@@ -538,15 +538,18 @@ class WaitingRoomViewModel: ObservableObject {
     // MARK: - Anxiety Tracking
     func recordAnxietyBefore(_ level: Int) {
         userProgress.anxietyLevelBefore = level
+        objectWillChange.send() // Force UI refresh
     }
     
     func recordAnxietyAfter(_ level: Int) {
         userProgress.anxietyLevelAfter = level
+        objectWillChange.send() // Force UI refresh
     }
     
     func recordAnxietyAfterWalk(_ level: Int) {
         userProgress.anxietyLevelAfter = level
         userProgress.anxietyLevelAfterWalk = level
+        objectWillChange.send() // Force UI refresh
     }
     
     var anxietyReduction: Int? {
