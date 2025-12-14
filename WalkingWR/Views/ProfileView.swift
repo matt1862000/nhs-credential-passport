@@ -1436,6 +1436,24 @@ struct SettingsView: View {
         AppTheme(rawValue: appTheme) ?? .system
     }
     
+    // Get the actual device color scheme (not the view's current scheme)
+    var deviceColorScheme: ColorScheme {
+        #if os(iOS)
+        return UITraitCollection.current.userInterfaceStyle == .dark ? .dark : .light
+        #else
+        return .light
+        #endif
+    }
+    
+    // Effective color scheme - uses actual device scheme when "System" is selected
+    var effectiveColorScheme: ColorScheme {
+        switch selectedTheme {
+        case .system: return deviceColorScheme // Use the actual device color scheme
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+    
     var body: some View {
         NavigationStack {
             List {
@@ -1512,6 +1530,34 @@ struct SettingsView: View {
                             Spacer()
                             Image(systemName: "arrow.up.right.square")
                         }
+                    }
+                }
+                
+                // Privacy Section
+                Section {
+                    NavigationLink {
+                        PrivacyInfoView()
+                    } label: {
+                        HStack(spacing: 12) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.mintGreen.opacity(0.15))
+                                    .frame(width: 36, height: 36)
+                                Image(systemName: "shield.lefthalf.filled")
+                                    .foregroundColor(.mintGreen)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Your Privacy & Data")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                                Text("How we protect your information")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
                     }
                 }
                 
@@ -1610,7 +1656,8 @@ struct SettingsView: View {
             } message: {
                 Text("This will permanently delete ALL your progress including total steps, routes completed, points, badges, and gratitude entries. This cannot be undone.")
             }
-            .preferredColorScheme(selectedTheme.colorScheme)
+            .preferredColorScheme(effectiveColorScheme)
+            .id(appTheme) // Force view refresh when theme changes
         }
     }
     
@@ -1753,6 +1800,247 @@ struct IntroductionReplayView: View {
                 }
                 .padding(.bottom, 50)
             }
+        }
+    }
+}
+
+// MARK: - Privacy Info View
+
+struct PrivacyInfoView: View {
+    @Environment(\.colorScheme) var colorScheme
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                
+                // Header
+                VStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.mintGreen.opacity(0.15))
+                            .frame(width: 80, height: 80)
+                        Image(systemName: "shield.lefthalf.filled")
+                            .font(.system(size: 36))
+                            .foregroundColor(.mintGreen)
+                    }
+                    
+                    Text("Your Privacy & Data")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                    
+                    Text("We want you to feel safe using this app")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 20)
+                
+                // What stays on your phone
+                PrivacySectionCard(
+                    icon: "iphone",
+                    iconColor: .tealAccent,
+                    title: "What stays on YOUR phone",
+                    items: [
+                        "Your wellbeing scores",
+                        "Gratitude journal entries",
+                        "Walking progress and badges",
+                        "Any photos you take"
+                    ],
+                    isPositive: true,
+                    colorScheme: colorScheme
+                )
+                
+                // What we do NOT do
+                PrivacySectionCard(
+                    icon: "xmark.shield",
+                    iconColor: .mintGreen,
+                    title: "We do NOT",
+                    items: [
+                        "Send your data to anyone",
+                        "Track your location when you're not using the app",
+                        "Share information with your clinician through this app",
+                        "Tell the clinic that you're using this app",
+                        "Store any of your personal health information"
+                    ],
+                    isPositive: false,
+                    colorScheme: colorScheme
+                )
+                
+                // How clinic delays work
+                PrivacySectionCard(
+                    icon: "arrow.down.circle",
+                    iconColor: .softAmber,
+                    title: "How clinic delays work",
+                    items: [
+                        "The app receives delay times from the clinic system",
+                        "This is one-way – the clinic sends information TO the app",
+                        "The clinic cannot see if you're using this app",
+                        "Your clinician does not know your location or activity"
+                    ],
+                    isPositive: true,
+                    colorScheme: colorScheme
+                )
+                
+                // Permissions explained
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "key.fill")
+                            .foregroundColor(.lavenderMist)
+                        Text("What we need permission for")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                    }
+                    
+                    PermissionExplainer(
+                        icon: "location.fill",
+                        title: "Location",
+                        explanation: "Only used during walks to show you the map and nearby spots. We don't track you otherwise."
+                    )
+                    
+                    PermissionExplainer(
+                        icon: "heart.fill",
+                        title: "Health (Steps)",
+                        explanation: "Only to count your steps during a walk. We can't see any other health data."
+                    )
+                    
+                    PermissionExplainer(
+                        icon: "bell.fill",
+                        title: "Notifications",
+                        explanation: "To let you know if clinic times change."
+                    )
+                }
+                .padding(20)
+                .background(Color.adaptiveCardBackground(colorScheme))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                
+                // You're in control
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "hand.raised.fill")
+                            .foregroundColor(.tealAccent)
+                        Text("You're in control")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        ControlPoint(text: "You can delete all your data at any time in Settings")
+                        ControlPoint(text: "You can turn off any permission in your phone's Settings")
+                        ControlPoint(text: "Closing the app stops all tracking")
+                    }
+                }
+                .padding(20)
+                .background(Color.adaptiveCardBackground(colorScheme))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                
+                // Questions
+                VStack(spacing: 12) {
+                    Image(systemName: "questionmark.bubble.fill")
+                        .font(.title)
+                        .foregroundColor(.tealAccent)
+                    
+                    Text("Questions?")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    
+                    Text("Speak to a member of staff – they're happy to help.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(24)
+                .background(Color.tealAccent.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                
+                Spacer(minLength: 40)
+            }
+            .padding(.horizontal, 20)
+        }
+        .background(Color.adaptiveBackground(colorScheme).ignoresSafeArea())
+        .navigationTitle("Privacy")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+    }
+}
+
+struct PrivacySectionCard: View {
+    let icon: String
+    let iconColor: Color
+    let title: String
+    let items: [String]
+    let isPositive: Bool
+    let colorScheme: ColorScheme
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .foregroundColor(iconColor)
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+            }
+            
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(items, id: \.self) { item in
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: isPositive ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundColor(isPositive ? .mintGreen : .coralPink.opacity(0.7))
+                            .font(.subheadline)
+                        Text(item)
+                            .font(.subheadline)
+                            .foregroundColor(.primary)
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.adaptiveCardBackground(colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+struct PermissionExplainer: View {
+    let icon: String
+    let title: String
+    let explanation: String
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .foregroundColor(.tealAccent)
+                .frame(width: 24)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.primary)
+                Text(explanation)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+}
+
+struct ControlPoint: View {
+    let text: String
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark")
+                .foregroundColor(.mintGreen)
+                .font(.caption)
+                .fontWeight(.bold)
+            Text(text)
+                .font(.subheadline)
+                .foregroundColor(.primary)
         }
     }
 }
