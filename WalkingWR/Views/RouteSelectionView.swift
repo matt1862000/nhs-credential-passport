@@ -368,45 +368,20 @@ struct LocalRoutePickerSheet: View {
                         .padding(20)
                         .cardStyle()
                         
-                        // Location status
-                        if let location = locationService.currentLocation {
-                            HStack(spacing: 12) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundColor(.mintGreen)
-                                
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Location detected")
-                                        .font(.bodyMedium)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.primary)
-                                    
-                                    Text("Lat: \(location.coordinate.latitude, specifier: "%.4f"), Lon: \(location.coordinate.longitude, specifier: "%.4f")")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                
-                                Spacer()
-                            }
-                            .padding(16)
-                            .cardStyle()
-                        } else {
+                        // Location permission prompt (only shown if not authorized)
+                        if !locationService.isAuthorized {
                             VStack(spacing: 12) {
                                 HStack(spacing: 12) {
-                                    if locationService.isAuthorized {
-                                        ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: locationService.isRetrying ? .softAmber : .tealAccent))
-                                    } else {
-                                        Image(systemName: "location.slash")
-                                            .foregroundColor(.softAmber)
-                                    }
+                                    Image(systemName: "location.slash")
+                                        .foregroundColor(.softAmber)
                                     
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(locationStatusText)
+                                        Text("Location required")
                                             .font(.bodyMedium)
                                             .fontWeight(.medium)
                                             .foregroundColor(.primary)
                                         
-                                        Text(locationStatusSubtext)
+                                        Text("Enable location to generate a route")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                     }
@@ -414,38 +389,42 @@ struct LocalRoutePickerSheet: View {
                                     Spacer()
                                 }
                                 
-                                if !locationService.isAuthorized {
-                                    Button(action: {
-                                        locationService.requestPermission()
-                                    }) {
-                                        HStack {
-                                            Image(systemName: "location.fill")
-                                            Text("Enable Location")
-                                        }
-                                        .font(.bodyMedium)
-                                        .fontWeight(.medium)
+                                Button(action: {
+                                    locationService.requestPermission()
+                                }) {
+                                    HStack {
+                                        Image(systemName: "location.fill")
+                                        Text("Enable Location")
                                     }
-                                    .buttonStyle(PrimaryButtonStyle(color: .softAmber))
+                                    .font(.bodyMedium)
+                                    .fontWeight(.medium)
                                 }
+                                .buttonStyle(PrimaryButtonStyle(color: .softAmber))
                             }
                             .padding(16)
                             .cardStyle()
                         }
                         
                         // Generate button
+                        let locationReady = locationService.currentLocation != nil
+                        
                         Button(action: generateRoute) {
                             HStack {
                                 if isGenerating {
                                     ProgressView()
                                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                } else if !locationReady {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    Text("Finding Location...")
                                 } else {
                                     Image(systemName: "sparkles")
                                     Text("Generate Route")
                                 }
                             }
                         }
-                        .buttonStyle(PrimaryButtonStyle())
-                        .disabled(locationService.currentLocation == nil || isGenerating)
+                        .buttonStyle(PrimaryButtonStyle(color: locationReady ? .tealAccent : .gray))
+                        .disabled(!locationReady || isGenerating)
                         
                         Spacer(minLength: 40)
                     }
@@ -469,27 +448,7 @@ struct LocalRoutePickerSheet: View {
         }
     }
     
-    // MARK: - Location Status Text
-    
-    var locationStatusText: String {
-        if !locationService.isAuthorized {
-            return "Location not available"
-        } else if locationService.isRetrying {
-            return "Retrying... (attempt \(locationService.locationRetryCount + 1)/4)"
-        } else {
-            return "Getting location..."
-        }
-    }
-    
-    var locationStatusSubtext: String {
-        if !locationService.isAuthorized {
-            return "Tap below to enable location services"
-        } else if locationService.isRetrying {
-            return "GPS taking longer than usual"
-        } else {
-            return "Please wait a moment"
-        }
-    }
+    // MARK: - Route Calculations
     
     var estimatedSteps: Int {
         // ~100 steps per minute of walking
