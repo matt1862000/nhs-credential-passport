@@ -84,7 +84,7 @@ struct ClinicianSelectionView: View {
                             Image(systemName: "info.circle.fill")
                                 .foregroundColor(.tealAccent)
                             
-                            Text("Wait times are estimates and updated in real-time from the clinic system.")
+                            Text("Delay times are estimates. Thank you for your patience.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -153,14 +153,14 @@ struct ClinicianCard: View {
                     
                     // Wait time
                     HStack(spacing: 6) {
-                        Image(systemName: "clock.fill")
+                        Image(systemName: clinician.isOnTime ? "checkmark.circle.fill" : "clock.fill")
                             .font(.caption2)
-                            .foregroundColor(.softAmber)
+                            .foregroundColor(clinician.isOnTime ? .mintGreen : .softAmber)
                         
-                        Text("~\(clinician.formattedWaitTime) delay")
+                        Text(clinician.isOnTime ? "On Time" : "~\(clinician.formattedWaitTime) delay")
                             .font(.caption)
                             .fontWeight(.medium)
-                            .foregroundColor(.softAmber)
+                            .foregroundColor(clinician.isOnTime ? .mintGreen : .softAmber)
                         
                     }
                 }

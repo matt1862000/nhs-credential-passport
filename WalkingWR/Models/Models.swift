@@ -66,13 +66,19 @@ struct Clinician: Identifiable, Codable, Hashable {
     }
     
     var formattedWaitTime: String {
-        if currentWaitMinutes < 60 {
+        if currentWaitMinutes == 0 {
+            return "On Time"
+        } else if currentWaitMinutes < 60 {
             return "\(currentWaitMinutes) min"
         } else {
             let hours = currentWaitMinutes / 60
             let mins = currentWaitMinutes % 60
             return "\(hours)h \(mins)m"
         }
+    }
+    
+    var isOnTime: Bool {
+        currentWaitMinutes == 0
     }
     
     var fullTitle: String {
@@ -216,13 +222,19 @@ struct WaitTimeInfo: Identifiable {
     var queuePosition: Int
     
     var formattedTime: String {
-        if estimatedMinutes < 60 {
+        if estimatedMinutes == 0 {
+            return "On Time"
+        } else if estimatedMinutes < 60 {
             return "\(estimatedMinutes) min"
         } else {
             let hours = estimatedMinutes / 60
             let mins = estimatedMinutes % 60
             return "\(hours)h \(mins)m"
         }
+    }
+    
+    var isOnTime: Bool {
+        estimatedMinutes == 0
     }
     
     // Create from clinician

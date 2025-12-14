@@ -137,15 +137,21 @@ struct WaitTimeCard: View {
             }
             
             // Time display - large
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("\(waitInfo.estimatedMinutes)")
-                    .font(.system(size: 72, weight: .bold, design: .rounded))
-                    .foregroundColor(.primary)
-                
-                Text("min")
-                    .font(.titleMedium)
-                    .foregroundColor(.primary)
-                    .padding(.bottom, 8)
+            if waitInfo.isOnTime {
+                Text("On Time")
+                    .font(.system(size: 48, weight: .bold, design: .rounded))
+                    .foregroundColor(.mintGreen)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("\(waitInfo.estimatedMinutes)")
+                        .font(.system(size: 72, weight: .bold, design: .rounded))
+                        .foregroundColor(.primary)
+                    
+                    Text("min")
+                        .font(.titleMedium)
+                        .foregroundColor(.primary)
+                        .padding(.bottom, 8)
+                }
             }
             
             // Clinician info with change option
