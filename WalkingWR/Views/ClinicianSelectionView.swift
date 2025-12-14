@@ -41,7 +41,7 @@ struct ClinicianSelectionView: View {
                                 .fontWeight(.bold)
                                 .foregroundColor(.primary)
                             
-                            Text("Select your clinician to see your personalised wait time")
+                            Text("Choose your clinician to receive real-time updates as clinic times change")
                                 .font(.bodyMedium)
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.center)

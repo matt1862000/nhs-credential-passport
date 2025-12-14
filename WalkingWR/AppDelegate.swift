@@ -27,8 +27,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         print("FCM Token: \(fcmToken ?? "none")")
     }
     
-    // Show notifications when app is in foreground
+    // When app is in foreground, don't show banner - the in-app alert handles it
+    // Banners only show when app is in background/closed
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound, .badge])
+        // Don't show banner when app is open - in-app alerts handle this
+        completionHandler([])
     }
 }
