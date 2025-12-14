@@ -1610,6 +1610,7 @@ struct SettingsView: View {
             } message: {
                 Text("This will permanently delete ALL your progress including total steps, routes completed, points, badges, and gratitude entries. This cannot be undone.")
             }
+            .preferredColorScheme(selectedTheme.colorScheme)
         }
     }
     
