@@ -8,6 +8,7 @@
 import Foundation
 import CoreLocation
 import Combine
+import UIKit
 
 class LocationService: NSObject, ObservableObject {
     private let locationManager = CLLocationManager()
@@ -38,6 +39,39 @@ class LocationService: NSObject, ObservableObject {
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 10 // Update every 10 meters
         authorizationStatus = locationManager.authorizationStatus
+        
+        // Listen for app returning to foreground to re-check permissions
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+    
+    @objc private func appDidBecomeActive() {
+        // Re-check authorization status when app returns from Settings
+        let newStatus = locationManager.authorizationStatus
+        
+        DispatchQueue.main.async {
+            let previousStatus = self.authorizationStatus
+            self.authorizationStatus = newStatus
+            
+            // If status changed from denied to notDetermined ("Ask Next Time"), prompt again
+            if previousStatus == .denied && newStatus == .notDetermined {
+                print("📍 User selected 'Ask Next Time' - requesting permission")
+                self.requestPermission()
+            }
+            // If we're now authorized but no location yet, request one
+            else if self.isAuthorized && self.currentLocation == nil {
+                print("📍 App became active - requesting fresh location")
+                self.requestFreshLocation()
+            }
+        }
     }
     
     // MARK: - Authorization
@@ -181,8 +215,20 @@ class LocationService: NSObject, ObservableObject {
 
 extension LocationService: CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let previousStatus = authorizationStatus
+        let newStatus = manager.authorizationStatus
+        
         DispatchQueue.main.async {
-            self.authorizationStatus = manager.authorizationStatus
+            self.authorizationStatus = newStatus
+            
+            // If we just became authorized (from denied/notDetermined), request location
+            let wasNotAuthorized = previousStatus == .denied || previousStatus == .notDetermined || previousStatus == .restricted
+            let isNowAuthorized = newStatus == .authorizedWhenInUse || newStatus == .authorizedAlways
+            
+            if wasNotAuthorized && isNowAuthorized && self.currentLocation == nil {
+                print("📍 Location permission granted - requesting fresh location")
+                self.requestFreshLocation()
+            }
         }
     }
     

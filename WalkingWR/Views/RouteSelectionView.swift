@@ -370,6 +370,8 @@ struct LocalRoutePickerSheet: View {
                         
                         // Location permission prompt (only shown if not authorized)
                         if !locationService.isAuthorized {
+                            let isDenied = locationService.authorizationStatus == .denied || locationService.authorizationStatus == .restricted
+                            
                             VStack(spacing: 12) {
                                 HStack(spacing: 12) {
                                     Image(systemName: "location.slash")
@@ -381,7 +383,7 @@ struct LocalRoutePickerSheet: View {
                                             .fontWeight(.medium)
                                             .foregroundColor(.primary)
                                         
-                                        Text("Enable location to generate a route")
+                                        Text(isDenied ? "Enable location in Settings to generate a route" : "We need your location to create a personalised route")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                     }
@@ -389,42 +391,62 @@ struct LocalRoutePickerSheet: View {
                                     Spacer()
                                 }
                                 
-                                Button(action: {
-                                    locationService.requestPermission()
-                                }) {
-                                    HStack {
-                                        Image(systemName: "location.fill")
-                                        Text("Enable Location")
+                                if isDenied {
+                                    // Location was denied - need to go to Settings
+                                    Button(action: {
+                                        if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                                            UIApplication.shared.open(settingsURL)
+                                        }
+                                    }) {
+                                        HStack {
+                                            Image(systemName: "gear")
+                                            Text("Open Settings")
+                                        }
+                                        .font(.bodyMedium)
+                                        .fontWeight(.medium)
                                     }
-                                    .font(.bodyMedium)
-                                    .fontWeight(.medium)
+                                    .buttonStyle(PrimaryButtonStyle(color: .softAmber))
+                                } else {
+                                    // Not determined yet - can request permission directly
+                                    Button(action: {
+                                        locationService.requestPermission()
+                                    }) {
+                                        HStack {
+                                            Image(systemName: "location.fill")
+                                            Text("Allow Location Access")
+                                        }
+                                        .font(.bodyMedium)
+                                        .fontWeight(.medium)
+                                    }
+                                    .buttonStyle(PrimaryButtonStyle(color: .tealAccent))
                                 }
-                                .buttonStyle(PrimaryButtonStyle(color: .softAmber))
                             }
                             .padding(16)
                             .cardStyle()
                         }
                         
-                        // Generate button
-                        let locationReady = locationService.currentLocation != nil
-                        
-                        Button(action: generateRoute) {
-                            HStack {
-                                if isGenerating {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                } else if !locationReady {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    Text("Finding Location...")
-                                } else {
-                                    Image(systemName: "sparkles")
-                                    Text("Generate Route")
+                        // Generate button - only shown when location is authorized
+                        if locationService.isAuthorized {
+                            let locationReady = locationService.currentLocation != nil
+                            
+                            Button(action: generateRoute) {
+                                HStack {
+                                    if isGenerating {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    } else if !locationReady {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        Text("Finding Location...")
+                                    } else {
+                                        Image(systemName: "sparkles")
+                                        Text("Generate Route")
+                                    }
                                 }
                             }
+                            .buttonStyle(PrimaryButtonStyle(color: locationReady ? .tealAccent : .gray))
+                            .disabled(!locationReady || isGenerating)
                         }
-                        .buttonStyle(PrimaryButtonStyle(color: locationReady ? .tealAccent : .gray))
-                        .disabled(!locationReady || isGenerating)
                         
                         Spacer(minLength: 40)
                     }
