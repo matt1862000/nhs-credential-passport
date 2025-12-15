@@ -16,18 +16,15 @@ class HealthKitService: ObservableObject {
     private let pedometer = CMPedometer()
     
     @Published var stepCount: Int = 0
-    @Published var heartRate: Double = 0
     @Published var isAuthorized: Bool = false
     @Published var errorMessage: String?
     @Published var distance: Double = 0 // in meters from pedometer
     
     private var stepQuery: HKObserverQuery?
-    private var heartRateQuery: HKAnchoredObjectQuery?
     private var pedometerStartDate: Date?
     
-    // Types we want to read
+    // Types we want to read - only step count (no heart rate)
     private let stepType = HKQuantityType.quantityType(forIdentifier: .stepCount)!
-    private let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
     
     init() {
         checkAuthorization()
@@ -35,6 +32,42 @@ class HealthKitService: ObservableObject {
     
     var isPedometerAvailable: Bool {
         CMPedometer.isStepCountingAvailable()
+    }
+    
+    var isPedometerAuthorized: Bool {
+        CMPedometer.authorizationStatus() == .authorized
+    }
+    
+    var isMotionAuthorized: Bool {
+        // Check if Core Motion (pedometer) is authorized
+        let status = CMPedometer.authorizationStatus()
+        return status == .authorized
+    }
+    
+    var isMotionDenied: Bool {
+        let status = CMPedometer.authorizationStatus()
+        return status == .denied || status == .restricted
+    }
+    
+    var isMotionNotDetermined: Bool {
+        let status = CMPedometer.authorizationStatus()
+        return status == .notDetermined
+    }
+    
+    /// Request Core Motion authorization by triggering a pedometer query
+    func requestMotionAuthorization() {
+        guard isPedometerAvailable else { return }
+        
+        // Trigger a brief pedometer query to prompt for permission
+        let now = Date()
+        let oneMinuteAgo = now.addingTimeInterval(-60)
+        
+        pedometer.queryPedometerData(from: oneMinuteAgo, to: now) { [weak self] _, _ in
+            // After the query (which triggers the permission prompt), check status
+            DispatchQueue.main.async {
+                self?.objectWillChange.send()
+            }
+        }
     }
     
     var isHealthKitAvailable: Bool {
@@ -47,24 +80,58 @@ class HealthKitService: ObservableObject {
             return
         }
         
-        let status = healthStore.authorizationStatus(for: stepType)
-        isAuthorized = status == .sharingAuthorized
+        // For read-only access, authorizationStatus doesn't work
+        // We need to try to query data to see if we have access
+        // Check if we can read today's steps as a test
+        Task {
+            let hasAccess = await canReadStepData()
+            await MainActor.run {
+                self.isAuthorized = hasAccess
+            }
+        }
+    }
+    
+    private func canReadStepData() async -> Bool {
+        let calendar = Calendar.current
+        let startOfDay = calendar.startOfDay(for: Date())
+        let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: Date(), options: .strictStartDate)
+        
+        return await withCheckedContinuation { continuation in
+            let query = HKStatisticsQuery(
+                quantityType: stepType,
+                quantitySamplePredicate: predicate,
+                options: .cumulativeSum
+            ) { _, result, error in
+                // If we get a result (even if 0 steps) without error, we have access
+                // If error is nil, we have access. Error means no access.
+                if error == nil {
+                    continuation.resume(returning: true)
+                } else {
+                    continuation.resume(returning: false)
+                }
+            }
+            healthStore.execute(query)
+        }
     }
     
     func requestAuthorization() async -> Bool {
         guard isHealthKitAvailable else {
-            errorMessage = "HealthKit is not available on this device"
+            await MainActor.run {
+                self.errorMessage = "HealthKit is not available on this device"
+            }
             return false
         }
         
-        let typesToRead: Set<HKObjectType> = [stepType, heartRateType]
+        let typesToRead: Set<HKObjectType> = [stepType]
         
         do {
             try await healthStore.requestAuthorization(toShare: [], read: typesToRead)
+            // For read access, we need to try reading data to know if access was granted
+            let hasAccess = await canReadStepData()
             await MainActor.run {
-                self.isAuthorized = true
+                self.isAuthorized = hasAccess
             }
-            return true
+            return hasAccess
         } catch {
             await MainActor.run {
                 self.errorMessage = "Authorization failed: \(error.localizedDescription)"
@@ -176,43 +243,6 @@ class HealthKitService: ObservableObject {
         healthStore.execute(query)
     }
     
-    func startObservingHeartRate() {
-        let predicate = HKQuery.predicateForSamples(
-            withStart: Date().addingTimeInterval(-60),
-            end: nil,
-            options: .strictStartDate
-        )
-        
-        heartRateQuery = HKAnchoredObjectQuery(
-            type: heartRateType,
-            predicate: predicate,
-            anchor: nil,
-            limit: HKObjectQueryNoLimit
-        ) { [weak self] _, samples, _, _, error in
-            self?.processHeartRateSamples(samples)
-        }
-        
-        heartRateQuery?.updateHandler = { [weak self] _, samples, _, _, error in
-            self?.processHeartRateSamples(samples)
-        }
-        
-        if let query = heartRateQuery {
-            healthStore.execute(query)
-        }
-    }
-    
-    private func processHeartRateSamples(_ samples: [HKSample]?) {
-        guard let heartRateSamples = samples as? [HKQuantitySample],
-              let mostRecent = heartRateSamples.last else { return }
-        
-        let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
-        let value = mostRecent.quantity.doubleValue(for: heartRateUnit)
-        
-        DispatchQueue.main.async {
-            self.heartRate = value
-        }
-    }
-    
     func stopObserving() {
         // Stop pedometer
         pedometer.stopUpdates()
@@ -222,10 +252,6 @@ class HealthKitService: ObservableObject {
         if let query = stepQuery {
             healthStore.stop(query)
             stepQuery = nil
-        }
-        if let query = heartRateQuery {
-            healthStore.stop(query)
-            heartRateQuery = nil
         }
         
         // Reset counts

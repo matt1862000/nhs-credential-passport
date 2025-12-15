@@ -476,6 +476,7 @@ class UserProgress: ObservableObject {
             pointsEarned: todayPoints,
             anxietyBefore: anxietyLevelBefore,
             anxietyAfter: anxietyLevelAfter,
+            anxietyAfterWalk: anxietyLevelAfterWalk,
             gratitudeEntries: gratitudeEntries
         )
         
@@ -507,6 +508,7 @@ class UserProgress: ObservableObject {
             pointsEarned: todayPoints,
             anxietyBefore: anxietyLevelBefore,
             anxietyAfter: anxietyLevelAfter,
+            anxietyAfterWalk: anxietyLevelAfterWalk,
             gratitudeEntries: todayGratitudeEntries
         )
     }
@@ -701,6 +703,7 @@ struct DailyActivity: Codable, Identifiable {
     let pointsEarned: Int
     let anxietyBefore: Int?
     let anxietyAfter: Int?
+    let anxietyAfterWalk: Int? // Specifically from walks (for Walking Wellbeing Impact)
     let gratitudeEntries: [String]
     
     var formattedDate: String {

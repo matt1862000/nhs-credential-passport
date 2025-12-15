@@ -53,7 +53,7 @@ Four routes optimized for different wait durations:
 
 ### 6. Health Integration
 - HealthKit step counting during walks
-- Heart rate monitoring (if Apple Watch connected)
+- Step counting during walks
 - Anxiety level tracking (VAS scale)
 
 ---

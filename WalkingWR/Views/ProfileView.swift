@@ -22,26 +22,29 @@ struct ProfileView: View {
                 AnimatedGradientBackground()
                 
                 ScrollView {
-                    VStack(spacing: 24) {
+                    VStack(spacing: 16) {
                         // Stats summary card
                         StatsSummaryCard(progress: viewModel.userProgress)
                         
                         // Activity History (scrollable)
                         ActivityHistorySection(progress: viewModel.userProgress)
                         
-                        // Overall anxiety score (from any activity - walk or breathing)
-                        if let before = viewModel.userProgress.anxietyLevelBefore {
-                            AnxietyScoreCard(
-                                before: before,
-                                after: viewModel.userProgress.anxietyLevelAfter
+                        // Wellbeing sections (grouped with less spacing)
+                        VStack(spacing: 12) {
+                            // Swipeable Wellbeing History (Today's Wellbeing)
+                            WellbeingHistorySection(
+                                progress: viewModel.userProgress,
+                                title: "Today's Wellbeing",
+                                icon: "heart.fill",
+                                useWalkScores: false
                             )
-                        }
-                        
-                        // Walking-specific wellbeing impact (always shows if there's a before score, but "after" only if walk done)
-                        if let before = viewModel.userProgress.anxietyLevelBefore {
-                            WalkingWellbeingCard(
-                                before: before,
-                                after: viewModel.userProgress.anxietyLevelAfterWalk
+                            
+                            // Swipeable Walking Wellbeing History
+                            WellbeingHistorySection(
+                                progress: viewModel.userProgress,
+                                title: "Walking Wellbeing Impact",
+                                icon: "figure.walk",
+                                useWalkScores: true
                             )
                         }
                         
@@ -277,14 +280,7 @@ struct ActivityHistorySection: View {
                 }
             }
             
-            // Swipe hint (only show if there's history)
-            if allActivities.count > 1 {
-                Text("Swipe to see previous days")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
             }
-        }
         // Sheet uses combined selection - activity and detail type bundled together
         .sheet(item: $detailSelection) { selection in
             ActivityDetailSheet(activity: selection.activity, focusedDetail: selection.detailType)
@@ -1015,6 +1011,212 @@ struct WalkingWellbeingCard: View {
     }
 }
 
+// MARK: - Wellbeing History Section (Swipeable)
+struct WellbeingHistorySection: View {
+    @ObservedObject var progress: UserProgress
+    let title: String
+    let icon: String
+    let useWalkScores: Bool // true = Walking Wellbeing, false = Today's Wellbeing
+    @Environment(\.colorScheme) var colorScheme
+    @State private var currentIndex: Int = 0
+    
+    // Get activities that have wellbeing data
+    var activitiesWithWellbeing: [DailyActivity] {
+        progress.allActivities.filter { activity in
+            if useWalkScores {
+                // For walking wellbeing, show if they did a walk (routes > 0) AND have a before score
+                // The "after" score can be nil (will show "?")
+                return activity.routesCompleted > 0 && activity.anxietyBefore != nil
+            } else {
+                // For general wellbeing, need before score
+                return activity.anxietyBefore != nil
+            }
+        }
+    }
+    
+    var body: some View {
+        // Only show if there's data
+        if !activitiesWithWellbeing.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                // Header with navigation indicator
+                HStack {
+                    Image(systemName: useWalkScores ? "figure.walk.circle.fill" : "heart.fill")
+                        .foregroundColor(useWalkScores ? .lavenderMist : .coralPink)
+                    
+                    Text(title)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    Spacer()
+                    
+                    // Page indicator in header
+                    if activitiesWithWellbeing.count > 1 {
+                        HStack(spacing: 4) {
+                            Image(systemName: "chevron.left")
+                                .font(.caption2)
+                                .foregroundColor(currentIndex > 0 ? .tealAccent : .secondary.opacity(0.3))
+                            
+                            Text("\(currentIndex + 1)/\(activitiesWithWellbeing.count)")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.secondary)
+                            
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundColor(currentIndex < activitiesWithWellbeing.count - 1 ? .tealAccent : .secondary.opacity(0.3))
+                        }
+                    }
+                }
+                .padding(.horizontal, 4)
+                
+                TabView(selection: $currentIndex) {
+                    ForEach(Array(activitiesWithWellbeing.enumerated()), id: \.element.id) { index, activity in
+                        WellbeingDayCard(
+                            activity: activity,
+                            useWalkScores: useWalkScores,
+                            colorScheme: colorScheme
+                        )
+                        .tag(index)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(height: 160)
+            }
+        }
+    }
+}
+
+struct WellbeingDayCard: View {
+    let activity: DailyActivity
+    let useWalkScores: Bool
+    let colorScheme: ColorScheme
+    
+    var before: Int? { activity.anxietyBefore }
+    var after: Int? { useWalkScores ? activity.anxietyAfterWalk : activity.anxietyAfter }
+    
+    var change: Int? {
+        guard let b = before, let a = after else { return nil }
+        return b - a
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Date badge - top left
+            Text(activity.isToday ? "Today" : activity.formattedDate)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.1))
+                .clipShape(Capsule())
+            
+            // Scores row with result indicator
+            HStack(spacing: 0) {
+                // Centered scores section
+                HStack(spacing: 20) {
+                    // Before
+                    if let beforeValue = before {
+                        VStack(spacing: 4) {
+                            ZStack {
+                                Circle()
+                                    .fill(anxietyColor(for: beforeValue).opacity(0.15))
+                                    .frame(width: 50, height: 50)
+                                
+                                Text("\(beforeValue)")
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(anxietyColor(for: beforeValue))
+                            }
+                            
+                            Text(useWalkScores ? "Before" : "Start")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    // Arrow
+                    Image(systemName: "arrow.right")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                        .padding(.bottom, 14)
+                    
+                    // After
+                    VStack(spacing: 4) {
+                        if let afterValue = after {
+                            ZStack {
+                                Circle()
+                                    .fill(anxietyColor(for: afterValue).opacity(0.15))
+                                    .frame(width: 50, height: 50)
+                                
+                                Text("\(afterValue)")
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(anxietyColor(for: afterValue))
+                            }
+                            
+                            Text(useWalkScores ? "After" : "Now")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        } else {
+                            ZStack {
+                                Circle()
+                                    .stroke(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [4]))
+                                    .frame(width: 50, height: 50)
+                                
+                                Text("?")
+                                    .font(.title2)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Pending")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity) // Center the scores
+                
+                // Result indicator - fixed width on the right
+                if let changeValue = change {
+                    VStack(spacing: 4) {
+                        Image(systemName: changeValue > 0 ? "arrow.down.circle.fill" : (changeValue < 0 ? "arrow.up.circle.fill" : "equal.circle.fill"))
+                            .font(.title)
+                            .foregroundColor(changeValue > 0 ? .mintGreen : (changeValue < 0 ? .coralPink : .secondary))
+                        
+                        Text(changeValue > 0 ? "Better" : (changeValue < 0 ? "Higher" : "Same"))
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundColor(changeValue > 0 ? .mintGreen : (changeValue < 0 ? .coralPink : .secondary))
+                    }
+                    .frame(width: 50)
+                }
+            }
+        }
+        .padding(16)
+        .background(Color.adaptiveCardBackground(colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.06), radius: 8, x: 0, y: 4)
+        .padding(.horizontal, 4)
+    }
+    
+    func anxietyColor(for level: Int) -> Color {
+        switch level {
+        case 1...3: return .mintGreen
+        case 4...6: return .softAmber
+        default: return .coralPink
+        }
+    }
+    
+    func anxietyLabel(for level: Int) -> String {
+        switch level {
+        case 1...3: return "Calm"
+        case 4...6: return "Moderate"
+        default: return "Anxious"
+        }
+    }
+}
+
 // MARK: - Badges Section
 struct BadgesSection: View {
     @ObservedObject var progress: UserProgress
@@ -1428,9 +1630,12 @@ struct SettingsView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var showIntroduction: Bool
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("appTheme") private var appTheme: String = AppTheme.system.rawValue
     @State private var showResetTodayAlert = false
     @State private var showResetAllAlert = false
+    @State private var notificationsEnabled = false
+    @State private var showHealthKitUnavailable = false
     
     var selectedTheme: AppTheme {
         AppTheme(rawValue: appTheme) ?? .system
@@ -1458,31 +1663,60 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 Section {
-                    Button(action: openAppSettings) {
+                    Button(action: requestNotificationPermission) {
                         HStack {
                             Label("Notifications", systemImage: "bell.fill")
                             Spacer()
-                            Image(systemName: "arrow.up.right.square")
-                                .font(.caption)
-                                .foregroundColor(.gray)
+                            if notificationsEnabled {
+                                Text("Enabled")
+                                    .font(.caption)
+                                    .foregroundColor(.mintGreen)
+                            } else {
+                                Text("Tap to enable")
+                                    .font(.caption)
+                                    .foregroundColor(.softAmber)
+                            }
                         }
                     }
                     .foregroundColor(.primary)
                     
-                    Button(action: openHealthSettings) {
+                    Button(action: requestLocationPermission) {
                         HStack {
-                            Label("Health & Activity", systemImage: "heart.fill")
+                            Label("Location", systemImage: "location.fill")
                             Spacer()
-                            Image(systemName: "arrow.up.right.square")
-                                .font(.caption)
-                                .foregroundColor(.gray)
+                            if viewModel.locationService.isAuthorized {
+                                Text("Enabled")
+                                    .font(.caption)
+                                    .foregroundColor(.mintGreen)
+                            } else {
+                                Text("Tap to enable")
+                                    .font(.caption)
+                                    .foregroundColor(.softAmber)
+                            }
+                        }
+                    }
+                    .foregroundColor(.primary)
+                    
+                    Button(action: requestMotionPermission) {
+                        HStack {
+                            Label("Steps & Motion", systemImage: "figure.walk")
+                            Spacer()
+                            if viewModel.healthKitService.isMotionAuthorized {
+                                Text("Enabled")
+                                    .font(.caption)
+                                    .foregroundColor(.mintGreen)
+                            } else {
+                                Text("Tap to enable")
+                                    .font(.caption)
+                                    .foregroundColor(.softAmber)
+                            }
                         }
                     }
                     .foregroundColor(.primary)
                 } header: {
                     Text("Permissions")
                 } footer: {
-                    Text("Manage permissions in iOS Settings")
+                    Text("Tap to enable or manage in iOS Settings")
                         .font(.caption)
                 }
                 
@@ -1656,22 +1890,91 @@ struct SettingsView: View {
             } message: {
                 Text("This will permanently delete ALL your progress including total steps, routes completed, points, badges, and gratitude entries. This cannot be undone.")
             }
+            .alert("HealthKit Not Available", isPresented: $showHealthKitUnavailable) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("HealthKit is not available on this device. Step tracking requires an iPhone with HealthKit support.")
+            }
             .preferredColorScheme(effectiveColorScheme)
             .id(appTheme) // Force view refresh when theme changes
+            .onAppear {
+                refreshPermissionStatuses()
+            }
+            .onChange(of: scenePhase) { oldPhase, newPhase in
+                if newPhase == .active {
+                    // Refresh permission statuses when returning from Settings
+                    refreshPermissionStatuses()
+                }
+            }
+        }
+    }
+    
+    private func refreshPermissionStatuses() {
+        // Check notification status
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                notificationsEnabled = settings.authorizationStatus == .authorized
+            }
+        }
+        // HealthKit and Location are already reactive via their services
+        viewModel.healthKitService.checkAuthorization()
+    }
+    
+    private func requestNotificationPermission() {
+        if notificationsEnabled {
+            // Already authorized, open settings to manage
+            openAppSettings()
+        } else {
+            // Check if we need to go to settings (denied) or can request directly
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+                DispatchQueue.main.async {
+                    if settings.authorizationStatus == .denied {
+                        // Must go to settings to enable
+                        openAppSettings()
+                    } else {
+                        // Request permission
+                        Task {
+                            let granted = await viewModel.notificationService.requestAuthorization()
+                            await MainActor.run {
+                                notificationsEnabled = granted
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    private func requestLocationPermission() {
+        if viewModel.locationService.isAuthorized {
+            // Already authorized, open settings to manage
+            openAppSettings()
+        } else {
+            // Request permission or open settings if denied
+            if viewModel.locationService.authorizationStatus == .denied {
+                openAppSettings()
+            } else {
+                viewModel.locationService.requestPermission()
+            }
+        }
+    }
+    
+    private func requestMotionPermission() {
+        if viewModel.healthKitService.isMotionAuthorized {
+            // Already authorized - open app settings to manage
+            openAppSettings()
+        } else if viewModel.healthKitService.isMotionDenied {
+            // Already denied - must go to Settings to re-enable
+            openAppSettings()
+        } else {
+            // Not yet determined - request permission by triggering a pedometer query
+            viewModel.healthKitService.requestMotionAuthorization()
         }
     }
     
     private func openAppSettings() {
         #if os(iOS)
         if let url = URL(string: UIApplication.openSettingsURLString) {
-            UIApplication.shared.open(url)
-        }
-        #endif
-    }
-    
-    private func openHealthSettings() {
-        #if os(iOS)
-        if let url = URL(string: "x-apple-health://") {
             UIApplication.shared.open(url)
         }
         #endif

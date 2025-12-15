@@ -18,6 +18,7 @@ struct RouteSelectionView: View {
     @State private var showHelpSheet = false
     @State private var showLocalRoutePicker = false
     @State private var localRouteDuration: Int = 10
+    @State private var showEndWalkConfirmation = false
     
     var filteredRoutes: [WalkingRoute] {
         var routes = viewModel.availableRoutes
@@ -43,7 +44,7 @@ struct RouteSelectionView: View {
                 AnimatedGradientBackground()
                 
                 if viewModel.walkSession.isActive {
-                    ActiveWalkView(viewModel: viewModel)
+                    ActiveWalkView(viewModel: viewModel, showEndConfirmation: $showEndWalkConfirmation)
                 } else {
                     ScrollView {
                         VStack(spacing: 20) {
@@ -127,6 +128,14 @@ struct RouteSelectionView: View {
                 }
             } message: {
                 Text("Your route is complete. Please return to the waiting area.")
+            }
+            .confirmationDialog("End Walk?", isPresented: $showEndWalkConfirmation) {
+                Button("End & Save Progress") {
+                    viewModel.endWalk(completed: true)
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Your steps and progress will be saved.")
             }
         }
     }
@@ -1242,7 +1251,7 @@ struct SheffieldHealthWalksCard: View {
 // MARK: - Active Walk View
 struct ActiveWalkView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
-    @State private var showEndConfirmation = false
+    @Binding var showEndConfirmation: Bool
     
     var body: some View {
         VStack(spacing: 0) {
@@ -1319,14 +1328,6 @@ struct ActiveWalkView: View {
                 .padding(.horizontal, 40)
                 .padding(.bottom, 20)
             }
-        }
-        .confirmationDialog("End Walk?", isPresented: $showEndConfirmation) {
-            Button("End & Save Progress") {
-                viewModel.endWalk(completed: true)
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Your steps and progress will be saved.")
         }
     }
     

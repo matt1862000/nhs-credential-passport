@@ -72,15 +72,9 @@ class WaitingRoomViewModel: ObservableObject {
         // Listen to Firebase for real wait times
         setupFirebaseListener()
         
-        // Request location permission
-        locationService.requestPermission()
-        
-        // Request HealthKit permission
-        Task {
-            await healthKitService.requestAuthorization()
-        }
-        
-        // Request notification permission
+        // Request notification permission on startup (needed for delay change alerts)
+        // Location and HealthKit permissions are requested when starting a walk
+        // This provides a better user experience (just-in-time permissions)
         Task {
             await notificationService.requestAuthorization()
         }
@@ -222,9 +216,27 @@ class WaitingRoomViewModel: ObservableObject {
         selectedRoute = route
     }
     
+    // MARK: - Permission Requests (Just-in-Time)
+    
+    /// Request permissions needed for walking - called when user starts a walk
+    private func requestWalkPermissions() {
+        // Request location permission if not already authorized
+        if !locationService.isAuthorized {
+            locationService.requestPermission()
+        }
+        
+        // Request HealthKit permission for step counting
+        Task {
+            await healthKitService.requestAuthorization()
+        }
+    }
+    
     // MARK: - Walk Session Management
     func startWalk() {
         guard let route = selectedRoute else { return }
+        
+        // Request permissions just-in-time when starting a walk
+        requestWalkPermissions()
         
         walkSession.isActive = true
         walkSession.startTime = Date()
@@ -240,10 +252,8 @@ class WaitingRoomViewModel: ObservableObject {
         // Start health tracking
         healthKitService.startObservingSteps(from: Date())
         
-        // Start location tracking (if authorized)
-        if locationService.isAuthorized {
-            locationService.startTracking()
-        }
+        // Start location tracking (requests permission if needed)
+        locationService.startTracking()
         
         // Schedule notifications
         notificationService.sendWalkStartedNotification(routeName: route.name, duration: route.durationMinutes)
