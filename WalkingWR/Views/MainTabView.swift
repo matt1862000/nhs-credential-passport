@@ -24,18 +24,6 @@ struct MainTabView: View {
             if showOnboarding {
                 OnboardingView(showOnboarding: $showOnboarding)
                     .transition(.opacity)
-            } else if showClinicianSelection || !viewModel.hasSelectedClinician {
-                ClinicianSelectionView(
-                    viewModel: viewModel,
-                    isPresented: $showClinicianSelection
-                )
-                .transition(.opacity)
-                .onDisappear {
-                    // Reset the flag when clinician is selected
-                    if viewModel.hasSelectedClinician {
-                        showClinicianSelection = false
-                    }
-                }
             } else {
                 TabView(selection: $selectedTab) {
                     WaitTimeView(viewModel: viewModel, selectedTab: $selectedTab)
@@ -56,7 +44,7 @@ struct MainTabView: View {
                         }
                         .tag(2)
                     
-                    ProfileView(viewModel: viewModel)
+                    ProfileView(viewModel: viewModel, healthKitService: viewModel.healthKitService)
                         .tabItem {
                             Label("Progress", systemImage: "trophy.fill")
                         }
@@ -67,7 +55,15 @@ struct MainTabView: View {
             }
         }
         .animation(.easeInOut(duration: 0.5), value: showOnboarding)
-        .animation(.easeInOut(duration: 0.3), value: viewModel.hasSelectedClinician)
+        .fullScreenCover(isPresented: .init(
+            get: { !showOnboarding && (showClinicianSelection || !viewModel.hasSelectedClinician) },
+            set: { if !$0 { showClinicianSelection = false } }
+        )) {
+            ClinicianSelectionView(
+                viewModel: viewModel,
+                isPresented: $showClinicianSelection
+            )
+        }
     }
 }
 

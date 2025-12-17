@@ -6,15 +6,18 @@
 //
 
 import SwiftUI
+import CoreMotion
 #if os(iOS)
 import UIKit
 #endif
 
 struct ProfileView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
+    @ObservedObject var healthKitService: HealthKitService
     @State private var showSettings = false
     @State private var showHelpSheet = false
     @State private var showIntroduction = false
+    @Environment(\.scenePhase) private var scenePhase
     
     var body: some View {
         NavigationStack {
@@ -27,14 +30,17 @@ struct ProfileView: View {
                         StatsSummaryCard(progress: viewModel.userProgress)
                         
                         // Activity History (scrollable)
-                        ActivityHistorySection(progress: viewModel.userProgress)
+                        ActivityHistorySection(
+                            progress: viewModel.userProgress,
+                            healthKitTotalSteps: healthKitService.totalDailySteps
+                        )
                         
                         // Wellbeing sections (grouped with less spacing)
                         VStack(spacing: 12) {
-                            // Swipeable Wellbeing History (Today's Wellbeing)
+                            // Swipeable Wellbeing History (Your Wellbeing)
                             WellbeingHistorySection(
                                 progress: viewModel.userProgress,
-                                title: "Today's Wellbeing",
+                                title: "Your Wellbeing",
                                 icon: "heart.fill",
                                 useWalkScores: false
                             )
@@ -75,13 +81,28 @@ struct ProfileView: View {
                 }
             }
             .sheet(isPresented: $showSettings) {
-                SettingsView(viewModel: viewModel, showIntroduction: $showIntroduction)
+                SettingsView(
+                    viewModel: viewModel,
+                    healthKitService: viewModel.healthKitService,
+                    locationService: viewModel.locationService,
+                    showIntroduction: $showIntroduction
+                )
             }
             .sheet(isPresented: $showHelpSheet) {
                 HelpView()
             }
             .fullScreenCover(isPresented: $showIntroduction) {
                 IntroductionReplayView(isPresented: $showIntroduction)
+            }
+            .onAppear {
+                // Refresh HealthKit total daily steps when view appears
+                healthKitService.refreshTotalDailySteps()
+            }
+            .onChange(of: scenePhase) { oldPhase, newPhase in
+                if newPhase == .active {
+                    // Refresh HealthKit steps when app becomes active
+                    healthKitService.refreshTotalDailySteps()
+                }
             }
         }
     }
@@ -201,11 +222,13 @@ struct ActivityDetailSelection: Identifiable {
     let id = UUID()
     let activity: DailyActivity
     let detailType: ActivityDetailType
+    var healthKitTotalSteps: Int? = nil  // Optional HealthKit total steps for today
 }
 
 // MARK: - Activity History Section
 struct ActivityHistorySection: View {
     @ObservedObject var progress: UserProgress
+    var healthKitTotalSteps: Int = 0  // Total daily steps from HealthKit
     @State private var currentIndex = 0
     @State private var cardHeight: CGFloat = 200 // Default, will be measured
     @State private var detailSelection: ActivityDetailSelection?
@@ -252,8 +275,16 @@ struct ActivityHistorySection: View {
             if allActivities.count > 1 {
                 TabView(selection: $currentIndex) {
                     ForEach(Array(allActivities.enumerated()), id: \.element.id) { index, activity in
-                        DailyActivityCard(activity: activity, isExpanded: true) { detailType in
-                            detailSelection = ActivityDetailSelection(activity: activity, detailType: detailType)
+                        DailyActivityCard(
+                            activity: activity,
+                            isExpanded: true,
+                            healthKitTotalSteps: activity.isToday ? healthKitTotalSteps : nil
+                        ) { detailType in
+                            detailSelection = ActivityDetailSelection(
+                                activity: activity,
+                                detailType: detailType,
+                                healthKitTotalSteps: activity.isToday ? healthKitTotalSteps : nil
+                            )
                         }
                         .background(
                             GeometryReader { geo in
@@ -275,15 +306,27 @@ struct ActivityHistorySection: View {
                 }
             } else {
                 // Just show today if no history - naturally sizes itself
-                DailyActivityCard(activity: progress.todayActivity, isExpanded: true) { detailType in
-                    detailSelection = ActivityDetailSelection(activity: progress.todayActivity, detailType: detailType)
+                DailyActivityCard(
+                    activity: progress.todayActivity,
+                    isExpanded: true,
+                    healthKitTotalSteps: healthKitTotalSteps
+                ) { detailType in
+                    detailSelection = ActivityDetailSelection(
+                        activity: progress.todayActivity,
+                        detailType: detailType,
+                        healthKitTotalSteps: healthKitTotalSteps
+                    )
                 }
             }
             
             }
         // Sheet uses combined selection - activity and detail type bundled together
         .sheet(item: $detailSelection) { selection in
-            ActivityDetailSheet(activity: selection.activity, focusedDetail: selection.detailType)
+            ActivityDetailSheet(
+                activity: selection.activity,
+                focusedDetail: selection.detailType,
+                healthKitTotalSteps: selection.healthKitTotalSteps
+            )
         }
     }
 }
@@ -300,8 +343,17 @@ struct CardHeightPreferenceKey: PreferenceKey {
 struct DailyActivityCard: View {
     let activity: DailyActivity
     var isExpanded: Bool = false
+    var healthKitTotalSteps: Int? = nil  // Total daily steps from HealthKit (for today only)
     var onTapDetail: ((ActivityDetailType) -> Void)? = nil
     @Environment(\.colorScheme) var colorScheme
+    
+    // Use HealthKit total steps for today if available, otherwise use activity steps
+    var displaySteps: Int {
+        if activity.isToday, let hkSteps = healthKitTotalSteps, hkSteps > 0 {
+            return hkSteps
+        }
+        return activity.steps
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -338,7 +390,7 @@ struct DailyActivityCard: View {
             HStack(spacing: 12) {
                 TappableStatView(
                     icon: "figure.walk",
-                    value: "\(activity.steps)",
+                    value: "\(displaySteps)",
                     label: "Steps",
                     color: .tealAccent
                 ) {
@@ -463,18 +515,27 @@ struct TappableStatView: View {
 struct ActivityDetailSheet: View {
     let activity: DailyActivity
     var focusedDetail: ActivityDetailType = .all
+    var healthKitTotalSteps: Int? = nil  // Total HealthKit steps (for today)
     @Environment(\.dismiss) var dismiss
     
+    // Use HealthKit total steps for today if available
+    var displaySteps: Int {
+        if activity.isToday, let hkSteps = healthKitTotalSteps, hkSteps > 0 {
+            return hkSteps
+        }
+        return activity.steps
+    }
+    
     var distanceKm: Double {
-        Double(activity.steps) * 0.0008
+        Double(displaySteps) * 0.0008
     }
     
     var caloriesBurned: Int {
-        activity.steps / 20
+        displaySteps / 20
     }
     
     var activeMinutes: Int {
-        max(1, activity.steps / 100)
+        max(1, displaySteps / 100)
     }
     
     var sheetTitle: String {
@@ -541,7 +602,7 @@ struct ActivityDetailSheet: View {
                         .foregroundColor(.tealAccent)
                 }
                 
-                Text("\(activity.steps)")
+                Text("\(displaySteps)")
                     .font(.system(size: 42, weight: .bold, design: .rounded))
                     .foregroundColor(.primary)
                 
@@ -551,6 +612,69 @@ struct ActivityDetailSheet: View {
             }
             
             Divider()
+            
+            // Steps breakdown - show route steps vs total steps
+            if activity.isToday, let hkSteps = healthKitTotalSteps, hkSteps > 0 {
+                VStack(spacing: 12) {
+                    Text("Steps Breakdown")
+                        .font(.bodyMedium)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    HStack(spacing: 20) {
+                        // Route steps
+                        VStack(spacing: 4) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "map.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.mintGreen)
+                                Text("\(activity.steps)")
+                                    .font(.title3)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.primary)
+                            }
+                            Text("During Routes")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.mintGreen.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        
+                        // Total daily steps
+                        VStack(spacing: 4) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "figure.walk")
+                                    .font(.caption)
+                                    .foregroundColor(.tealAccent)
+                                Text("\(hkSteps)")
+                                    .font(.title3)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.primary)
+                            }
+                            Text("Total Today")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.tealAccent.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    
+                    // Percentage from routes
+                    if hkSteps > 0 {
+                        let percentage = min(100, (Double(activity.steps) / Double(hkSteps)) * 100)
+                        Text("\(Int(percentage))% of your steps today were during WaitWell routes")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                
+                Divider()
+            }
             
             // Stats breakdown
             HStack(spacing: 16) {
@@ -571,10 +695,10 @@ struct ActivityDetailSheet: View {
     }
     
     var stepsMotivation: String {
-        if activity.steps >= 5000 { return "🎉 Amazing effort! You've hit a great milestone." }
-        else if activity.steps >= 2000 { return "👍 Great progress! Every step counts." }
-        else if activity.steps >= 500 { return "🚶 Good start! Keep moving when you can." }
-        else if activity.steps > 0 { return "🌱 Every journey begins with a single step." }
+        if displaySteps >= 5000 { return "🎉 Amazing effort! You've hit a great milestone." }
+        else if displaySteps >= 2000 { return "👍 Great progress! Every step counts." }
+        else if displaySteps >= 500 { return "🚶 Good start! Keep moving when you can." }
+        else if displaySteps > 0 { return "🌱 Every journey begins with a single step." }
         else { return "Ready to start walking? Even a short walk can boost your mood." }
     }
     
@@ -772,7 +896,7 @@ struct AnxietyScoreCard: View {
                     .font(.title2)
                     .foregroundColor(.coralPink)
                 
-                Text("Today's Wellbeing")
+                Text("Your Wellbeing")
                     .font(.titleMedium)
                     .fontWeight(.semibold)
                     .foregroundColor(.primary)
@@ -1016,7 +1140,7 @@ struct WellbeingHistorySection: View {
     @ObservedObject var progress: UserProgress
     let title: String
     let icon: String
-    let useWalkScores: Bool // true = Walking Wellbeing, false = Today's Wellbeing
+    let useWalkScores: Bool // true = Walking Wellbeing, false = Your Wellbeing
     @Environment(\.colorScheme) var colorScheme
     @State private var currentIndex: Int = 0
     
@@ -1038,13 +1162,10 @@ struct WellbeingHistorySection: View {
         // Only show if there's data
         if !activitiesWithWellbeing.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                // Header with navigation indicator
+                // Header with navigation indicator (aligned with Your Activity style)
                 HStack {
-                    Image(systemName: useWalkScores ? "figure.walk.circle.fill" : "heart.fill")
-                        .foregroundColor(useWalkScores ? .lavenderMist : .coralPink)
-                    
                     Text(title)
-                        .font(.subheadline)
+                        .font(.titleMedium)
                         .fontWeight(.semibold)
                         .foregroundColor(.primary)
                     
@@ -1101,95 +1222,130 @@ struct WellbeingDayCard: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Date badge - top left
-            Text(activity.isToday ? "Today" : activity.formattedDate)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.secondary.opacity(0.1))
-                .clipShape(Capsule())
-            
-            // Scores row with result indicator
-            HStack(spacing: 0) {
-                // Centered scores section
-                HStack(spacing: 20) {
-                    // Before
-                    if let beforeValue = before {
-                        VStack(spacing: 4) {
-                            ZStack {
-                                Circle()
-                                    .fill(anxietyColor(for: beforeValue).opacity(0.15))
-                                    .frame(width: 50, height: 50)
-                                
-                                Text("\(beforeValue)")
-                                    .font(.title2)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(anxietyColor(for: beforeValue))
-                            }
-                            
-                            Text(useWalkScores ? "Before" : "Start")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                    }
+        VStack(alignment: .leading, spacing: 12) {
+            // Header - matching DailyActivityCard style
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(activity.isToday ? "Today" : activity.displayTitle)
+                        .font(.bodyLarge)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
                     
-                    // Arrow
-                    Image(systemName: "arrow.right")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
-                        .padding(.bottom, 14)
-                    
-                    // After
-                    VStack(spacing: 4) {
-                        if let afterValue = after {
-                            ZStack {
-                                Circle()
-                                    .fill(anxietyColor(for: afterValue).opacity(0.15))
-                                    .frame(width: 50, height: 50)
-                                
-                                Text("\(afterValue)")
-                                    .font(.title2)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(anxietyColor(for: afterValue))
-                            }
-                            
-                            Text(useWalkScores ? "After" : "Now")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        } else {
-                            ZStack {
-                                Circle()
-                                    .stroke(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [4]))
-                                    .frame(width: 50, height: 50)
-                                
-                                Text("?")
-                                    .font(.title2)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Text("Pending")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
+                    if !activity.isToday {
+                        Text(activity.formattedDate)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
-                .frame(maxWidth: .infinity) // Center the scores
                 
-                // Result indicator - fixed width on the right
+                Spacer()
+                
+                if activity.isToday {
+                    Text("Now")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.tealAccent)
+                        .clipShape(Capsule())
+                }
+            }
+            
+            // Stats row - matching DailyActivityCard alignment
+            HStack(spacing: 12) {
+                // Before/Start
+                if let beforeValue = before {
+                    VStack(spacing: 8) {
+                        ZStack {
+                            Circle()
+                                .fill(anxietyColor(for: beforeValue).opacity(0.15))
+                                .frame(width: 50, height: 50)
+                            
+                            Text("\(beforeValue)")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(anxietyColor(for: beforeValue))
+                        }
+                        
+                        Text(useWalkScores ? "Before" : "Start")
+                            .font(.micro)
+                            .foregroundColor(.primary)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                
+                // After/Now
+                VStack(spacing: 8) {
+                    if let afterValue = after {
+                        ZStack {
+                            Circle()
+                                .fill(anxietyColor(for: afterValue).opacity(0.15))
+                                .frame(width: 50, height: 50)
+                            
+                            Text("\(afterValue)")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(anxietyColor(for: afterValue))
+                        }
+                        
+                        Text(useWalkScores ? "After" : "Now")
+                            .font(.micro)
+                            .foregroundColor(.primary)
+                    } else {
+                        ZStack {
+                            Circle()
+                                .stroke(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 2, dash: [4]))
+                                .frame(width: 50, height: 50)
+                            
+                            Text("?")
+                                .font(.title2)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Text("Pending")
+                            .font(.micro)
+                            .foregroundColor(.primary)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                
+                // Result indicator
                 if let changeValue = change {
-                    VStack(spacing: 4) {
-                        Image(systemName: changeValue > 0 ? "arrow.down.circle.fill" : (changeValue < 0 ? "arrow.up.circle.fill" : "equal.circle.fill"))
-                            .font(.title)
-                            .foregroundColor(changeValue > 0 ? .mintGreen : (changeValue < 0 ? .coralPink : .secondary))
+                    VStack(spacing: 8) {
+                        ZStack {
+                            Circle()
+                                .fill((changeValue > 0 ? Color.mintGreen : (changeValue < 0 ? Color.coralPink : Color.secondary)).opacity(0.15))
+                                .frame(width: 50, height: 50)
+                            
+                            Image(systemName: changeValue > 0 ? "arrow.down" : (changeValue < 0 ? "arrow.up" : "equal"))
+                                .font(.title3)
+                                .foregroundColor(changeValue > 0 ? .mintGreen : (changeValue < 0 ? .coralPink : .secondary))
+                        }
                         
                         Text(changeValue > 0 ? "Better" : (changeValue < 0 ? "Higher" : "Same"))
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                            .foregroundColor(changeValue > 0 ? .mintGreen : (changeValue < 0 ? .coralPink : .secondary))
+                            .font(.micro)
+                            .foregroundColor(.primary)
                     }
-                    .frame(width: 50)
+                    .frame(maxWidth: .infinity)
+                } else {
+                    // Empty spacer to maintain alignment when no change
+                    VStack(spacing: 8) {
+                        ZStack {
+                            Circle()
+                                .stroke(Color.secondary.opacity(0.2), style: StrokeStyle(lineWidth: 2, dash: [4]))
+                                .frame(width: 50, height: 50)
+                            
+                            Text("-")
+                                .font(.title2)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Text("Change")
+                            .font(.micro)
+                            .foregroundColor(.primary)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
             }
         }
@@ -1628,6 +1784,8 @@ struct HelpResourcesCard: View {
 // MARK: - Settings View
 struct SettingsView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
+    @ObservedObject var healthKitService: HealthKitService
+    @ObservedObject var locationService: LocationService
     @Binding var showIntroduction: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -1636,6 +1794,8 @@ struct SettingsView: View {
     @State private var showResetAllAlert = false
     @State private var notificationsEnabled = false
     @State private var showHealthKitUnavailable = false
+    @State private var showMotionUnavailable = false
+    @State private var showHealthKitManageAlert = false
     
     var selectedTheme: AppTheme {
         AppTheme(rawValue: appTheme) ?? .system
@@ -1684,7 +1844,7 @@ struct SettingsView: View {
                         HStack {
                             Label("Location", systemImage: "location.fill")
                             Spacer()
-                            if viewModel.locationService.isAuthorized {
+                            if locationService.isAuthorized {
                                 Text("Enabled")
                                     .font(.caption)
                                     .foregroundColor(.mintGreen)
@@ -1697,11 +1857,31 @@ struct SettingsView: View {
                     }
                     .foregroundColor(.primary)
                     
-                    Button(action: requestMotionPermission) {
+                    Button(action: {
+                            print("🔴 BUTTON TAPPED - Steps & Motion")
+                            requestMotionPermission()
+                        }) {
                         HStack {
                             Label("Steps & Motion", systemImage: "figure.walk")
                             Spacer()
-                            if viewModel.healthKitService.isMotionAuthorized {
+                            if healthKitService.isMotionAuthorized {
+                                Text("Enabled")
+                                    .font(.caption)
+                                    .foregroundColor(.mintGreen)
+                            } else {
+                                Text("Tap to enable")
+                                    .font(.caption)
+                                    .foregroundColor(.softAmber)
+                            }
+                        }
+                    }
+                    .foregroundColor(.primary)
+                    
+                    Button(action: requestHealthKitPermission) {
+                        HStack {
+                            Label("HealthKit Steps", systemImage: "heart.fill")
+                            Spacer()
+                            if healthKitService.isAuthorized {
                                 Text("Enabled")
                                     .font(.caption)
                                     .foregroundColor(.mintGreen)
@@ -1716,7 +1896,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Permissions")
                 } footer: {
-                    Text("Tap to enable or manage in iOS Settings")
+                    Text("Steps & Motion tracks steps during walks. HealthKit syncs your daily step count.")
                         .font(.caption)
                 }
                 
@@ -1890,10 +2070,26 @@ struct SettingsView: View {
             } message: {
                 Text("This will permanently delete ALL your progress including total steps, routes completed, points, badges, and gratitude entries. This cannot be undone.")
             }
-            .alert("HealthKit Not Available", isPresented: $showHealthKitUnavailable) {
+            .alert("Enable HealthKit Steps", isPresented: $showHealthKitUnavailable) {
+                Button("Open Health App") {
+                    openHealthApp()
+                }
                 Button("OK", role: .cancel) { }
             } message: {
-                Text("HealthKit is not available on this device. Step tracking requires an iPhone with HealthKit support.")
+                Text("To enable step syncing:\n\n1. Open the Health app\n2. Tap your profile picture\n3. Go to Apps & Services\n4. Find WaitWell\n5. Enable Steps")
+            }
+            .alert("Motion Not Available", isPresented: $showMotionUnavailable) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("Motion & Fitness tracking is not available on the iOS Simulator.\n\nPlease test on a real device to enable step counting during walks.")
+            }
+            .alert("Manage HealthKit Access", isPresented: $showHealthKitManageAlert) {
+                Button("Open Health App") {
+                    openHealthApp()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("To disable HealthKit step syncing:\n\n1. Tap 'Open Health App'\n2. Tap your profile picture\n3. Go to Apps & Services\n4. Find WaitWell\n5. Turn off Steps")
             }
             .preferredColorScheme(effectiveColorScheme)
             .id(appTheme) // Force view refresh when theme changes
@@ -1917,7 +2113,7 @@ struct SettingsView: View {
             }
         }
         // HealthKit and Location are already reactive via their services
-        viewModel.healthKitService.checkAuthorization()
+        healthKitService.checkAuthorization()
     }
     
     private func requestNotificationPermission() {
@@ -1934,9 +2130,9 @@ struct SettingsView: View {
                     } else {
                         // Request permission
                         Task {
-                            let granted = await viewModel.notificationService.requestAuthorization()
+                            let granted = await self.viewModel.notificationService.requestAuthorization()
                             await MainActor.run {
-                                notificationsEnabled = granted
+                                self.notificationsEnabled = granted
                             }
                         }
                     }
@@ -1946,30 +2142,64 @@ struct SettingsView: View {
     }
     
     private func requestLocationPermission() {
-        if viewModel.locationService.isAuthorized {
+        if locationService.isAuthorized {
             // Already authorized, open settings to manage
             openAppSettings()
         } else {
             // Request permission or open settings if denied
-            if viewModel.locationService.authorizationStatus == .denied {
+            if locationService.authorizationStatus == .denied {
                 openAppSettings()
             } else {
-                viewModel.locationService.requestPermission()
+                locationService.requestPermission()
             }
         }
     }
     
     private func requestMotionPermission() {
-        if viewModel.healthKitService.isMotionAuthorized {
-            // Already authorized - open app settings to manage
+        print("📱 requestMotionPermission called!")
+        
+        if healthKitService.isMotionAuthorized {
+            // Already enabled - open Settings so user can disable
             openAppSettings()
-        } else if viewModel.healthKitService.isMotionDenied {
-            // Already denied - must go to Settings to re-enable
+        } else if healthKitService.isMotionDenied {
+            // Denied - open Settings to re-enable
             openAppSettings()
         } else {
-            // Not yet determined - request permission by triggering a pedometer query
-            viewModel.healthKitService.requestMotionAuthorization()
+            // Not determined - trigger the permission request
+            healthKitService.requestMotionAuthorization { granted in
+                print("📱 Permission callback - granted: \(granted)")
+                if granted {
+                    self.healthKitService.objectWillChange.send()
+                }
+            }
         }
+    }
+    
+    private func requestHealthKitPermission() {
+        if healthKitService.isAuthorized {
+            // Already authorized - show instructions before opening Health app
+            showHealthKitManageAlert = true
+        } else {
+            // Request HealthKit authorization
+            Task {
+                let granted = await healthKitService.requestAuthorization()
+                // No need to force UI refresh - @ObservedObject handles it
+                if !granted {
+                    await MainActor.run {
+                        showHealthKitUnavailable = true
+                    }
+                }
+            }
+        }
+    }
+    
+    private func openHealthApp() {
+        #if os(iOS)
+        // Open Health app - user can manage permissions there
+        if let url = URL(string: "x-apple-health://") {
+            UIApplication.shared.open(url)
+        }
+        #endif
     }
     
     private func openAppSettings() {
@@ -2165,7 +2395,8 @@ struct PrivacyInfoView: View {
                         "Track your location when you're not using the app",
                         "Share information with your clinician through this app",
                         "Tell the clinic that you're using this app",
-                        "Store any of your personal health information"
+                        "Access any health data other than steps",
+                        "Store your HealthKit data – it stays in Apple Health"
                     ],
                     isPositive: false,
                     colorScheme: colorScheme
@@ -2197,21 +2428,27 @@ struct PrivacyInfoView: View {
                     }
                     
                     PermissionExplainer(
+                        icon: "bell.fill",
+                        title: "Notifications",
+                        explanation: "To let you know if clinic times change or when it's time to head back."
+                    )
+                    
+                    PermissionExplainer(
                         icon: "location.fill",
                         title: "Location",
-                        explanation: "Only used during walks to show you the map and nearby spots. We don't track you otherwise."
+                        explanation: "Only used during walks to show you the map and nearby discovery spots. We don't track you otherwise."
+                    )
+                    
+                    PermissionExplainer(
+                        icon: "figure.walk",
+                        title: "Steps & Motion",
+                        explanation: "Counts your steps in real-time during walks. This uses your phone's motion sensors and works even without internet."
                     )
                     
                     PermissionExplainer(
                         icon: "heart.fill",
-                        title: "Health (Steps)",
-                        explanation: "Only to count your steps during a walk. We can't see any other health data."
-                    )
-                    
-                    PermissionExplainer(
-                        icon: "bell.fill",
-                        title: "Notifications",
-                        explanation: "To let you know if clinic times change."
+                        title: "HealthKit Steps",
+                        explanation: "Syncs your total daily step count from Apple Health. This lets you see all your steps, not just from walks in this app."
                     )
                 }
                 .padding(20)
@@ -2349,7 +2586,8 @@ struct ControlPoint: View {
 }
 
 #Preview {
-    ProfileView(viewModel: WaitingRoomViewModel())
+    let viewModel = WaitingRoomViewModel()
+    ProfileView(viewModel: viewModel, healthKitService: viewModel.healthKitService)
 }
 
 

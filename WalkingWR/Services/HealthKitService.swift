@@ -15,7 +15,8 @@ class HealthKitService: ObservableObject {
     private let healthStore = HKHealthStore()
     private let pedometer = CMPedometer()
     
-    @Published var stepCount: Int = 0
+    @Published var stepCount: Int = 0  // Steps during current walk (from pedometer)
+    @Published var totalDailySteps: Int = 0  // Total steps today from HealthKit
     @Published var isAuthorized: Bool = false
     @Published var errorMessage: String?
     @Published var distance: Double = 0 // in meters from pedometer
@@ -23,7 +24,7 @@ class HealthKitService: ObservableObject {
     private var stepQuery: HKObserverQuery?
     private var pedometerStartDate: Date?
     
-    // Types we want to read - only step count (no heart rate)
+    // Types we want to read - only step count
     private let stepType = HKQuantityType.quantityType(forIdentifier: .stepCount)!
     
     init() {
@@ -34,14 +35,8 @@ class HealthKitService: ObservableObject {
         CMPedometer.isStepCountingAvailable()
     }
     
-    var isPedometerAuthorized: Bool {
-        CMPedometer.authorizationStatus() == .authorized
-    }
-    
     var isMotionAuthorized: Bool {
-        // Check if Core Motion (pedometer) is authorized
-        let status = CMPedometer.authorizationStatus()
-        return status == .authorized
+        CMPedometer.authorizationStatus() == .authorized
     }
     
     var isMotionDenied: Bool {
@@ -50,22 +45,30 @@ class HealthKitService: ObservableObject {
     }
     
     var isMotionNotDetermined: Bool {
-        let status = CMPedometer.authorizationStatus()
-        return status == .notDetermined
+        CMPedometer.authorizationStatus() == .notDetermined
     }
     
-    /// Request Core Motion authorization by triggering a pedometer query
-    func requestMotionAuthorization() {
-        guard isPedometerAvailable else { return }
+    /// Request Core Motion authorization by triggering pedometer updates
+    /// This uses the same approach as startObservingSteps which successfully shows the prompt
+    func requestMotionAuthorization(completion: ((Bool) -> Void)? = nil) {
+        guard isPedometerAvailable else {
+            completion?(false)
+            return
+        }
         
-        // Trigger a brief pedometer query to prompt for permission
-        let now = Date()
-        let oneMinuteAgo = now.addingTimeInterval(-60)
-        
-        pedometer.queryPedometerData(from: oneMinuteAgo, to: now) { [weak self] _, _ in
-            // After the query (which triggers the permission prompt), check status
+        // Use the exact same approach as startObservingSteps - this triggers the permission prompt
+        pedometer.startUpdates(from: Date()) { [weak self] data, error in
+            guard let self = self else { return }
+            
+            // We got a response (or error) - check authorization status
             DispatchQueue.main.async {
-                self?.objectWillChange.send()
+                // Stop the updates since we just wanted to trigger the prompt
+                self.pedometer.stopUpdates()
+                self.objectWillChange.send()
+                
+                let granted = CMPedometer.authorizationStatus() == .authorized
+                print("📱 Motion authorization result: \(granted), status: \(CMPedometer.authorizationStatus().rawValue)")
+                completion?(granted)
             }
         }
     }
@@ -80,45 +83,41 @@ class HealthKitService: ObservableObject {
             return
         }
         
-        // For read-only access, authorizationStatus doesn't work
-        // We need to try to query data to see if we have access
-        // Check if we can read today's steps as a test
-        Task {
-            let hasAccess = await canReadStepData()
-            await MainActor.run {
-                self.isAuthorized = hasAccess
-            }
-        }
-    }
-    
-    private func canReadStepData() async -> Bool {
+        // For read-only permissions, we need to try reading data to check access
+        // Query today's steps - if we get data (or no error), we have access
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: Date())
         let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: Date(), options: .strictStartDate)
         
-        return await withCheckedContinuation { continuation in
-            let query = HKStatisticsQuery(
-                quantityType: stepType,
-                quantitySamplePredicate: predicate,
-                options: .cumulativeSum
-            ) { _, result, error in
-                // If we get a result (even if 0 steps) without error, we have access
-                // If error is nil, we have access. Error means no access.
-                if error == nil {
-                    continuation.resume(returning: true)
+        let query = HKStatisticsQuery(
+            quantityType: stepType,
+            quantitySamplePredicate: predicate,
+            options: .cumulativeSum
+        ) { [weak self] _, result, error in
+            DispatchQueue.main.async {
+                // If we get a result without authorization error, we have access
+                // HealthKit returns nil result (not an error) when access is revoked
+                if error == nil && result != nil {
+                    self?.isAuthorized = true
+                    // Also refresh total daily steps
+                    self?.refreshTotalDailySteps()
                 } else {
-                    continuation.resume(returning: false)
+                    // Check if we previously had authorization
+                    let previouslyRequested = UserDefaults.standard.bool(forKey: "healthKitRequested")
+                    // If we requested but now can't read, access was revoked
+                    self?.isAuthorized = false
+                    if previouslyRequested && result == nil {
+                        print("📱 HealthKit access appears to have been revoked")
+                    }
                 }
             }
-            healthStore.execute(query)
         }
+        healthStore.execute(query)
     }
     
     func requestAuthorization() async -> Bool {
         guard isHealthKitAvailable else {
-            await MainActor.run {
-                self.errorMessage = "HealthKit is not available on this device"
-            }
+            errorMessage = "HealthKit is not available on this device"
             return false
         }
         
@@ -126,12 +125,14 @@ class HealthKitService: ObservableObject {
         
         do {
             try await healthStore.requestAuthorization(toShare: [], read: typesToRead)
-            // For read access, we need to try reading data to know if access was granted
-            let hasAccess = await canReadStepData()
             await MainActor.run {
-                self.isAuthorized = hasAccess
+                self.isAuthorized = true
+                // Save that we've requested authorization
+                UserDefaults.standard.set(true, forKey: "healthKitRequested")
+                // Fetch total daily steps now that we have access
+                self.refreshTotalDailySteps()
             }
-            return hasAccess
+            return true
         } catch {
             await MainActor.run {
                 self.errorMessage = "Authorization failed: \(error.localizedDescription)"
@@ -285,6 +286,18 @@ class HealthKitService: ObservableObject {
             }
             
             healthStore.execute(query)
+        }
+    }
+    
+    /// Fetch and update total daily steps from HealthKit
+    func refreshTotalDailySteps() {
+        guard isAuthorized else { return }
+        
+        Task {
+            let steps = await getTodaysSteps()
+            await MainActor.run {
+                self.totalDailySteps = steps
+            }
         }
     }
 }

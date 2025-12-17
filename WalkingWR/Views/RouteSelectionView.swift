@@ -117,6 +117,12 @@ struct RouteSelectionView: View {
             .sheet(isPresented: $viewModel.showMarkerArrivalPrompt) {
                 MarkerArrivalSheet(viewModel: viewModel)
             }
+            .sheet(isPresented: $viewModel.showPreWalkWellbeing) {
+                AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPreWalkWellbeing, isPostWalk: false)
+            }
+            .sheet(isPresented: $viewModel.showPostWalkWellbeing) {
+                AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPostWalkWellbeing, isPostWalk: true, isWalkActivity: true)
+            }
             .alert("Time to Head Back!", isPresented: $viewModel.showHalfwayAlert) {
                 Button("Got it") { }
             } message: {
@@ -290,7 +296,10 @@ struct LocalRoutePickerSheet: View {
                         onStartWalk: {
                             viewModel.selectRoute(route)
                             viewModel.startWalk()
-                            isPresented = false
+                            // Delay dismissal to allow permission dialogs to present
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                isPresented = false
+                            }
                         },
                         onRegenerate: {
                             generatedRoute = nil
