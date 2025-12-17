@@ -5,6 +5,9 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
+		<string>location</string>
 	</array>
+	<key>GOOGLE_MAPS_API_KEY</key>
+	<string>AIzaSyDZkuQUd5nmGdBKXecRNMOxCiPecHguh9s</string>
 </dict>
 </plist>

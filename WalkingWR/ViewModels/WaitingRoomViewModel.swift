@@ -256,6 +256,14 @@ class WaitingRoomViewModel: ObservableObject {
         // Start location tracking (requests permission if needed)
         locationService.startTracking()
         
+        // Start direction monitoring for turn-by-turn notifications (non-indoor routes only)
+        if !route.isIndoor && !route.walkingDirections.isEmpty {
+            locationService.startDirectionMonitoring(
+                directions: route.walkingDirections,
+                routePath: route.routePath
+            )
+        }
+        
         // Schedule notifications
         notificationService.sendWalkStartedNotification(routeName: route.name, duration: route.durationMinutes)
         scheduleWalkNotifications(routeDuration: route.durationMinutes)

@@ -824,9 +824,56 @@ struct NatureSection: View {
                 .padding(16)
                 .cardStyle()
             }
+            
+            // Sheffield Health Walks
+            SheffieldHealthWalksCard()
         }
         .sheet(item: $selectedPhoto) { photo in
             PhotoDetailView(photo: photo, photoStorage: photoStorage)
+        }
+    }
+}
+
+// MARK: - Sheffield Health Walks Card
+struct SheffieldHealthWalksCard: View {
+    var body: some View {
+        Link(destination: URL(string: "https://www.stepoutsheffield.co.uk")!) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    ZStack {
+                        Circle()
+                            .fill(Color.green.opacity(0.15))
+                            .frame(width: 50, height: 50)
+                        
+                        Image(systemName: "figure.walk.diamond.fill")
+                            .font(.title3)
+                            .foregroundColor(.green)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Sheffield Health Walks")
+                            .font(.bodyLarge)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        
+                        Text("Free group walks led by trained volunteers")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Image(systemName: "arrow.up.right.square")
+                        .foregroundColor(.green)
+                }
+                
+                Text("Discover walks across Sheffield, from gentle strolls to more active routes. All free, friendly and welcoming.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(16)
+            .cardStyle()
         }
     }
 }
@@ -978,7 +1025,7 @@ struct DigitalSkillsSection: View {
         ("mytoolkit", "brain.head.profile", "Visit MyToolkit", "Helpful resources including your safety plan.", .url("https://toolkit.sheffieldmentalhealth.co.uk")),
         ("learnmyway", "graduationcap.fill", "Visit Learn My Way", "Free courses to build digital confidence.", .url("https://www.learnmyway.com")),
         ("take_photo", "camera.fill", "Take a Photo", "Capture nature - photos appear in Nature tab.", .camera),
-        ("nhs_app", "app.badge", "Download NHS App", "Book appointments and view health records.", .url("https://apps.apple.com/gb/app/nhs-app/id1388411277"))
+        ("nhs_app", "app.badge", "Download the NHS App", "Book appointments and view health records.", .url("https://apps.apple.com/gb/app/nhs-app/id1388411277"))
     ]
     
     var body: some View {

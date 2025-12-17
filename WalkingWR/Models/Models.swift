@@ -10,6 +10,59 @@ import SwiftUI
 import Combine
 import CoreLocation
 
+// MARK: - Polyline Decoder
+/// Decodes Google Maps encoded polylines into coordinate arrays
+struct PolylineDecoder {
+    /// Decodes an encoded polyline string into an array of coordinates
+    /// Based on Google's Polyline Algorithm: https://developers.google.com/maps/documentation/utilities/polylinealgorithm
+    static func decode(_ encodedPolyline: String) -> [CLLocationCoordinate2D] {
+        var coordinates: [CLLocationCoordinate2D] = []
+        var index = encodedPolyline.startIndex
+        var lat = 0
+        var lng = 0
+        
+        while index < encodedPolyline.endIndex {
+            // Decode latitude
+            var result = 0
+            var shift = 0
+            var byte: Int
+            
+            repeat {
+                byte = Int(encodedPolyline[index].asciiValue! - 63)
+                index = encodedPolyline.index(after: index)
+                result |= (byte & 0x1F) << shift
+                shift += 5
+            } while byte >= 0x20 && index < encodedPolyline.endIndex
+            
+            let deltaLat = ((result & 1) != 0) ? ~(result >> 1) : (result >> 1)
+            lat += deltaLat
+            
+            // Decode longitude
+            result = 0
+            shift = 0
+            
+            repeat {
+                guard index < encodedPolyline.endIndex else { break }
+                byte = Int(encodedPolyline[index].asciiValue! - 63)
+                index = encodedPolyline.index(after: index)
+                result |= (byte & 0x1F) << shift
+                shift += 5
+            } while byte >= 0x20 && index < encodedPolyline.endIndex
+            
+            let deltaLng = ((result & 1) != 0) ? ~(result >> 1) : (result >> 1)
+            lng += deltaLng
+            
+            let coordinate = CLLocationCoordinate2D(
+                latitude: Double(lat) / 1e5,
+                longitude: Double(lng) / 1e5
+            )
+            coordinates.append(coordinate)
+        }
+        
+        return coordinates
+    }
+}
+
 // MARK: - Clinician
 struct Clinician: Identifiable, Codable, Hashable {
     let id: UUID
@@ -254,6 +307,56 @@ struct WaitTimeInfo: Identifiable {
     }
 }
 
+// MARK: - Route Type
+enum RouteType: String, Codable {
+    case curated = "Curated"      // Verified routes at specific locations
+    case local = "Local"          // Generated from user's location
+    case indoor = "Indoor"        // Indoor hospital routes
+}
+
+// MARK: - Walking Direction Step
+struct WalkingDirection: Identifiable, Hashable {
+    let id = UUID()
+    let instruction: String       // Plain text instruction (HTML stripped)
+    let distance: String          // e.g., "120 m"
+    let distanceMeters: Int
+    let duration: String          // e.g., "2 mins"
+    let maneuver: String?         // e.g., "turn-left", "turn-right"
+    
+    /// Icon for the direction maneuver
+    var icon: String {
+        switch maneuver {
+        case "turn-left": return "arrow.turn.up.left"
+        case "turn-right": return "arrow.turn.up.right"
+        case "turn-slight-left": return "arrow.up.left"
+        case "turn-slight-right": return "arrow.up.right"
+        case "turn-sharp-left": return "arrow.turn.left.down"
+        case "turn-sharp-right": return "arrow.turn.right.down"
+        case "uturn-left", "uturn-right": return "arrow.uturn.down"
+        case "straight": return "arrow.up"
+        case "roundabout-left", "roundabout-right": return "arrow.triangle.2.circlepath"
+        default: return "arrow.up"
+        }
+    }
+    
+    /// Create from HTML instructions (strips HTML tags)
+    static func fromHTML(_ html: String, distance: String, distanceMeters: Int, duration: String, maneuver: String?) -> WalkingDirection {
+        // Strip HTML tags from instruction
+        let plainText = html
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        
+        return WalkingDirection(
+            instruction: plainText,
+            distance: distance,
+            distanceMeters: distanceMeters,
+            duration: duration,
+            maneuver: maneuver
+        )
+    }
+}
+
 // MARK: - Walking Route
 struct WalkingRoute: Identifiable, Hashable {
     let id = UUID()
@@ -268,10 +371,62 @@ struct WalkingRoute: Identifiable, Hashable {
     let icon: String
     let color: Color
     let qrMarkers: [QRMarker]
+    let routeType: RouteType
+    let encodedPolyline: String?  // Google Maps encoded polyline for accurate route display
+    let walkingDirections: [WalkingDirection]  // Turn-by-turn directions
+    
+    // Default initializer with backwards compatibility
+    init(name: String, description: String, durationMinutes: Int, distanceMeters: Int,
+         difficulty: RouteDifficulty, isIndoor: Bool, isAccessible: Bool,
+         landmarks: [String], icon: String, color: Color, qrMarkers: [QRMarker],
+         routeType: RouteType = .curated, encodedPolyline: String? = nil,
+         walkingDirections: [WalkingDirection] = []) {
+        self.name = name
+        self.description = description
+        self.durationMinutes = durationMinutes
+        self.distanceMeters = distanceMeters
+        self.difficulty = difficulty
+        self.isIndoor = isIndoor
+        self.isAccessible = isAccessible
+        self.landmarks = landmarks
+        self.icon = icon
+        self.color = color
+        self.qrMarkers = qrMarkers
+        self.routeType = routeType
+        self.encodedPolyline = encodedPolyline
+        self.walkingDirections = walkingDirections
+    }
+    
+    /// Decoded route path coordinates for map display
+    /// Uses Google's encoded polyline if available, otherwise falls back to marker coordinates
+    var routePath: [CLLocationCoordinate2D] {
+        if let polyline = encodedPolyline, !polyline.isEmpty {
+            return PolylineDecoder.decode(polyline)
+        }
+        // Fallback to marker coordinates if no polyline
+        return qrMarkers.map { $0.coordinate }
+    }
+    
+    /// Simple waypoints for basic display (start, markers, end)
+    var waypoints: [CLLocationCoordinate2D] {
+        var points: [CLLocationCoordinate2D] = []
+        if let first = routePath.first {
+            points.append(first)
+        }
+        points.append(contentsOf: qrMarkers.map { $0.coordinate })
+        if let last = routePath.last {
+            points.append(last)
+        }
+        return points
+    }
     
     var estimatedSteps: Int {
         // Average stride length ~0.76m
         return Int(Double(distanceMeters) / 0.76)
+    }
+    
+    var isCurated: Bool {
+        routeType == .curated
     }
     
     static func == (lhs: WalkingRoute, rhs: WalkingRoute) -> Bool {
@@ -774,199 +929,381 @@ enum WalkNotification {
 
 // MARK: - Sample Data
 extension WalkingRoute {
-    static let sampleRoutes: [WalkingRoute] = [
+    // The Longley Centre coordinates (start/end point)
+    static let longleyCentre = CLLocationCoordinate2D(latitude: 53.4108891, longitude: -1.4603237)
+    
+    // MARK: - Curated Routes for Northern General Hospital (Longley Centre)
+    // These routes have been verified using Google Directions API with walking mode
+    // Polylines are encoded using Google's Polyline Algorithm for accurate path display
+    static let curatedRoutes: [WalkingRoute] = [
+        // Route 1: Courtyard Stroll (5 min / 385m) - VERIFIED
         WalkingRoute(
-            name: "Corridor Circuit",
-            description: "A gentle indoor loop through the main corridors. Perfect for staying close to the clinic.",
+            name: "Courtyard Stroll",
+            description: "A gentle 5-minute loop around the immediate hospital grounds. Perfect for a quick refresh without going far.",
             durationMinutes: 5,
-            distanceMeters: 300,
+            distanceMeters: 385,
             difficulty: .easy,
-            isIndoor: true,
+            isIndoor: false,
             isAccessible: true,
-            landmarks: ["Reception", "Café", "Garden View Window"],
-            icon: "building.2",
+            landmarks: ["Longley Centre", "Rivermead Drive", "Norwood Grange Way", "Return"],
+            icon: "figure.walk",
             color: .tealAccent,
             qrMarkers: [
                 QRMarker(
-                    code: "CORRIDOR1",
-                    name: "Reception Calm",
-                    location: "Near Reception",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4150, longitude: -1.4683),
-                    contentType: .breathingExercise,
-                    content: WellbeingContent.breathingExercises[0],
-                    pointsValue: 10
-                ),
-                QRMarker(
-                    code: "CORRIDOR2",
-                    name: "Café Corner",
-                    location: "Outside Café",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4148, longitude: -1.4685),
-                    contentType: .gratitudePrompt,
-                    content: WellbeingContent.gratitudePrompts[0],
-                    pointsValue: 10
-                ),
-                QRMarker(
-                    code: "CORRIDOR3",
-                    name: "Garden View",
-                    location: "Window Alcove",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4149, longitude: -1.4681),
-                    contentType: .natureFact,
-                    content: WellbeingContent(title: "Window Views", description: "Looking at nature through a window can reduce stress by 40%.", icon: "window.vertical.open", duration: 30, steps: ["Pause by the window", "Look at something green", "Take 3 deep breaths"]),
-                    pointsValue: 10
-                )
-            ]
-        ),
-        WalkingRoute(
-            name: "Courtyard Calm",
-            description: "A peaceful walk through the enclosed courtyard garden with seating areas.",
-            durationMinutes: 10,
-            distanceMeters: 500,
-            difficulty: .easy,
-            isIndoor: false,
-            isAccessible: true,
-            landmarks: ["Courtyard Entrance", "Memorial Bench", "Water Feature"],
-            icon: "leaf.fill",
-            color: .mintGreen,
-            qrMarkers: [
-                QRMarker(
                     code: "COURT1",
-                    name: "Courtyard Entrance",
-                    location: "Garden Gate",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4147, longitude: -1.4693),
+                    name: "Rivermead View",
+                    location: "Rivermead Drive",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4110, longitude: -1.4592),
                     contentType: .breathingExercise,
                     content: WellbeingContent.breathingExercises[0],
-                    pointsValue: 15
+                    pointsValue: 10
                 ),
                 QRMarker(
                     code: "COURT2",
-                    name: "Garden Bench",
-                    location: "Memorial Bench",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4146, longitude: -1.4690),
+                    name: "Grange Corner",
+                    location: "Norwood Grange Way",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4113, longitude: -1.4603),
                     contentType: .gratitudePrompt,
                     content: WellbeingContent.gratitudePrompts[0],
-                    pointsValue: 15
-                ),
-                QRMarker(
-                    code: "COURT3",
-                    name: "Water Feature",
-                    location: "Fountain Area",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4144, longitude: -1.4687),
-                    contentType: .natureFact,
-                    content: WellbeingContent(title: "Water Sounds", description: "The sound of water can lower cortisol levels and promote relaxation.", icon: "drop.fill", duration: 30, steps: ["Close your eyes", "Listen to the water", "Let your shoulders relax"]),
-                    pointsValue: 15
+                    pointsValue: 10
                 )
-            ]
+            ],
+            routeType: .curated,
+            encodedPolyline: "ay~dI~e|GAiDCKCCSCCm@OASDOD?x@?xC?F?G?yC?y@NEREN@Bl@J@HBBD@h@@fC"
         ),
+        
+        // Route 2: Hospital Circuit (10 min / 736m) - VERIFIED
         WalkingRoute(
-            name: "Green Loop",
-            description: "Explore the grounds with views of the community garden and wildflower meadow.",
-            durationMinutes: 15,
-            distanceMeters: 900,
-            difficulty: .moderate,
+            name: "Hospital Circuit",
+            description: "A 10-minute triangular loop through the hospital campus, passing the Hand Unit and Firth Wing.",
+            durationMinutes: 10,
+            distanceMeters: 736,
+            difficulty: .easy,
             isIndoor: false,
             isAccessible: true,
-            landmarks: ["Main Entrance", "Community Garden", "Wildflower Area", "Bird Boxes"],
-            icon: "tree.fill",
-            color: .forestGreen,
+            landmarks: ["Longley Centre", "Hand Unit", "Firth Wing", "Central Lane", "Return"],
+            icon: "arrow.triangle.2.circlepath",
+            color: .mintGreen,
             qrMarkers: [
                 QRMarker(
-                    code: "GREEN1",
-                    name: "Garden Gate",
-                    location: "Community Garden Entrance",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4154, longitude: -1.4695),
-                    contentType: .natureFact,
-                    content: WellbeingContent(title: "Garden Wildlife", description: "Community gardens support 30% more wildlife than traditional lawns.", icon: "bird", duration: 30, steps: ["Look for butterflies", "Listen for birdsong", "Notice the plants"]),
-                    pointsValue: 20
-                ),
-                QRMarker(
-                    code: "GREEN2",
-                    name: "Herb Spiral",
-                    location: "Herb Garden",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4156, longitude: -1.4697),
+                    code: "HOSP1",
+                    name: "Hand Unit Garden",
+                    location: "Near Hand Unit",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4102, longitude: -1.4580),
                     contentType: .breathingExercise,
                     content: WellbeingContent.breathingExercises[1],
-                    pointsValue: 20
+                    pointsValue: 15
                 ),
                 QRMarker(
-                    code: "GREEN3",
-                    name: "Wildflower Meadow",
-                    location: "Meadow Viewpoint",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4159, longitude: -1.4700),
+                    code: "HOSP2",
+                    name: "Central Lane",
+                    location: "Firth Wing Area",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4110, longitude: -1.4565),
                     contentType: .gratitudePrompt,
                     content: WellbeingContent.gratitudePrompts[1],
-                    pointsValue: 20
+                    pointsValue: 15
                 ),
                 QRMarker(
-                    code: "GREEN4",
-                    name: "Bird Boxes",
-                    location: "Woodland Edge",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4152, longitude: -1.4705),
-                    contentType: .miniChallenge,
-                    content: WellbeingContent(title: "Bird Spotting", description: "Can you spot any birds using the nest boxes?", icon: "bird.fill", duration: 60, steps: ["Stand quietly for 1 minute", "Look at the bird boxes", "Listen for chirping", "Count how many birds you see"]),
-                    pointsValue: 25
+                    code: "HOSP3",
+                    name: "Quiet Corner",
+                    location: "Herries Road Drive",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4105, longitude: -1.4575),
+                    contentType: .natureFact,
+                    content: WellbeingContent(title: "Walking Benefits", description: "Just 10 minutes of walking can improve mood and reduce anxiety.", icon: "heart.fill", duration: 30, steps: ["Take a deep breath", "Notice how your body feels", "Appreciate this moment"]),
+                    pointsValue: 15
                 )
-            ]
+            ],
+            routeType: .curated,
+            encodedPolyline: "ay~dI~e|GAiDCKCCSCCm@LAd@Ar@CLANI`@kA[}@ESCIFGPIPAQ@QHGFEKIKKEwAEOEA{@EyDT?U?DxDBhAUBDtBB`@Ax@L@Bl@J@HBBD@h@@fC"
         ),
+        
+        // Route 3: Brennan Way Loop (15 min / 1.2km) - VERIFIED
         WalkingRoute(
-            name: "Longley Explorer",
-            description: "The full grounds circuit with nature trail elements and quiet reflection spots.",
-            durationMinutes: 20,
+            name: "Brennan Way Loop",
+            description: "A 15-minute walk through the residential area west of the hospital, via Brennan Way and Longley Lane.",
+            durationMinutes: 15,
             distanceMeters: 1200,
             difficulty: .moderate,
             isIndoor: false,
-            isAccessible: false,
-            landmarks: ["Reception", "Sensory Garden", "Woodland Path", "Viewpoint", "Return Path"],
-            icon: "map.fill",
-            color: .softAmber,
+            isAccessible: true,
+            landmarks: ["Longley Centre", "Brennan Way", "Norwood Grange Drive", "Longley Lane", "Return"],
+            icon: "leaf.fill",
+            color: .forestGreen,
             qrMarkers: [
                 QRMarker(
-                    code: "LONG1",
-                    name: "Sensory Garden",
-                    location: "Herb Garden",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4152, longitude: -1.4680),
+                    code: "BREN1",
+                    name: "Brennan Way",
+                    location: "Residential Area",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4615),
                     contentType: .breathingExercise,
                     content: WellbeingContent.breathingExercises[2],
                     pointsValue: 20
                 ),
                 QRMarker(
-                    code: "LONG2",
-                    name: "Lavender Walk",
-                    location: "Scented Path",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4155, longitude: -1.4685),
+                    code: "BREN2",
+                    name: "Longley Lane South",
+                    location: "11 Longley Lane",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4120, longitude: -1.4642),
                     contentType: .gratitudePrompt,
-                    content: WellbeingContent.gratitudePrompts[0],
+                    content: WellbeingContent.gratitudePrompts[2],
+                    pointsValue: 20
+                ),
+                QRMarker(
+                    code: "BREN3",
+                    name: "Longley Lane North",
+                    location: "10 Longley Lane",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4128, longitude: -1.4632),
+                    contentType: .natureFact,
+                    content: WellbeingContent(title: "Community Walking", description: "Walking in your local area helps you feel more connected to your community.", icon: "person.2.fill", duration: 30, steps: ["Look around at the buildings", "Notice any gardens or plants", "Wave if you see a neighbour"]),
+                    pointsValue: 20
+                ),
+                QRMarker(
+                    code: "BREN4",
+                    name: "Norwood Return",
+                    location: "Norwood Grange Drive",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4118, longitude: -1.4620),
+                    contentType: .miniChallenge,
+                    content: WellbeingContent(title: "Mindful Walking", description: "Focus on the sensation of walking.", icon: "figure.walk.motion", duration: 60, steps: ["Slow your pace slightly", "Feel each footstep", "Notice the ground beneath you", "Take 10 mindful steps"]),
+                    pointsValue: 25
+                )
+            ],
+            routeType: .curated,
+            encodedPolyline: "ay~dI~e|GAiDCKCCSCCm@I?O?YH?~EAhBBn@APETGJSNIBFVADIt@e@pEQ|BC`@GPQVS^PXQYq@m@Do@Fi@GCYMs@_@MILHf@Vd@TFBGh@En@p@l@R_@PWFQT_Dn@gG@EGWHCROFKDU@QCo@@iB?_Fh@IH?Bl@RBBBBJ@hD"
+        ),
+        
+        // Route 4: Longley Explorer (20 min / 1.5km) - VERIFIED
+        WalkingRoute(
+            name: "Longley Explorer",
+            description: "A 20-minute exploration of the wider Longley area, including Longley Close and Herries Road. Great for a proper break.",
+            durationMinutes: 20,
+            distanceMeters: 1500,
+            difficulty: .moderate,
+            isIndoor: false,
+            isAccessible: true,
+            landmarks: ["Longley Centre", "Brennan Way", "Longley Close", "Herries Road", "Longley Lane", "Return"],
+            icon: "map.fill",
+            color: .softAmber,
+            qrMarkers: [
+                QRMarker(
+                    code: "LONG1",
+                    name: "Brennan Way Start",
+                    location: "Leaving the Hospital",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4614),
+                    contentType: .breathingExercise,
+                    content: WellbeingContent.breathingExercises[0],
+                    pointsValue: 20
+                ),
+                QRMarker(
+                    code: "LONG2",
+                    name: "Longley Close",
+                    location: "2 Longley Close",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4132, longitude: -1.4637),
+                    contentType: .natureFact,
+                    content: WellbeingContent(title: "Green Spaces", description: "Living near green spaces is linked to lower stress and better mental health.", icon: "leaf.fill", duration: 30, steps: ["Look for any trees nearby", "Notice any gardens", "Take 3 deep breaths of fresh air"]),
                     pointsValue: 20
                 ),
                 QRMarker(
                     code: "LONG3",
-                    name: "Woodland Entry",
-                    location: "Path Start",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4164, longitude: -1.4690),
-                    contentType: .natureFact,
-                    content: WellbeingContent(title: "Forest Bathing", description: "Walking in woodland can reduce cortisol by 16% and blood pressure by 2%.", icon: "tree.fill", duration: 45, steps: ["Walk slowly and mindfully", "Touch the bark of a tree", "Breathe in the forest air", "Notice the light through leaves"]),
+                    name: "Herries Road",
+                    location: "306 Herries Road",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4122, longitude: -1.4658),
+                    contentType: .gratitudePrompt,
+                    content: WellbeingContent.gratitudePrompts[0],
                     pointsValue: 25
                 ),
                 QRMarker(
                     code: "LONG4",
-                    name: "Hilltop View",
-                    location: "Viewpoint",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4169, longitude: -1.4693),
+                    name: "Longley Lane View",
+                    location: "Junction Area",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4117, longitude: -1.4647),
                     contentType: .miniChallenge,
-                    content: WellbeingContent(title: "Horizon Gazing", description: "Looking at distant views relaxes your eye muscles and reduces mental fatigue.", icon: "binoculars.fill", duration: 60, steps: ["Find a comfortable stance", "Look at the furthest point you can see", "Notice the sky", "Take 5 slow breaths"]),
+                    content: WellbeingContent(title: "Horizon Gazing", description: "Looking at distant views relaxes your eyes and mind.", icon: "binoculars.fill", duration: 60, steps: ["Find the furthest point you can see", "Focus on it for 30 seconds", "Notice the sky", "Take 5 slow breaths"]),
                     pointsValue: 25
                 ),
                 QRMarker(
                     code: "LONG5",
-                    name: "Reflection Spot",
-                    location: "Quiet Bench",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4159, longitude: -1.4675),
+                    name: "Return Path",
+                    location: "Heading Back",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4625),
                     contentType: .digitalTip,
-                    content: WellbeingContent(title: "Digital Detox Moment", description: "Take a moment away from screens.", icon: "iphone.slash", duration: 60, steps: ["Put your phone in your pocket", "Look at the horizon", "Take 5 deep breaths", "Notice how you feel"]),
+                    content: WellbeingContent(title: "Digital Detox Moment", description: "Take a moment away from screens.", icon: "iphone.slash", duration: 60, steps: ["Keep your phone in your pocket", "Look around you", "Notice 3 things you can see", "Feel present in this moment"]),
                     pointsValue: 25
                 )
-            ]
+            ],
+            routeType: .curated,
+            encodedPolyline: "ay~dI~e|GAiDCKCCSCCm@I?O?YH?~EAhBBn@APETGJSNIBFVADIt@e@pEQ|BC`@GPQVS^q@m@yCa@MELDxC`@p@l@Xb@t@tAgAxBa@hAAHBZC[@I`@iAfAyBu@uAYc@R_@PWFQBa@P}Bn@gG@EGWHCROFKDU@QCo@@iB?_Fh@IH?Bl@RBBBBJ@hD"
         )
     ]
+    
+    // Indoor routes for Northern General Hospital
+    // Based on NGH site map - hospital is over different levels with link corridors
+    // Reference: https://sheffieldhospitalscharity.org.uk/storage/documents/NGH_site_map_-_Wycliffe_House_edit.pdf
+    static let indoorRoutes: [WalkingRoute] = [
+        // Indoor Route 1: Longley Centre Loop (5 min)
+        WalkingRoute(
+            name: "Longley Centre Loop",
+            description: "A gentle 5-minute indoor circuit within The Longley Centre. Perfect for staying close to your appointment or during bad weather.",
+            durationMinutes: 5,
+            distanceMeters: 300,
+            difficulty: .easy,
+            isIndoor: true,
+            isAccessible: true,
+            landmarks: ["Main Reception", "Waiting Area", "Garden View Windows", "Return Corridor"],
+            icon: "building.2",
+            color: .lavenderMist,
+            qrMarkers: [
+                QRMarker(
+                    code: "LC_IN1",
+                    name: "Reception Calm",
+                    location: "Longley Centre Reception",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4109, longitude: -1.4602),
+                    contentType: .breathingExercise,
+                    content: WellbeingContent.breathingExercises[0],
+                    pointsValue: 10
+                ),
+                QRMarker(
+                    code: "LC_IN2",
+                    name: "Garden View",
+                    location: "Window Alcove",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4108, longitude: -1.4600),
+                    contentType: .natureFact,
+                    content: WellbeingContent(title: "Window Gazing", description: "Looking at nature through a window can reduce stress by up to 40%. Even a brief glimpse of greenery helps.", icon: "window.vertical.open", duration: 30, steps: ["Find a window with a view", "Look at something green outside", "Take 3 slow, deep breaths", "Notice how you feel"]),
+                    pointsValue: 10
+                ),
+                QRMarker(
+                    code: "LC_IN3",
+                    name: "Quiet Corner",
+                    location: "End of Corridor",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4110, longitude: -1.4604),
+                    contentType: .gratitudePrompt,
+                    content: WellbeingContent.gratitudePrompts[0],
+                    pointsValue: 10
+                )
+            ],
+            routeType: .indoor,
+            encodedPolyline: nil
+        ),
+        
+        // Indoor Route 2: NGH Link Corridor Walk (10 min)
+        WalkingRoute(
+            name: "NGH Corridor Explorer",
+            description: "A 10-minute walk through the Northern General Hospital link corridors. Follow the coloured floor lines and signage. Great for a longer indoor stretch.",
+            durationMinutes: 10,
+            distanceMeters: 500,
+            difficulty: .easy,
+            isIndoor: true,
+            isAccessible: true,
+            landmarks: ["Longley Centre", "Link Corridor", "Main Hospital", "Atrium Area", "Return via Link"],
+            icon: "arrow.triangle.swap",
+            color: .tealAccent,
+            qrMarkers: [
+                QRMarker(
+                    code: "NGH_IN1",
+                    name: "Link Corridor Start",
+                    location: "Leaving Longley Centre",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4108, longitude: -1.4598),
+                    contentType: .breathingExercise,
+                    content: WellbeingContent(title: "Walking Meditation", description: "As you walk through the corridor, focus on each step.", icon: "figure.walk", duration: 60, steps: ["Walk at a comfortable pace", "Feel each footstep on the floor", "Notice the rhythm of your walking", "Let your thoughts come and go"]),
+                    pointsValue: 15
+                ),
+                QRMarker(
+                    code: "NGH_IN2",
+                    name: "Hospital Art",
+                    location: "Main Corridor",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4105, longitude: -1.4585),
+                    contentType: .gratitudePrompt,
+                    content: WellbeingContent(title: "Art Appreciation", description: "NHS hospitals often display local artwork. Take a moment to notice any art, photos, or displays on the walls.", icon: "photo.artframe", duration: nil, steps: nil),
+                    pointsValue: 15
+                ),
+                QRMarker(
+                    code: "NGH_IN3",
+                    name: "Atrium Rest",
+                    location: "Near Seating Area",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4102, longitude: -1.4575),
+                    contentType: .breathingExercise,
+                    content: WellbeingContent.breathingExercises[1],
+                    pointsValue: 15
+                ),
+                QRMarker(
+                    code: "NGH_IN4",
+                    name: "Return Journey",
+                    location: "Heading Back",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4106, longitude: -1.4590),
+                    contentType: .miniChallenge,
+                    content: WellbeingContent(title: "Posture Check", description: "Good posture while walking helps reduce tension and improves mood.", icon: "figure.stand", duration: 30, steps: ["Stand tall, shoulders back", "Relax your jaw and face", "Take a deep breath", "Continue walking with awareness"]),
+                    pointsValue: 15
+                )
+            ],
+            routeType: .indoor,
+            encodedPolyline: nil
+        ),
+        
+        // Indoor Route 3: NGH Discovery Walk (15 min)
+        WalkingRoute(
+            name: "NGH Discovery Walk",
+            description: "A 15-minute exploration of Northern General Hospital's main buildings via the link corridors. Look for the café, shop, and chapel along the way. Follow floor signage.",
+            durationMinutes: 15,
+            distanceMeters: 800,
+            difficulty: .moderate,
+            isIndoor: true,
+            isAccessible: true,
+            landmarks: ["Longley Centre", "Main Link Corridor", "Hospital Shop", "Café Area", "Chapel", "Return via Ground Floor"],
+            icon: "map.fill",
+            color: .mintGreen,
+            qrMarkers: [
+                QRMarker(
+                    code: "NGH_D1",
+                    name: "Journey Start",
+                    location: "Longley Centre Exit",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4108, longitude: -1.4598),
+                    contentType: .breathingExercise,
+                    content: WellbeingContent.breathingExercises[2],
+                    pointsValue: 20
+                ),
+                QRMarker(
+                    code: "NGH_D2",
+                    name: "Shop Stop",
+                    location: "Near Hospital Shop",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4100, longitude: -1.4580),
+                    contentType: .digitalTip,
+                    content: WellbeingContent(title: "Hydration Reminder", description: "Staying hydrated helps with concentration and reduces anxiety. Consider grabbing a drink if you pass the shop or café.", icon: "drop.fill", duration: nil, steps: nil),
+                    pointsValue: 20
+                ),
+                QRMarker(
+                    code: "NGH_D3",
+                    name: "Café Corner",
+                    location: "Near Café Seating",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4098, longitude: -1.4570),
+                    contentType: .gratitudePrompt,
+                    content: WellbeingContent.gratitudePrompts[1],
+                    pointsValue: 20
+                ),
+                QRMarker(
+                    code: "NGH_D4",
+                    name: "Quiet Reflection",
+                    location: "Near Chapel",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4095, longitude: -1.4565),
+                    contentType: .breathingExercise,
+                    content: WellbeingContent(title: "Moment of Peace", description: "Hospital chapels and quiet rooms are open to everyone, regardless of faith. They offer a peaceful space for reflection.", icon: "hands.sparkles.fill", duration: 60, steps: ["Find a quiet spot", "Sit comfortably if possible", "Close your eyes briefly", "Take 5 slow, deep breaths", "Set an intention for your day"]),
+                    pointsValue: 25
+                ),
+                QRMarker(
+                    code: "NGH_D5",
+                    name: "Homeward Bound",
+                    location: "Return Corridor",
+                    coordinate: CLLocationCoordinate2D(latitude: 53.4105, longitude: -1.4592),
+                    contentType: .miniChallenge,
+                    content: WellbeingContent(title: "Counting Steps", description: "Can you count your steps back to The Longley Centre? It's a simple mindfulness exercise.", icon: "number", duration: nil, steps: ["Start counting from 1", "If you lose count, start again", "Notice how this focuses your mind", "Celebrate when you arrive back!"]),
+                    pointsValue: 25
+                )
+            ],
+            routeType: .indoor,
+            encodedPolyline: nil
+        )
+    ]
+    
+    // Combined sample routes (for backwards compatibility)
+    static let sampleRoutes: [WalkingRoute] = curatedRoutes + indoorRoutes
 }
 
 extension WellbeingContent {

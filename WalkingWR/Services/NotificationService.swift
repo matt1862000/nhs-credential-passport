@@ -172,6 +172,58 @@ class NotificationService: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
     
+    // MARK: - Walking Direction Notifications
+    
+    /// Send a direction notification when approaching a turn
+    func sendDirectionNotification(instruction: String, distance: String, stepNumber: Int, totalSteps: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = "🧭 Next: \(getDirectionEmoji(from: instruction))"
+        content.body = instruction
+        content.subtitle = "\(distance) • Step \(stepNumber) of \(totalSteps)"
+        content.sound = .default
+        content.categoryIdentifier = "WALKING_ALERT"
+        content.interruptionLevel = .timeSensitive
+        
+        // Immediate notification
+        let request = UNNotificationRequest(
+            identifier: "direction-\(stepNumber)-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        
+        UNUserNotificationCenter.current().add(request)
+    }
+    
+    /// Get an appropriate emoji for the direction type
+    private func getDirectionEmoji(from instruction: String) -> String {
+        let lowercased = instruction.lowercased()
+        
+        if lowercased.contains("left") {
+            return "↰ Turn Left"
+        } else if lowercased.contains("right") {
+            return "↱ Turn Right"
+        } else if lowercased.contains("straight") || lowercased.contains("continue") {
+            return "↑ Continue"
+        } else if lowercased.contains("destination") || lowercased.contains("arrive") {
+            return "📍 Arriving"
+        } else if lowercased.contains("roundabout") {
+            return "🔄 Roundabout"
+        } else {
+            return "👣 Walking"
+        }
+    }
+    
+    /// Cancel all direction notifications
+    func cancelDirectionNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let directionIds = requests
+                .filter { $0.identifier.starts(with: "direction-") }
+                .map { $0.identifier }
+            center.removePendingNotificationRequests(withIdentifiers: directionIds)
+        }
+    }
+    
     func scheduleDelayUpdateNotification(newWaitMinutes: Int) {
         let content = UNMutableNotificationContent()
         content.title = "Wait Time Updated"

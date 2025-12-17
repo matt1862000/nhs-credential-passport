@@ -24,6 +24,13 @@ class LocationService: NSObject, ObservableObject {
     @Published var locationRetryCount: Int = 0
     @Published var isRetrying: Bool = false
     
+    // Direction monitoring
+    @Published var currentDirectionIndex: Int = 0
+    @Published var isMonitoringDirections: Bool = false
+    private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String)] = []
+    private var notifiedDirectionIndices: Set<Int> = []
+    private let directionNotificationRadius: Double = 30 // meters - notify when within 30m of turn
+    
     // Starting point for walk
     private var startLocation: CLLocation?
     private var retryTimer: Timer?
@@ -96,14 +103,124 @@ class LocationService: NSObject, ObservableObject {
         distanceWalked = 0
         routeLocations = []
         startLocation = nil
+        
+        // Enable background location updates for turn-by-turn notifications
+        locationManager.allowsBackgroundLocationUpdates = true
+        locationManager.pausesLocationUpdatesAutomatically = false
+        locationManager.showsBackgroundLocationIndicator = true
+        
         locationManager.startUpdatingLocation()
         locationManager.startUpdatingHeading()
     }
     
     func stopTracking() {
         isTracking = false
+        
+        // Disable background location updates to save battery
+        locationManager.allowsBackgroundLocationUpdates = false
+        locationManager.showsBackgroundLocationIndicator = false
+        
         locationManager.stopUpdatingLocation()
         locationManager.stopUpdatingHeading()
+        stopDirectionMonitoring()
+    }
+    
+    // MARK: - Direction Monitoring
+    
+    /// Start monitoring for direction waypoints to send turn-by-turn notifications
+    func startDirectionMonitoring(directions: [WalkingDirection], routePath: [CLLocationCoordinate2D]) {
+        // Build waypoints from directions
+        // Each direction corresponds to a step - we'll use approximate positions along the route
+        directionWaypoints = []
+        notifiedDirectionIndices = []
+        currentDirectionIndex = 0
+        
+        // Calculate cumulative distance for each step to find approximate positions
+        var cumulativeDistance: Double = 0
+        var routeIndex = 0
+        let totalRoutePoints = routePath.count
+        
+        for direction in directions {
+            // Find the approximate point along the route for this direction
+            let targetDistance = cumulativeDistance + Double(direction.distanceMeters) / 2 // Midpoint of step
+            
+            // Walk through route points until we reach the target distance
+            var accumulatedDist: Double = 0
+            var waypointCoord = routePath.first ?? CLLocationCoordinate2D()
+            
+            for i in routeIndex..<(totalRoutePoints - 1) {
+                let from = CLLocation(latitude: routePath[i].latitude, longitude: routePath[i].longitude)
+                let to = CLLocation(latitude: routePath[i + 1].latitude, longitude: routePath[i + 1].longitude)
+                let segmentDist = from.distance(from: to)
+                
+                if accumulatedDist + segmentDist >= targetDistance - cumulativeDistance {
+                    // This segment contains our waypoint
+                    waypointCoord = routePath[i + 1]
+                    routeIndex = i + 1
+                    break
+                }
+                accumulatedDist += segmentDist
+            }
+            
+            directionWaypoints.append((
+                coordinate: waypointCoord,
+                instruction: direction.instruction,
+                distance: direction.distance
+            ))
+            
+            cumulativeDistance += Double(direction.distanceMeters)
+        }
+        
+        isMonitoringDirections = true
+        print("📍 Started direction monitoring with \(directionWaypoints.count) waypoints")
+    }
+    
+    /// Stop monitoring for directions
+    func stopDirectionMonitoring() {
+        isMonitoringDirections = false
+        directionWaypoints = []
+        notifiedDirectionIndices = []
+        currentDirectionIndex = 0
+        NotificationService.shared.cancelDirectionNotifications()
+    }
+    
+    /// Check if user is approaching any direction waypoint and send notification
+    private func checkDirectionWaypoints(currentLocation: CLLocation) {
+        guard isMonitoringDirections, !directionWaypoints.isEmpty else { return }
+        
+        // Check upcoming waypoints (current and next few)
+        let checkRange = currentDirectionIndex..<min(currentDirectionIndex + 3, directionWaypoints.count)
+        
+        for index in checkRange {
+            // Skip if already notified for this waypoint
+            guard !notifiedDirectionIndices.contains(index) else { continue }
+            
+            let waypoint = directionWaypoints[index]
+            let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
+            let distance = currentLocation.distance(from: waypointLocation)
+            
+            // If within notification radius, send notification
+            if distance <= directionNotificationRadius {
+                NotificationService.shared.sendDirectionNotification(
+                    instruction: waypoint.instruction,
+                    distance: waypoint.distance,
+                    stepNumber: index + 1,
+                    totalSteps: directionWaypoints.count
+                )
+                
+                notifiedDirectionIndices.insert(index)
+                
+                // Update current direction index
+                if index >= currentDirectionIndex {
+                    DispatchQueue.main.async {
+                        self.currentDirectionIndex = index + 1
+                    }
+                }
+                
+                print("📍 Direction notification sent for step \(index + 1): \(waypoint.instruction)")
+                break // Only send one notification at a time
+            }
+        }
     }
     
     /// Request a FRESH location (clears cached location first)
@@ -252,6 +369,9 @@ extension LocationService: CLLocationManagerDelegate {
             
             self.routeLocations.append(newLocation)
             self.currentLocation = newLocation
+            
+            // Check if approaching any direction waypoints
+            self.checkDirectionWaypoints(currentLocation: newLocation)
         }
     }
     
