@@ -7,13 +7,29 @@
 
 import SwiftUI
 
+// Sheet types for WaitTimeView
+enum WaitTimeSheetType: Identifiable {
+    case help
+    case anxietyCheck
+    case clinicianProfile
+    case clinicianSelection
+    
+    var id: String {
+        switch self {
+        case .help: return "help"
+        case .anxietyCheck: return "anxietyCheck"
+        case .clinicianProfile: return "clinicianProfile"
+        case .clinicianSelection: return "clinicianSelection"
+        }
+    }
+}
+
 struct WaitTimeView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var selectedTab: Int
     
-    @State private var showAnxietyCheck = false
     @State private var pulseAnimation = false
-    @State private var showHelpSheet = false
+    @State private var activeSheet: WaitTimeSheetType?
     
     var body: some View {
         NavigationStack {
@@ -23,7 +39,11 @@ struct WaitTimeView: View {
                 ScrollView {
                     VStack(spacing: 24) {
                         // Main wait time display
-                        WaitTimeCard(viewModel: viewModel)
+                        WaitTimeCard(
+                            viewModel: viewModel,
+                            onShowClinicianSelection: { activeSheet = .clinicianSelection },
+                            onShowClinicianProfile: { activeSheet = .clinicianProfile }
+                        )
                             .padding(.top, 20)
                         
                         // Walking suggestion
@@ -39,7 +59,7 @@ struct WaitTimeView: View {
                         // Wellbeing prompt - only show if no initial score recorded
                         if viewModel.userProgress.anxietyLevelBefore == nil {
                             AnxietyCheckCard(
-                                showAnxietyCheck: $showAnxietyCheck,
+                                onTap: { activeSheet = .anxietyCheck },
                                 hasCompletedPre: false
                             )
                         }
@@ -55,23 +75,31 @@ struct WaitTimeView: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: { showHelpSheet = true }) {
+                    Button(action: { activeSheet = .help }) {
                         Image(systemName: "hand.raised.fill")
                             .foregroundColor(.coralPink)
                     }
                 }
             }
-            .sheet(isPresented: $showHelpSheet) {
-                HelpView()
-            }
-            .sheet(isPresented: $showAnxietyCheck) {
-                AnxietyCheckSheet(viewModel: viewModel, isPresented: $showAnxietyCheck, isPostWalk: false)
-            }
-            .sheet(isPresented: $viewModel.showPreWalkWellbeing) {
-                AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPreWalkWellbeing, isPostWalk: false)
-            }
-            .sheet(isPresented: $viewModel.showPostWalkWellbeing) {
-                AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPostWalkWellbeing, isPostWalk: true, isWalkActivity: true)
+            .sheet(item: $activeSheet) { sheetType in
+                switch sheetType {
+                case .help:
+                    HelpView()
+                case .anxietyCheck:
+                    AnxietyCheckSheet(viewModel: viewModel, isPresented: .init(
+                        get: { activeSheet == .anxietyCheck },
+                        set: { if !$0 { activeSheet = nil } }
+                    ), isPostWalk: false)
+                case .clinicianProfile:
+                    if let clinician = viewModel.selectedClinician {
+                        ClinicianProfileView(clinician: clinician)
+                    }
+                case .clinicianSelection:
+                    ClinicianSelectionView(viewModel: viewModel, isPresented: .init(
+                        get: { activeSheet == .clinicianSelection },
+                        set: { if !$0 { activeSheet = nil } }
+                    ))
+                }
             }
             .alert("Clinician Ready!", isPresented: $viewModel.showClinicianReadyAlert) {
                 Button("I'm on my way") {
@@ -113,8 +141,8 @@ struct WaitTimeView: View {
 // MARK: - Wait Time Card
 struct WaitTimeCard: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
-    @State private var showClinicianProfile = false
-    @State private var showClinicianSelection = false
+    var onShowClinicianSelection: () -> Void
+    var onShowClinicianProfile: () -> Void
     
     var waitInfo: WaitTimeInfo {
         viewModel.waitTimeInfo
@@ -162,7 +190,7 @@ struct WaitTimeCard: View {
                     
                     // Name and specialty
                     VStack(alignment: .leading, spacing: 6) {
-                        Button(action: { showClinicianProfile = true }) {
+                        Button(action: onShowClinicianProfile) {
                             HStack(spacing: 6) {
                                 Text(clinician.fullTitle)
                                     .font(.headline)
@@ -180,7 +208,7 @@ struct WaitTimeCard: View {
                             .foregroundColor(.secondary)
                         
                         // Change button - more prominent
-                        Button(action: { showClinicianSelection = true }) {
+                        Button(action: onShowClinicianSelection) {
                             HStack(spacing: 6) {
                                 Image(systemName: "arrow.triangle.2.circlepath")
                                     .font(.subheadline)
@@ -209,14 +237,6 @@ struct WaitTimeCard: View {
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity)
         .cardStyle()
-        .sheet(isPresented: $showClinicianProfile) {
-            if let clinician = viewModel.selectedClinician {
-                ClinicianProfileView(clinician: clinician)
-            }
-        }
-        .sheet(isPresented: $showClinicianSelection) {
-            ClinicianSelectionView(viewModel: viewModel, isPresented: $showClinicianSelection)
-        }
     }
 }
 
@@ -459,11 +479,11 @@ struct ActiveWalkCard: View {
 
 // MARK: - Anxiety Check Card
 struct AnxietyCheckCard: View {
-    @Binding var showAnxietyCheck: Bool
+    var onTap: () -> Void
     var hasCompletedPre: Bool = false
     
     var body: some View {
-        Button(action: { showAnxietyCheck = true }) {
+        Button(action: onTap) {
             HStack(spacing: 16) {
                 ZStack {
                     Circle()

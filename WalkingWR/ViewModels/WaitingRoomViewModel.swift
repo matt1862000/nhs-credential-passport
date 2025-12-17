@@ -37,6 +37,7 @@ class WaitingRoomViewModel: ObservableObject {
     // Clinician selection
     @Published var availableClinicians: [Clinician] = []
     @Published var selectedClinician: Clinician?
+    @Published var showClinicianSelection: Bool = false
     private let allClinicians: [Clinician] = Clinician.sampleClinicians
     
     // Simulated EPR updates

@@ -12,7 +12,6 @@ struct MainTabView: View {
     @State private var selectedTab = 0
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var showOnboarding = false
-    @State private var showClinicianSelection = false
     
     init() {
         // Only show onboarding if user hasn't completed it before
@@ -56,12 +55,12 @@ struct MainTabView: View {
         }
         .animation(.easeInOut(duration: 0.5), value: showOnboarding)
         .fullScreenCover(isPresented: .init(
-            get: { !showOnboarding && (showClinicianSelection || !viewModel.hasSelectedClinician) },
-            set: { if !$0 { showClinicianSelection = false } }
+            get: { !showOnboarding && (viewModel.showClinicianSelection || !viewModel.hasSelectedClinician) },
+            set: { if !$0 { viewModel.showClinicianSelection = false } }
         )) {
             ClinicianSelectionView(
                 viewModel: viewModel,
-                isPresented: $showClinicianSelection
+                isPresented: $viewModel.showClinicianSelection
             )
         }
     }

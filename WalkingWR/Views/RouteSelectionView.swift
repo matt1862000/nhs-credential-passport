@@ -786,56 +786,116 @@ struct RouteFilters: View {
     @Binding var selectedDifficulty: RouteDifficulty?
     @Binding var showIndoorOnly: Bool
     @Binding var showAccessibleOnly: Bool
+    @State private var hasScrolled = false
+    @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                // Difficulty filters
-                ForEach(RouteDifficulty.allCases, id: \.self) { difficulty in
-                    FilterChip(
-                        title: difficulty.rawValue,
-                        icon: difficulty.icon,
-                        isSelected: selectedDifficulty == difficulty,
-                        color: difficulty.color
-                    ) {
-                        withAnimation {
-                            if selectedDifficulty == difficulty {
-                                selectedDifficulty = nil
-                            } else {
-                                selectedDifficulty = difficulty
-                            }
-                        }
-                    }
-                }
+        VStack(spacing: 8) {
+            // Filter label with swipe hint
+            HStack {
+                Text("Filter routes")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
                 
-                Divider()
-                    .frame(height: 24)
+                Spacer()
                 
-                // Indoor filter
-                FilterChip(
-                    title: "Indoor",
-                    icon: "building.2",
-                    isSelected: showIndoorOnly,
-                    color: .tealAccent
-                ) {
-                    withAnimation {
-                        showIndoorOnly.toggle()
+                if !hasScrolled {
+                    HStack(spacing: 4) {
+                        Text("Swipe for more")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Image(systemName: "arrow.right")
+                            .font(.caption2)
+                            .foregroundColor(.tealAccent)
                     }
-                }
-                
-                // Accessible filter
-                FilterChip(
-                    title: "Accessible",
-                    icon: "figure.roll",
-                    isSelected: showAccessibleOnly,
-                    color: .lavenderMist
-                ) {
-                    withAnimation {
-                        showAccessibleOnly.toggle()
-                    }
+                    .transition(.opacity)
                 }
             }
             .padding(.horizontal, 4)
+            .animation(.easeInOut, value: hasScrolled)
+            
+            // Scrollable filters with gradient fade
+            ZStack(alignment: .trailing) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        // Indoor filter - show first for discoverability
+                        FilterChip(
+                            title: "Indoor",
+                            icon: "building.2",
+                            isSelected: showIndoorOnly,
+                            color: .tealAccent
+                        ) {
+                            withAnimation {
+                                showIndoorOnly.toggle()
+                            }
+                        }
+                        
+                        // Accessible filter
+                        FilterChip(
+                            title: "Accessible",
+                            icon: "figure.roll",
+                            isSelected: showAccessibleOnly,
+                            color: .lavenderMist
+                        ) {
+                            withAnimation {
+                                showAccessibleOnly.toggle()
+                            }
+                        }
+                        
+                        Divider()
+                            .frame(height: 24)
+                        
+                        // Difficulty filters
+                        ForEach(RouteDifficulty.allCases, id: \.self) { difficulty in
+                            FilterChip(
+                                title: difficulty.rawValue,
+                                icon: difficulty.icon,
+                                isSelected: selectedDifficulty == difficulty,
+                                color: difficulty.color
+                            ) {
+                                withAnimation {
+                                    if selectedDifficulty == difficulty {
+                                        selectedDifficulty = nil
+                                    } else {
+                                        selectedDifficulty = difficulty
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Extra padding at end to ensure last item is fully visible
+                        Color.clear.frame(width: 20)
+                    }
+                    .padding(.horizontal, 4)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear
+                                .onChange(of: geo.frame(in: .global).minX) { oldValue, newValue in
+                                    if newValue < oldValue && !hasScrolled {
+                                        withAnimation {
+                                            hasScrolled = true
+                                        }
+                                    }
+                                }
+                        }
+                    )
+                }
+                
+                // Fade gradient on right edge to hint at more content
+                if !hasScrolled {
+                    LinearGradient(
+                        colors: [
+                            Color.clear,
+                            colorScheme == .dark ? Color.black.opacity(0.8) : Color.white.opacity(0.8)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: 40)
+                    .allowsHitTesting(false)
+                }
+            }
         }
     }
 }

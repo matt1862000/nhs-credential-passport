@@ -2076,7 +2076,7 @@ struct SettingsView: View {
                 }
                 Button("OK", role: .cancel) { }
             } message: {
-                Text("To enable step syncing:\n\n1. Open the Health app\n2. Tap your profile picture\n3. Go to Apps & Services\n4. Find WaitWell\n5. Enable Steps")
+                Text("To enable step syncing:\n\n1. Open the Health app\n2. Tap your profile icon (top right)\n3. Look for Apps or Apps & Services\n4. Find WaitWell\n5. Enable Steps")
             }
             .alert("Motion Not Available", isPresented: $showMotionUnavailable) {
                 Button("OK", role: .cancel) { }
@@ -2089,7 +2089,7 @@ struct SettingsView: View {
                 }
                 Button("Cancel", role: .cancel) { }
             } message: {
-                Text("To disable HealthKit step syncing:\n\n1. Tap 'Open Health App'\n2. Tap your profile picture\n3. Go to Apps & Services\n4. Find WaitWell\n5. Turn off Steps")
+                Text("To manage HealthKit access:\n\n1. Tap 'Open Health App' below\n2. Tap your profile icon (top right)\n3. Look for Apps or Apps & Services\n4. Find WaitWell\n5. Toggle Steps on or off")
             }
             .preferredColorScheme(effectiveColorScheme)
             .id(appTheme) // Force view refresh when theme changes
@@ -2467,7 +2467,7 @@ struct PrivacyInfoView: View {
                     
                     VStack(alignment: .leading, spacing: 8) {
                         ControlPoint(text: "You can delete all your data at any time in Settings")
-                        ControlPoint(text: "You can turn off any permission in your phone's Settings")
+                        ControlPoint(text: "Manage permissions in Settings → Privacy & Security, or search for WaitWell in Settings")
                         ControlPoint(text: "Closing the app stops all tracking")
                     }
                 }
