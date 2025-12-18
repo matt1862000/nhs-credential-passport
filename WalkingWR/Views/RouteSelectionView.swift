@@ -1326,7 +1326,8 @@ struct LocalRoutePickerSheet: View {
     }
     
     var numberOfMarkers: Int {
-        max(2, min(4, selectedDuration / 5))
+        // 1 discovery spot per 5 minutes of walking
+        return max(1, selectedDuration / 5)
     }
     
     var estimatedDistance: Int {
@@ -1393,20 +1394,31 @@ struct LocalRoutePickerSheet: View {
                         routeDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
                     }
                     
-                    // Generate AI-powered description
-                    let placeNames = result.places.map { $0.name }
-                    let aiDescription = await GeminiService.shared.generateRouteDescription(
-                        places: placeNames,
+                    // Generate AI-powered name and description with rich waypoint info
+                    let waypointInfos = result.places.map { place in
+                        GeminiService.WaypointInfo(
+                            name: place.name,
+                            types: place.types ?? [],
+                            vicinity: place.vicinity
+                        )
+                    }
+                    let aiContent = await GeminiService.shared.generateRouteContent(
+                        waypoints: waypointInfos,
                         durationMinutes: result.durationMinutes,
                         distanceMeters: result.distanceMeters,
                         difficulty: selectedDifficulty
                     )
                     
-                    // Fallback description if AI fails
+                    // Use AI content or fallback
+                    let routeName: String
                     let description: String
-                    if let ai = aiDescription, !ai.isEmpty {
-                        description = ai
+                    
+                    if let content = aiContent {
+                        routeName = content.name
+                        description = content.description
                     } else {
+                        // Fallback name and description if AI fails
+                        routeName = "Local Discovery"
                         var descParts: [String] = ["A \(result.formattedDuration) walk passing \(result.places.count) local points of interest."]
                         if let diff = selectedDifficulty {
                             switch diff {
@@ -1420,7 +1432,7 @@ struct LocalRoutePickerSheet: View {
                     
                     // Create the walking route with actual polyline and directions
                     let localRoute = WalkingRoute(
-                        name: "Local Discovery",
+                        name: routeName,
                         description: description,
                         durationMinutes: max(1, result.durationMinutes),
                         distanceMeters: result.distanceMeters,
@@ -1689,30 +1701,15 @@ struct LocalRouteMapPreview: View {
                                 .fontWeight(.bold)
                                 .foregroundColor(.primary)
                             
-                            if hasRealPolyline {
-                                HStack(spacing: 2) {
-                                    Image(systemName: "checkmark.seal.fill")
-                                        .font(.caption2)
-                                    Text("OK")
-                                        .font(.caption2)
-                                        .fontWeight(.bold)
-                                }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Color.mintGreen)
-                                .clipShape(Capsule())
-                                .fixedSize()
-                            }
                         }
                         
                         HStack(spacing: 4) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
+                            Image(systemName: "sparkles")
                                 .font(.caption2)
-                            Text(hasRealPolyline ? "Walking route verified" : "Circular loop")
+                            Text("AI generated route")
                                 .font(.caption)
                         }
-                        .foregroundColor(.mintGreen)
+                        .foregroundColor(.tealAccent)
                     }
                     
                     Spacer()

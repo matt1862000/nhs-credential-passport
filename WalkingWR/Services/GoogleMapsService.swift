@@ -204,6 +204,13 @@ class GoogleMapsService: ObservableObject {
             throw GoogleMapsError.noPlacesFound
         }
         
+        // Calculate how many discovery spots: 1 per 5 minutes
+        // We use 1 waypoint for Google Directions (accurate timing)
+        // Additional discovery spots are added from nearby POIs
+        let discoverySpotCount = max(1, targetDurationMinutes / 5)
+        
+        print("🗺️ Using 1 waypoint for routing, will add \(discoverySpotCount) discovery spots (1 per 5 min)")
+        
         // Step 2: Get candidate waypoints sorted by distance from ideal
         let candidates = selectCandidateWaypoints(from: places, origin: location, idealWaypointDistance: idealWaypointDistance, difficulty: difficulty)
         
@@ -213,12 +220,11 @@ class GoogleMapsService: ObservableObject {
         
         print("🗺️ Have \(candidates.count) candidate waypoints to try")
         
-        // Step 3: Try candidates and collect all that are within tolerance
+        // Step 3: Try single waypoint candidates and collect all that are within tolerance
         var validRoutes: [GeneratedRoute] = []
         var bestFallbackRoute: GeneratedRoute?
         var bestFallbackDiff = Int.max
         
-        // Try up to 8 candidates to find valid options
         let maxAttempts = min(8, candidates.count)
         
         for i in 0..<maxAttempts {
@@ -226,53 +232,25 @@ class GoogleMapsService: ObservableObject {
             let distance = distanceBetween(location, candidate.coordinate)
             print("🗺️ Trying candidate \(i+1): '\(candidate.name)' at \(Int(distance))m")
             
-            do {
-                let directions = try await getWalkingDirections(
-                    origin: location,
-                    destination: location,
-                    waypoints: [candidate.coordinate]
-                )
-                
-                let totalDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
-                let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
-                let durationMinutes = totalDuration / 60
-                let durationDiff = durationMinutes - targetDurationMinutes
-                
-                print("🗺️ Route result: \(durationMinutes)min (\(totalDistance)m), diff: \(durationDiff)min")
-                
-                let route = GeneratedRoute(
-                    places: [candidate],
-                    polyline: directions.overviewPolyline.points,
-                    distanceMeters: totalDistance,
-                    durationSeconds: totalDuration,
-                    legs: directions.legs
-                )
-                
-                // Check if within tolerance
-                if totalDuration >= minAcceptableDuration && totalDuration <= maxAcceptableDuration {
-                    print("🗺️ ✓ Route within tolerance!")
-                    validRoutes.append(route)
-                } else {
-                    // Track best fallback route (prefer slightly under target)
-                    let absDiff = abs(durationDiff)
-                    let adjustedDiff = durationDiff > 0 ? absDiff + 2 : absDiff
-                    
-                    if adjustedDiff < bestFallbackDiff {
-                        bestFallbackDiff = adjustedDiff
-                        bestFallbackRoute = route
-                    }
-                }
-            } catch {
-                print("🗺️ Failed to get directions for candidate: \(error.localizedDescription)")
-                continue
-            }
+            let _ = await tryRoute(
+                origin: location,
+                waypoints: [candidate],
+                targetDurationMinutes: targetDurationMinutes,
+                minAcceptableDuration: minAcceptableDuration,
+                maxAcceptableDuration: maxAcceptableDuration,
+                validRoutes: &validRoutes,
+                bestFallbackRoute: &bestFallbackRoute,
+                bestFallbackDiff: &bestFallbackDiff,
+                allCandidates: candidates,
+                discoverySpotCount: discoverySpotCount
+            )
         }
         
         // If we have valid routes, randomly select from them
         if !validRoutes.isEmpty {
             let selected = validRoutes.randomElement()!
             let mins = selected.durationSeconds / 60
-            print("🗺️ Found \(validRoutes.count) valid routes. Randomly selected: \(mins)min (target: \(targetDurationMinutes)min)")
+            print("🗺️ Found \(validRoutes.count) valid routes. Randomly selected: \(mins)min with \(selected.places.count) POIs (target: \(targetDurationMinutes)min)")
             return selected
         }
         
@@ -352,6 +330,74 @@ class GoogleMapsService: ObservableObject {
     }
     
     // MARK: - Helper Methods
+    
+    /// Try a route with given waypoints and update valid/fallback routes
+    /// Adds additional discovery spots from other candidates if needed
+    private func tryRoute(
+        origin: CLLocationCoordinate2D,
+        waypoints: [PlaceResult],
+        targetDurationMinutes: Int,
+        minAcceptableDuration: Int,
+        maxAcceptableDuration: Int,
+        validRoutes: inout [GeneratedRoute],
+        bestFallbackRoute: inout GeneratedRoute?,
+        bestFallbackDiff: inout Int,
+        allCandidates: [PlaceResult] = [],
+        discoverySpotCount: Int = 1
+    ) async -> GeneratedRoute? {
+        do {
+            let waypointCoords = waypoints.map { $0.coordinate }
+            let directions = try await getWalkingDirections(
+                origin: origin,
+                destination: origin,
+                waypoints: waypointCoords
+            )
+            
+            let totalDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+            let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
+            let durationMinutes = totalDuration / 60
+            let durationDiff = durationMinutes - targetDurationMinutes
+            
+            // Add additional discovery spots from other candidates
+            var allPlaces = waypoints
+            if discoverySpotCount > 1 && !allCandidates.isEmpty {
+                // Add more places from candidates (excluding the main waypoint)
+                let additionalPlaces = allCandidates
+                    .filter { candidate in !waypoints.contains(where: { $0.placeId == candidate.placeId }) }
+                    .prefix(discoverySpotCount - 1)
+                allPlaces.append(contentsOf: additionalPlaces)
+            }
+            
+            print("🗺️ Route result: \(durationMinutes)min (\(totalDistance)m), diff: \(durationDiff)min, discovery spots: \(allPlaces.count)")
+            
+            let route = GeneratedRoute(
+                places: allPlaces,
+                polyline: directions.overviewPolyline.points,
+                distanceMeters: totalDistance,
+                durationSeconds: totalDuration,
+                legs: directions.legs
+            )
+            
+            // Check if within tolerance
+            if totalDuration >= minAcceptableDuration && totalDuration <= maxAcceptableDuration {
+                print("🗺️ ✓ Route within tolerance!")
+                validRoutes.append(route)
+                return route
+            } else {
+                // Track best fallback route (prefer slightly under target)
+                let absDiff = abs(durationDiff)
+                let adjustedDiff = durationDiff > 0 ? absDiff + 2 : absDiff
+                
+                if adjustedDiff < bestFallbackDiff {
+                    bestFallbackDiff = adjustedDiff
+                    bestFallbackRoute = route
+                }
+            }
+        } catch {
+            print("🗺️ Failed to get directions: \(error.localizedDescription)")
+        }
+        return nil
+    }
     
     private func distanceBetween(_ c1: CLLocationCoordinate2D, _ c2: CLLocationCoordinate2D) -> Double {
         let loc1 = CLLocation(latitude: c1.latitude, longitude: c1.longitude)
