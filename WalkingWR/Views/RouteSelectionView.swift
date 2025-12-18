@@ -18,7 +18,30 @@ struct RouteSelectionView: View {
     @State private var showHelpSheet = false
     @State private var showLocalRoutePicker = false
     @State private var localRouteDuration: Int = 10
+    @State private var localRouteUseCustom = false
     @State private var showEndWalkConfirmation = false
+    
+    // Calculate recommended duration based on delay time (with 5 min buffer)
+    private var recommendedDuration: Int {
+        let availableTime = viewModel.waitTimeInfo.estimatedMinutes - 5
+        let presetOptions = [10, 15, 20, 25, 30]
+        
+        // Find the best preset option that fits within available time
+        if let bestOption = presetOptions.reversed().first(where: { $0 <= availableTime }) {
+            return bestOption
+        }
+        return 10 // Default to minimum if delay is very short
+    }
+    
+    // Whether custom time should be auto-selected (delay > 35 min, i.e., 30 min walk + 5 min buffer)
+    private var shouldUseCustom: Bool {
+        viewModel.waitTimeInfo.estimatedMinutes > 35
+    }
+    
+    // Custom duration value based on delay (with 6 min buffer)
+    private var customDurationForDelay: Int {
+        max(5, viewModel.waitTimeInfo.estimatedMinutes - 6)
+    }
     
     var filteredRoutes: [WalkingRoute] {
         var routes = viewModel.availableRoutes
@@ -132,8 +155,21 @@ struct RouteSelectionView: View {
                     viewModel: viewModel,
                     locationService: viewModel.locationService,
                     selectedDuration: $localRouteDuration,
+                    useCustomTime: $localRouteUseCustom,
                     isPresented: $showLocalRoutePicker
                 )
+            }
+            .onChange(of: showLocalRoutePicker) { _, isShowing in
+                if isShowing {
+                    // Pre-select duration based on delay time
+                    if shouldUseCustom {
+                        localRouteUseCustom = true
+                        localRouteDuration = customDurationForDelay
+                    } else {
+                        localRouteUseCustom = false
+                        localRouteDuration = recommendedDuration
+                    }
+                }
             }
             .sheet(isPresented: $viewModel.showMarkerArrivalPrompt) {
                 MarkerArrivalSheet(viewModel: viewModel)
@@ -449,73 +485,279 @@ struct CompactRouteCard: View {
     let isTooLong: Bool
     let onSelect: () -> Void
     
+    @State private var isExpanded = false
+    
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 12) {
-                // Icon
-                ZStack {
-                    Circle()
-                        .fill(route.color.opacity(0.15))
-                        .frame(width: 36, height: 36)
-                    Image(systemName: route.icon)
-                        .font(.callout)
-                        .foregroundColor(route.color)
+        VStack(spacing: 0) {
+            // Main row - tappable to expand
+            Button(action: {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    isExpanded.toggle()
                 }
-                
-                // Info
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(route.name)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
-                        
-                        if isRecommended {
-                            Image(systemName: "star.fill")
-                                .font(.caption2)
-                                .foregroundColor(.mintGreen)
+            }) {
+                HStack(spacing: 12) {
+                    // Icon
+                    ZStack {
+                        Circle()
+                            .fill(route.color.opacity(0.15))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: route.icon)
+                            .font(.callout)
+                            .foregroundColor(route.color)
+                    }
+                    
+                    // Info
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(route.name)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                            
+                            if isRecommended {
+                                Image(systemName: "star.fill")
+                                    .font(.caption2)
+                                    .foregroundColor(.mintGreen)
+                            }
+                            
+                            if isTooLong {
+                                Text("LONG")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(Color.coralPink)
+                                    .clipShape(Capsule())
+                            }
                         }
                         
-                        if isTooLong {
-                            Text("LONG")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 2)
-                                .background(Color.coralPink)
-                                .clipShape(Capsule())
+                        HStack(spacing: 8) {
+                            Label("\(route.durationMinutes)m", systemImage: "clock")
+                            Label("\(route.qrMarkers.count) spots", systemImage: "mappin")
+                            if route.isIndoor {
+                                Label("Indoor", systemImage: "building.2")
+                            }
+                        }
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    // Expand indicator
+                    Image(systemName: "chevron.down")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                }
+                .padding(12)
+            }
+            .buttonStyle(.plain)
+            
+            // Expanded details
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 12) {
+                    Divider()
+                    
+                    // Map preview (for outdoor routes with path)
+                    if !route.isIndoor && route.routePath.count >= 2 {
+                        RouteMapPreview(route: route)
+                            .frame(height: 150)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else if route.isIndoor {
+                        // Indoor route - show building icon instead
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 8) {
+                                Image(systemName: "building.2.fill")
+                                    .font(.largeTitle)
+                                    .foregroundColor(.lavenderMist)
+                                Text("Indoor Route")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(height: 100)
+                            Spacer()
+                        }
+                        .background(Color(.quaternarySystemFill))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    
+                    // Description
+                    Text(route.description)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    
+                    // Route details
+                    HStack(spacing: 16) {
+                        // Duration & Distance
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("\(route.durationMinutes) minutes", systemImage: "clock.fill")
+                                .font(.caption)
+                                .foregroundColor(.primary)
+                            Label("\(route.distanceMeters)m distance", systemImage: "figure.walk")
+                                .font(.caption)
+                                .foregroundColor(.primary)
+                        }
+                        
+                        Spacer()
+                        
+                        // Difficulty badge
+                        HStack(spacing: 4) {
+                            Image(systemName: difficultyIcon)
+                                .font(.caption2)
+                            Text(route.difficulty.rawValue.capitalized)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundColor(difficultyColor)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(difficultyColor.opacity(0.15))
+                        .clipShape(Capsule())
+                    }
+                    
+                    // Landmarks/Discovery spots
+                    if !route.landmarks.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Discovery Spots")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                            
+                            FlowLayout(spacing: 6) {
+                                ForEach(route.landmarks.prefix(5), id: \.self) { landmark in
+                                    Text(landmark)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color(.quaternarySystemFill))
+                                        .clipShape(Capsule())
+                                }
+                                if route.landmarks.count > 5 {
+                                    Text("+\(route.landmarks.count - 5) more")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color(.quaternarySystemFill))
+                                        .clipShape(Capsule())
+                                }
+                            }
                         }
                     }
                     
-                    HStack(spacing: 8) {
-                        Label("\(route.durationMinutes)m", systemImage: "clock")
-                        Label("\(route.qrMarkers.count) spots", systemImage: "mappin")
+                    // Features row
+                    HStack(spacing: 12) {
+                        if route.isAccessible {
+                            Label("Accessible", systemImage: "figure.roll")
+                                .font(.caption2)
+                                .foregroundColor(.tealAccent)
+                        }
                         if route.isIndoor {
                             Label("Indoor", systemImage: "building.2")
+                                .font(.caption2)
+                                .foregroundColor(.lavenderMist)
+                        }
+                        if route.isCurated {
+                            Label("Verified", systemImage: "checkmark.seal.fill")
+                                .font(.caption2)
+                                .foregroundColor(.mintGreen)
                         }
                     }
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                    
+                    // Start button
+                    Button(action: onSelect) {
+                        HStack {
+                            Image(systemName: "figure.walk")
+                            Text("Start This Walk")
+                                .fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(route.color)
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                    }
                 }
-                
-                Spacer()
-                
-                // Go button
-                Text("Go")
-                    .font(.caption)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(route.color)
-                    .clipShape(Capsule())
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
-            .padding(12)
-            .background(Color(.tertiarySystemBackground))
-            .cornerRadius(10)
         }
-        .buttonStyle(.plain)
+        .background(Color(.tertiarySystemBackground))
+        .cornerRadius(10)
+    }
+    
+    var difficultyIcon: String {
+        switch route.difficulty {
+        case .easy: return "leaf.fill"
+        case .moderate: return "figure.walk"
+        case .challenging: return "flame.fill"
+        }
+    }
+    
+    var difficultyColor: Color {
+        switch route.difficulty {
+        case .easy: return .mintGreen
+        case .moderate: return .softAmber
+        case .challenging: return .coralPink
+        }
+    }
+}
+
+// MARK: - Route Map Preview
+struct RouteMapPreview: View {
+    let route: WalkingRoute
+    
+    var body: some View {
+        Map {
+            // Route polyline
+            if route.routePath.count >= 2 {
+                MapPolyline(coordinates: route.routePath)
+                    .stroke(route.color, lineWidth: 3)
+            }
+            
+            // Start marker
+            if let start = route.routePath.first {
+                Annotation("Start", coordinate: start) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.mintGreen)
+                            .frame(width: 24, height: 24)
+                        Image(systemName: "figure.walk")
+                            .font(.caption2)
+                            .foregroundColor(.white)
+                    }
+                }
+            }
+            
+            // Discovery markers
+            ForEach(route.qrMarkers.prefix(3)) { marker in
+                Annotation("", coordinate: marker.coordinate) {
+                    Circle()
+                        .fill(route.color)
+                        .frame(width: 12, height: 12)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white, lineWidth: 2)
+                        )
+                }
+            }
+        }
+        .mapStyle(.standard(elevation: .flat))
+        .disabled(true) // Prevent interaction - it's just a preview
+        .overlay(
+            // Gradient overlay at bottom for better text readability if needed
+            LinearGradient(
+                colors: [.clear, Color(.tertiarySystemBackground).opacity(0.3)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 }
 
@@ -599,14 +841,16 @@ struct LocalRoutePickerSheet: View {
     @ObservedObject var locationService: LocationService
     @StateObject private var mapsService = GoogleMapsService.shared
     @Binding var selectedDuration: Int
+    @Binding var useCustomTime: Bool
     @Binding var isPresented: Bool
     @State private var isGenerating = false
     @State private var generatedRoute: WalkingRoute?
     @State private var generatedRouteData: GeneratedRoute?
     @State private var showMapPreview = false
     @State private var errorMessage: String?
+    @State private var customTimeValue: Double = 5
     
-    let durationOptions = [5, 10, 15, 20, 25, 30]
+    let durationOptions = [10, 15, 20, 25, 30]
     
     var body: some View {
         NavigationStack {
@@ -677,10 +921,107 @@ struct LocalRoutePickerSheet: View {
                                     ForEach(durationOptions, id: \.self) { duration in
                                         DurationOptionButton(
                                             duration: duration,
-                                            isSelected: selectedDuration == duration,
-                                            onSelect: { selectedDuration = duration }
+                                            isSelected: !useCustomTime && selectedDuration == duration,
+                                            onSelect: {
+                                                useCustomTime = false
+                                                selectedDuration = duration
+                                            }
                                         )
                                     }
+                                    
+                                    // Custom time button
+                                    Button(action: {
+                                        useCustomTime = true
+                                        selectedDuration = Int(customTimeValue)
+                                    }) {
+                                        VStack(spacing: 4) {
+                                            Image(systemName: "slider.horizontal.3")
+                                                .font(.title3)
+                                            Text("Custom")
+                                                .font(.caption)
+                                                .fontWeight(.medium)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 16)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .fill(useCustomTime ? Color.tealAccent : Color.tealAccent.opacity(0.1))
+                                        )
+                                        .foregroundColor(useCustomTime ? .white : .tealAccent)
+                                    }
+                                }
+                                
+                                // Custom time slider
+                                if useCustomTime {
+                                    let delayTime = viewModel.waitTimeInfo.estimatedMinutes
+                                    let selectedTime = Int(customTimeValue)
+                                    let isOverTime = selectedTime >= delayTime
+                                    let isCloseToTime = selectedTime >= delayTime - 5 && selectedTime < delayTime
+                                    
+                                    let sliderColor: Color = {
+                                        if isOverTime { return .coralPink }
+                                        if isCloseToTime { return .softAmber }
+                                        return .tealAccent
+                                    }()
+                                    
+                                    VStack(spacing: 8) {
+                                        HStack {
+                                            Text("\(selectedTime) minutes")
+                                                .font(.titleMedium)
+                                                .fontWeight(.bold)
+                                                .foregroundColor(sliderColor)
+                                            
+                                            Spacer()
+                                            
+                                            Text("~\(selectedTime * 100) steps")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        
+                                        Slider(value: $customTimeValue, in: 1...60, step: 1)
+                                            .tint(sliderColor)
+                                            .onChange(of: customTimeValue) { _, newValue in
+                                                selectedDuration = Int(newValue)
+                                            }
+                                        
+                                        HStack {
+                                            Text("1 min")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                            Spacer()
+                                            Text("60 min")
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        
+                                        // Warning messages
+                                        if isOverTime {
+                                            HStack(spacing: 8) {
+                                                Image(systemName: "exclamationmark.triangle.fill")
+                                                    .foregroundColor(.coralPink)
+                                                Text("This exceeds your \(delayTime) min delay. You may miss your appointment.")
+                                                    .font(.caption)
+                                                    .foregroundColor(.coralPink)
+                                            }
+                                            .padding(10)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .background(Color.coralPink.opacity(0.1))
+                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        } else if isCloseToTime {
+                                            HStack(spacing: 8) {
+                                                Image(systemName: "clock.badge.exclamationmark")
+                                                    .foregroundColor(.softAmber)
+                                                Text("This is close to your \(delayTime) min delay. Allow time to return.")
+                                                    .font(.caption)
+                                                    .foregroundColor(.softAmber)
+                                            }
+                                            .padding(10)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .background(Color.softAmber.opacity(0.1))
+                                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        }
+                                    }
+                                    .padding(.top, 8)
                                 }
                             }
                             .padding(20)
@@ -833,6 +1174,10 @@ struct LocalRoutePickerSheet: View {
             }
             .onAppear {
                 locationService.requestFreshLocation()
+                // Sync customTimeValue with selectedDuration if in custom mode
+                if useCustomTime {
+                    customTimeValue = Double(selectedDuration)
+                }
             }
         }
     }

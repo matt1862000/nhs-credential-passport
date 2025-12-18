@@ -313,6 +313,21 @@ struct WalkingSuggestionCard: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var selectedTab: Int
     
+    // Suggested duration based on wait time (leave 5 min buffer)
+    private var suggestedDuration: Int {
+        let waitTime = viewModel.waitTimeInfo.estimatedMinutes
+        if waitTime >= 25 { return 20 }
+        if waitTime >= 20 { return 15 }
+        if waitTime >= 15 { return 10 }
+        if waitTime >= 10 { return 5 }
+        return 0 // Too short to walk
+    }
+    
+    // Estimated steps for the duration
+    private var estimatedSteps: Int {
+        suggestedDuration * 100 // ~100 steps per minute
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -328,17 +343,15 @@ struct WalkingSuggestionCard: View {
                 Spacer()
             }
             
-            let suggestedRoutes = viewModel.suggestedRoutes(for: viewModel.waitTimeInfo.estimatedMinutes)
-            
-            if let bestRoute = suggestedRoutes.first {
+            if suggestedDuration > 0 {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(bestRoute.name)
+                        Text("Create your route")
                             .font(.bodyLarge)
                             .fontWeight(.medium)
                             .foregroundColor(.primary)
                         
-                        Text("\(bestRoute.durationMinutes) min • \(bestRoute.estimatedSteps) steps")
+                        Text("\(suggestedDuration) min • \(estimatedSteps) steps")
                             .font(.bodyMedium)
                             .foregroundColor(.primary)
                     }
@@ -346,8 +359,7 @@ struct WalkingSuggestionCard: View {
                     Spacer()
                     
                     Button("Go") {
-                        viewModel.selectRoute(bestRoute)
-                        selectedTab = 1
+                        selectedTab = 1 // Navigate to Walk tab to create local route
                     }
                     .font(.bodyLarge)
                     .fontWeight(.semibold)
@@ -361,7 +373,7 @@ struct WalkingSuggestionCard: View {
                 .background(Color.tealAccent.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 
-                Text("You have time for a \(bestRoute.durationMinutes)-minute route. We'll notify you when to head back.")
+                Text("You have time for a \(suggestedDuration)-minute route. We'll notify you when to head back.")
                     .font(.caption)
                     .foregroundColor(.primary)
             } else {
