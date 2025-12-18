@@ -8,6 +8,8 @@
 		<string>location</string>
 	</array>
 	<key>GOOGLE_MAPS_API_KEY</key>
-	<string>AIzaSyDZkuQUd5nmGdBKXecRNMOxCiPecHguh9s</string>
+	<string>AIzaSyB4ArGM5beRSeInpW-P3q1SFbS_lrQ0jx8</string>
+	<key>GEMINI_API_KEY</key>
+	<string>AIzaSyDxMzPL_-enELjtzPWBNGoWbPjTmPGeZ_c</string>
 </dict>
 </plist>
