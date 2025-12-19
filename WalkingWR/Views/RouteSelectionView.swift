@@ -850,8 +850,17 @@ struct LocalRoutePickerSheet: View {
     @State private var lastValidRoute: WalkingRoute?
     @State private var lastValidRouteData: GeneratedRoute?
     @State private var isRecycledRoute = false  // Indicates shuffle fell back to previous route
+    @State private var shownPlaceIdSets: [Set<String>] = []  // Track all shown route combinations
+    
+    // Pre-generated routes for instant shuffling
+    @State private var allRoutes: [(route: WalkingRoute, data: GeneratedRoute)] = []
+    @State private var currentRouteIndex: Int = 0
+    @State private var isPreGeneratingRoutes = false
+    @State private var preGenerationComplete = false
+    @State private var viewedRouteIndices: Set<Int> = []  // Track which routes user has seen
     
     let durationOptions = [10, 15, 20, 25, 30]
+    let maxRoutesToGenerate = 10
     
     var body: some View {
         NavigationStack {
@@ -913,6 +922,9 @@ struct LocalRoutePickerSheet: View {
                         generatedData: generatedRouteData,
                         isRecycled: isRecycledRoute,
                         targetDurationMinutes: selectedDuration,
+                        currentRouteIndex: currentRouteIndex + 1,  // 1-based for display
+                        totalRoutes: allRoutes.count,
+                        isLoadingMoreRoutes: isPreGeneratingRoutes,
                         onStartWalk: {
                             viewModel.selectRoute(route)
                             viewModel.startWalk()
@@ -921,20 +933,19 @@ struct LocalRoutePickerSheet: View {
                             }
                         },
                         onShuffle: {
-                            // Show shuffle loading state
-                            isShuffling = true
-                            generatedRoute = nil
-                            generatedRouteData = nil
-                            errorMessage = nil
-                            // Regenerate with randomization
-                            generateRouteForShuffle()
+                            shuffleToNextRoute()
                         },
                         onChangeOptions: {
-                            // Go back to options screen - clear last valid too since options changing
+                            // Go back to options screen - clear all tracking since options changing
                             generatedRoute = nil
                             generatedRouteData = nil
                             lastValidRoute = nil
                             lastValidRouteData = nil
+                            shownPlaceIdSets = []  // Reset shown routes tracking
+                            allRoutes = []
+                            currentRouteIndex = 0
+                            preGenerationComplete = false
+                            viewedRouteIndices = []  // Reset viewed tracking
                             showMapPreview = false
                             errorMessage = nil
                         }
@@ -1512,6 +1523,15 @@ struct LocalRoutePickerSheet: View {
                         // Save as last valid for recycling on shuffle
                         lastValidRoute = localRoute
                         lastValidRouteData = result
+                        // Initialize route array with first route
+                        allRoutes = [(route: localRoute, data: result)]
+                        currentRouteIndex = 0
+                        preGenerationComplete = false
+                        isRecycledRoute = false  // First route is never recycled
+                        viewedRouteIndices = [0]  // Mark first route as viewed
+                        // Track place IDs for this route
+                        let placeIds = Set(result.places.map { $0.placeId })
+                        shownPlaceIdSets = [placeIds]
                         showMapPreview = true
                     }
                 } catch {
@@ -1538,10 +1558,14 @@ struct LocalRoutePickerSheet: View {
         if mapsService.hasAPIKey {
             Task {
                 do {
+                    // Flatten all previously shown place IDs to exclude from new route
+                    let excludedPlaceIds = shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
+                    
                     let result = try await mapsService.generateLocalRoute(
                         from: userLocation.coordinate,
                         targetDurationMinutes: selectedDuration,
-                        difficulty: selectedDifficulty
+                        difficulty: selectedDifficulty,
+                        excludePlaceIds: excludedPlaceIds
                     )
                     
                     guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
@@ -1634,15 +1658,30 @@ struct LocalRoutePickerSheet: View {
                             walkingDirections: directions
                         )
                         
+                        // Check if this route has been shown before in this session
+                        let newPlaceIds = Set(result.places.map { $0.placeId })
+                        let isRepeatRoute = shownPlaceIdSets.contains(newPlaceIds)
+                        
+                        // Track this route combination
+                        if !isRepeatRoute {
+                            shownPlaceIdSets.append(newPlaceIds)
+                        }
+                        
                         // Save as last valid route for recycling
                         lastValidRoute = route
                         lastValidRouteData = result
                         
                         generatedRoute = route
                         generatedRouteData = result
-                        isRecycledRoute = false  // New route, not recycled
+                        isRecycledRoute = isRepeatRoute  // True if same places shown before
                         showMapPreview = true
                         isShuffling = false
+                        
+                        if isRepeatRoute {
+                            print("🔄 Shuffle returned previously shown places - marking as recycled")
+                        } else {
+                            print("✨ New route combination shown (total unique: \(shownPlaceIdSets.count))")
+                        }
                     }
                 } catch {
                     await MainActor.run {
@@ -1673,6 +1712,170 @@ struct LocalRoutePickerSheet: View {
                 isShuffling = false
                 showMapPreview = true
                 errorMessage = "Maps service not available."
+            }
+        }
+    }
+    
+    /// Handle shuffle button press - cycles through pre-generated routes or triggers generation
+    func shuffleToNextRoute() {
+        // If we have more pre-generated routes to show, cycle to next
+        if currentRouteIndex < allRoutes.count - 1 {
+            // Show next pre-generated route instantly
+            currentRouteIndex += 1
+            let nextRoute = allRoutes[currentRouteIndex]
+            generatedRoute = nextRoute.route
+            generatedRouteData = nextRoute.data
+            // Check if this route has been viewed before
+            isRecycledRoute = viewedRouteIndices.contains(currentRouteIndex)
+            viewedRouteIndices.insert(currentRouteIndex)  // Mark as viewed
+            print("🔀 Showing route \(currentRouteIndex + 1) of \(allRoutes.count) (recycled: \(isRecycledRoute))")
+        } else if preGenerationComplete && currentRouteIndex >= allRoutes.count - 1 {
+            // All routes have been shown, cycle back to start
+            currentRouteIndex = 0
+            let firstRoute = allRoutes[0]
+            generatedRoute = firstRoute.route
+            generatedRouteData = firstRoute.data
+            isRecycledRoute = true  // Always recycled when cycling back
+            print("🔄 Cycling back to route 1 of \(allRoutes.count)")
+        } else {
+            // First shuffle or still generating - trigger new route generation
+            isShuffling = true
+            generatedRoute = nil
+            generatedRouteData = nil
+            errorMessage = nil
+            
+            // Start pre-generation in background if not already running
+            if !isPreGeneratingRoutes && !preGenerationComplete {
+                preGenerateRemainingRoutes()
+            }
+            
+            // Generate next route
+            generateRouteForShuffle()
+        }
+    }
+    
+    /// Pre-generate remaining routes in background for instant shuffling
+    func preGenerateRemainingRoutes() {
+        guard let userLocation = locationService.currentLocation else { return }
+        guard mapsService.hasAPIKey else { return }
+        guard !isPreGeneratingRoutes else { return }
+        
+        isPreGeneratingRoutes = true
+        print("🚀 Starting background pre-generation of up to \(maxRoutesToGenerate) routes...")
+        
+        Task {
+            var routesGenerated = allRoutes.count
+            var consecutiveFailures = 0
+            let maxConsecutiveFailures = 5  // Try harder to find more routes
+            
+            while routesGenerated < maxRoutesToGenerate && consecutiveFailures < maxConsecutiveFailures {
+                do {
+                    // Collect all place IDs we've already used
+                    let excludedPlaceIds = await MainActor.run {
+                        shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
+                    }
+                    
+                    let result = try await mapsService.generateLocalRoute(
+                        from: userLocation.coordinate,
+                        targetDurationMinutes: selectedDuration,
+                        difficulty: selectedDifficulty,
+                        excludePlaceIds: excludedPlaceIds
+                    )
+                    
+                    // Validate result
+                    guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
+                        consecutiveFailures += 1
+                        continue
+                    }
+                    
+                    // Check if this is a duplicate route
+                    let newPlaceIds = Set(result.places.map { $0.placeId })
+                    let isDuplicate = await MainActor.run { shownPlaceIdSets.contains(newPlaceIds) }
+                    
+                    if isDuplicate {
+                        consecutiveFailures += 1
+                        print("⚠️ Pre-generation found duplicate route, skipping...")
+                        continue
+                    }
+                    
+                    // Create markers and directions
+                    let markers = await MainActor.run {
+                        createMarkersFromPlaces(result.places, origin: userLocation.coordinate)
+                    }
+                    
+                    guard !markers.isEmpty else {
+                        consecutiveFailures += 1
+                        continue
+                    }
+                    
+                    let directions = await MainActor.run {
+                        extractWalkingDirections(from: result.legs)
+                    }
+                    
+                    // Determine difficulty
+                    let routeDifficulty: RouteDifficulty
+                    if let userDifficulty = selectedDifficulty {
+                        routeDifficulty = userDifficulty
+                    } else {
+                        routeDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                    }
+                    
+                    // Generate AI content
+                    let waypointInfos = result.places.map { place in
+                        GeminiService.WaypointInfo(
+                            name: place.name,
+                            types: place.types ?? [],
+                            vicinity: place.vicinity
+                        )
+                    }
+                    let aiContent = await GeminiService.shared.generateRouteContent(
+                        waypoints: waypointInfos,
+                        durationMinutes: result.durationMinutes,
+                        distanceMeters: result.distanceMeters,
+                        difficulty: selectedDifficulty
+                    )
+                    
+                    let routeName = aiContent?.name ?? "Local Discovery"
+                    let description = aiContent?.description ?? "Explore \(markers.count) interesting spots nearby"
+                    
+                    let route = WalkingRoute(
+                        name: routeName,
+                        description: description,
+                        durationMinutes: max(1, result.durationMinutes),
+                        distanceMeters: result.distanceMeters,
+                        difficulty: routeDifficulty,
+                        isIndoor: false,
+                        isAccessible: true,
+                        landmarks: ["Start"] + result.places.map { $0.name } + ["Return"],
+                        icon: "location.fill",
+                        color: .tealAccent,
+                        qrMarkers: markers,
+                        routeType: .local,
+                        encodedPolyline: result.polyline,
+                        walkingDirections: directions
+                    )
+                    
+                    await MainActor.run {
+                        allRoutes.append((route: route, data: result))
+                        shownPlaceIdSets.append(newPlaceIds)
+                        routesGenerated = allRoutes.count
+                        consecutiveFailures = 0  // Reset on success
+                        print("✅ Pre-generated route \(routesGenerated) of \(maxRoutesToGenerate)")
+                    }
+                    
+                } catch {
+                    consecutiveFailures += 1
+                    print("⚠️ Pre-generation error: \(error.localizedDescription)")
+                }
+                
+                // Small delay between generations to avoid rate limiting
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            }
+            
+            await MainActor.run {
+                isPreGeneratingRoutes = false
+                preGenerationComplete = true
+                print("🏁 Pre-generation complete! Total routes: \(allRoutes.count)")
             }
         }
     }
@@ -1863,6 +2066,9 @@ struct LocalRouteMapPreview: View {
     var generatedData: GeneratedRoute?
     var isRecycled: Bool = false   // True if this is a recycled route (no new options found)
     var targetDurationMinutes: Int = 0  // Original requested duration
+    var currentRouteIndex: Int = 1  // 1-based index for display
+    var totalRoutes: Int = 1
+    var isLoadingMoreRoutes: Bool = false  // True when pre-generating in background
     let onStartWalk: () -> Void
     let onShuffle: () -> Void      // Quick regenerate with same settings
     let onChangeOptions: () -> Void // Go back to options screen
@@ -2163,17 +2369,42 @@ struct LocalRouteMapPreview: View {
                     Spacer()
                 }
                 
+                // Route index indicator
+                HStack(spacing: 6) {
+                    Text("\(currentRouteIndex) of \(totalRoutes)")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
+                    
+                    if isLoadingMoreRoutes {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text("finding more...")
+                            .font(.caption)
+                            .foregroundColor(.secondary.opacity(0.7))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                
                 // Action buttons
                 HStack(spacing: 10) {
                     // Shuffle - quick regenerate with same settings
                     Button(action: onShuffle) {
-                        Image(systemName: "shuffle")
-                            .font(.title3)
-                            .fontWeight(.medium)
-                            .foregroundColor(.tealAccent)
-                            .frame(width: 48, height: 48)
-                            .background(Color.tealAccent.opacity(0.15))
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        HStack(spacing: 6) {
+                            Image(systemName: "shuffle")
+                                .font(.title3)
+                                .fontWeight(.medium)
+                            if totalRoutes > 1 {
+                                Text("Next")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                            }
+                        }
+                        .foregroundColor(.tealAccent)
+                        .padding(.horizontal, totalRoutes > 1 ? 16 : 12)
+                        .frame(height: 48)
+                        .background(Color.tealAccent.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     

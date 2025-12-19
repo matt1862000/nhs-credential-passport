@@ -128,7 +128,6 @@ struct ClinicianSelectionView: View {
                 }
             } message: {
                 if let info = viewModel.waitTimeChangeInfo {
-                    let decrease = info.oldMinutes - info.newMinutes
                     if info.newMinutes == 0 {
                         Text("The clinic is now running on time.")
                     } else {

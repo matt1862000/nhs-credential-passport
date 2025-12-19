@@ -25,7 +25,7 @@ class GoogleMapsService: ObservableObject {
     
     // MARK: - Find Nearby Places
     /// Finds points of interest near a location using Google Places API
-    /// Note: The Places API 'type' parameter only accepts ONE type at a time
+    /// Searches multiple place types in parallel for maximum variety
     func findNearbyPlaces(
         location: CLLocationCoordinate2D,
         radiusMeters: Int = 500,
@@ -35,25 +35,120 @@ class GoogleMapsService: ObservableObject {
             throw GoogleMapsError.missingAPIKey
         }
         
+        // Search multiple specific types in parallel to maximize POI variety
+        // Google's default "prominence" ranking favors famous places over local businesses
+        let placeTypesToSearch = [
+            // Retail & Shopping
+            "store",              // General retail
+            "convenience_store",  // Local corner shops
+            "supermarket",        // Supermarkets
+            "shopping_mall",      // Shopping centers
+            "hardware_store",     // DIY shops
+            "florist",            // Flower shops
+            "pet_store",          // Pet shops
+            "liquor_store",       // Off-licenses
+            
+            // Food & Drink
+            "restaurant",         // Restaurants
+            "cafe",               // Coffee shops
+            "bar",                // Bars/pubs
+            "bakery",             // Bakeries
+            "meal_takeaway",      // Takeaways (fish & chips, kebabs)
+            
+            // Health & Wellness
+            "pharmacy",           // Pharmacies
+            "doctor",             // GP surgeries
+            "dentist",            // Dental practices
+            "veterinary_care",    // Vets
+            "spa",                // Spas/wellness
+            
+            // Services
+            "bank",               // Banks
+            "post_office",        // Post offices
+            "hair_care",          // Hairdressers/barbers
+            "laundry",            // Launderettes
+            "car_wash",           // Car washes
+            "gas_station",        // Petrol stations
+            
+            // Culture & Leisure
+            "park",               // Parks
+            "museum",             // Museums
+            "library",            // Libraries
+            "art_gallery",        // Art galleries
+            "book_store",         // Book shops
+            "gym",                // Gyms
+            "church",             // Churches/places of worship
+            "movie_theater",      // Cinemas
+            "bowling_alley",      // Bowling alleys
+            
+            // Education & Community
+            "school",             // Schools
+            "community_center",   // Community centres
+            
+            // Outdoors & Nature
+            "cemetery",           // Cemeteries/churchyards
+            "campground",         // Camping/green spaces
+            
+            // Transport
+            "bus_station",        // Bus stations
+            "train_station",      // Train stations
+            
+            // Lodging
+            "lodging",            // Hotels, B&Bs
+            
+            // Government & Landmarks
+            "local_government_office",  // Town halls
+            "fire_station",       // Fire stations
+            "police"              // Police stations
+        ]
+        
         var allResults: [PlaceResult] = []
+        var seenPlaceIds = Set<String>()
         
-        // The Places API only accepts one type at a time, so we'll search with a single type
-        // Using "point_of_interest" or no type restriction gives best results
-        let primaryType = types.first ?? "point_of_interest"
+        // Search each type in parallel using TaskGroup
+        await withTaskGroup(of: [PlaceResult].self) { group in
+            for placeType in placeTypesToSearch {
+                group.addTask {
+                    do {
+                        return try await self.searchSingleType(
+                            location: location,
+                            radiusMeters: radiusMeters,
+                            type: placeType
+                        )
+                    } catch {
+                        print("🗺️ Search failed for type '\(placeType)': \(error)")
+                        return []
+                    }
+                }
+            }
+            
+            // Collect results from all parallel searches
+            for await results in group {
+                for place in results {
+                    if !seenPlaceIds.contains(place.placeId) {
+                        seenPlaceIds.insert(place.placeId)
+                        allResults.append(place)
+                    }
+                }
+            }
+        }
         
-        // Build URL - can also omit 'type' entirely to get all nearby places
+        print("🗺️ Multi-type search found \(allResults.count) unique POIs from \(placeTypesToSearch.count) categories")
+        
+        return allResults
+    }
+    
+    /// Search for a single place type
+    private func searchSingleType(
+        location: CLLocationCoordinate2D,
+        radiusMeters: Int,
+        type: String
+    ) async throws -> [PlaceResult] {
         var urlString = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?"
         urlString += "location=\(location.latitude),\(location.longitude)"
         urlString += "&radius=\(radiusMeters)"
-        
-        // Only add type if it's not a generic search
-        if primaryType != "establishment" && primaryType != "point_of_interest" {
-            urlString += "&type=\(primaryType)"
-        }
-        
+        urlString += "&type=\(type)"
         urlString += "&key=\(apiKey)"
-        
-        print("🗺️ Places API URL: \(urlString.replacingOccurrences(of: apiKey, with: "***"))")
         
         guard let url = URL(string: urlString) else {
             throw GoogleMapsError.invalidURL
@@ -62,26 +157,16 @@ class GoogleMapsService: ObservableObject {
         let (data, response) = try await session.data(from: url)
         
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            print("🗺️ Places API HTTP error: \(String(describing: (response as? HTTPURLResponse)?.statusCode))")
             throw GoogleMapsError.serverError
         }
         
-        // Debug: print raw response
-        if let jsonString = String(data: data, encoding: .utf8) {
-            print("🗺️ Places API response (first 500 chars): \(String(jsonString.prefix(500)))")
-        }
-        
         let placesResponse = try JSONDecoder().decode(PlacesResponse.self, from: data)
-        
-        print("🗺️ Places API status: \(placesResponse.status), results count: \(placesResponse.results.count)")
         
         if placesResponse.status != "OK" && placesResponse.status != "ZERO_RESULTS" {
             throw GoogleMapsError.apiError(placesResponse.status)
         }
         
-        allResults.append(contentsOf: placesResponse.results)
-        
-        return allResults
+        return placesResponse.results
     }
     
     // MARK: - Get Walking Directions
@@ -138,7 +223,8 @@ class GoogleMapsService: ObservableObject {
     func generateLocalRoute(
         from location: CLLocationCoordinate2D,
         targetDurationMinutes: Int,
-        difficulty: RouteDifficulty? = nil
+        difficulty: RouteDifficulty? = nil,
+        excludePlaceIds: Set<String> = []
     ) async throws -> GeneratedRoute {
         await MainActor.run { isLoading = true }
         defer { Task { @MainActor in isLoading = false } }
@@ -171,6 +257,13 @@ class GoogleMapsService: ObservableObject {
         )
         
         print("🗺️ Found \(places.count) POIs (need \(desiredSpots) for route)")
+        
+        // Filter out previously shown places to ensure variety
+        if !excludePlaceIds.isEmpty {
+            let beforeCount = places.count
+            places = places.filter { !excludePlaceIds.contains($0.placeId) }
+            print("🗺️ Excluded \(beforeCount - places.count) previously shown POIs, \(places.count) remaining")
+        }
         
         // For longer routes, we need more POIs - do additional searches at different points
         if places.count < desiredSpots * 2 && targetDurationMinutes > 20 {
