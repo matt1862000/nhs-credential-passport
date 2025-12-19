@@ -61,9 +61,9 @@ struct WellbeingView: View {
                         case .gratitude:
                             GratitudeSection(savedEntries: $viewModel.userProgress.gratitudeEntries)
                         case .nature:
-                            NatureSection()
+                            NatureSection(viewModel: viewModel)
                         case .digital:
-                            DigitalSkillsSection(userProgress: viewModel.userProgress)
+                            DigitalSkillsSection(userProgress: viewModel.userProgress, viewModel: viewModel)
                         }
                         
                         Spacer(minLength: 100)
@@ -750,6 +750,7 @@ struct GratitudeSection: View {
 
 // MARK: - Nature Section
 struct NatureSection: View {
+    @ObservedObject var viewModel: WaitingRoomViewModel
     @StateObject private var photoStorage = PhotoStorageService.shared
     @State private var selectedPhoto: CapturedPhoto?
     
@@ -834,6 +835,7 @@ struct NatureSection: View {
         }
         .sheet(item: $selectedPhoto) { photo in
             PhotoDetailView(photo: photo, photoStorage: photoStorage)
+                .delayAlerts(viewModel: viewModel)
         }
     }
 }
@@ -1017,6 +1019,7 @@ enum DigitalSkillAction {
 
 struct DigitalSkillsSection: View {
     @ObservedObject var userProgress: UserProgress
+    @ObservedObject var viewModel: WaitingRoomViewModel
     @StateObject private var photoStorage = PhotoStorageService.shared
     @State private var showImagePicker = false
     @State private var showPhotoOptions = false
@@ -1083,6 +1086,7 @@ struct DigitalSkillsSection: View {
         }
         .sheet(isPresented: $showImagePicker) {
             ImagePicker(image: $capturedImage, useCamera: useCamera)
+                .delayAlerts(viewModel: viewModel)
         }
         .onChange(of: capturedImage) { oldValue, newValue in
             if let image = newValue {

@@ -3844,6 +3844,7 @@ struct MarkerArrivalSheet: View {
             }
             .sheet(isPresented: $showImagePicker) {
                 ImagePicker(image: $capturedImage, useCamera: useCamera)
+                    .delayAlerts(viewModel: viewModel)
             }
             .onChange(of: capturedImage) { oldValue, newValue in
                 if let image = newValue {
