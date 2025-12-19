@@ -12,6 +12,8 @@ struct MainTabView: View {
     @State private var selectedTab = 0
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var showOnboarding = false
+    @State private var hasCheckedPendingNotification = false
+    @Environment(\.scenePhase) private var scenePhase
     
     init() {
         // Only show onboarding if user hasn't completed it before
@@ -64,40 +66,65 @@ struct MainTabView: View {
             )
         }
         .onAppear {
-            // Check for pending notification from cold launch
-            checkForPendingPushNotification()
+            // Only check once per cold launch
+            guard !hasCheckedPendingNotification else { return }
+            hasCheckedPendingNotification = true
+            
+            // On cold launch, delay to ensure AppDelegate.didReceive has completed
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                checkForPendingPushNotification()
+            }
+        }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            if newPhase == .active {
+                // App became active - check for pending push notification
+                // Small delay to ensure AppDelegate.didReceive has completed
+                print("📱 Scene became active (was: \(oldPhase)) - will check for pending notification")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    checkForPendingPushNotification()
+                }
+            }
         }
     }
     
     private func checkForPendingPushNotification() {
-        // Delay to ensure app is ready
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            if let pending = AppDelegate.pendingNotification {
-                // Keep suppress flag ON to prevent Firebase listener from showing alerts
-                AppDelegate.suppressInAppAlertsFlag = true
-                
-                // Clear the pending notification
-                AppDelegate.pendingNotification = nil
-                
-                // Parse the notification to show as in-app alert
-                let body = pending["body"] ?? ""
-                
-                // Determine if it's an increase or decrease based on body
-                if body.contains("increased") {
-                    viewModel.waitTimeChangeInfo = (oldMinutes: 0, newMinutes: viewModel.waitTimeInfo.estimatedMinutes, isIncrease: true)
-                    viewModel.showWaitTimeIncreasedAlert = true
-                } else {
-                    viewModel.waitTimeChangeInfo = (oldMinutes: 0, newMinutes: viewModel.waitTimeInfo.estimatedMinutes, isIncrease: false)
-                    viewModel.showWaitTimeDecreasedAlert = true
-                }
-                
-                print("📱 Showing alert from push notification")
-                
-                // Clear suppress flag after a delay (after alert is shown)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                    AppDelegate.suppressInAppAlertsFlag = false
-                }
-            }
+        print("📱 checkForPendingPushNotification called - pending: \(AppDelegate.pendingNotification != nil)")
+        
+        // Only proceed if there's actually a pending notification from push tap
+        guard let pending = AppDelegate.pendingNotification else {
+            // No pending notification - clear any stale flags
+            print("📱 No pending notification found")
+            AppDelegate.suppressInAppAlertsFlag = false
+            return
+        }
+        
+        print("📱 Found pending notification from push tap: \(pending)")
+        
+        // Keep suppress flag ON to prevent Firebase listener from showing duplicate alerts
+        AppDelegate.suppressInAppAlertsFlag = true
+        
+        // Clear the pending notification immediately
+        AppDelegate.pendingNotification = nil
+        
+        // Parse the notification to show as in-app alert
+        let body = pending["body"] ?? ""
+        
+        // Determine if it's an increase or decrease based on body
+        if body.contains("increased") {
+            viewModel.waitTimeChangeInfo = (oldMinutes: 0, newMinutes: viewModel.waitTimeInfo.estimatedMinutes, isIncrease: true)
+            viewModel.showWaitTimeIncreasedAlert = true
+            print("📱 Showing INCREASED alert from push notification")
+        } else {
+            viewModel.waitTimeChangeInfo = (oldMinutes: 0, newMinutes: viewModel.waitTimeInfo.estimatedMinutes, isIncrease: false)
+            viewModel.showWaitTimeDecreasedAlert = true
+            print("📱 Showing DECREASED alert from push notification")
+        }
+        
+        // Clear suppress flag after a short delay to allow alert to show
+        // Then Firebase can resume normal operation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            AppDelegate.suppressInAppAlertsFlag = false
+            print("📱 Cleared suppress flag - Firebase alerts enabled")
         }
     }
 }

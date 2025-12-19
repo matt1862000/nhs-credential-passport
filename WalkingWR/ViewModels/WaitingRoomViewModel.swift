@@ -54,6 +54,7 @@ class WaitingRoomViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var walkTimer: Timer?
     private var updateTimer: Timer?
+    private var isFirstFirebaseUpdate = true  // Skip alert on first sync
     
     let healthKitService = HealthKitService()
     let notificationService = NotificationService.shared
@@ -62,8 +63,18 @@ class WaitingRoomViewModel: ObservableObject {
     
     // MARK: - Initialization
     init() {
+        // Check if notifications should auto-reset (new day = new appointment)
+        let savedNotificationDate = UserDefaults.standard.object(forKey: "notificationsEnabledDate") as? Date
+        let isNewDay = !Calendar.current.isDateInToday(savedNotificationDate ?? Date.distantPast)
+        
         // Load saved notification preference (defaults to true if clinician was selected)
-        let savedNotificationPref = UserDefaults.standard.object(forKey: "notificationsEnabled") as? Bool
+        // But reset to false if it's a new day
+        var savedNotificationPref = UserDefaults.standard.object(forKey: "notificationsEnabled") as? Bool
+        if isNewDay && savedNotificationPref == true {
+            print("📅 New day detected - auto-disabling notifications")
+            savedNotificationPref = false
+            UserDefaults.standard.set(false, forKey: "notificationsEnabled")
+        }
         
         // Load saved clinician name (more reliable than UUID which changes)
         let savedClinicianName = UserDefaults.standard.string(forKey: "selectedClinicianName")
@@ -251,39 +262,50 @@ class WaitingRoomViewModel: ObservableObject {
                 let isWalking = walkSession.isActive
                 
                 // Check for delay changes and notify
-                // Skip if there's a pending push notification (user will see that instead)
-                let hasPendingPush = AppDelegate.pendingNotification != nil || AppDelegate.suppressInAppAlertsFlag
-                if previousDelay > 0 && newDelay != previousDelay && !hasPendingPush {
-                    // Check if app is in foreground - only send local notifications in foreground
-                    // Push notifications (from Cloud Function) handle background alerts
-                    let isAppInForeground = UIApplication.shared.applicationState == .active
+                print("🔍 Firebase update: previous=\(previousDelay), new=\(newDelay), isFirst=\(isFirstFirebaseUpdate), suppress=\(AppDelegate.suppressInAppAlertsFlag), pending=\(AppDelegate.pendingNotification != nil)")
+                
+                // Skip first Firebase update (it's just syncing on app launch, not a real-time change)
+                if isFirstFirebaseUpdate {
+                    isFirstFirebaseUpdate = false
+                    print("🔄 First Firebase sync - skipping alert (this is expected)")
+                } else if previousDelay > 0 && newDelay != previousDelay {
+                    // Delay actually changed - MUST show alert
+                    // Only skip if there's a pending push notification waiting to be shown
+                    let hasPendingPush = AppDelegate.pendingNotification != nil
                     
-                    if newDelay > previousDelay {
-                        // Delay increased
-                        if isAppInForeground {
-                            // Local notification only for foreground - push handles background
-                            notificationService.sendWaitTimeIncreasedNotification(
-                                oldMinutes: previousDelay,
-                                newMinutes: newDelay,
-                                isWalking: isWalking
-                            )
+                    if hasPendingPush {
+                        print("⏸️ Skipping in-app alert - pending push notification will show instead")
+                    } else {
+                        // Clear any stale suppress flag - we need to show this alert
+                        AppDelegate.suppressInAppAlertsFlag = false
+                        
+                        let isAppInForeground = UIApplication.shared.applicationState == .active
+                        
+                        if newDelay > previousDelay {
+                            // Delay increased
+                            if isAppInForeground {
+                                notificationService.sendWaitTimeIncreasedNotification(
+                                    oldMinutes: previousDelay,
+                                    newMinutes: newDelay,
+                                    isWalking: isWalking
+                                )
+                            }
+                            waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: true)
+                            showWaitTimeIncreasedAlert = true
+                            print("⚠️ SHOWING ALERT: Delay increased \(previousDelay) → \(newDelay) min")
+                        } else if newDelay < previousDelay {
+                            // Delay decreased (any amount)
+                            if isAppInForeground {
+                                notificationService.sendWaitTimeDecreasedNotification(
+                                    oldMinutes: previousDelay,
+                                    newMinutes: newDelay,
+                                    isWalking: isWalking
+                                )
+                            }
+                            waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: false)
+                            showWaitTimeDecreasedAlert = true
+                            print("✅ SHOWING ALERT: Delay decreased \(previousDelay) → \(newDelay) min")
                         }
-                        waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: true)
-                        showWaitTimeIncreasedAlert = true
-                        print("⚠️ Delay increased: \(previousDelay) → \(newDelay) min (foreground: \(isAppInForeground))")
-                    } else if previousDelay - newDelay >= 2 {
-                        // Delay decreased by 2+ minutes
-                        if isAppInForeground {
-                            // Local notification only for foreground - push handles background
-                            notificationService.sendWaitTimeDecreasedNotification(
-                                oldMinutes: previousDelay,
-                                newMinutes: newDelay,
-                                isWalking: isWalking
-                            )
-                        }
-                        waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: false)
-                        showWaitTimeDecreasedAlert = true
-                        print("✅ Delay decreased: \(previousDelay) → \(newDelay) min (foreground: \(isAppInForeground))")
                     }
                 }
                 
@@ -639,12 +661,13 @@ class WaitingRoomViewModel: ObservableObject {
         waitTimeInfo = WaitTimeInfo(from: clinician)
         notificationsEnabled = true  // Enable notifications for new clinician
         
-        // Save selection and notification preference
+        // Save selection, notification preference, and the date (for auto-reset next day)
         UserDefaults.standard.set(clinician.id.uuidString, forKey: "selectedClinicianId")
         UserDefaults.standard.set(clinician.fullTitle, forKey: "selectedClinicianName")
         UserDefaults.standard.set(true, forKey: "notificationsEnabled")
+        UserDefaults.standard.set(Date(), forKey: "notificationsEnabledDate")
         
-        print("📱 Saved clinician: \(clinician.fullTitle), notifications enabled")
+        print("📱 Saved clinician: \(clinician.fullTitle), notifications enabled for today")
     }
     
     // MARK: - Notification Management
@@ -699,6 +722,7 @@ class WaitingRoomViewModel: ObservableObject {
                     DispatchQueue.main.async {
                         self?.notificationsEnabled = true
                         UserDefaults.standard.set(true, forKey: "notificationsEnabled")
+                        UserDefaults.standard.set(Date(), forKey: "notificationsEnabledDate")
                     }
                 }
             }

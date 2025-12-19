@@ -213,44 +213,24 @@ struct WaitTimeCard: View {
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         
-                        // Action buttons - stacked vertically, full width
-                        VStack(spacing: 10) {
-                            // Change clinician button - full width
-                            Button(action: onShowClinicianSelection) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "arrow.triangle.2.circlepath")
-                                        .font(.body)
-                                    Text("Change Clinician")
-                                        .font(.body)
-                                        .fontWeight(.semibold)
-                                    Spacer()
-                                }
-                                .foregroundColor(.tealAccent)
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 12)
-                                .frame(maxWidth: .infinity)
-                                .background(Color.tealAccent.opacity(0.15))
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                        // Change clinician button - fixed size to prevent truncation
+                        Button(action: onShowClinicianSelection) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.callout)
+                                Text("Change Clinician")
+                                    .font(.callout)
+                                    .fontWeight(.medium)
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
                             }
-                            
-                            // Notification toggle button - full width
-                            Button(action: { viewModel.toggleNotifications() }) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: viewModel.notificationsEnabled ? "bell.fill" : "bell.slash.fill")
-                                        .font(.body)
-                                    Text(viewModel.notificationsEnabled ? "Alerts On" : "Alerts Off")
-                                        .font(.body)
-                                        .fontWeight(.semibold)
-                                    Spacer()
-                                }
-                                .foregroundColor(viewModel.notificationsEnabled ? .mintGreen : .secondary)
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 12)
-                                .frame(maxWidth: .infinity)
-                                .background(viewModel.notificationsEnabled ? Color.mintGreen.opacity(0.15) : Color.gray.opacity(0.15))
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                            }
+                            .foregroundColor(.tealAccent)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(Color.tealAccent.opacity(0.12))
+                            .clipShape(Capsule())
                         }
+                        .fixedSize(horizontal: true, vertical: false)
                         .padding(.top, 8)
                     }
                     
