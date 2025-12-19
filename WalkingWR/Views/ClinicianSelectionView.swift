@@ -107,6 +107,68 @@ struct ClinicianSelectionView: View {
                     }
                 }
             }
+            // Delay alerts with Stop Alerts option (for cold launch from push notification)
+            .alert("Clinic Delay Updated", isPresented: $viewModel.showWaitTimeIncreasedAlert) {
+                Button("OK", role: .cancel) { }
+                Button("Stop Alerts", role: .destructive) {
+                    viewModel.toggleNotifications()
+                }
+            } message: {
+                if let info = viewModel.waitTimeChangeInfo {
+                    let increase = info.newMinutes - info.oldMinutes
+                    Text("The clinic delay has increased by \(increase) minutes (now \(info.newMinutes) min delay).")
+                } else {
+                    Text("The clinic delay has been updated.")
+                }
+            }
+            .alert("Delay Reduction", isPresented: $viewModel.showWaitTimeDecreasedAlert) {
+                Button("OK", role: .cancel) { }
+                Button("Stop Alerts", role: .destructive) {
+                    viewModel.toggleNotifications()
+                }
+            } message: {
+                if let info = viewModel.waitTimeChangeInfo {
+                    let decrease = info.oldMinutes - info.newMinutes
+                    if info.newMinutes == 0 {
+                        Text("The clinic is now running on time.")
+                    } else {
+                        Text("The clinic delay has reduced to \(info.newMinutes) minutes.")
+                    }
+                } else {
+                    Text("The clinic delay has been updated.")
+                }
+            }
+            .onAppear {
+                // Check for pending push notification (cold launch)
+                checkPendingNotification()
+            }
+        }
+    }
+    
+    private func checkPendingNotification() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if let pending = AppDelegate.pendingNotification {
+                // Keep suppress flag ON to prevent duplicate alerts
+                AppDelegate.suppressInAppAlertsFlag = true
+                AppDelegate.pendingNotification = nil
+                
+                let body = pending["body"] ?? ""
+                
+                if body.contains("increased") {
+                    viewModel.waitTimeChangeInfo = (oldMinutes: 0, newMinutes: viewModel.waitTimeInfo.estimatedMinutes, isIncrease: true)
+                    viewModel.showWaitTimeIncreasedAlert = true
+                } else {
+                    viewModel.waitTimeChangeInfo = (oldMinutes: 0, newMinutes: viewModel.waitTimeInfo.estimatedMinutes, isIncrease: false)
+                    viewModel.showWaitTimeDecreasedAlert = true
+                }
+                
+                print("📱 Showing alert from push on clinician selection screen")
+                
+                // Clear suppress flag after delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    AppDelegate.suppressInAppAlertsFlag = false
+                }
+            }
         }
     }
 }

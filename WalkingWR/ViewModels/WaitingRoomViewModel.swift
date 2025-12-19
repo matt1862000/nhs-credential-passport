@@ -37,6 +37,14 @@ class WaitingRoomViewModel: ObservableObject {
     // Clinician selection
     @Published var availableClinicians: [Clinician] = []
     @Published var selectedClinician: Clinician?
+    @Published var notificationsEnabled: Bool = true
+    
+    // Push notification dialog
+    @Published var showPushNotificationDialog: Bool = false
+    @Published var pushNotificationTitle: String = ""
+    @Published var pushNotificationBody: String = ""
+    @Published var pushNotificationTopic: String = ""
+    private var suppressInAppAlerts: Bool = false  // Prevents duplicate alerts when opened from push
     @Published var showClinicianSelection: Bool = false
     private let allClinicians: [Clinician] = Clinician.sampleClinicians
     
@@ -54,13 +62,54 @@ class WaitingRoomViewModel: ObservableObject {
     
     // MARK: - Initialization
     init() {
-        // Load saved clinician or use default
-        if let savedClinicianId = UserDefaults.standard.string(forKey: "selectedClinicianId"),
-           let uuid = UUID(uuidString: savedClinicianId),
-           let clinician = Clinician.sampleClinicians.first(where: { $0.id == uuid }) {
+        // Load saved notification preference (defaults to true if clinician was selected)
+        let savedNotificationPref = UserDefaults.standard.object(forKey: "notificationsEnabled") as? Bool
+        
+        // Load saved clinician name (more reliable than UUID which changes)
+        let savedClinicianName = UserDefaults.standard.string(forKey: "selectedClinicianName")
+        
+        // Try to find clinician by name first, then by UUID as fallback
+        var foundClinician: Clinician? = nil
+        
+        if let name = savedClinicianName {
+            foundClinician = Clinician.sampleClinicians.first(where: { 
+                $0.fullTitle.lowercased() == name.lowercased() ||
+                $0.name.lowercased() == name.lowercased()
+            })
+        }
+        
+        // Fallback to UUID lookup
+        if foundClinician == nil,
+           let savedClinicianId = UserDefaults.standard.string(forKey: "selectedClinicianId"),
+           let uuid = UUID(uuidString: savedClinicianId) {
+            foundClinician = Clinician.sampleClinicians.first(where: { $0.id == uuid })
+        }
+        
+        if let clinician = foundClinician {
             self.selectedClinician = clinician
             self.waitTimeInfo = WaitTimeInfo(from: clinician)
+            
+            // Default to notifications enabled unless explicitly disabled
+            self.notificationsEnabled = savedNotificationPref ?? true
+            
+            // Re-subscribe to this clinician's topic if notifications are enabled
+            if notificationsEnabled {
+                let topic = "clinician_" + clinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+                print("📱 Attempting to subscribe to topic: \(topic)")
+                Messaging.messaging().subscribe(toTopic: topic) { error in
+                    if let error = error {
+                        print("❌ Error re-subscribing to topic: \(error)")
+                    } else {
+                        print("🔔 Re-subscribed to topic on launch: \(topic)")
+                    }
+                }
+            } else {
+                print("🔕 Notifications disabled, not subscribing on launch")
+            }
         } else {
+            // No clinician selected - default to notifications disabled
+            self.notificationsEnabled = false
+            
             // Default wait time info (no clinician selected yet)
             self.waitTimeInfo = WaitTimeInfo(
                 estimatedMinutes: 20,
@@ -68,6 +117,7 @@ class WaitingRoomViewModel: ObservableObject {
                 clinicianName: "Select your clinician",
                 queuePosition: 0
             )
+            print("📱 No saved clinician found")
         }
         
         // Listen to Firebase for real wait times
@@ -80,8 +130,83 @@ class WaitingRoomViewModel: ObservableObject {
             await notificationService.requestAuthorization()
         }
         
+        // Listen for notifications disabled via push notification action
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("NotificationsDisabled"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.notificationsEnabled = false
+                print("🔕 UI updated: notifications disabled via push action")
+            }
+        }
+        
+        
         // Record app usage for streak tracking
         userProgress.recordAppUsage()
+        
+        // Clean up old topic subscriptions (do this after init is complete)
+        DispatchQueue.main.async { [weak self] in
+            self?.cleanupOldSubscriptions()
+        }
+    }
+    
+    private func cleanupOldSubscriptions() {
+        // Unsubscribe from all clinician topics EXCEPT the selected one
+        guard let selected = selectedClinician else {
+            // No clinician selected - unsubscribe from all
+            unsubscribeFromAllClinicianTopics()
+            return
+        }
+        
+        let selectedTopic = "clinician_" + selected.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+        
+        // Unsubscribe from all except selected
+        let allPossibleClinicians = Clinician.sampleClinicians
+        for clinician in allPossibleClinicians {
+            let topic = "clinician_" + clinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+            
+            // Skip the selected clinician
+            if topic == selectedTopic { continue }
+            
+            Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+                if error == nil {
+                    print("🧹 Cleaned up old subscription: \(topic)")
+                }
+            }
+        }
+    }
+    
+    func checkForPendingNotification() {
+        // Check and show pending notification dialog
+        guard let pending = AppDelegate.pendingNotification else {
+            return
+        }
+        
+        // Clear immediately to prevent duplicate checks
+        AppDelegate.pendingNotification = nil
+        
+        print("📱 Found pending notification, showing dialog")
+        
+        // Suppress in-app alerts
+        suppressInAppAlerts = true
+        
+        // Dismiss any existing alerts
+        showWaitTimeIncreasedAlert = false
+        showWaitTimeDecreasedAlert = false
+        
+        // Set dialog content
+        pushNotificationTitle = pending["title"] ?? "Clinic Update"
+        pushNotificationBody = pending["body"] ?? ""
+        pushNotificationTopic = pending["topic"] ?? ""
+        showPushNotificationDialog = true
+        
+        // Reset suppression after delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            self?.suppressInAppAlerts = false
+            AppDelegate.suppressInAppAlertsFlag = false
+        }
     }
     
     // MARK: - Firebase Real-Time Updates
@@ -126,27 +251,39 @@ class WaitingRoomViewModel: ObservableObject {
                 let isWalking = walkSession.isActive
                 
                 // Check for delay changes and notify
-                if previousDelay > 0 && newDelay != previousDelay {
+                // Skip if there's a pending push notification (user will see that instead)
+                let hasPendingPush = AppDelegate.pendingNotification != nil || AppDelegate.suppressInAppAlertsFlag
+                if previousDelay > 0 && newDelay != previousDelay && !hasPendingPush {
+                    // Check if app is in foreground - only send local notifications in foreground
+                    // Push notifications (from Cloud Function) handle background alerts
+                    let isAppInForeground = UIApplication.shared.applicationState == .active
+                    
                     if newDelay > previousDelay {
                         // Delay increased
-                        notificationService.sendWaitTimeIncreasedNotification(
-                            oldMinutes: previousDelay,
-                            newMinutes: newDelay,
-                            isWalking: isWalking
-                        )
+                        if isAppInForeground {
+                            // Local notification only for foreground - push handles background
+                            notificationService.sendWaitTimeIncreasedNotification(
+                                oldMinutes: previousDelay,
+                                newMinutes: newDelay,
+                                isWalking: isWalking
+                            )
+                        }
                         waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: true)
                         showWaitTimeIncreasedAlert = true
-                        print("⚠️ Delay increased: \(previousDelay) → \(newDelay) min")
+                        print("⚠️ Delay increased: \(previousDelay) → \(newDelay) min (foreground: \(isAppInForeground))")
                     } else if previousDelay - newDelay >= 2 {
                         // Delay decreased by 2+ minutes
-                        notificationService.sendWaitTimeDecreasedNotification(
-                            oldMinutes: previousDelay,
-                            newMinutes: newDelay,
-                            isWalking: isWalking
-                        )
+                        if isAppInForeground {
+                            // Local notification only for foreground - push handles background
+                            notificationService.sendWaitTimeDecreasedNotification(
+                                oldMinutes: previousDelay,
+                                newMinutes: newDelay,
+                                isWalking: isWalking
+                            )
+                        }
                         waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: false)
                         showWaitTimeDecreasedAlert = true
-                        print("✅ Delay decreased: \(previousDelay) → \(newDelay) min")
+                        print("✅ Delay decreased: \(previousDelay) → \(newDelay) min (foreground: \(isAppInForeground))")
                     }
                 }
                 
@@ -157,6 +294,16 @@ class WaitingRoomViewModel: ObservableObject {
                 waitTimeInfo.estimatedMinutes = newDelay
                 waitTimeInfo.lastUpdated = Date()
                 waitTimeInfo.clinicianName = updatedData.fullName
+                
+                // Ensure we're subscribed to this clinician's topic
+                if notificationsEnabled {
+                    let topic = "clinician_" + updatedData.fullName.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+                    Messaging.messaging().subscribe(toTopic: topic) { error in
+                        if error == nil {
+                            print("🔔 Confirmed subscription to: \(topic)")
+                        }
+                    }
+                }
                 
                 print("🔄 Updated selected clinician: \(updatedData.fullName) - all fields refreshed")
             }
@@ -478,19 +625,105 @@ class WaitingRoomViewModel: ObservableObject {
         
         // Subscribe to new clinician topic
         let newTopic = "clinician_" + clinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+        print("🔔🔔🔔 SUBSCRIBING TO TOPIC: \(newTopic) 🔔🔔🔔")
+        print("🔔 Clinician fullTitle: '\(clinician.fullTitle)'")
         Messaging.messaging().subscribe(toTopic: newTopic) { error in
             if let error = error {
-                print("Error subscribing to topic: \(error)")
+                print("❌❌❌ SUBSCRIPTION FAILED: \(error) ❌❌❌")
             } else {
-                print("Subscribed to topic: \(newTopic)")
+                print("✅✅✅ SUBSCRIPTION SUCCESS: \(newTopic) ✅✅✅")
             }
         }
         
         selectedClinician = clinician
         waitTimeInfo = WaitTimeInfo(from: clinician)
+        notificationsEnabled = true  // Enable notifications for new clinician
         
-        // Save selection
+        // Save selection and notification preference
         UserDefaults.standard.set(clinician.id.uuidString, forKey: "selectedClinicianId")
+        UserDefaults.standard.set(clinician.fullTitle, forKey: "selectedClinicianName")
+        UserDefaults.standard.set(true, forKey: "notificationsEnabled")
+        
+        print("📱 Saved clinician: \(clinician.fullTitle), notifications enabled")
+    }
+    
+    // MARK: - Notification Management
+    
+    private func unsubscribeFromAllClinicianTopics() {
+        // Unsubscribe from all possible clinician topics to ensure clean state
+        // This prevents receiving notifications for previously selected clinicians
+        let allPossibleClinicians = Clinician.sampleClinicians + availableClinicians
+        var seenTopics = Set<String>()
+        
+        for clinician in allPossibleClinicians {
+            let topic = "clinician_" + clinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+            
+            // Avoid duplicate unsubscribe calls
+            guard !seenTopics.contains(topic) else { continue }
+            seenTopics.insert(topic)
+            
+            Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+                if error == nil {
+                    print("🔕 Unsubscribed from topic: \(topic)")
+                }
+            }
+        }
+        print("🧹 Cleaned up all clinician topic subscriptions")
+    }
+    
+    func toggleNotifications() {
+        guard let clinician = selectedClinician else { return }
+        
+        let topic = "clinician_" + clinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+        
+        if notificationsEnabled {
+            // Currently enabled, so disable (unsubscribe)
+            Messaging.messaging().unsubscribe(fromTopic: topic) { [weak self] error in
+                if let error = error {
+                    print("❌ Error unsubscribing: \(error)")
+                } else {
+                    print("🔕 Notifications disabled for: \(topic)")
+                    DispatchQueue.main.async {
+                        self?.notificationsEnabled = false
+                        UserDefaults.standard.set(false, forKey: "notificationsEnabled")
+                    }
+                }
+            }
+        } else {
+            // Currently disabled, so enable (subscribe)
+            Messaging.messaging().subscribe(toTopic: topic) { [weak self] error in
+                if let error = error {
+                    print("❌ Error subscribing: \(error)")
+                } else {
+                    print("🔔 Notifications enabled for: \(topic)")
+                    DispatchQueue.main.async {
+                        self?.notificationsEnabled = true
+                        UserDefaults.standard.set(true, forKey: "notificationsEnabled")
+                    }
+                }
+            }
+        }
+    }
+    
+    func stopNotificationsFromDialog() {
+        // Use the topic from the push notification
+        let topic = pushNotificationTopic
+        
+        guard !topic.isEmpty else {
+            print("❌ No topic to unsubscribe from")
+            return
+        }
+        
+        Messaging.messaging().unsubscribe(fromTopic: topic) { [weak self] error in
+            if let error = error {
+                print("❌ Error unsubscribing: \(error)")
+            } else {
+                print("🔕 Notifications stopped via dialog for: \(topic)")
+                DispatchQueue.main.async {
+                    self?.notificationsEnabled = false
+                }
+            }
+        }
     }
     
     func clearClinicianSelection() {

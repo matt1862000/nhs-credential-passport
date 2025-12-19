@@ -16,38 +16,63 @@ exports.onClinicianDelayChange = onDocumentUpdated('clinicians/{clinicianId}', a
     return null;
   }
   
+  // Build full name with title to match app subscription format
+  const clinicianTitle = after.title || '';
   const clinicianName = after.name || 'Unknown';
-  const topic = 'clinician_' + clinicianName.replace(/[^a-zA-Z0-9]/g, '_');
+  const fullName = (clinicianTitle + ' ' + clinicianName).trim();
+  const topic = 'clinician_' + fullName.replace(/[^a-zA-Z0-9]/g, '_');
   
-  let title, body;
+  // Create short name for notification (e.g., "Dr. Thompson" instead of "Dr. James Thompson")
+  const nameParts = clinicianName.split(' ');
+  const surname = nameParts.length > 1 ? nameParts[nameParts.length - 1] : clinicianName;
+  const shortName = clinicianTitle ? (clinicianTitle + ' ' + surname) : surname;
+  
+  let notifTitle, notifBody;
   
   if (newDelay > oldDelay) {
     const increase = newDelay - oldDelay;
-    title = 'Clinic Delay Updated ⏰';
-    body = 'The clinic delay has increased by ' + increase + ' minutes (now ' + newDelay + ' min delay). We apologise for any inconvenience.';
+    notifTitle = shortName + "'s Clinic";
+    notifBody = 'Delay increased by ' + increase + ' min (now ' + newDelay + ' min). Thank you for your patience.';
   } else {
     const decrease = oldDelay - newDelay;
     if (newDelay === 0) {
-      title = 'Good News! 🎉';
-      body = 'The clinic is now running on time.';
+      notifTitle = shortName + "'s Clinic";
+      notifBody = 'The clinic is now running on time.';
     } else if (newDelay <= 5) {
-      title = 'Good News! 🎉';
-      body = 'The clinic delay has reduced to just ' + newDelay + ' minutes.';
+      notifTitle = shortName + "'s Clinic";
+      notifBody = 'Delay reduced to ' + newDelay + ' min. Thank you for waiting.';
     } else {
-      title = 'Good News! 🎉';
-      body = 'The clinic delay has reduced by ' + decrease + ' minutes (now ' + newDelay + ' min delay).';
+      notifTitle = shortName + "'s Clinic";
+      notifBody = 'Delay reduced by ' + decrease + ' min (now ' + newDelay + ' min).';
     }
   }
   
   const message = {
     notification: {
-      title: title,
-      body: body
+      title: notifTitle,
+      body: notifBody
+    },
+    // Custom data payload - accessible when user taps notification
+    data: {
+      topic: topic,
+      clinicianName: fullName,
+      newDelay: String(newDelay),
+      oldDelay: String(oldDelay)
+    },
+    // iOS-specific: Enable actionable notification with buttons
+    apns: {
+      payload: {
+        aps: {
+          'category': 'DELAY_UPDATE',  // Matches AppDelegate.delayNotificationCategory
+          'mutable-content': 1,
+          'sound': 'default'
+        }
+      }
     },
     topic: topic
   };
   
-  console.log('Sending notification to topic: ' + topic);
+  console.log('Sending notification to topic: ' + topic + ' with category DELAY_UPDATE');
   
   try {
     const response = await getMessaging().send(message);

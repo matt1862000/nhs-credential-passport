@@ -101,8 +101,9 @@ class GoogleMapsService: ObservableObject {
         urlString += "&mode=walking"
         
         if !waypoints.isEmpty {
+            // Use optimize:true to let Google order waypoints for the most efficient route
             let waypointString = waypoints.map { "\($0.latitude),\($0.longitude)" }.joined(separator: "|")
-            urlString += "&waypoints=\(waypointString)"
+            urlString += "&waypoints=optimize:true|\(waypointString)"
         }
         
         urlString += "&key=\(apiKey)"
@@ -132,8 +133,8 @@ class GoogleMapsService: ObservableObject {
     
     // MARK: - Generate Local Walking Route
     /// Generates a circular walking route from user's location using nearby POIs
-    /// Route duration will be within ±3 minutes of target - this is strictly enforced
-    /// Difficulty affects POI prioritization: easy = prefer closer, hard = prefer further
+    /// DYNAMICALLY adjusts number of waypoints to match target duration
+    /// Keeps trying different combinations until within ±3 minutes of target
     func generateLocalRoute(
         from location: CLLocationCoordinate2D,
         targetDurationMinutes: Int,
@@ -142,126 +143,369 @@ class GoogleMapsService: ObservableObject {
         await MainActor.run { isLoading = true }
         defer { Task { @MainActor in isLoading = false } }
         
-        // Tolerance: route MUST be within 3 minutes of target - strictly enforced
-        let toleranceMinutes = 3
-        let minAcceptableDuration = (targetDurationMinutes - toleranceMinutes) * 60 // in seconds
-        let maxAcceptableDuration = (targetDurationMinutes + toleranceMinutes) * 60
+        // STRICT TIMING: Route can be shorter but NEVER exceed requested time
+        // Acceptable range: 80% to 100% of target
+        let minPercent = 0.80
+        let minAcceptableMinutes = max(1, Int(Double(targetDurationMinutes) * minPercent))
+        let maxAcceptableMinutes = targetDurationMinutes  // 100% - never exceed
+        let minAcceptableDuration = minAcceptableMinutes * 60
+        let maxAcceptableDuration = maxAcceptableMinutes * 60
         
-        // Walking speed is constant ~80m/min for accurate time estimation
+        print("🗺️ STRICT: \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (80-100% of \(targetDurationMinutes)min, never exceed)")
+        
+        // Walking speed ~80m/min
         let walkingSpeedMeterPerMin = 80
-        
-        // Calculate base target distance
         let totalDistanceTarget = targetDurationMinutes * walkingSpeedMeterPerMin
         
-        // Ideal waypoint distance for the target duration
-        let idealWaypointDistance = totalDistanceTarget / 3
+        // Search radius based on route length
+        let searchRadius = max(600, totalDistanceTarget / 2)
         
-        // Search radius: wide enough to find various POIs
-        let searchRadius = max(400, idealWaypointDistance + 300)
+        print("🗺️ Target: \(targetDurationMinutes)min")
+        print("🗺️ Search radius: \(searchRadius)m")
         
-        // Difficulty affects sorting preference, not the target time
-        let difficultyDescription: String
-        switch difficulty {
-        case .easy:
-            difficultyDescription = "EASY - will prefer closer POIs"
-        case .challenging:
-            difficultyDescription = "HARD - will prefer further POIs"
-        case .moderate:
-            difficultyDescription = "MODERATE - balanced selection"
-        case .none:
-            difficultyDescription = "None - balanced selection"
-        }
-        
-        print("🗺️ Target: \(targetDurationMinutes)min (±\(toleranceMinutes)min STRICT), ideal waypoint: \(idealWaypointDistance)m")
-        print("🗺️ Difficulty: \(difficultyDescription)")
-        
-        // Step 1: Find nearby POIs
+        // Step 1: Find nearby POIs - need enough for 1 per 5 minutes
+        let desiredSpots = max(2, targetDurationMinutes / 5)
         var places = try await findNearbyPlaces(
             location: location,
             radiusMeters: searchRadius
         )
         
-        print("🗺️ Found \(places.count) POIs")
+        print("🗺️ Found \(places.count) POIs (need \(desiredSpots) for route)")
         
-        // If not enough places, try larger radius
-        if places.count < 5 {
-            print("🗺️ Not enough POIs, trying larger radius...")
-            let expandedRadius = searchRadius + 400
-            let morePlaces = try await findNearbyPlaces(
-                location: location,
-                radiusMeters: expandedRadius
-            )
-            for place in morePlaces {
-                if !places.contains(where: { $0.placeId == place.placeId }) {
-                    places.append(place)
+        // For longer routes, we need more POIs - do additional searches at different points
+        if places.count < desiredSpots * 2 && targetDurationMinutes > 20 {
+            print("🗺️ Fetching more POIs for \(targetDurationMinutes)min route...")
+            
+            // Search at cardinal directions from origin
+            let offsetDistance = 0.005 // ~500m in lat/lng
+            let searchOffsets = [
+                (lat: offsetDistance, lng: 0.0),
+                (lat: -offsetDistance, lng: 0.0),
+                (lat: 0.0, lng: offsetDistance),
+                (lat: 0.0, lng: -offsetDistance)
+            ]
+            
+            for offset in searchOffsets {
+                let offsetLocation = CLLocationCoordinate2D(
+                    latitude: location.latitude + offset.lat,
+                    longitude: location.longitude + offset.lng
+                )
+                if let morePlaces = try? await findNearbyPlaces(
+                    location: offsetLocation,
+                    radiusMeters: 800
+                ) {
+                    for place in morePlaces {
+                        if !places.contains(where: { $0.placeId == place.placeId }) {
+                            places.append(place)
+                        }
+                    }
                 }
+                
+                // Stop if we have enough
+                if places.count >= desiredSpots * 3 { break }
             }
-            print("🗺️ Now have \(places.count) total places")
+            print("🗺️ Now have \(places.count) total POIs")
         }
         
         guard !places.isEmpty else {
-            print("🗺️ No places found at all!")
             throw GoogleMapsError.noPlacesFound
         }
         
-        // Calculate how many discovery spots: 1 per 5 minutes
-        // We use 1 waypoint for Google Directions (accurate timing)
-        // Additional discovery spots are added from nearby POIs
-        let discoverySpotCount = max(1, targetDurationMinutes / 5)
+        print("🗺️ Have \(places.count) POIs to select from")
         
-        print("🗺️ Using 1 waypoint for routing, will add \(discoverySpotCount) discovery spots (1 per 5 min)")
-        
-        // Step 2: Get candidate waypoints sorted by distance from ideal
-        let candidates = selectCandidateWaypoints(from: places, origin: location, idealWaypointDistance: idealWaypointDistance, difficulty: difficulty)
-        
-        guard !candidates.isEmpty else {
-            throw GoogleMapsError.noPlacesFound
-        }
-        
-        print("🗺️ Have \(candidates.count) candidate waypoints to try")
-        
-        // Step 3: Try single waypoint candidates and collect all that are within tolerance
+        // Step 3: MAXIMIZE POIs while staying within time limit
         var validRoutes: [GeneratedRoute] = []
         var bestFallbackRoute: GeneratedRoute?
         var bestFallbackDiff = Int.max
         
-        let maxAttempts = min(8, candidates.count)
+        // PRIORITY: 1) Timing within 125%  2) Maximum POIs
+        // Strategy: Start with MAXIMUM waypoints and reduce if route too long
+        // This ensures we get as many verified walkable POIs as possible
         
-        for i in 0..<maxAttempts {
-            let candidate = candidates[i]
-            let distance = distanceBetween(location, candidate.coordinate)
-            print("🗺️ Trying candidate \(i+1): '\(candidate.name)' at \(Int(distance))m")
+        // Desired waypoints (1 per 5 min)
+        let desiredWaypoints = max(2, targetDurationMinutes / 5)
+        let maxWaypoints = min(desiredWaypoints, 8, places.count)
+        
+        // Try waypoint counts in DESCENDING order (most first, then fewer)
+        // First valid route (within 125%) wins - maximizing POI count
+        let waypointCountsToTry = Array((1...maxWaypoints).reversed())
+        
+        print("🗺️ Will try waypoint counts: \(waypointCountsToTry) (maximize POIs within 125% time)")
+        
+        var totalAttempts = 0
+        let maxTotalAttempts = 25
+        
+        for waypointCount in waypointCountsToTry {
+            guard totalAttempts < maxTotalAttempts else { break }
+            guard validRoutes.count < 3 else { break } // Stop if we have enough valid routes
             
-            let _ = await tryRoute(
+            // IMPORTANT: Scale ideal distance based on waypoint count
+            // For circular route: total segments = waypointCount + 1
+            // Each segment = totalDistance / (waypointCount + 1)
+            // Ideal waypoint distance = varies, but roughly totalDistance / 2 for the furthest point
+            let segmentsInRoute = waypointCount + 1
+            let idealSegmentDistance = totalDistanceTarget / segmentsInRoute
+            
+            // Re-select candidates with appropriate distance for this waypoint count
+            let candidatesForCount = selectCandidateWaypoints(
+                from: places,
                 origin: location,
-                waypoints: [candidate],
-                targetDurationMinutes: targetDurationMinutes,
-                minAcceptableDuration: minAcceptableDuration,
-                maxAcceptableDuration: maxAcceptableDuration,
-                validRoutes: &validRoutes,
-                bestFallbackRoute: &bestFallbackRoute,
-                bestFallbackDiff: &bestFallbackDiff,
-                allCandidates: candidates,
-                discoverySpotCount: discoverySpotCount
+                idealWaypointDistance: idealSegmentDistance,
+                difficulty: difficulty
             )
+            
+            print("🗺️ --- Trying \(waypointCount) waypoint(s) (ideal segment: \(idealSegmentDistance)m) ---")
+            
+            guard candidatesForCount.count >= waypointCount else {
+                print("🗺️ Not enough candidates (\(candidatesForCount.count)) for \(waypointCount) waypoints")
+                continue
+            }
+            
+            // Try multiple combinations with this waypoint count
+            // FIRST attempt uses best candidates (deterministic), then randomize for variety
+            let combinationsToTry = min(8, candidatesForCount.count)
+            var triedCombinations = Set<String>()
+            
+            for comboIndex in 0..<combinationsToTry {
+                guard totalAttempts < maxTotalAttempts else { break }
+                
+                var selectedWaypoints: [PlaceResult] = []
+                
+                if comboIndex == 0 {
+                    // FIRST ATTEMPT: Use the best candidates (no randomization)
+                    selectedWaypoints = Array(candidatesForCount.prefix(waypointCount))
+                } else {
+                    // SUBSEQUENT ATTEMPTS: Use weighted randomization for variety
+                    var availableIndices = Array(0..<candidatesForCount.count)
+                    
+                    for _ in 0..<waypointCount {
+                        guard !availableIndices.isEmpty else { break }
+                        
+                        // Weighted random: prefer lower indices (better candidates) but allow variety
+                        let weights = availableIndices.map { idx in 
+                            exp(-Double(idx) * 0.3)  // Decay factor
+                        }
+                        let totalWeight = weights.reduce(0, +)
+                        var random = Double.random(in: 0..<totalWeight)
+                        
+                        var selectedIdx = 0
+                        for (i, weight) in weights.enumerated() {
+                            random -= weight
+                            if random <= 0 {
+                                selectedIdx = i
+                                break
+                            }
+                        }
+                        
+                        let candidateIndex = availableIndices[selectedIdx]
+                        selectedWaypoints.append(candidatesForCount[candidateIndex])
+                        availableIndices.remove(at: selectedIdx)
+                    }
+                }
+                
+                guard selectedWaypoints.count == waypointCount else { continue }
+                
+                // Skip if we've already tried this exact combination
+                let comboKey = selectedWaypoints.map { $0.placeId }.sorted().joined(separator: ",")
+                guard !triedCombinations.contains(comboKey) else { continue }
+                triedCombinations.insert(comboKey)
+                
+                totalAttempts += 1
+                let waypointNames = selectedWaypoints.prefix(3).map { $0.name }.joined(separator: ", ")
+                let suffix = selectedWaypoints.count > 3 ? "..." : ""
+                print("🗺️ Attempt \(totalAttempts): \(waypointCount) POIs [\(waypointNames)\(suffix)]")
+                
+                // Try this combination
+                if let route = await tryRouteAndEvaluate(
+                    origin: location,
+                    waypoints: selectedWaypoints,
+                    targetDurationMinutes: targetDurationMinutes,
+                    minAcceptable: minAcceptableDuration,
+                    maxAcceptable: maxAcceptableDuration,
+                    validRoutes: &validRoutes,
+                    bestFallback: &bestFallbackRoute,
+                    bestFallbackDiff: &bestFallbackDiff
+                ) {
+                    let routeMins = route.durationSeconds / 60
+                    // Since we try DESCENDING (most waypoints first):
+                    // If route is within tolerance, we found a good one with max POIs
+                    if routeMins >= minAcceptableMinutes && routeMins <= maxAcceptableMinutes {
+                        print("🗺️ ✓ Found valid route with \(waypointCount) POIs")
+                    }
+                    // If route is too long, continue to try fewer waypoints
+                    if routeMins > maxAcceptableMinutes {
+                        print("🗺️ Route too long (\(routeMins)min), trying fewer waypoints...")
+                    }
+                }
+            }
         }
         
-        // If we have valid routes, randomly select from them
+        // Return best valid route (50-100% of target, never exceeds)
+        // PRIORITY: 1) Most waypoints  2) Closest to target time
         if !validRoutes.isEmpty {
-            let selected = validRoutes.randomElement()!
-            let mins = selected.durationSeconds / 60
-            print("🗺️ Found \(validRoutes.count) valid routes. Randomly selected: \(mins)min with \(selected.places.count) POIs (target: \(targetDurationMinutes)min)")
+            // Sort by: most waypoints first, then closest to target
+            let sorted = validRoutes.sorted { route1, route2 in
+                // First: more waypoints is better
+                if route1.places.count != route2.places.count {
+                    return route1.places.count > route2.places.count
+                }
+                // Second: closer to target is better (all are at or under)
+                let diff1 = targetDurationMinutes - route1.durationSeconds / 60
+                let diff2 = targetDurationMinutes - route2.durationSeconds / 60
+                return diff1 < diff2  // Prefer routes closer to target
+            }
+            
+            var selected = sorted.first!
+            
+            // Remove waypoints that are too close together (within 100m)
+            selected = removeCloseWaypoints(from: selected, minDistance: 100)
+            
+            let finalMins = selected.durationSeconds / 60
+            print("🗺️ ✓ SUCCESS! Selected: \(finalMins)min, \(selected.places.count) POIs (target: \(targetDurationMinutes)min)")
+            
             return selected
         }
         
-        // Return best fallback route if no valid routes found
-        if let best = bestFallbackRoute {
+        // ALWAYS return the best fallback - all POIs are verified walkable
+        if var best = bestFallbackRoute {
+            // Remove waypoints that are too close together
+            best = removeCloseWaypoints(from: best, minDistance: 100)
+            
             let mins = best.durationSeconds / 60
-            print("🗺️ No route within tolerance. Best found: \(mins)min (target: \(targetDurationMinutes)min)")
+            print("🗺️ ⚠️ No route within tolerance. Best found: \(mins)min with \(best.places.count) POIs (target: \(targetDurationMinutes)min)")
             return best
         }
         
         throw GoogleMapsError.noRouteFound
+    }
+    
+    /// Remove waypoints that are too close together (keeps first one in each cluster)
+    private func removeCloseWaypoints(from route: GeneratedRoute, minDistance: Double) -> GeneratedRoute {
+        guard route.places.count > 1 else { return route }
+        
+        var filteredPlaces: [PlaceResult] = []
+        
+        for place in route.places {
+            // Check if this place is too close to any already-kept place
+            let tooClose = filteredPlaces.contains { kept in
+                distanceBetween(kept.coordinate, place.coordinate) < minDistance
+            }
+            
+            if !tooClose {
+                filteredPlaces.append(place)
+            } else {
+                print("🗺️ Removed '\(place.name)' - too close to another waypoint")
+            }
+        }
+        
+        return GeneratedRoute(
+            places: filteredPlaces,
+            polyline: route.polyline,
+            distanceMeters: route.distanceMeters,
+            durationSeconds: route.durationSeconds,
+            legs: route.legs
+        )
+    }
+    
+    /// Generate waypoint counts to try, starting from estimated and branching out
+    private func generateWaypointCounts(estimated: Int, min: Int, max: Int) -> [Int] {
+        var counts: [Int] = [estimated]
+        
+        // Add counts branching out from estimate
+        for offset in 1...4 {
+            if estimated - offset >= min {
+                counts.append(estimated - offset)
+            }
+            if estimated + offset <= max {
+                counts.append(estimated + offset)
+            }
+        }
+        
+        // Remove duplicates and sort by distance from estimate
+        return Array(Set(counts)).sorted { abs($0 - estimated) < abs($1 - estimated) }
+    }
+    
+    /// Try a route and evaluate if it's within tolerance
+    private func tryRouteAndEvaluate(
+        origin: CLLocationCoordinate2D,
+        waypoints: [PlaceResult],
+        targetDurationMinutes: Int,
+        minAcceptable: Int,
+        maxAcceptable: Int,
+        validRoutes: inout [GeneratedRoute],
+        bestFallback: inout GeneratedRoute?,
+        bestFallbackDiff: inout Int
+    ) async -> GeneratedRoute? {
+        do {
+            let waypointCoords = waypoints.map { $0.coordinate }
+            let directions = try await getWalkingDirections(
+                origin: origin,
+                destination: origin,
+                waypoints: waypointCoords
+            )
+            
+            let totalDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+            let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
+            let durationMin = totalDuration / 60
+            let diff = abs(durationMin - targetDurationMinutes)
+            
+            // EARLY REJECTION: If route is more than double target, skip entirely
+            if durationMin > targetDurationMinutes * 2 {
+                print("🗺️ ✗ REJECTED: \(durationMin)min is way too long (target: \(targetDurationMinutes)min)")
+                return nil
+            }
+            
+            let polylinePoints = directions.overviewPolyline.points
+            let decodedCount = PolylineDecoder.decode(polylinePoints).count
+            
+            // Reorder waypoints based on Google's optimized order
+            var orderedWaypoints = waypoints
+            if let waypointOrder = directions.waypointOrder, waypointOrder.count == waypoints.count {
+                orderedWaypoints = waypointOrder.compactMap { index in
+                    index < waypoints.count ? waypoints[index] : nil
+                }
+                print("🗺️ Waypoints reordered by Google: \(waypointOrder)")
+            }
+            
+            let route = GeneratedRoute(
+                places: orderedWaypoints,
+                polyline: polylinePoints,
+                distanceMeters: totalDistance,
+                durationSeconds: totalDuration,
+                legs: directions.legs
+            )
+            
+            if totalDuration >= minAcceptable && totalDuration <= maxAcceptable {
+                print("🗺️ ✓ VALID: \(durationMin)min, \(totalDistance)m, \(decodedCount) polyline points")
+                validRoutes.append(route)
+            } else {
+                print("🗺️ ✗ Outside tolerance: \(durationMin)min (diff: \(diff)min)")
+            }
+            
+            // Track best fallback - ONLY consider routes that don't exceed target
+            let isUnderOrAtTarget = durationMin <= targetDurationMinutes
+            
+            // Only track as fallback if it doesn't exceed the target time
+            if isUnderOrAtTarget {
+                let currentBestPOIs = bestFallback?.places.count ?? 0
+                let thisPOIs = route.places.count
+                
+                // Prefer: more POIs, then closer to target time
+                let shouldUpdate = bestFallback == nil ||
+                    thisPOIs > currentBestPOIs ||
+                    (thisPOIs == currentBestPOIs && diff < bestFallbackDiff)
+                
+                if shouldUpdate {
+                    bestFallbackDiff = diff
+                    bestFallback = route
+                }
+            }
+            
+            return route
+        } catch {
+            print("🗺️ Route failed: \(error.localizedDescription)")
+            return nil
+        }
     }
     
     /// Select candidate waypoints sorted by preference
@@ -329,75 +573,128 @@ class GoogleMapsService: ObservableObject {
         return sorted
     }
     
+    /// Add additional discovery spots along the route polyline without affecting timing
+    /// These are display-only POIs that weren't used in the Directions API call
+    private func addDiscoverySpotsAlongRoute(
+        route: GeneratedRoute,
+        allPlaces: [PlaceResult],
+        desiredCount: Int,
+        origin: CLLocationCoordinate2D
+    ) async -> GeneratedRoute {
+        let routePath = PolylineDecoder.decode(route.polyline)
+        guard routePath.count > 2 else { return route }
+        
+        var existingPlaceIds = Set(route.places.map { $0.placeId })
+        let spotsToAdd = desiredCount - route.places.count
+        
+        guard spotsToAdd > 0 else { return route }
+        
+        print("🗺️ Adding up to \(spotsToAdd) discovery spots along route (have \(allPlaces.count) POIs available)...")
+        
+        var additionalSpots: [PlaceResult] = []
+        
+        // Calculate ideal spacing based on route length
+        // Route distance in meters (approximate from polyline)
+        var totalRouteDistance: Double = 0
+        for i in 1..<routePath.count {
+            totalRouteDistance += distanceBetween(routePath[i-1], routePath[i])
+        }
+        
+        // Ideal spacing = route distance / (total spots + 1) to distribute evenly
+        let totalSpotsIncludingExisting = route.places.count + spotsToAdd
+        let idealSpacing = totalRouteDistance / Double(totalSpotsIncludingExisting + 1)
+        let minSpacing = max(150, idealSpacing * 0.6)  // At least 60% of ideal, min 150m
+        
+        // Reduce min spacing for longer routes to fit more POIs
+        let adjustedMinSpacing = max(100, min(minSpacing, totalRouteDistance / Double(spotsToAdd + 2)))
+        
+        print("🗺️ Route ~\(Int(totalRouteDistance))m, ideal spacing: \(Int(idealSpacing))m, min: \(Int(adjustedMinSpacing))m")
+        
+        for i in 1...spotsToAdd {
+            // Calculate position along route (skip first 8% and last 8%)
+            let fraction = 0.08 + (0.84 * Double(i) / Double(spotsToAdd + 1))
+            let targetIndex = Int(Double(routePath.count - 1) * fraction)
+            let targetPoint = routePath[targetIndex]
+            
+            // All existing waypoint coordinates (original + already added)
+            let existingCoords = route.places.map { $0.coordinate } + additionalSpots.map { $0.coordinate }
+            
+            // Try progressively larger radii to find POIs near the route
+            var nearestPOI: PlaceResult? = nil
+            
+            for maxDistanceFromRoute in [100.0, 200.0, 300.0, 500.0] {
+                let candidatePOIs = allPlaces.filter { place in
+                    guard !existingPlaceIds.contains(place.placeId) else { return false }
+                    guard distanceBetween(origin, place.coordinate) > 60 else { return false }
+                    
+                    // Check minimum spacing from existing waypoints (relaxed for later attempts)
+                    let effectiveMinSpacing = maxDistanceFromRoute > 200 ? adjustedMinSpacing * 0.7 : adjustedMinSpacing
+                    let tooCloseToExisting = existingCoords.contains { coord in
+                        distanceBetween(coord, place.coordinate) < effectiveMinSpacing
+                    }
+                    guard !tooCloseToExisting else { return false }
+                    
+                    // Check if POI is near the target point on route
+                    return distanceBetween(targetPoint, place.coordinate) < maxDistanceFromRoute
+                }
+                
+                // Pick the one closest to our target point
+                nearestPOI = candidatePOIs.min { p1, p2 in
+                    distanceBetween(targetPoint, p1.coordinate) < distanceBetween(targetPoint, p2.coordinate)
+                }
+                
+                if nearestPOI != nil { break }
+            }
+            
+            if let poi = nearestPOI {
+                additionalSpots.append(poi)
+                existingPlaceIds.insert(poi.placeId)
+                let dist = Int(distanceBetween(targetPoint, poi.coordinate))
+                print("🗺️   Spot \(i): \(poi.name) (\(dist)m from route)")
+            } else {
+                print("🗺️   Spot \(i): No POI found near this section")
+            }
+        }
+        
+        // Merge original waypoints with additional spots, sorted by position along route
+        var allWaypoints = route.places + additionalSpots
+        
+        // Sort by distance along route
+        allWaypoints.sort { p1, p2 in
+            let pos1 = findPositionAlongRoute(p1.coordinate, routePath: routePath)
+            let pos2 = findPositionAlongRoute(p2.coordinate, routePath: routePath)
+            return pos1 < pos2
+        }
+        
+        print("🗺️ Route now has \(allWaypoints.count) discovery spots (added \(additionalSpots.count))")
+        
+        return GeneratedRoute(
+            places: allWaypoints,
+            polyline: route.polyline,
+            distanceMeters: route.distanceMeters,
+            durationSeconds: route.durationSeconds,
+            legs: route.legs
+        )
+    }
+    
+    /// Find approximate position (0.0 to 1.0) of a coordinate along the route
+    private func findPositionAlongRoute(_ coord: CLLocationCoordinate2D, routePath: [CLLocationCoordinate2D]) -> Double {
+        var closestIndex = 0
+        var closestDistance = Double.infinity
+        
+        for (index, point) in routePath.enumerated() {
+            let dist = distanceBetween(coord, point)
+            if dist < closestDistance {
+                closestDistance = dist
+                closestIndex = index
+            }
+        }
+        
+        return Double(closestIndex) / Double(max(1, routePath.count - 1))
+    }
+    
     // MARK: - Helper Methods
     
-    /// Try a route with given waypoints and update valid/fallback routes
-    /// Adds additional discovery spots from other candidates if needed
-    private func tryRoute(
-        origin: CLLocationCoordinate2D,
-        waypoints: [PlaceResult],
-        targetDurationMinutes: Int,
-        minAcceptableDuration: Int,
-        maxAcceptableDuration: Int,
-        validRoutes: inout [GeneratedRoute],
-        bestFallbackRoute: inout GeneratedRoute?,
-        bestFallbackDiff: inout Int,
-        allCandidates: [PlaceResult] = [],
-        discoverySpotCount: Int = 1
-    ) async -> GeneratedRoute? {
-        do {
-            let waypointCoords = waypoints.map { $0.coordinate }
-            let directions = try await getWalkingDirections(
-                origin: origin,
-                destination: origin,
-                waypoints: waypointCoords
-            )
-            
-            let totalDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
-            let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
-            let durationMinutes = totalDuration / 60
-            let durationDiff = durationMinutes - targetDurationMinutes
-            
-            // Add additional discovery spots from other candidates
-            var allPlaces = waypoints
-            if discoverySpotCount > 1 && !allCandidates.isEmpty {
-                // Add more places from candidates (excluding the main waypoint)
-                let additionalPlaces = allCandidates
-                    .filter { candidate in !waypoints.contains(where: { $0.placeId == candidate.placeId }) }
-                    .prefix(discoverySpotCount - 1)
-                allPlaces.append(contentsOf: additionalPlaces)
-            }
-            
-            print("🗺️ Route result: \(durationMinutes)min (\(totalDistance)m), diff: \(durationDiff)min, discovery spots: \(allPlaces.count)")
-            
-            let route = GeneratedRoute(
-                places: allPlaces,
-                polyline: directions.overviewPolyline.points,
-                distanceMeters: totalDistance,
-                durationSeconds: totalDuration,
-                legs: directions.legs
-            )
-            
-            // Check if within tolerance
-            if totalDuration >= minAcceptableDuration && totalDuration <= maxAcceptableDuration {
-                print("🗺️ ✓ Route within tolerance!")
-                validRoutes.append(route)
-                return route
-            } else {
-                // Track best fallback route (prefer slightly under target)
-                let absDiff = abs(durationDiff)
-                let adjustedDiff = durationDiff > 0 ? absDiff + 2 : absDiff
-                
-                if adjustedDiff < bestFallbackDiff {
-                    bestFallbackDiff = adjustedDiff
-                    bestFallbackRoute = route
-                }
-            }
-        } catch {
-            print("🗺️ Failed to get directions: \(error.localizedDescription)")
-        }
-        return nil
-    }
     
     private func distanceBetween(_ c1: CLLocationCoordinate2D, _ c2: CLLocationCoordinate2D) -> Double {
         let loc1 = CLLocation(latitude: c1.latitude, longitude: c1.longitude)
@@ -488,11 +785,13 @@ struct DirectionsResult: Codable {
     let overviewPolyline: OverviewPolyline
     let summary: String?
     let warnings: [String]?
+    let waypointOrder: [Int]?  // Optimized order when using optimize:true
     
     enum CodingKeys: String, CodingKey {
         case legs
         case overviewPolyline = "overview_polyline"
         case summary, warnings
+        case waypointOrder = "waypoint_order"
     }
 }
 

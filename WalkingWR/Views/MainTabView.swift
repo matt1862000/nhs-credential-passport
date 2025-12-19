@@ -63,6 +63,42 @@ struct MainTabView: View {
                 isPresented: $viewModel.showClinicianSelection
             )
         }
+        .onAppear {
+            // Check for pending notification from cold launch
+            checkForPendingPushNotification()
+        }
+    }
+    
+    private func checkForPendingPushNotification() {
+        // Delay to ensure app is ready
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if let pending = AppDelegate.pendingNotification {
+                // Keep suppress flag ON to prevent Firebase listener from showing alerts
+                AppDelegate.suppressInAppAlertsFlag = true
+                
+                // Clear the pending notification
+                AppDelegate.pendingNotification = nil
+                
+                // Parse the notification to show as in-app alert
+                let body = pending["body"] ?? ""
+                
+                // Determine if it's an increase or decrease based on body
+                if body.contains("increased") {
+                    viewModel.waitTimeChangeInfo = (oldMinutes: 0, newMinutes: viewModel.waitTimeInfo.estimatedMinutes, isIncrease: true)
+                    viewModel.showWaitTimeIncreasedAlert = true
+                } else {
+                    viewModel.waitTimeChangeInfo = (oldMinutes: 0, newMinutes: viewModel.waitTimeInfo.estimatedMinutes, isIncrease: false)
+                    viewModel.showWaitTimeDecreasedAlert = true
+                }
+                
+                print("📱 Showing alert from push notification")
+                
+                // Clear suppress flag after a delay (after alert is shown)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    AppDelegate.suppressInAppAlertsFlag = false
+                }
+            }
+        }
     }
 }
 

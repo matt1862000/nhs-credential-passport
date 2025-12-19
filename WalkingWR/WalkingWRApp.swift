@@ -19,8 +19,7 @@ struct WalkingWRApp: App {
     }
     
     init() {
-        // Initialize Firebase
-        FirebaseApp.configure()
+        // Firebase is configured in AppDelegate
         
         // Configure tab bar
         UITabBar.appearance().unselectedItemTintColor = .darkGray

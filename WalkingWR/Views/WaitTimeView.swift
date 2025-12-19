@@ -110,25 +110,31 @@ struct WaitTimeView: View {
             }
             .alert("Clinic Delay Updated", isPresented: $viewModel.showWaitTimeIncreasedAlert) {
                 Button("OK", role: .cancel) { }
+                Button("Stop Alerts", role: .destructive) {
+                    viewModel.toggleNotifications()
+                }
             } message: {
                 if let info = viewModel.waitTimeChangeInfo {
                     let increase = info.newMinutes - info.oldMinutes
-                    Text("The clinic delay has increased by \(increase) minutes (now \(info.newMinutes) min delay).\n\nWe apologise for any inconvenience. Feel free to explore our wellbeing activities while you wait.")
+                    Text("The clinic delay has increased by \(increase) minutes (now \(info.newMinutes) min delay).")
                 } else {
                     Text("The clinic delay has been updated.")
                 }
             }
-            .alert("Good News! 🎉", isPresented: $viewModel.showWaitTimeDecreasedAlert) {
+            .alert("Delay Reduction", isPresented: $viewModel.showWaitTimeDecreasedAlert) {
                 Button("OK", role: .cancel) { }
+                Button("Stop Alerts", role: .destructive) {
+                    viewModel.toggleNotifications()
+                }
             } message: {
                 if let info = viewModel.waitTimeChangeInfo {
                     let decrease = info.oldMinutes - info.newMinutes
                     if info.newMinutes == 0 {
-                        Text("The clinic is now running on time.\n\nPlease check in with reception when you're ready for your appointment.")
+                        Text("The clinic is now running on time.")
                     } else if info.newMinutes <= 5 {
-                        Text("The clinic delay has reduced to just \(info.newMinutes) minutes.\n\nThe clinic is nearly back on schedule.")
+                        Text("The clinic delay has reduced to \(info.newMinutes) minutes.")
                     } else {
-                        Text("The clinic delay has reduced by \(decrease) minutes (now \(info.newMinutes) min delay).\n\nWe'll keep you updated.")
+                        Text("The clinic delay has reduced by \(decrease) minutes (now \(info.newMinutes) min delay).")
                     }
                 } else {
                     Text("The clinic delay has been updated.")
@@ -207,25 +213,45 @@ struct WaitTimeCard: View {
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         
-                        // Change button - more prominent
-                        Button(action: onShowClinicianSelection) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.triangle.2.circlepath")
-                                    .font(.subheadline)
-                                Text("Change Clinician")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                                    .lineLimit(1)
-                                    .fixedSize(horizontal: true, vertical: false)
+                        // Action buttons - stacked vertically, full width
+                        VStack(spacing: 10) {
+                            // Change clinician button - full width
+                            Button(action: onShowClinicianSelection) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .font(.body)
+                                    Text("Change Clinician")
+                                        .font(.body)
+                                        .fontWeight(.semibold)
+                                    Spacer()
+                                }
+                                .foregroundColor(.tealAccent)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .frame(maxWidth: .infinity)
+                                .background(Color.tealAccent.opacity(0.15))
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
-                            .foregroundColor(.tealAccent)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(Color.tealAccent.opacity(0.15))
-                            .clipShape(Capsule())
+                            
+                            // Notification toggle button - full width
+                            Button(action: { viewModel.toggleNotifications() }) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: viewModel.notificationsEnabled ? "bell.fill" : "bell.slash.fill")
+                                        .font(.body)
+                                    Text(viewModel.notificationsEnabled ? "Alerts On" : "Alerts Off")
+                                        .font(.body)
+                                        .fontWeight(.semibold)
+                                    Spacer()
+                                }
+                                .foregroundColor(viewModel.notificationsEnabled ? .mintGreen : .secondary)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .frame(maxWidth: .infinity)
+                                .background(viewModel.notificationsEnabled ? Color.mintGreen.opacity(0.15) : Color.gray.opacity(0.15))
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
                         }
-                        .padding(.top, 6)
-                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.top, 8)
                     }
                     
                     Spacer()

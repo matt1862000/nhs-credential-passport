@@ -279,9 +279,19 @@ struct WalkingInfoCard: View {
 // MARK: - Embedded Walk Map View (for inline display)
 struct EmbeddedWalkMapView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
-    @State private var cameraPosition: MapCameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
+    @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var route: MKRoute?
+    @State private var hasPlayedIntro: Bool = false
+    @State private var showingIntroOverlay: Bool = false
+    @State private var introPhase: IntroPhase = .showingFirstWaypoint
+    @State private var userInteractedWithMap: Bool = false  // Cancels intro animation
     @Environment(\.colorScheme) var colorScheme
+    
+    enum IntroPhase: String {
+        case showingFirstWaypoint = "Your first destination"
+        case showingFullRoute = "Your route"
+        case followingUser = ""
+    }
     
     let clinicCoordinate = CLLocationCoordinate2D(latitude: 53.4084, longitude: -1.4350)
     
@@ -316,41 +326,52 @@ struct EmbeddedWalkMapView: View {
                     UserAnnotation()
                 }
                 
-                // Clinic marker
-                Annotation("Clinic", coordinate: clinicCoordinate) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.coralPink)
-                            .frame(width: 36, height: 36)
-                        Image(systemName: "cross.circle.fill")
-                            .font(.body)
-                            .foregroundColor(.white)
-                    }
-                }
-                
-                // Next waypoint
-                if let selectedRoute = viewModel.selectedRoute,
-                   !selectedRoute.qrMarkers.isEmpty {
-                    let visitedCount = viewModel.userProgress.qrScansCompleted
-                    if visitedCount < selectedRoute.qrMarkers.count {
-                        let nextMarker = selectedRoute.qrMarkers[visitedCount]
-                        Annotation(nextMarker.name, coordinate: nextMarker.coordinate) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.tealAccent)
-                                    .frame(width: 36, height: 36)
-                                Image(systemName: "mappin.circle.fill")
-                                    .font(.body)
-                                    .foregroundColor(.white)
-                            }
+                // Start/End marker (user's starting position or clinic)
+                if let currentRoute = viewModel.walkSession.currentRoute,
+                   let startPoint = currentRoute.routePath.first {
+                    Annotation("Start/End", coordinate: startPoint) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue)
+                                .frame(width: 28, height: 28)
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 12, height: 12)
                         }
                     }
                 }
                 
-                // Route line
+                // Route polyline from Google Directions
+                if let currentRoute = viewModel.walkSession.currentRoute,
+                   currentRoute.routePath.count >= 2 {
+                    MapPolyline(coordinates: currentRoute.routePath)
+                        .stroke(currentRoute.color, lineWidth: 4)
+                }
+                
+                // ALL waypoint markers with NEXT one prominent
+                if let currentRoute = viewModel.walkSession.currentRoute {
+                    let visitedIds = viewModel.visitedMarkerIds
+                    let markers = currentRoute.qrMarkers
+                    
+                    ForEach(Array(markers.enumerated()), id: \.element.id) { index, marker in
+                        let isVisited = visitedIds.contains(marker.id)
+                        let isNext = !isVisited && !markers.prefix(index).contains(where: { !visitedIds.contains($0.id) })
+                        
+                        Annotation(marker.name, coordinate: marker.coordinate) {
+                            WaypointMarkerView(
+                                name: marker.name,
+                                index: index + 1,
+                                isNext: isNext,
+                                isVisited: isVisited
+                            )
+                        }
+                    }
+                }
+                
+                // Fallback: MKRoute polyline (for calculated routes)
                 if let route = route {
                     MapPolyline(route.polyline)
-                        .stroke(Color.tealAccent, lineWidth: 4)
+                        .stroke(Color.tealAccent.opacity(0.5), lineWidth: 3)
                 }
             }
             .mapStyle(.standard)
@@ -358,52 +379,151 @@ struct EmbeddedWalkMapView: View {
                 MapUserLocationButton()
             }
             
-            // Next waypoint info overlay
+            // Next waypoint info overlay - tappable and swipeable
             VStack {
                 Spacer()
                 
-                if let selectedRoute = viewModel.selectedRoute,
-                   !selectedRoute.qrMarkers.isEmpty {
-                    let visitedCount = viewModel.userProgress.qrScansCompleted
-                    if visitedCount < selectedRoute.qrMarkers.count {
-                        let nextMarker = selectedRoute.qrMarkers[visitedCount]
-                        
-                        HStack(spacing: 12) {
-                            Image(systemName: "arrow.triangle.turn.up.right.circle.fill")
-                                .font(.title2)
-                                .foregroundColor(.tealAccent)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Next: \(nextMarker.name)")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
-                                
-                                if let routeInfo = route {
-                                    Text("\(Int(routeInfo.distance))m • ~\(Int(routeInfo.expectedTravelTime / 60)) min")
-                                        .font(.caption)
-                                        .foregroundColor(.primary)
-                                }
-                            }
-                            
-                            Spacer()
-                            
-                            Button(action: calculateRoute) {
-                                Image(systemName: "arrow.clockwise")
-                                    .foregroundColor(.tealAccent)
-                            }
-                        }
-                        .padding(12)
-                        .background(colorScheme == .dark ? Color.darkCardBackground : Color.white)
-                        .cornerRadius(12)
-                        .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 5)
-                        .padding(12)
-                    }
+                if let currentRoute = viewModel.walkSession.currentRoute {
+                    WaypointCarousel(
+                        markers: currentRoute.qrMarkers,
+                        visitedIds: viewModel.visitedMarkerIds,
+                        startLocation: currentRoute.routePath.first,
+                        onTapWaypoint: { coordinate in
+                            zoomToWaypoint(coordinate)
+                        },
+                        colorScheme: colorScheme
+                    )
                 }
+            }
+            
+            // Intro overlay during camera animation
+            if showingIntroOverlay {
+                VStack {
+                    Spacer()
+                    
+                    HStack {
+                        Image(systemName: introPhase == .showingFirstWaypoint ? "1.circle.fill" : 
+                              introPhase == .showingFullRoute ? "map.fill" : "location.fill")
+                            .font(.title2)
+                            .foregroundColor(.white)
+                        
+                        Text(introPhase.rawValue)
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(Color.black.opacity(0.7))
+                    .clipShape(Capsule())
+                    .padding(.bottom, 100)
+                }
+                .transition(.opacity)
+                .animation(.easeInOut, value: introPhase)
             }
         }
         .onAppear {
+            if !hasPlayedIntro {
+                playIntroAnimation()
+            } else {
+                calculateRoute()
+            }
+        }
+    }
+    
+    /// Play the intro camera animation sequence with very smooth, slow transitions
+    private func playIntroAnimation() {
+        guard let currentRoute = viewModel.walkSession.currentRoute,
+              let firstWaypoint = currentRoute.qrMarkers.first?.coordinate,
+              let userLocation = viewModel.locationService.currentLocation?.coordinate else {
+            // No waypoints or location, skip intro
+            hasPlayedIntro = true
+            cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
             calculateRoute()
+            return
+        }
+        
+        hasPlayedIntro = true
+        showingIntroOverlay = true
+        
+        // Very slow, ultra-smooth easeInOut animation
+        let verySlowAnimation = Animation.easeInOut(duration: 2.5)
+        
+        // Phase 1: Slowly zoom to first waypoint
+        introPhase = .showingFirstWaypoint
+        withAnimation(verySlowAnimation) {
+            cameraPosition = .region(MKCoordinateRegion(
+                center: firstWaypoint,
+                latitudinalMeters: 100,
+                longitudinalMeters: 100
+            ))
+        }
+        
+        // Phase 2: Slowly zoom out to show full route (after 4 seconds)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            guard !userInteractedWithMap else { return }  // Skip if user interacted
+            introPhase = .showingFullRoute
+            
+            // Calculate bounds for full route
+            let allPoints = currentRoute.routePath
+            if allPoints.count >= 2 {
+                let lats = allPoints.map { $0.latitude }
+                let lngs = allPoints.map { $0.longitude }
+                let center = CLLocationCoordinate2D(
+                    latitude: (lats.min()! + lats.max()!) / 2,
+                    longitude: (lngs.min()! + lngs.max()!) / 2
+                )
+                let latSpan = (lats.max()! - lats.min()!) * 1.5
+                let lngSpan = (lngs.max()! - lngs.min()!) * 1.5
+                
+                withAnimation(verySlowAnimation) {
+                    cameraPosition = .region(MKCoordinateRegion(
+                        center: center,
+                        span: MKCoordinateSpan(latitudeDelta: max(0.01, latSpan), longitudeDelta: max(0.01, lngSpan))
+                    ))
+                }
+            }
+        }
+        
+        // Phase 3: Slowly ZOOM IN to user's current location (after 8 seconds)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
+            guard !userInteractedWithMap else { return }  // Skip if user interacted
+            introPhase = .followingUser
+            
+            // ZOOMED IN view of current location (100m x 100m area)
+            withAnimation(verySlowAnimation) {
+                cameraPosition = .region(MKCoordinateRegion(
+                    center: userLocation,
+                    latitudinalMeters: 100,
+                    longitudinalMeters: 100
+                ))
+            }
+        }
+        
+        // Phase 4: Hide overlay (after 11 seconds)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 11.0) {
+            withAnimation(.easeOut(duration: 1.0)) {
+                showingIntroOverlay = false
+            }
+            if !userInteractedWithMap {
+                calculateRoute()
+            }
+        }
+    }
+    
+    /// Zoom to a specific waypoint (stays there until user interacts)
+    func zoomToWaypoint(_ coordinate: CLLocationCoordinate2D) {
+        // Cancel any ongoing intro animation
+        userInteractedWithMap = true
+        showingIntroOverlay = false
+        
+        let smoothAnimation = Animation.easeInOut(duration: 1.5)
+        withAnimation(smoothAnimation) {
+            cameraPosition = .region(MKCoordinateRegion(
+                center: coordinate,
+                latitudinalMeters: 150,
+                longitudinalMeters: 150
+            ))
         }
     }
     
@@ -464,6 +584,318 @@ struct CompactStatPill: View {
         .background(colorScheme == .dark ? Color.darkCardBackground : Color.white)
         .cornerRadius(20)
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.05), radius: 2)
+    }
+}
+
+// MARK: - Waypoint Carousel (Swipeable)
+struct WaypointCarousel: View {
+    let markers: [QRMarker]
+    let visitedIds: Set<UUID>
+    let startLocation: CLLocationCoordinate2D?
+    let onTapWaypoint: (CLLocationCoordinate2D) -> Void
+    let colorScheme: ColorScheme
+    
+    @State private var selectedIndex: Int = 0
+    
+    // Get unvisited markers for display
+    var unvisitedMarkers: [(index: Int, marker: QRMarker)] {
+        markers.enumerated().compactMap { index, marker in
+            visitedIds.contains(marker.id) ? nil : (index: index, marker: marker)
+        }
+    }
+    
+    // Total cards = waypoints + 1 (for return to start)
+    var totalCards: Int {
+        unvisitedMarkers.count + 1
+    }
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            // Swipe indicator dots (including Return to Start)
+            if totalCards > 1 {
+                HStack(spacing: 6) {
+                    ForEach(0..<totalCards, id: \.self) { i in
+                        Circle()
+                            .fill(i == selectedIndex ? (i == totalCards - 1 ? Color.blue : Color.orange) : Color.gray.opacity(0.4))
+                            .frame(width: 6, height: 6)
+                    }
+                }
+            }
+            
+            // Swipeable cards
+            TabView(selection: $selectedIndex) {
+                // Waypoint cards
+                ForEach(Array(unvisitedMarkers.enumerated()), id: \.element.marker.id) { cardIndex, item in
+                    WaypointCard(
+                        marker: item.marker,
+                        waypointNumber: item.index + 1,
+                        totalWaypoints: markers.count,
+                        visitedCount: visitedIds.count,
+                        isNext: cardIndex == 0,
+                        isLast: false,
+                        onTap: {
+                            onTapWaypoint(item.marker.coordinate)
+                        },
+                        colorScheme: colorScheme
+                    )
+                    .tag(cardIndex)
+                }
+                
+                // Return to Start card (final)
+                ReturnToStartCard(
+                    totalWaypoints: markers.count,
+                    onTap: {
+                        if let start = startLocation {
+                            onTapWaypoint(start)
+                        }
+                    },
+                    colorScheme: colorScheme
+                )
+                .tag(unvisitedMarkers.count)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(height: 90)
+            .onChange(of: selectedIndex) { _, newIndex in
+                // When swiping to a new waypoint, animate camera to it
+                if newIndex < unvisitedMarkers.count {
+                    let marker = unvisitedMarkers[newIndex].marker
+                    onTapWaypoint(marker.coordinate)
+                } else if newIndex == unvisitedMarkers.count, let start = startLocation {
+                    // Return to Start card
+                    onTapWaypoint(start)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+    }
+}
+
+// MARK: - Return to Start Card
+struct ReturnToStartCard: View {
+    let totalWaypoints: Int
+    let onTap: () -> Void
+    let colorScheme: ColorScheme
+    
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                // Finish indicator
+                ZStack {
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 44, height: 44)
+                    
+                    Image(systemName: "flag.checkered")
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                }
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Final destination")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                    
+                    Text("Return to Start")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    
+                    HStack(spacing: 4) {
+                        Image(systemName: "location.fill")
+                            .font(.caption2)
+                            .foregroundColor(.blue)
+                        Text("Back where you began")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+                
+                // Completion indicator
+                VStack(alignment: .trailing, spacing: 2) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.blue)
+                    
+                    Text("finish")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(colorScheme == .dark ? Color(.systemGray6) : Color.white)
+                    .shadow(color: .blue.opacity(0.2), radius: 4, x: 0, y: 2)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+    }
+}
+
+// MARK: - Waypoint Card (Individual)
+struct WaypointCard: View {
+    let marker: QRMarker
+    let waypointNumber: Int
+    let totalWaypoints: Int
+    let visitedCount: Int
+    let isNext: Bool
+    let isLast: Bool  // Kept for compatibility but not used since we have ReturnToStartCard
+    let onTap: () -> Void
+    let colorScheme: ColorScheme
+    
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                // Waypoint indicator
+                ZStack {
+                    Circle()
+                        .fill(isNext ? Color.orange : Color.mintGreen)
+                        .frame(width: 44, height: 44)
+                    
+                    VStack(spacing: 0) {
+                        if isNext {
+                            Image(systemName: "arrow.up")
+                                .font(.caption2)
+                                .fontWeight(.bold)
+                        }
+                        Text("\(waypointNumber)")
+                            .font(.subheadline)
+                            .fontWeight(.bold)
+                    }
+                    .foregroundColor(.white)
+                }
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(isNext ? "Next stop" : "Upcoming")
+                        .font(.caption)
+                        .foregroundColor(isNext ? .orange : .secondary)
+                    
+                    Text(marker.name)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    
+                    HStack(spacing: 4) {
+                        Text("\(waypointNumber) of \(totalWaypoints)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        Text("•")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        Text("Tap to view")
+                            .font(.caption2)
+                            .foregroundColor(.tealAccent)
+                    }
+                }
+                
+                Spacer()
+                
+                // Progress or swipe hint
+                VStack(alignment: .trailing, spacing: 2) {
+                    if isNext {
+                        Text("\(visitedCount)/\(totalWaypoints)")
+                            .font(.title3)
+                            .fontWeight(.bold)
+                            .foregroundColor(.orange)
+                        
+                        Text("visited")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Image(systemName: "chevron.left.chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        Text("swipe")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding(12)
+            .background(colorScheme == .dark ? Color.darkCardBackground : Color.white)
+            .cornerRadius(12)
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 5)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Waypoint Marker View
+struct WaypointMarkerView: View {
+    let name: String
+    let index: Int
+    let isNext: Bool
+    let isVisited: Bool
+    
+    @State private var isPulsing = false
+    
+    var body: some View {
+        ZStack {
+            // Pulsing outer ring for NEXT waypoint
+            if isNext {
+                Circle()
+                    .fill(Color.orange.opacity(0.3))
+                    .frame(width: 56, height: 56)
+                    .scaleEffect(isPulsing ? 1.2 : 1.0)
+                    .opacity(isPulsing ? 0.5 : 0.8)
+                    .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: isPulsing)
+                    .onAppear { isPulsing = true }
+            }
+            
+            // Main marker circle
+            Circle()
+                .fill(markerColor)
+                .frame(width: isNext ? 44 : 32, height: isNext ? 44 : 32)
+                .shadow(color: isNext ? .orange.opacity(0.5) : .black.opacity(0.2), radius: isNext ? 6 : 2)
+            
+            // Icon or number
+            if isVisited {
+                Image(systemName: "checkmark")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+            } else if isNext {
+                VStack(spacing: 0) {
+                    Image(systemName: "arrow.down")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                    Text("\(index)")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                }
+                .foregroundColor(.white)
+            } else {
+                Text("\(index)")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+            }
+        }
+    }
+    
+    var markerColor: Color {
+        if isVisited {
+            return .gray
+        } else if isNext {
+            return .orange
+        } else {
+            return .mintGreen
+        }
     }
 }
 

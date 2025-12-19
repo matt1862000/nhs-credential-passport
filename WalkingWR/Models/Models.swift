@@ -335,6 +335,7 @@ struct WalkingDirection: Identifiable, Hashable {
         case "uturn-left", "uturn-right": return "arrow.uturn.down"
         case "straight": return "arrow.up"
         case "roundabout-left", "roundabout-right": return "arrow.triangle.2.circlepath"
+        case "arrive": return "flag.checkered"
         default: return "arrow.up"
         }
     }

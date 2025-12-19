@@ -19,7 +19,6 @@ struct RouteSelectionView: View {
     @State private var showLocalRoutePicker = false
     @State private var localRouteDuration: Int = 10
     @State private var localRouteUseCustom = false
-    @State private var showEndWalkConfirmation = false
     
     // Calculate recommended duration based on delay time (with 5 min buffer)
     private var recommendedDuration: Int {
@@ -77,7 +76,7 @@ struct RouteSelectionView: View {
                 AnimatedGradientBackground()
                 
                 if viewModel.walkSession.isActive {
-                    ActiveWalkView(viewModel: viewModel, showEndConfirmation: $showEndWalkConfirmation)
+                    ActiveWalkView(viewModel: viewModel)
                 } else {
                     ScrollView {
                         VStack(spacing: 16) {
@@ -191,14 +190,6 @@ struct RouteSelectionView: View {
                 }
             } message: {
                 Text("Your route is complete. Please return to the waiting area.")
-            }
-            .confirmationDialog("End Walk?", isPresented: $showEndWalkConfirmation) {
-                Button("End & Save Progress") {
-                    viewModel.endWalk(completed: true)
-                }
-                Button("Cancel", role: .cancel) { }
-            } message: {
-                Text("Your steps and progress will be saved.")
             }
         }
     }
@@ -844,6 +835,7 @@ struct LocalRoutePickerSheet: View {
     @Binding var useCustomTime: Bool
     @Binding var isPresented: Bool
     @State private var isGenerating = false
+    @State private var isShuffling = false  // Separate state for shuffle loading
     @State private var generatedRoute: WalkingRoute?
     @State private var generatedRouteData: GeneratedRoute?
     @State private var showMapPreview = false
@@ -854,6 +846,11 @@ struct LocalRoutePickerSheet: View {
     @State private var showAdvancedOptions = false
     @State private var selectedDifficulty: RouteDifficulty? = nil
     
+    // Store last valid route for recycling when shuffle exhausts options
+    @State private var lastValidRoute: WalkingRoute?
+    @State private var lastValidRouteData: GeneratedRoute?
+    @State private var isRecycledRoute = false  // Indicates shuffle fell back to previous route
+    
     let durationOptions = [10, 15, 20, 25, 30]
     
     var body: some View {
@@ -861,12 +858,61 @@ struct LocalRoutePickerSheet: View {
             ZStack {
                 AnimatedGradientBackground()
                 
-                if let route = generatedRoute, showMapPreview {
+                // Show shuffle loading overlay (or error with retry)
+                if isShuffling {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.tealAccent)
+                        
+                        Text("Finding new route...")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemBackground))
+                } else if let error = errorMessage, generatedRoute == nil, showMapPreview {
+                    // Shuffle failed - show error with retry
+                    VStack(spacing: 20) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 50))
+                            .foregroundColor(.softAmber)
+                        
+                        Text("Couldn't find a different route")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        
+                        Text(error)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                        
+                        HStack(spacing: 16) {
+                            Button("Try Again") {
+                                errorMessage = nil
+                                isShuffling = true
+                                generateRouteForShuffle()
+                            }
+                            .buttonStyle(PrimaryButtonStyle())
+                            
+                            Button("Change Options") {
+                                showMapPreview = false
+                                errorMessage = nil
+                            }
+                            .foregroundColor(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemBackground))
+                } else if let route = generatedRoute, showMapPreview {
                     // Stage 2: Show map preview - full screen with solid background
                     LocalRouteMapPreview(
                         route: route,
                         userLocation: locationService.currentLocation?.coordinate,
                         generatedData: generatedRouteData,
+                        isRecycled: isRecycledRoute,
+                        targetDurationMinutes: selectedDuration,
                         onStartWalk: {
                             viewModel.selectRoute(route)
                             viewModel.startWalk()
@@ -874,9 +920,21 @@ struct LocalRoutePickerSheet: View {
                                 isPresented = false
                             }
                         },
-                        onRegenerate: {
+                        onShuffle: {
+                            // Show shuffle loading state
+                            isShuffling = true
                             generatedRoute = nil
                             generatedRouteData = nil
+                            errorMessage = nil
+                            // Regenerate with randomization
+                            generateRouteForShuffle()
+                        },
+                        onChangeOptions: {
+                            // Go back to options screen - clear last valid too since options changing
+                            generatedRoute = nil
+                            generatedRouteData = nil
+                            lastValidRoute = nil
+                            lastValidRouteData = nil
                             showMapPreview = false
                             errorMessage = nil
                         }
@@ -1041,14 +1099,13 @@ struct LocalRoutePickerSheet: View {
                                         .foregroundColor(.mintGreen)
                                 }
                                 
-                                Text("Your route will include:")
+                                Text("Your route will include approximately:")
                                     .font(.bodyMedium)
                                     .fontWeight(.semibold)
                                     .foregroundColor(.primary)
                                 
                                 HStack(spacing: 20) {
                                     RouteInfoItem(icon: "figure.walk", value: "~\(estimatedSteps)", label: "steps")
-                                    RouteInfoItem(icon: "mappin", value: "\(numberOfMarkers)", label: "spots")
                                     RouteInfoItem(icon: "arrow.triangle.swap", value: "~\(estimatedDistance)m", label: "distance")
                                 }
                                 
@@ -1452,22 +1509,171 @@ struct LocalRoutePickerSheet: View {
                         isGenerating = false
                         generatedRoute = localRoute
                         generatedRouteData = result
+                        // Save as last valid for recycling on shuffle
+                        lastValidRoute = localRoute
+                        lastValidRouteData = result
                         showMapPreview = true
                     }
                 } catch {
                     await MainActor.run {
                         isGenerating = false
-                        let errorDesc = (error as? GoogleMapsError)?.errorDescription ?? error.localizedDescription
-                        errorMessage = "Smart routing failed: \(errorDesc). Using basic route."
+                        errorMessage = "Could not find a route within time limit. Try different options."
                         print("🗺️ Smart routing error: \(error)")
-                        // Fall back to basic generation
-                        generateBasicRoute(from: userLocation.coordinate)
                     }
                 }
             }
         } else {
             // Use basic generation (fallback)
             generateBasicRoute(from: userLocation.coordinate)
+        }
+    }
+    
+    /// Wrapper for shuffle that manages the shuffle loading state
+    func generateRouteForShuffle() {
+        guard let userLocation = locationService.currentLocation else {
+            isShuffling = false
+            return
+        }
+        
+        if mapsService.hasAPIKey {
+            Task {
+                do {
+                    let result = try await mapsService.generateLocalRoute(
+                        from: userLocation.coordinate,
+                        targetDurationMinutes: selectedDuration,
+                        difficulty: selectedDifficulty
+                    )
+                    
+                    guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
+                        await MainActor.run {
+                            // Recycle previous route if available
+                            if let previousRoute = lastValidRoute, let previousData = lastValidRouteData {
+                                generatedRoute = previousRoute
+                                generatedRouteData = previousData
+                                isRecycledRoute = true
+                            } else {
+                                errorMessage = "Could not find different places nearby. Try changing options."
+                            }
+                            isShuffling = false
+                            showMapPreview = true
+                        }
+                        return
+                    }
+                    
+                    let markers = await MainActor.run {
+                        createMarkersFromPlaces(result.places, origin: userLocation.coordinate)
+                    }
+                    
+                    guard !markers.isEmpty else {
+                        await MainActor.run {
+                            // Recycle previous route if available
+                            if let previousRoute = lastValidRoute, let previousData = lastValidRouteData {
+                                generatedRoute = previousRoute
+                                generatedRouteData = previousData
+                                isRecycledRoute = true
+                            } else {
+                                errorMessage = "No discovery spots could be created. Try changing options."
+                            }
+                            isShuffling = false
+                            showMapPreview = true
+                        }
+                        return
+                    }
+                    
+                    let directions = await MainActor.run {
+                        extractWalkingDirections(from: result.legs)
+                    }
+                    
+                    let routeDifficulty: RouteDifficulty
+                    if let userDifficulty = selectedDifficulty {
+                        routeDifficulty = userDifficulty
+                    } else {
+                        routeDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                    }
+                    
+                    let waypointInfos = result.places.map { place in
+                        GeminiService.WaypointInfo(
+                            name: place.name,
+                            types: place.types ?? [],
+                            vicinity: place.vicinity
+                        )
+                    }
+                    let aiContent = await GeminiService.shared.generateRouteContent(
+                        waypoints: waypointInfos,
+                        durationMinutes: result.durationMinutes,
+                        distanceMeters: result.distanceMeters,
+                        difficulty: selectedDifficulty
+                    )
+                    
+                    let routeName: String
+                    let description: String
+                    
+                    if let content = aiContent {
+                        routeName = content.name
+                        description = content.description
+                    } else {
+                        routeName = "Local Discovery"
+                        description = "Explore \(markers.count) interesting spots nearby"
+                    }
+                    
+                    await MainActor.run {
+                        let route = WalkingRoute(
+                            name: routeName,
+                            description: description,
+                            durationMinutes: max(1, result.durationMinutes),
+                            distanceMeters: result.distanceMeters,
+                            difficulty: routeDifficulty,
+                            isIndoor: false,
+                            isAccessible: true,
+                            landmarks: ["Start"] + result.places.map { $0.name } + ["Return"],
+                            icon: "location.fill",
+                            color: .tealAccent,
+                            qrMarkers: markers,
+                            routeType: .local,
+                            encodedPolyline: result.polyline,
+                            walkingDirections: directions
+                        )
+                        
+                        // Save as last valid route for recycling
+                        lastValidRoute = route
+                        lastValidRouteData = result
+                        
+                        generatedRoute = route
+                        generatedRouteData = result
+                        isRecycledRoute = false  // New route, not recycled
+                        showMapPreview = true
+                        isShuffling = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        // If we have a previous valid route, recycle it
+                        if let previousRoute = lastValidRoute, let previousData = lastValidRouteData {
+                            generatedRoute = previousRoute
+                            generatedRouteData = previousData
+                            isRecycledRoute = true
+                            showMapPreview = true
+                            isShuffling = false
+                        } else {
+                            isShuffling = false
+                            showMapPreview = true
+                            errorMessage = "No routes available within time limit. Try changing your options."
+                        }
+                    }
+                }
+            }
+        } else {
+            // No API - recycle previous or show error
+            if let previousRoute = lastValidRoute, let previousData = lastValidRouteData {
+                generatedRoute = previousRoute
+                generatedRouteData = previousData
+                isRecycledRoute = true
+                showMapPreview = true
+                isShuffling = false
+            } else {
+                isShuffling = false
+                showMapPreview = true
+                errorMessage = "Maps service not available."
+            }
         }
     }
     
@@ -1536,22 +1742,34 @@ struct LocalRoutePickerSheet: View {
     func extractWalkingDirections(from legs: [DirectionsLeg]) -> [WalkingDirection] {
         var directions: [WalkingDirection] = []
         
-        for leg in legs {
+        for (legIndex, leg) in legs.enumerated() {
             guard let steps = leg.steps else { continue }
+            let isLastLeg = legIndex == legs.count - 1
             
-            for step in steps {
+            for (stepIndex, step) in steps.enumerated() {
                 guard let html = step.htmlInstructions else { continue }
                 
                 // Extract maneuver from HTML if present (e.g., "turn-left")
                 let maneuver = extractManeuver(from: html)
                 
-                let direction = WalkingDirection.fromHTML(
+                var direction = WalkingDirection.fromHTML(
                     html,
                     distance: step.distance.text,
                     distanceMeters: step.distance.value,
                     duration: step.duration.text,
                     maneuver: maneuver
                 )
+                
+                // Replace the last step of the last leg with "Return to starting point"
+                if isLastLeg && stepIndex == steps.count - 1 {
+                    direction = WalkingDirection(
+                        instruction: "Return to starting point",
+                        distance: step.distance.text,
+                        distanceMeters: step.distance.value,
+                        duration: step.duration.text,
+                        maneuver: "arrive"
+                    )
+                }
                 
                 directions.append(direction)
             }
@@ -1643,17 +1861,111 @@ struct LocalRouteMapPreview: View {
     let route: WalkingRoute
     let userLocation: CLLocationCoordinate2D?
     var generatedData: GeneratedRoute?
+    var isRecycled: Bool = false   // True if this is a recycled route (no new options found)
+    var targetDurationMinutes: Int = 0  // Original requested duration
     let onStartWalk: () -> Void
-    let onRegenerate: () -> Void
+    let onShuffle: () -> Void      // Quick regenerate with same settings
+    let onChangeOptions: () -> Void // Go back to options screen
+    
+    /// True if route duration exceeds requested target
+    var isOverTarget: Bool {
+        guard let data = generatedData, targetDurationMinutes > 0 else { return false }
+        return data.durationMinutes > targetDurationMinutes
+    }
+    
+    /// How many minutes over target
+    var minutesOverTarget: Int {
+        guard let data = generatedData else { return 0 }
+        return max(0, data.durationMinutes - targetDurationMinutes)
+    }
     
     var hasRealPolyline: Bool {
         route.encodedPolyline != nil && !route.encodedPolyline!.isEmpty
     }
     
+    /// Split the route polyline at the last waypoint
+    /// Returns outbound path (start → last waypoint) and return path (last waypoint → start)
+    func splitRouteAtLastWaypoint() -> (outbound: [CLLocationCoordinate2D], returnLeg: [CLLocationCoordinate2D]) {
+        let fullPath = route.routePath
+        guard fullPath.count >= 4 else {
+            // Route too short to split meaningfully
+            let midpoint = fullPath.count / 2
+            return (Array(fullPath.prefix(midpoint + 1)), Array(fullPath.suffix(from: midpoint)))
+        }
+        
+        // Find the last waypoint (or approximate midpoint if no waypoints)
+        guard let lastMarker = route.qrMarkers.last else {
+            // No waypoints - split at midpoint
+            let midpoint = fullPath.count / 2
+            return (Array(fullPath.prefix(midpoint + 1)), Array(fullPath.suffix(from: midpoint)))
+        }
+        
+        // Find the point on the polyline closest to the last waypoint
+        var closestIndex = fullPath.count / 2
+        var closestDistance = Double.infinity
+        
+        for (index, point) in fullPath.enumerated() {
+            let dist = distanceBetweenPoints(point, lastMarker.coordinate)
+            if dist < closestDistance {
+                closestDistance = dist
+                closestIndex = index
+            }
+        }
+        
+        // Split at this index (include the split point in both segments for continuity)
+        let outbound = Array(fullPath.prefix(closestIndex + 1))
+        let returnLeg = Array(fullPath.suffix(from: closestIndex))
+        
+        return (outbound, returnLeg)
+    }
+    
+    private func distanceBetweenPoints(_ c1: CLLocationCoordinate2D, _ c2: CLLocationCoordinate2D) -> Double {
+        let loc1 = CLLocation(latitude: c1.latitude, longitude: c1.longitude)
+        let loc2 = CLLocation(latitude: c2.latitude, longitude: c2.longitude)
+        return loc1.distance(from: loc2)
+    }
+    
+    /// Calculate camera position to show entire route
+    var mapCameraPosition: MapCameraPosition {
+        let allPoints = route.routePath
+        print("🗺️ Map preview: routePath has \(allPoints.count) points, polyline length: \(route.encodedPolyline?.count ?? 0) chars")
+        guard !allPoints.isEmpty else {
+            if let loc = userLocation {
+                return .region(MKCoordinateRegion(center: loc, latitudinalMeters: 500, longitudinalMeters: 500))
+            }
+            return .automatic
+        }
+        
+        // Calculate bounds of all points
+        let lats = allPoints.map { $0.latitude }
+        let lngs = allPoints.map { $0.longitude }
+        
+        let minLat = lats.min()!
+        let maxLat = lats.max()!
+        let minLng = lngs.min()!
+        let maxLng = lngs.max()!
+        
+        let center = CLLocationCoordinate2D(
+            latitude: (minLat + maxLat) / 2,
+            longitude: (minLng + maxLng) / 2
+        )
+        
+        // Add 20% padding
+        let latSpan = (maxLat - minLat) * 1.3
+        let lngSpan = (maxLng - minLng) * 1.3
+        
+        let region = MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(latitudeDelta: max(0.005, latSpan), longitudeDelta: max(0.005, lngSpan))
+        )
+        
+        return .region(region)
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
-            // Map
-            Map {
+            // Map - with explicit camera position to show full route
+            Map(initialPosition: mapCameraPosition) {
                 // User's starting location
                 if let userLoc = userLocation {
                     Annotation("Start/End", coordinate: userLoc) {
@@ -1669,9 +1981,21 @@ struct LocalRouteMapPreview: View {
                 }
                 
                 // Route polyline (if available from Google Directions)
+                // Split into outbound (teal) and return leg (orange)
                 if hasRealPolyline, route.routePath.count >= 2 {
-                    MapPolyline(coordinates: route.routePath)
-                        .stroke(route.color, lineWidth: 4)
+                    let splitResult = splitRouteAtLastWaypoint()
+                    
+                    // Outbound leg (to waypoints) - teal
+                    if splitResult.outbound.count >= 2 {
+                        MapPolyline(coordinates: splitResult.outbound)
+                            .stroke(Color.tealAccent, lineWidth: 4)
+                    }
+                    
+                    // Return leg (back to start) - orange
+                    if splitResult.returnLeg.count >= 2 {
+                        MapPolyline(coordinates: splitResult.returnLeg)
+                            .stroke(Color.orange.opacity(0.8), lineWidth: 4)
+                    }
                 }
                 
                 // Discovery markers (POIs)
@@ -1689,6 +2013,39 @@ struct LocalRouteMapPreview: View {
                 }
             }
             .mapStyle(.standard)
+            
+            // Warning banners
+            VStack(spacing: 0) {
+                // Recycled route indicator
+                if isRecycled {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.caption)
+                        Text("No new routes found – showing previous suggestion")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.softAmber)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.softAmber.opacity(0.1))
+                }
+                
+                // Over target duration warning
+                if isOverTarget {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                        Text("Route is \(minutesOverTarget) min longer than your \(targetDurationMinutes) min delay")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.coralPink)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.coralPink.opacity(0.1))
+                }
+            }
             
             // Bottom info panel
             VStack(spacing: 16) {
@@ -1807,22 +2164,32 @@ struct LocalRouteMapPreview: View {
                 }
                 
                 // Action buttons
-                HStack(spacing: 12) {
-                    Button(action: onRegenerate) {
-                        HStack {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                            Text("Try Another")
-                        }
-                        .font(.bodyMedium)
-                        .fontWeight(.medium)
-                        .foregroundColor(.tealAccent)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 14)
-                        .background(Color.tealAccent.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                HStack(spacing: 10) {
+                    // Shuffle - quick regenerate with same settings
+                    Button(action: onShuffle) {
+                        Image(systemName: "shuffle")
+                            .font(.title3)
+                            .fontWeight(.medium)
+                            .foregroundColor(.tealAccent)
+                            .frame(width: 48, height: 48)
+                            .background(Color.tealAccent.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     
+                    // Change options - go back to picker
+                    Button(action: onChangeOptions) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.title3)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+                            .frame(width: 48, height: 48)
+                            .background(Color.secondary.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    
+                    // Let's Go - primary action
                     Button(action: onStartWalk) {
                         HStack {
                             Image(systemName: "figure.walk")
@@ -2625,8 +2992,8 @@ struct StatBadge: View {
 // MARK: - Active Walk View
 struct ActiveWalkView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
-    @Binding var showEndConfirmation: Bool
     @State private var showAllDirections: Bool = false
+    @State private var showEndConfirmation: Bool = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -2728,6 +3095,14 @@ struct ActiveWalkView: View {
                 .padding(.horizontal, 40)
                 .padding(.bottom, 12)
             }
+        }
+        .confirmationDialog("End Walk?", isPresented: $showEndConfirmation) {
+            Button("End & Save Progress") {
+                viewModel.endWalk(completed: true)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Your steps and progress will be saved.")
         }
     }
     
