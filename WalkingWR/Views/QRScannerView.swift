@@ -134,6 +134,7 @@ struct QRScannerView: View {
                         showMarkerContent = false
                         isScanning = true
                     }
+                    .delayAlerts(viewModel: viewModel)
                 }
             }
         }

@@ -64,6 +64,7 @@ struct MainTabView: View {
                 viewModel: viewModel,
                 isPresented: $viewModel.showClinicianSelection
             )
+            .delayAlerts(viewModel: viewModel)
         }
         .onAppear {
             // Only check once per cold launch
@@ -85,6 +86,8 @@ struct MainTabView: View {
                 }
             }
         }
+        // Global delay alerts - use the reusable modifier
+        .delayAlerts(viewModel: viewModel)
     }
     
     private func checkForPendingPushNotification() {
@@ -261,6 +264,60 @@ struct OnboardingPageView: View {
         .onDisappear {
             appeared = false
         }
+    }
+}
+
+// MARK: - Delay Alert ViewModifier
+/// Reusable modifier to add delay alerts to any view
+struct DelayAlertsModifier: ViewModifier {
+    @ObservedObject var viewModel: WaitingRoomViewModel
+    
+    func body(content: Content) -> some View {
+        content
+            .alert("Clinic Delay Updated", isPresented: $viewModel.showWaitTimeIncreasedAlert) {
+                Button("OK", role: .cancel) { }
+                Button("Stop Alerts", role: .destructive) {
+                    viewModel.toggleNotifications()
+                }
+            } message: {
+                Text(increaseMessage)
+            }
+            .alert("Delay Reduction", isPresented: $viewModel.showWaitTimeDecreasedAlert) {
+                Button("OK", role: .cancel) { }
+                Button("Stop Alerts", role: .destructive) {
+                    viewModel.toggleNotifications()
+                }
+            } message: {
+                Text(decreaseMessage)
+            }
+    }
+    
+    private var increaseMessage: String {
+        if let info = viewModel.waitTimeChangeInfo {
+            let increase = info.newMinutes - info.oldMinutes
+            return "The clinic delay has increased by \(increase) minutes (now \(info.newMinutes) min delay)."
+        }
+        return "The clinic delay has been updated."
+    }
+    
+    private var decreaseMessage: String {
+        if let info = viewModel.waitTimeChangeInfo {
+            if info.newMinutes == 0 {
+                return "The clinic is now running on time."
+            } else if info.newMinutes <= 5 {
+                return "The clinic delay has reduced to \(info.newMinutes) minutes."
+            } else {
+                let decrease = info.oldMinutes - info.newMinutes
+                return "The clinic delay has reduced by \(decrease) minutes (now \(info.newMinutes) min delay)."
+            }
+        }
+        return "The clinic delay has been updated."
+    }
+}
+
+extension View {
+    func delayAlerts(viewModel: WaitingRoomViewModel) -> some View {
+        modifier(DelayAlertsModifier(viewModel: viewModel))
     }
 }
 

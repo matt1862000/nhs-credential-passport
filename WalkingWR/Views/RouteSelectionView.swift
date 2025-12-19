@@ -148,6 +148,7 @@ struct RouteSelectionView: View {
             }
             .sheet(isPresented: $showHelpSheet) {
                 HelpView()
+                    .delayAlerts(viewModel: viewModel)
             }
             .sheet(isPresented: $showLocalRoutePicker) {
                 LocalRoutePickerSheet(
@@ -157,6 +158,7 @@ struct RouteSelectionView: View {
                     useCustomTime: $localRouteUseCustom,
                     isPresented: $showLocalRoutePicker
                 )
+                .delayAlerts(viewModel: viewModel)
             }
             .onChange(of: showLocalRoutePicker) { _, isShowing in
                 if isShowing {
@@ -172,12 +174,15 @@ struct RouteSelectionView: View {
             }
             .sheet(isPresented: $viewModel.showMarkerArrivalPrompt) {
                 MarkerArrivalSheet(viewModel: viewModel)
+                    .delayAlerts(viewModel: viewModel)
             }
             .sheet(isPresented: $viewModel.showPreWalkWellbeing) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPreWalkWellbeing, isPostWalk: false)
+                    .delayAlerts(viewModel: viewModel)
             }
             .sheet(isPresented: $viewModel.showPostWalkWellbeing) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPostWalkWellbeing, isPostWalk: true, isWalkActivity: true)
+                    .delayAlerts(viewModel: viewModel)
             }
             .alert("Time to Head Back!", isPresented: $viewModel.showHalfwayAlert) {
                 Button("Got it") { }
@@ -859,6 +864,11 @@ struct LocalRoutePickerSheet: View {
     @State private var preGenerationComplete = false
     @State private var viewedRouteIndices: Set<Int> = []  // Track which routes user has seen
     
+    // Pre-fetched POIs for faster route generation
+    @State private var prefetchedPOIs: [PlaceResult] = []
+    @State private var isPrefetchingPOIs = false
+    @State private var prefetchedForLocation: CLLocationCoordinate2D?
+    
     let durationOptions = [10, 15, 20, 25, 30]
     let maxRoutesToGenerate = 10
     
@@ -1383,7 +1393,17 @@ struct LocalRoutePickerSheet: View {
                 if useCustomTime {
                     customTimeValue = Double(selectedDuration)
                 }
+                // Pre-fetch POIs while user selects duration (speeds up Generate)
+                prefetchPOIsIfNeeded()
             }
+            .onChange(of: locationService.currentLocation) { _, newLocation in
+                // Re-fetch POIs if location significantly changed
+                if newLocation != nil, prefetchedPOIs.isEmpty {
+                    prefetchPOIsIfNeeded()
+                }
+            }
+            // Delay alerts - must show even when route sheet is open
+            .delayAlerts(viewModel: viewModel)
         }
     }
     
@@ -1410,6 +1430,38 @@ struct LocalRoutePickerSheet: View {
         activeFilterCount > 0
     }
     
+    /// Pre-fetch POIs in background while user selects duration
+    func prefetchPOIsIfNeeded() {
+        guard let userLocation = locationService.currentLocation else { return }
+        guard mapsService.hasAPIKey else { return }
+        guard !isPrefetchingPOIs else { return }
+        guard prefetchedPOIs.isEmpty else { return }  // Already fetched
+        
+        isPrefetchingPOIs = true
+        prefetchedForLocation = userLocation.coordinate
+        print("🚀 Pre-fetching POIs while user selects duration...")
+        
+        Task {
+            do {
+                // Use a generous radius to cover most duration options
+                let pois = try await mapsService.findNearbyPlaces(
+                    location: userLocation.coordinate,
+                    radiusMeters: 1500  // Cover up to ~30min walks
+                )
+                await MainActor.run {
+                    prefetchedPOIs = pois
+                    isPrefetchingPOIs = false
+                    print("✅ Pre-fetched \(pois.count) POIs - ready for fast route generation!")
+                }
+            } catch {
+                await MainActor.run {
+                    isPrefetchingPOIs = false
+                    print("⚠️ POI pre-fetch failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
     func generateRoute() {
         guard let userLocation = locationService.currentLocation else { return }
         
@@ -1420,10 +1472,17 @@ struct LocalRoutePickerSheet: View {
             // Use Google APIs for smart routing
             Task {
                 do {
+                    // Use pre-fetched POIs if available (faster!)
+                    let poisToUse = prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
+                    if poisToUse != nil {
+                        print("⚡ Using pre-fetched POIs for instant route generation")
+                    }
+                    
                     let result = try await mapsService.generateLocalRoute(
                         from: userLocation.coordinate,
                         targetDurationMinutes: selectedDuration,
-                        difficulty: selectedDifficulty
+                        difficulty: selectedDifficulty,
+                        prefetchedPOIs: poisToUse
                     )
                     
                     // Validate result
@@ -1561,11 +1620,15 @@ struct LocalRoutePickerSheet: View {
                     // Flatten all previously shown place IDs to exclude from new route
                     let excludedPlaceIds = shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
                     
+                    // Use pre-fetched POIs if available
+                    let poisToUse = prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
+                    
                     let result = try await mapsService.generateLocalRoute(
                         from: userLocation.coordinate,
                         targetDurationMinutes: selectedDuration,
                         difficulty: selectedDifficulty,
-                        excludePlaceIds: excludedPlaceIds
+                        excludePlaceIds: excludedPlaceIds,
+                        prefetchedPOIs: poisToUse
                     )
                     
                     guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
@@ -1768,6 +1831,9 @@ struct LocalRoutePickerSheet: View {
             var consecutiveFailures = 0
             let maxConsecutiveFailures = 5  // Try harder to find more routes
             
+            // Get pre-fetched POIs once for all iterations
+            let poisToUse = await MainActor.run { prefetchedPOIs.isEmpty ? nil : prefetchedPOIs }
+            
             while routesGenerated < maxRoutesToGenerate && consecutiveFailures < maxConsecutiveFailures {
                 do {
                     // Collect all place IDs we've already used
@@ -1779,7 +1845,8 @@ struct LocalRoutePickerSheet: View {
                         from: userLocation.coordinate,
                         targetDurationMinutes: selectedDuration,
                         difficulty: selectedDifficulty,
-                        excludePlaceIds: excludedPlaceIds
+                        excludePlaceIds: excludedPlaceIds,
+                        prefetchedPOIs: poisToUse
                     )
                     
                     // Validate result

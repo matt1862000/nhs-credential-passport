@@ -82,24 +82,27 @@ struct WaitTimeView: View {
                 }
             }
             .sheet(item: $activeSheet) { sheetType in
-                switch sheetType {
-                case .help:
-                    HelpView()
-                case .anxietyCheck:
-                    AnxietyCheckSheet(viewModel: viewModel, isPresented: .init(
-                        get: { activeSheet == .anxietyCheck },
-                        set: { if !$0 { activeSheet = nil } }
-                    ), isPostWalk: false)
-                case .clinicianProfile:
-                    if let clinician = viewModel.selectedClinician {
-                        ClinicianProfileView(clinician: clinician)
+                Group {
+                    switch sheetType {
+                    case .help:
+                        HelpView()
+                    case .anxietyCheck:
+                        AnxietyCheckSheet(viewModel: viewModel, isPresented: .init(
+                            get: { activeSheet == .anxietyCheck },
+                            set: { if !$0 { activeSheet = nil } }
+                        ), isPostWalk: false)
+                    case .clinicianProfile:
+                        if let clinician = viewModel.selectedClinician {
+                            ClinicianProfileView(clinician: clinician)
+                        }
+                    case .clinicianSelection:
+                        ClinicianSelectionView(viewModel: viewModel, isPresented: .init(
+                            get: { activeSheet == .clinicianSelection },
+                            set: { if !$0 { activeSheet = nil } }
+                        ))
                     }
-                case .clinicianSelection:
-                    ClinicianSelectionView(viewModel: viewModel, isPresented: .init(
-                        get: { activeSheet == .clinicianSelection },
-                        set: { if !$0 { activeSheet = nil } }
-                    ))
                 }
+                .delayAlerts(viewModel: viewModel)
             }
             .alert("Clinician Ready!", isPresented: $viewModel.showClinicianReadyAlert) {
                 Button("I'm on my way") {
@@ -156,6 +159,29 @@ struct WaitTimeCard: View {
     
     var body: some View {
         VStack(spacing: 12) {
+            // Notification reminder when alerts are off
+            if !viewModel.notificationsEnabled {
+                Button(action: {
+                    viewModel.toggleNotifications()
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "bell.slash.fill")
+                            .font(.subheadline)
+                        Text("Alerts off. Tap to re-enable notifications.")
+                            .font(.caption)
+                            .multilineTextAlignment(.leading)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color.softAmber)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
+            
             // Last updated - top right
             HStack {
                 Spacer()
@@ -481,6 +507,7 @@ struct ActiveWalkCard: View {
         }
         .sheet(isPresented: $showMap) {
             WalkingMapView(viewModel: viewModel)
+                .delayAlerts(viewModel: viewModel)
         }
         .padding(20)
         .background(

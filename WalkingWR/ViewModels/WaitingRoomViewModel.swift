@@ -269,42 +269,46 @@ class WaitingRoomViewModel: ObservableObject {
                     isFirstFirebaseUpdate = false
                     print("🔄 First Firebase sync - skipping alert (this is expected)")
                 } else if previousDelay > 0 && newDelay != previousDelay {
-                    // Delay actually changed - MUST show alert
-                    // Only skip if there's a pending push notification waiting to be shown
-                    let hasPendingPush = AppDelegate.pendingNotification != nil
-                    
-                    if hasPendingPush {
-                        print("⏸️ Skipping in-app alert - pending push notification will show instead")
+                    // Delay actually changed - only show alert if notifications are enabled
+                    if !notificationsEnabled {
+                        print("🔕 Notifications disabled - skipping delay alert (data will still update)")
                     } else {
-                        // Clear any stale suppress flag - we need to show this alert
-                        AppDelegate.suppressInAppAlertsFlag = false
+                        // Only skip if there's a pending push notification waiting to be shown
+                        let hasPendingPush = AppDelegate.pendingNotification != nil
                         
-                        let isAppInForeground = UIApplication.shared.applicationState == .active
-                        
-                        if newDelay > previousDelay {
-                            // Delay increased
-                            if isAppInForeground {
-                                notificationService.sendWaitTimeIncreasedNotification(
-                                    oldMinutes: previousDelay,
-                                    newMinutes: newDelay,
-                                    isWalking: isWalking
-                                )
+                        if hasPendingPush {
+                            print("⏸️ Skipping in-app alert - pending push notification will show instead")
+                        } else {
+                            // Clear any stale suppress flag - we need to show this alert
+                            AppDelegate.suppressInAppAlertsFlag = false
+                            
+                            let isAppInForeground = UIApplication.shared.applicationState == .active
+                            
+                            if newDelay > previousDelay {
+                                // Delay increased
+                                if isAppInForeground {
+                                    notificationService.sendWaitTimeIncreasedNotification(
+                                        oldMinutes: previousDelay,
+                                        newMinutes: newDelay,
+                                        isWalking: isWalking
+                                    )
+                                }
+                                waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: true)
+                                showWaitTimeIncreasedAlert = true
+                                print("⚠️ SHOWING ALERT: Delay increased \(previousDelay) → \(newDelay) min")
+                            } else if newDelay < previousDelay {
+                                // Delay decreased (any amount)
+                                if isAppInForeground {
+                                    notificationService.sendWaitTimeDecreasedNotification(
+                                        oldMinutes: previousDelay,
+                                        newMinutes: newDelay,
+                                        isWalking: isWalking
+                                    )
+                                }
+                                waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: false)
+                                showWaitTimeDecreasedAlert = true
+                                print("✅ SHOWING ALERT: Delay decreased \(previousDelay) → \(newDelay) min")
                             }
-                            waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: true)
-                            showWaitTimeIncreasedAlert = true
-                            print("⚠️ SHOWING ALERT: Delay increased \(previousDelay) → \(newDelay) min")
-                        } else if newDelay < previousDelay {
-                            // Delay decreased (any amount)
-                            if isAppInForeground {
-                                notificationService.sendWaitTimeDecreasedNotification(
-                                    oldMinutes: previousDelay,
-                                    newMinutes: newDelay,
-                                    isWalking: isWalking
-                                )
-                            }
-                            waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: false)
-                            showWaitTimeDecreasedAlert = true
-                            print("✅ SHOWING ALERT: Delay decreased \(previousDelay) → \(newDelay) min")
                         }
                     }
                 }

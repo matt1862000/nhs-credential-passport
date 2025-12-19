@@ -220,24 +220,26 @@ class GoogleMapsService: ObservableObject {
     /// Generates a circular walking route from user's location using nearby POIs
     /// DYNAMICALLY adjusts number of waypoints to match target duration
     /// Keeps trying different combinations until within ±3 minutes of target
+    /// - Parameter prefetchedPOIs: Optional pre-fetched POIs to skip the Places API call (faster generation)
     func generateLocalRoute(
         from location: CLLocationCoordinate2D,
         targetDurationMinutes: Int,
         difficulty: RouteDifficulty? = nil,
-        excludePlaceIds: Set<String> = []
+        excludePlaceIds: Set<String> = [],
+        prefetchedPOIs: [PlaceResult]? = nil
     ) async throws -> GeneratedRoute {
         await MainActor.run { isLoading = true }
         defer { Task { @MainActor in isLoading = false } }
         
         // STRICT TIMING: Route can be shorter but NEVER exceed requested time
-        // Acceptable range: 80% to 100% of target
-        let minPercent = 0.80
+        // Acceptable range: 75% to 100% of target (e.g., 20min request → 15-20min acceptable)
+        let minPercent = 0.75
         let minAcceptableMinutes = max(1, Int(Double(targetDurationMinutes) * minPercent))
         let maxAcceptableMinutes = targetDurationMinutes  // 100% - never exceed
         let minAcceptableDuration = minAcceptableMinutes * 60
         let maxAcceptableDuration = maxAcceptableMinutes * 60
         
-        print("🗺️ STRICT: \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (80-100% of \(targetDurationMinutes)min, never exceed)")
+        print("🗺️ STRICT: \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (75-100% of \(targetDurationMinutes)min, never exceed)")
         
         // Walking speed ~80m/min
         let walkingSpeedMeterPerMin = 80
@@ -249,14 +251,22 @@ class GoogleMapsService: ObservableObject {
         print("🗺️ Target: \(targetDurationMinutes)min")
         print("🗺️ Search radius: \(searchRadius)m")
         
-        // Step 1: Find nearby POIs - need enough for 1 per 5 minutes
+        // Step 1: Find nearby POIs - use pre-fetched if available (faster!)
         let desiredSpots = max(2, targetDurationMinutes / 5)
-        var places = try await findNearbyPlaces(
-            location: location,
-            radiusMeters: searchRadius
-        )
+        var places: [PlaceResult]
         
-        print("🗺️ Found \(places.count) POIs (need \(desiredSpots) for route)")
+        if let prefetched = prefetchedPOIs, !prefetched.isEmpty {
+            // Use pre-fetched POIs - skip API call!
+            places = prefetched
+            print("🗺️ ⚡ Using \(places.count) pre-fetched POIs (faster!)")
+        } else {
+            // Fetch POIs now
+            places = try await findNearbyPlaces(
+                location: location,
+                radiusMeters: searchRadius
+            )
+            print("🗺️ Found \(places.count) POIs (need \(desiredSpots) for route)")
+        }
         
         // Filter out previously shown places to ensure variety
         if !excludePlaceIds.isEmpty {
@@ -365,8 +375,12 @@ class GoogleMapsService: ObservableObject {
                 var selectedWaypoints: [PlaceResult] = []
                 
                 if comboIndex == 0 {
-                    // FIRST ATTEMPT: Use the best candidates (no randomization)
-                    selectedWaypoints = Array(candidatesForCount.prefix(waypointCount))
+                    // FIRST ATTEMPT: Select angularly diverse waypoints for better loops
+                    selectedWaypoints = selectAngularlyDiverseWaypoints(
+                        from: candidatesForCount,
+                        origin: location,
+                        count: waypointCount
+                    )
                 } else {
                     // SUBSEQUENT ATTEMPTS: Use weighted randomization for variety
                     var availableIndices = Array(0..<candidatesForCount.count)
@@ -434,21 +448,33 @@ class GoogleMapsService: ObservableObject {
         }
         
         // Return best valid route (50-100% of target, never exceeds)
-        // PRIORITY: 1) Most waypoints  2) Closest to target time
+        // PRIORITY: 1) Most waypoints  2) Less backtracking  3) Closest to target time
         if !validRoutes.isEmpty {
-            // Sort by: most waypoints first, then closest to target
-            let sorted = validRoutes.sorted { route1, route2 in
+            // Calculate backtracking scores for all valid routes
+            let routesWithScores = validRoutes.map { route -> (route: GeneratedRoute, backtrackScore: Double) in
+                let score = calculateBacktrackingScore(polyline: route.polyline)
+                return (route, score)
+            }
+            
+            // Sort by: most waypoints, then least backtracking, then closest to target
+            let sorted = routesWithScores.sorted { r1, r2 in
                 // First: more waypoints is better
-                if route1.places.count != route2.places.count {
-                    return route1.places.count > route2.places.count
+                if r1.route.places.count != r2.route.places.count {
+                    return r1.route.places.count > r2.route.places.count
                 }
-                // Second: closer to target is better (all are at or under)
-                let diff1 = targetDurationMinutes - route1.durationSeconds / 60
-                let diff2 = targetDurationMinutes - route2.durationSeconds / 60
+                // Second: less backtracking is better (lower score = more loop-like)
+                if abs(r1.backtrackScore - r2.backtrackScore) > 0.1 {
+                    return r1.backtrackScore < r2.backtrackScore
+                }
+                // Third: closer to target is better (all are at or under)
+                let diff1 = targetDurationMinutes - r1.route.durationSeconds / 60
+                let diff2 = targetDurationMinutes - r2.route.durationSeconds / 60
                 return diff1 < diff2  // Prefer routes closer to target
             }
             
-            var selected = sorted.first!
+            var selected = sorted.first!.route
+            let selectedScore = sorted.first!.backtrackScore
+            print("🗺️ Route backtracking score: \(String(format: "%.0f", selectedScore * 100))% (lower = more loop-like)")
             
             // Remove waypoints that are too close together (within 100m)
             selected = removeCloseWaypoints(from: selected, minDistance: 100)
@@ -459,17 +485,61 @@ class GoogleMapsService: ObservableObject {
             return selected
         }
         
-        // ALWAYS return the best fallback - all POIs are verified walkable
+        // Only return fallback if it meets minimum duration (75% of target)
         if var best = bestFallbackRoute {
-            // Remove waypoints that are too close together
-            best = removeCloseWaypoints(from: best, minDistance: 100)
-            
             let mins = best.durationSeconds / 60
-            print("🗺️ ⚠️ No route within tolerance. Best found: \(mins)min with \(best.places.count) POIs (target: \(targetDurationMinutes)min)")
-            return best
+            
+            // Check if fallback meets minimum threshold
+            if mins >= minAcceptableMinutes {
+                // Remove waypoints that are too close together
+                best = removeCloseWaypoints(from: best, minDistance: 100)
+                print("🗺️ ⚠️ Using fallback route: \(mins)min with \(best.places.count) POIs (target: \(targetDurationMinutes)min, min: \(minAcceptableMinutes)min)")
+                return best
+            } else {
+                print("🗺️ ❌ Fallback route too short: \(mins)min (need at least \(minAcceptableMinutes)min)")
+            }
         }
         
         throw GoogleMapsError.noRouteFound
+    }
+    
+    /// Calculate how much a route backtracks on itself (0.0 = perfect loop, 1.0 = complete out-and-back)
+    /// Compares outbound path to return path - if they overlap significantly, score is high
+    private func calculateBacktrackingScore(polyline: String) -> Double {
+        let points = decodePolyline(polyline)
+        guard points.count >= 4 else { return 0.5 }  // Not enough points to analyze
+        
+        // Split route at midpoint
+        let midIndex = points.count / 2
+        let outbound = Array(points.prefix(midIndex))
+        let returnPath = Array(points.suffix(from: midIndex))
+        
+        guard !outbound.isEmpty && !returnPath.isEmpty else { return 0.5 }
+        
+        // Sample points from return path and check how close they are to outbound path
+        let sampleCount = min(10, returnPath.count)
+        let sampleInterval = max(1, returnPath.count / sampleCount)
+        
+        var closePointCount = 0
+        let closeThresholdMeters: Double = 30  // Points within 30m are considered "same path"
+        
+        for i in stride(from: 0, to: returnPath.count, by: sampleInterval) {
+            let returnPoint = returnPath[i]
+            
+            // Check if this return point is close to any outbound point
+            let isCloseToOutbound = outbound.contains { outboundPoint in
+                distanceBetween(outboundPoint, returnPoint) < closeThresholdMeters
+            }
+            
+            if isCloseToOutbound {
+                closePointCount += 1
+            }
+        }
+        
+        let sampledPoints = (returnPath.count + sampleInterval - 1) / sampleInterval
+        let backtrackRatio = Double(closePointCount) / Double(max(1, sampledPoints))
+        
+        return backtrackRatio  // 0.0 = no overlap (good loop), 1.0 = full overlap (out-and-back)
     }
     
     /// Remove waypoints that are too close together (keeps first one in each cluster)
@@ -623,47 +693,138 @@ class GoogleMapsService: ObservableObject {
             return distance >= minDistance && distance <= maxDistance && !hasExcludedType
         }
         
-        // Sort based on difficulty preference
+        // Calculate bearing (angle) from origin for each POI
+        let placesWithAngles = filtered.map { place -> (place: PlaceResult, distance: Double, angle: Double) in
+            let distance = distanceBetween(origin, place.coordinate)
+            let angle = bearingBetween(origin, place.coordinate)
+            return (place, distance, angle)
+        }
+        
+        // Sort based on difficulty preference, but also consider angular diversity
         let sorted: [PlaceResult]
         switch difficulty {
         case .easy:
-            // Easy: prefer closer POIs (sort by distance ascending, but still reasonable)
-            sorted = filtered.sorted { p1, p2 in
-                let d1 = distanceBetween(origin, p1.coordinate)
-                let d2 = distanceBetween(origin, p2.coordinate)
-                // Prefer closer, but not too close (penalize very close ones slightly)
-                let score1 = d1 < idealDistance * 0.5 ? d1 + 100 : d1
-                let score2 = d2 < idealDistance * 0.5 ? d2 + 100 : d2
+            // Easy: prefer closer POIs
+            sorted = placesWithAngles.sorted { p1, p2 in
+                let score1 = p1.distance < idealDistance * 0.5 ? p1.distance + 100 : p1.distance
+                let score2 = p2.distance < idealDistance * 0.5 ? p2.distance + 100 : p2.distance
                 return score1 < score2
-            }
+            }.map { $0.place }
             print("🗺️ Sorting: EASY - preferring closer POIs")
             
         case .challenging:
-            // Hard: prefer further POIs (sort by distance descending, but within range)
-            sorted = filtered.sorted { p1, p2 in
-                let d1 = distanceBetween(origin, p1.coordinate)
-                let d2 = distanceBetween(origin, p2.coordinate)
-                return d1 > d2
-            }
+            // Hard: prefer further POIs
+            sorted = placesWithAngles.sorted { $0.distance > $1.distance }.map { $0.place }
             print("🗺️ Sorting: HARD - preferring further POIs")
             
         case .moderate, .none:
-            // Moderate/None: prefer POIs closest to ideal distance
-            sorted = filtered.sorted { p1, p2 in
-                let d1 = abs(distanceBetween(origin, p1.coordinate) - idealDistance)
-                let d2 = abs(distanceBetween(origin, p2.coordinate) - idealDistance)
-                return d1 < d2
+            // Moderate/None: Select POIs that are well-distributed angularly for better loops
+            // Group POIs by direction (8 sectors of 45 degrees each)
+            var sectors: [[PlaceResult]] = Array(repeating: [], count: 8)
+            for item in placesWithAngles {
+                let sectorIndex = Int((item.angle + 180) / 45) % 8
+                sectors[sectorIndex].append(item.place)
             }
-            print("🗺️ Sorting: MODERATE - preferring ideal distance POIs")
+            
+            // Pick best POI from each sector (closest to ideal distance)
+            var diverseSelection: [PlaceResult] = []
+            for sector in sectors {
+                if let best = sector.min(by: { p1, p2 in
+                    abs(distanceBetween(origin, p1.coordinate) - idealDistance) <
+                    abs(distanceBetween(origin, p2.coordinate) - idealDistance)
+                }) {
+                    diverseSelection.append(best)
+                }
+            }
+            
+            // Then add remaining POIs sorted by ideal distance
+            let diverseIds = Set(diverseSelection.map { $0.placeId })
+            let remaining = placesWithAngles
+                .filter { !diverseIds.contains($0.place.placeId) }
+                .sorted { abs($0.distance - idealDistance) < abs($1.distance - idealDistance) }
+                .map { $0.place }
+            
+            sorted = diverseSelection + remaining
+            print("🗺️ Sorting: MODERATE - preferring angular diversity for better loops (\(diverseSelection.count) sectors covered)")
         }
         
         print("🗺️ Candidate waypoints: \(sorted.count) (ideal: \(Int(idealDistance))m, range: \(Int(minDistance))-\(Int(maxDistance))m)")
         for (i, place) in sorted.prefix(5).enumerated() {
             let dist = distanceBetween(origin, place.coordinate)
-            print("🗺️   \(i+1). '\(place.name)' at \(Int(dist))m")
+            let angle = bearingBetween(origin, place.coordinate)
+            print("🗺️   \(i+1). '\(place.name)' at \(Int(dist))m, \(Int(angle))°")
         }
         
         return sorted
+    }
+    
+    /// Calculate bearing (angle) from one coordinate to another in degrees (-180 to 180)
+    private func bearingBetween(_ c1: CLLocationCoordinate2D, _ c2: CLLocationCoordinate2D) -> Double {
+        let lat1 = c1.latitude * .pi / 180
+        let lat2 = c2.latitude * .pi / 180
+        let dLon = (c2.longitude - c1.longitude) * .pi / 180
+        
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        
+        let bearing = atan2(y, x) * 180 / .pi
+        return bearing  // -180 to 180 degrees
+    }
+    
+    /// Select waypoints that are angularly spread around the origin to form better loops
+    /// This avoids selecting multiple POIs in the same direction (which causes backtracking)
+    private func selectAngularlyDiverseWaypoints(from places: [PlaceResult], origin: CLLocationCoordinate2D, count: Int) -> [PlaceResult] {
+        guard count > 0, !places.isEmpty else { return [] }
+        guard count > 1 else { return Array(places.prefix(1)) }  // Single waypoint - just use first
+        
+        // Calculate angle for each place
+        let placesWithAngles = places.map { place -> (place: PlaceResult, angle: Double) in
+            let angle = bearingBetween(origin, place.coordinate)
+            return (place, angle)
+        }
+        
+        // Target angular spread for N waypoints: 360/N degrees apart
+        let targetSpread = 360.0 / Double(count)
+        let minAngularDistance = targetSpread * 0.4  // At least 40% of ideal spread
+        
+        var selected: [PlaceResult] = []
+        var selectedAngles: [Double] = []
+        
+        for (place, angle) in placesWithAngles {
+            // Check if this angle is far enough from already selected angles
+            let isAngularlyDistinct = selectedAngles.allSatisfy { existingAngle in
+                let diff = abs(angle - existingAngle)
+                let angularDistance = min(diff, 360 - diff)  // Handle wrap-around
+                return angularDistance >= minAngularDistance
+            }
+            
+            if isAngularlyDistinct || selected.isEmpty {
+                selected.append(place)
+                selectedAngles.append(angle)
+                
+                if selected.count >= count {
+                    break
+                }
+            }
+        }
+        
+        // If we couldn't find enough angularly diverse POIs, fill with remaining
+        if selected.count < count {
+            let selectedIds = Set(selected.map { $0.placeId })
+            for place in places where !selectedIds.contains(place.placeId) {
+                selected.append(place)
+                if selected.count >= count {
+                    break
+                }
+            }
+        }
+        
+        if selected.count > 1 {
+            let angles = selected.map { Int(bearingBetween(origin, $0.coordinate)) }
+            print("🗺️ Selected \(selected.count) angularly diverse waypoints: \(angles)°")
+        }
+        
+        return selected
     }
     
     /// Add additional discovery spots along the route polyline without affecting timing
@@ -788,6 +949,54 @@ class GoogleMapsService: ObservableObject {
     
     // MARK: - Helper Methods
     
+    /// Decode a Google Maps encoded polyline string into coordinates
+    private func decodePolyline(_ encodedPath: String) -> [CLLocationCoordinate2D] {
+        var coordinates: [CLLocationCoordinate2D] = []
+        var index = encodedPath.startIndex
+        var lat: Int32 = 0
+        var lng: Int32 = 0
+        
+        while index < encodedPath.endIndex {
+            // Decode latitude
+            var shift: Int32 = 0
+            var result: Int32 = 0
+            var byte: Int32
+            
+            repeat {
+                guard index < encodedPath.endIndex else { break }
+                byte = Int32(encodedPath[index].asciiValue! - 63)
+                index = encodedPath.index(after: index)
+                result |= (byte & 0x1F) << shift
+                shift += 5
+            } while byte >= 0x20
+            
+            let deltaLat = ((result & 1) != 0) ? ~(result >> 1) : (result >> 1)
+            lat += deltaLat
+            
+            // Decode longitude
+            shift = 0
+            result = 0
+            
+            repeat {
+                guard index < encodedPath.endIndex else { break }
+                byte = Int32(encodedPath[index].asciiValue! - 63)
+                index = encodedPath.index(after: index)
+                result |= (byte & 0x1F) << shift
+                shift += 5
+            } while byte >= 0x20
+            
+            let deltaLng = ((result & 1) != 0) ? ~(result >> 1) : (result >> 1)
+            lng += deltaLng
+            
+            let coordinate = CLLocationCoordinate2D(
+                latitude: Double(lat) / 1e5,
+                longitude: Double(lng) / 1e5
+            )
+            coordinates.append(coordinate)
+        }
+        
+        return coordinates
+    }
     
     private func distanceBetween(_ c1: CLLocationCoordinate2D, _ c2: CLLocationCoordinate2D) -> Double {
         let loc1 = CLLocation(latitude: c1.latitude, longitude: c1.longitude)

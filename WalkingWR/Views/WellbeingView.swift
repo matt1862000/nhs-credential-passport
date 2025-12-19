@@ -85,6 +85,7 @@ struct WellbeingView: View {
             }
             .sheet(isPresented: $showHelpSheet) {
                 HelpView()
+                    .delayAlerts(viewModel: viewModel)
             }
             .sheet(item: $selectedExercise) { exercise in
                 BreathingExerciseSheet(
@@ -108,9 +109,11 @@ struct WellbeingView: View {
                         exerciseCompleted = true
                     }
                 )
+                .delayAlerts(viewModel: viewModel)
             }
             .sheet(isPresented: $showPreWellbeingCheck) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $showPreWellbeingCheck, isPostWalk: false)
+                    .delayAlerts(viewModel: viewModel)
                     .onDisappear {
                         // Start the pending exercise after pre-check
                         if let exercise = pendingExercise {
@@ -123,6 +126,7 @@ struct WellbeingView: View {
             }
             .sheet(isPresented: $showPostWellbeingCheck) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $showPostWellbeingCheck, isPostWalk: true)
+                    .delayAlerts(viewModel: viewModel)
             }
         }
     }

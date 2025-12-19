@@ -87,12 +87,15 @@ struct ProfileView: View {
                     locationService: viewModel.locationService,
                     showIntroduction: $showIntroduction
                 )
+                .delayAlerts(viewModel: viewModel)
             }
             .sheet(isPresented: $showHelpSheet) {
                 HelpView()
+                    .delayAlerts(viewModel: viewModel)
             }
             .fullScreenCover(isPresented: $showIntroduction) {
                 IntroductionReplayView(isPresented: $showIntroduction)
+                    .delayAlerts(viewModel: viewModel)
             }
             .onAppear {
                 // Refresh HealthKit total daily steps when view appears
@@ -1792,7 +1795,7 @@ struct SettingsView: View {
     @AppStorage("appTheme") private var appTheme: String = AppTheme.system.rawValue
     @State private var showResetTodayAlert = false
     @State private var showResetAllAlert = false
-    @State private var notificationsEnabled = false
+    @State private var systemNotificationsEnabled = false
     @State private var showHealthKitUnavailable = false
     @State private var showMotionUnavailable = false
     @State private var showHealthKitManageAlert = false
@@ -1823,18 +1826,33 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 Section {
-                    Button(action: requestNotificationPermission) {
+                    Button(action: {
+                        if !systemNotificationsEnabled {
+                            // System notifications disabled - open settings
+                            requestNotificationPermission()
+                        } else if !viewModel.notificationsEnabled {
+                            // App alerts off - re-enable them
+                            viewModel.toggleNotifications()
+                        } else {
+                            // Everything enabled - open settings to manage
+                            requestNotificationPermission()
+                        }
+                    }) {
                         HStack {
                             Label("Notifications", systemImage: "bell.fill")
                             Spacer()
-                            if notificationsEnabled {
-                                Text("Enabled")
-                                    .font(.caption)
-                                    .foregroundColor(.mintGreen)
-                            } else {
+                            if !systemNotificationsEnabled {
                                 Text("Tap to enable")
                                     .font(.caption)
                                     .foregroundColor(.softAmber)
+                            } else if !viewModel.notificationsEnabled {
+                                Text("Alerts Off. Tap to re-enable")
+                                    .font(.caption)
+                                    .foregroundColor(.softAmber)
+                            } else {
+                                Text("Enabled")
+                                    .font(.caption)
+                                    .foregroundColor(.mintGreen)
                             }
                         }
                     }
@@ -2109,7 +2127,7 @@ struct SettingsView: View {
         // Check notification status
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
-                notificationsEnabled = settings.authorizationStatus == .authorized
+                systemNotificationsEnabled = settings.authorizationStatus == .authorized
             }
         }
         // HealthKit and Location are already reactive via their services
@@ -2117,7 +2135,7 @@ struct SettingsView: View {
     }
     
     private func requestNotificationPermission() {
-        if notificationsEnabled {
+        if systemNotificationsEnabled {
             // Already authorized, open settings to manage
             openAppSettings()
         } else {
@@ -2132,7 +2150,7 @@ struct SettingsView: View {
                         Task {
                             let granted = await self.viewModel.notificationService.requestAuthorization()
                             await MainActor.run {
-                                self.notificationsEnabled = granted
+                                self.systemNotificationsEnabled = granted
                             }
                         }
                     }
