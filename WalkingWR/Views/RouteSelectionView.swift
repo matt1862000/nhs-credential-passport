@@ -2039,7 +2039,7 @@ struct LocalRouteMapPreview: View {
         case .requestMotion:
             return .blue  // Motion/activity - blue
         case .requestHealthKit:
-            return .pink  // Health/heart - pink
+            return Color(red: 0.95, green: 0.45, blue: 0.45)  // Soft coral red
         case .startWalk:
             return .tealAccent  // Go/start - teal green
         }
