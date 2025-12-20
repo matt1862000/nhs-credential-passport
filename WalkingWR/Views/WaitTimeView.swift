@@ -102,7 +102,6 @@ struct WaitTimeView: View {
                         ))
                     }
                 }
-                .delayAlerts(viewModel: viewModel)
             }
             .alert("Clinician Ready!", isPresented: $viewModel.showClinicianReadyAlert) {
                 Button("I'm on my way") {
@@ -512,7 +511,6 @@ struct ActiveWalkCard: View {
         }
         .sheet(isPresented: $showMap) {
             WalkingMapView(viewModel: viewModel)
-                .delayAlerts(viewModel: viewModel)
         }
         .padding(20)
         .background(

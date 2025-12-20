@@ -148,7 +148,6 @@ struct RouteSelectionView: View {
             }
             .sheet(isPresented: $showHelpSheet) {
                 HelpView()
-                    .delayAlerts(viewModel: viewModel)
             }
             .sheet(isPresented: $showLocalRoutePicker) {
                 LocalRoutePickerSheet(
@@ -158,7 +157,6 @@ struct RouteSelectionView: View {
                     useCustomTime: $localRouteUseCustom,
                     isPresented: $showLocalRoutePicker
                 )
-                .delayAlerts(viewModel: viewModel)
             }
             .onChange(of: showLocalRoutePicker) { _, isShowing in
                 if isShowing {
@@ -174,15 +172,12 @@ struct RouteSelectionView: View {
             }
             .sheet(isPresented: $viewModel.showMarkerArrivalPrompt) {
                 MarkerArrivalSheet(viewModel: viewModel)
-                    .delayAlerts(viewModel: viewModel)
             }
             .sheet(isPresented: $viewModel.showPreWalkWellbeing) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPreWalkWellbeing, isPostWalk: false)
-                    .delayAlerts(viewModel: viewModel)
             }
             .sheet(isPresented: $viewModel.showPostWalkWellbeing) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPostWalkWellbeing, isPostWalk: true, isWalkActivity: true)
-                    .delayAlerts(viewModel: viewModel)
             }
             .alert("Time to Head Back!", isPresented: $viewModel.showHalfwayAlert) {
                 Button("Got it") { }
@@ -1271,7 +1266,6 @@ struct LocalRoutePickerSheet: View {
                 }
             }
             // Delay alerts - must show even when route sheet is open
-            .delayAlerts(viewModel: viewModel)
         }
     }
     
@@ -3684,7 +3678,6 @@ struct MarkerArrivalSheet: View {
             }
             .sheet(isPresented: $showImagePicker) {
                 ImagePicker(image: $capturedImage, useCamera: useCamera)
-                    .delayAlerts(viewModel: viewModel)
             }
             .onChange(of: capturedImage) { oldValue, newValue in
                 if let image = newValue {

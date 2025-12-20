@@ -64,7 +64,6 @@ struct MainTabView: View {
                 viewModel: viewModel,
                 isPresented: $viewModel.showClinicianSelection
             )
-            .delayAlerts(viewModel: viewModel)
         }
         .onAppear {
             // Only check once per cold launch
@@ -268,63 +267,64 @@ struct OnboardingPageView: View {
 }
 
 // MARK: - Delay Alert ViewModifier
-/// Reusable modifier to add delay alerts to any view
-/// Uses local @State to isolate alert presentation from ViewModel re-renders (iOS 18 fix)
+/// Uses a custom overlay alert that works reliably on iOS 18
+/// Shows above all content including sheets
 struct DelayAlertsModifier: ViewModifier {
     @ObservedObject var viewModel: WaitingRoomViewModel
     
     // Local state to isolate alerts from ViewModel changes (iOS 18 compatibility)
-    @State private var showIncreaseAlert = false
-    @State private var showDecreaseAlert = false
-    @State private var capturedMessage = ""
-    @State private var isIncrease = true
+    @State private var showAlert = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
     
     func body(content: Content) -> some View {
         content
-            // Watch for ViewModel alert triggers, then copy to local state with delay
+            // Watch for ViewModel alert triggers
             .onChange(of: viewModel.showWaitTimeIncreasedAlert) { _, shouldShow in
                 if shouldShow {
-                    // Capture the message NOW before any re-renders
-                    capturedMessage = buildIncreaseMessage()
-                    isIncrease = true
-                    // Reset ViewModel immediately to prevent re-triggers
+                    alertTitle = "Clinic Delay Updated"
+                    alertMessage = buildIncreaseMessage()
                     viewModel.showWaitTimeIncreasedAlert = false
-                    // Show local alert after a brief delay to let state settle
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showIncreaseAlert = true
+                    // Delay to let any re-renders settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        showAlert = true
                     }
                 }
             }
             .onChange(of: viewModel.showWaitTimeDecreasedAlert) { _, shouldShow in
                 if shouldShow {
-                    // Capture the message NOW before any re-renders
-                    capturedMessage = buildDecreaseMessage()
-                    isIncrease = false
-                    // Reset ViewModel immediately to prevent re-triggers
+                    alertTitle = "Delay Reduction"
+                    alertMessage = buildDecreaseMessage()
                     viewModel.showWaitTimeDecreasedAlert = false
-                    // Show local alert after a brief delay to let state settle
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showDecreaseAlert = true
+                    // Delay to let any re-renders settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        showAlert = true
                     }
                 }
             }
-            // Use LOCAL state for alert presentation (isolated from ViewModel re-renders)
-            .alert(isIncrease ? "Clinic Delay Updated" : "Delay Reduction", isPresented: $showIncreaseAlert) {
-                Button("OK", role: .cancel) { }
-                Button("Stop Alerts", role: .destructive) {
-                    viewModel.toggleNotifications()
+            // Custom overlay alert - shows above everything
+            .overlay {
+                if showAlert {
+                    CustomAlertOverlay(
+                        title: alertTitle,
+                        message: alertMessage,
+                        onOK: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                showAlert = false
+                            }
+                        },
+                        onStopAlerts: {
+                            viewModel.toggleNotifications()
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                showAlert = false
+                            }
+                        }
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    .zIndex(999)
                 }
-            } message: {
-                Text(capturedMessage)
             }
-            .alert(isIncrease ? "Clinic Delay Updated" : "Delay Reduction", isPresented: $showDecreaseAlert) {
-                Button("OK", role: .cancel) { }
-                Button("Stop Alerts", role: .destructive) {
-                    viewModel.toggleNotifications()
-                }
-            } message: {
-                Text(capturedMessage)
-            }
+            .animation(.easeInOut(duration: 0.25), value: showAlert)
     }
     
     private func buildIncreaseMessage() -> String {
@@ -347,6 +347,73 @@ struct DelayAlertsModifier: ViewModifier {
             }
         }
         return "The clinic delay has been updated."
+    }
+}
+
+// MARK: - Custom Alert Overlay
+/// A custom alert that displays as an overlay, immune to iOS 18 re-render issues
+struct CustomAlertOverlay: View {
+    let title: String
+    let message: String
+    let onOK: () -> Void
+    let onStopAlerts: () -> Void
+    
+    var body: some View {
+        ZStack {
+            // Dimmed background
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+                .onTapGesture { } // Prevent tap-through
+            
+            // Alert card
+            VStack(spacing: 0) {
+                // Content
+                VStack(spacing: 12) {
+                    Text(title)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .multilineTextAlignment(.center)
+                    
+                    Text(message)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 24)
+                .padding(.bottom, 20)
+                
+                Divider()
+                
+                // Buttons
+                HStack(spacing: 0) {
+                    Button(action: onStopAlerts) {
+                        Text("Stop Alerts")
+                            .font(.body)
+                            .foregroundColor(.red)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                    }
+                    
+                    Divider()
+                        .frame(height: 44)
+                    
+                    Button(action: onOK) {
+                        Text("OK")
+                            .font(.body)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.accentColor)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                    }
+                }
+            }
+            .background(Color(.systemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: 10)
+            .padding(.horizontal, 50)
+        }
     }
 }
 

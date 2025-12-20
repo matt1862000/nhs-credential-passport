@@ -87,15 +87,12 @@ struct ProfileView: View {
                     locationService: viewModel.locationService,
                     showIntroduction: $showIntroduction
                 )
-                .delayAlerts(viewModel: viewModel)
             }
             .sheet(isPresented: $showHelpSheet) {
                 HelpView()
-                    .delayAlerts(viewModel: viewModel)
             }
             .fullScreenCover(isPresented: $showIntroduction) {
                 IntroductionReplayView(isPresented: $showIntroduction)
-                    .delayAlerts(viewModel: viewModel)
             }
             .onAppear {
                 // Refresh HealthKit total daily steps when view appears

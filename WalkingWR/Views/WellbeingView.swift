@@ -85,7 +85,6 @@ struct WellbeingView: View {
             }
             .sheet(isPresented: $showHelpSheet) {
                 HelpView()
-                    .delayAlerts(viewModel: viewModel)
             }
             .sheet(item: $selectedExercise) { exercise in
                 BreathingExerciseSheet(
@@ -109,11 +108,9 @@ struct WellbeingView: View {
                         exerciseCompleted = true
                     }
                 )
-                .delayAlerts(viewModel: viewModel)
             }
             .sheet(isPresented: $showPreWellbeingCheck) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $showPreWellbeingCheck, isPostWalk: false)
-                    .delayAlerts(viewModel: viewModel)
                     .onDisappear {
                         // Start the pending exercise after pre-check
                         if let exercise = pendingExercise {
@@ -126,7 +123,6 @@ struct WellbeingView: View {
             }
             .sheet(isPresented: $showPostWellbeingCheck) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $showPostWellbeingCheck, isPostWalk: true)
-                    .delayAlerts(viewModel: viewModel)
             }
         }
     }
@@ -835,7 +831,6 @@ struct NatureSection: View {
         }
         .sheet(item: $selectedPhoto) { photo in
             PhotoDetailView(photo: photo, photoStorage: photoStorage)
-                .delayAlerts(viewModel: viewModel)
         }
     }
 }
@@ -1086,7 +1081,6 @@ struct DigitalSkillsSection: View {
         }
         .sheet(isPresented: $showImagePicker) {
             ImagePicker(image: $capturedImage, useCamera: useCamera)
-                .delayAlerts(viewModel: viewModel)
         }
         .onChange(of: capturedImage) { oldValue, newValue in
             if let image = newValue {
