@@ -2034,6 +2034,17 @@ struct LocalRouteMapPreview: View {
         }
     }
     
+    var primaryButtonColor: Color {
+        switch primaryAction {
+        case .requestMotion:
+            return .blue  // Motion/activity - blue
+        case .requestHealthKit:
+            return .pink  // Health/heart - pink
+        case .startWalk:
+            return .tealAccent  // Go/start - teal green
+        }
+    }
+    
     /// Step indicator for permission flow (e.g., "Step 1 of 2")
     var permissionStepText: String? {
         switch primaryAction {
@@ -2427,7 +2438,7 @@ struct LocalRouteMapPreview: View {
                                 Text(primaryButtonText)
                             }
                         }
-                        .buttonStyle(PrimaryButtonStyle())
+                        .buttonStyle(PrimaryButtonStyle(color: primaryButtonColor))
                         
                         // Permission description
                         if let description = permissionDescription {
