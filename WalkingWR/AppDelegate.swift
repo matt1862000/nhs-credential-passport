@@ -26,17 +26,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         // Register notification categories with actions
         registerNotificationCategories()
         
-        // Request notification permissions
+        // Set delegate for handling notifications (but don't request permission yet)
+        // Permission will be requested after splash/onboarding screen
         UNUserNotificationCenter.current().delegate = self
-        let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
-        UNUserNotificationCenter.current().requestAuthorization(options: authOptions) { granted, error in
-            print("📱 Notification permission granted: \(granted)")
-            if let error = error {
-                print("📱 Notification permission error: \(error)")
-            }
-        }
         
-        // Register for remote notifications
+        // Register for remote notifications (this is safe even before permission is granted)
         DispatchQueue.main.async {
             application.registerForRemoteNotifications()
         }

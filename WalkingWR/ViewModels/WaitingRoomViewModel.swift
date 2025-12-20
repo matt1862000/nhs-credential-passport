@@ -134,11 +134,13 @@ class WaitingRoomViewModel: ObservableObject {
         // Listen to Firebase for real wait times
         setupFirebaseListener()
         
-        // Request notification permission on startup (needed for delay change alerts)
+        // Request notification permission AFTER splash screen loads (2.5 second delay)
+        // This provides a better user experience - user sees the app first
         // Location and HealthKit permissions are requested when starting a walk
-        // This provides a better user experience (just-in-time permissions)
-        Task {
-            await notificationService.requestAuthorization()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            Task {
+                await self?.notificationService.requestAuthorization()
+            }
         }
         
         // Listen for notifications disabled via push notification action
