@@ -842,6 +842,11 @@ struct LocalRoutePickerSheet: View {
     @State private var errorMessage: String?
     @State private var customTimeValue: Double = 5
     
+    // Permission request flow state
+    @State private var showPermissionRequest = false
+    @State private var isRequestingPermissions = false
+    @State private var pendingRouteToStart: WalkingRoute?
+    
     
     // Store last valid route for recycling when shuffle exhausts options
     @State private var lastValidRoute: WalkingRoute?
@@ -929,10 +934,17 @@ struct LocalRoutePickerSheet: View {
                         totalRoutes: allRoutes.count,
                         isLoadingMoreRoutes: isPreGeneratingRoutes,
                         onStartWalk: {
-                            viewModel.selectRoute(route)
-                            viewModel.startWalk()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                isPresented = false
+                            // Check if permissions are needed before starting
+                            if needsWalkPermissions() {
+                                pendingRouteToStart = route
+                                showPermissionRequest = true
+                            } else {
+                                // Permissions already granted, start walk directly
+                                viewModel.selectRoute(route)
+                                viewModel.startWalk()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                    isPresented = false
+                                }
                             }
                         },
                         onShuffle: {
@@ -1266,6 +1278,18 @@ struct LocalRoutePickerSheet: View {
                 }
             }
             // Delay alerts - must show even when route sheet is open
+            .sheet(isPresented: $showPermissionRequest) {
+                WalkPermissionRequestView(
+                    healthKitService: viewModel.healthKitService,
+                    isRequesting: $isRequestingPermissions,
+                    onContinue: requestPermissionsAndStartWalk,
+                    onCancel: {
+                        showPermissionRequest = false
+                        pendingRouteToStart = nil
+                    }
+                )
+                .interactiveDismissDisabled(isRequestingPermissions)
+            }
         }
     }
     
@@ -1957,6 +1981,59 @@ struct LocalRoutePickerSheet: View {
         }
         
         return markers
+    }
+    
+    // MARK: - Permission Helpers
+    
+    /// Check if Motion or HealthKit permissions are needed
+    private func needsWalkPermissions() -> Bool {
+        let needsMotion = viewModel.healthKitService.isMotionNotDetermined
+        let needsHealthKit = !viewModel.healthKitService.isAuthorized
+        return needsMotion || needsHealthKit
+    }
+    
+    /// Request Motion and HealthKit permissions, then start the walk
+    private func requestPermissionsAndStartWalk() {
+        guard let route = pendingRouteToStart else {
+            showPermissionRequest = false
+            return
+        }
+        
+        isRequestingPermissions = true
+        
+        Task {
+            // Request Motion permission first (if not determined)
+            if viewModel.healthKitService.isMotionNotDetermined {
+                await withCheckedContinuation { continuation in
+                    viewModel.healthKitService.requestMotionAuthorization { _ in
+                        continuation.resume()
+                    }
+                }
+                // Wait for dialog to settle
+                try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s
+            }
+            
+            // Request HealthKit permission (if not authorized)
+            if !viewModel.healthKitService.isAuthorized {
+                _ = await viewModel.healthKitService.requestAuthorization()
+                // Wait for dialog to settle
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+            }
+            
+            // Now start the walk on main thread
+            await MainActor.run {
+                isRequestingPermissions = false
+                showPermissionRequest = false
+                pendingRouteToStart = nil
+                
+                viewModel.selectRoute(route)
+                viewModel.startWalk()
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isPresented = false
+                }
+            }
+        }
     }
 }
 
@@ -3679,6 +3756,167 @@ struct MarkerArrivalSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Walk Permission Request View
+/// Shown before starting a walk if Motion or HealthKit permissions are needed
+struct WalkPermissionRequestView: View {
+    @ObservedObject var healthKitService: HealthKitService
+    @Binding var isRequesting: Bool
+    let onContinue: () -> Void
+    let onCancel: () -> Void
+    
+    var needsMotion: Bool {
+        healthKitService.isMotionNotDetermined
+    }
+    
+    var needsHealthKit: Bool {
+        !healthKitService.isAuthorized
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                AnimatedGradientBackground()
+                
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Icon
+                        Image(systemName: "figure.walk.motion")
+                            .font(.system(size: 60))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [.tealAccent, .mintGreen],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .padding(.top, 40)
+                        
+                        // Title
+                        Text("Quick Setup")
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .foregroundColor(.primary)
+                        
+                        // Subtitle
+                        Text("To track your walk, we need a couple of permissions.")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                        
+                        // Permission cards
+                        VStack(spacing: 16) {
+                            if needsMotion {
+                                PermissionCard(
+                                    icon: "figure.walk",
+                                    title: "Motion & Fitness",
+                                    description: "Count your steps during the walk",
+                                    isGranted: healthKitService.isMotionAuthorized
+                                )
+                            }
+                            
+                            if needsHealthKit {
+                                PermissionCard(
+                                    icon: "heart.fill",
+                                    title: "HealthKit",
+                                    description: "Track your daily step progress",
+                                    isGranted: healthKitService.isAuthorized
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        
+                        // Privacy note
+                        HStack(spacing: 8) {
+                            Image(systemName: "lock.shield.fill")
+                                .foregroundColor(.mintGreen)
+                            Text("Your data stays on your device")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.top, 8)
+                        
+                        Spacer(minLength: 40)
+                        
+                        // Continue button
+                        Button(action: onContinue) {
+                            HStack {
+                                if isRequesting {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    Text("Requesting...")
+                                } else {
+                                    Image(systemName: "arrow.right.circle.fill")
+                                    Text("Continue")
+                                }
+                            }
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        .disabled(isRequesting)
+                        .padding(.horizontal, 20)
+                        
+                        Spacer(minLength: 60)
+                    }
+                }
+            }
+            .navigationTitle("Permissions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        onCancel()
+                    }
+                    .disabled(isRequesting)
+                }
+            }
+        }
+    }
+}
+
+/// Card showing a permission item
+private struct PermissionCard: View {
+    let icon: String
+    let title: String
+    let description: String
+    var isGranted: Bool = false
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundColor(.tealAccent)
+                .frame(width: 44, height: 44)
+                .background(Color.tealAccent.opacity(0.1))
+                .clipShape(Circle())
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            if isGranted {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.mintGreen)
+                    .font(.title2)
+            }
+        }
+        .padding(16)
+        .background(Color(.systemBackground).opacity(0.8))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+        )
     }
 }
 
