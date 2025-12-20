@@ -1988,46 +1988,52 @@ struct LocalRoutePickerSheet: View {
         
         isRequestingPermissions = true
         
-        Task {
-            // Request Motion permission first (if not determined)
-            if viewModel.healthKitService.isMotionNotDetermined {
-                // Trigger the motion permission dialog
-                viewModel.healthKitService.requestMotionAuthorization(completion: nil)
-                
-                // Wait for user to respond to the dialog (poll for status change)
-                // Motion dialog typically takes 2-5 seconds for user to respond
-                for _ in 0..<20 { // Up to 10 seconds
-                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
-                    
-                    // Check if user has responded (no longer "not determined")
-                    if !viewModel.healthKitService.isMotionNotDetermined {
-                        break
-                    }
+        // Check what permissions we need upfront (on main thread)
+        let needsMotion = viewModel.healthKitService.isMotionNotDetermined
+        let needsHealthKit = !viewModel.healthKitService.isAuthorized
+        
+        if needsMotion {
+            // Request motion first, then continue in completion
+            viewModel.healthKitService.requestMotionAuthorization { [self] _ in
+                // Motion dialog closed - wait a moment then continue
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.continueWithHealthKitThenStart(route: route, needsHealthKit: needsHealthKit)
                 }
-                
-                // Extra delay for dialog to fully dismiss
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
             }
-            
-            // Request HealthKit permission (if not authorized)
-            if !viewModel.healthKitService.isAuthorized {
+        } else {
+            // No motion needed, go straight to HealthKit
+            continueWithHealthKitThenStart(route: route, needsHealthKit: needsHealthKit)
+        }
+    }
+    
+    /// Continue permission flow with HealthKit, then start walk
+    private func continueWithHealthKitThenStart(route: WalkingRoute, needsHealthKit: Bool) {
+        if needsHealthKit {
+            Task {
                 _ = await viewModel.healthKitService.requestAuthorization()
+                
                 // Wait for dialog to settle
                 try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
-            }
-            
-            // Now start the walk on main thread
-            await MainActor.run {
-                isRequestingPermissions = false
-                pendingRouteToStart = nil
                 
-                viewModel.selectRoute(route)
-                viewModel.startWalk()
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    isPresented = false
+                await MainActor.run {
+                    self.finishAndStartWalk(route: route)
                 }
             }
+        } else {
+            finishAndStartWalk(route: route)
+        }
+    }
+    
+    /// Final step - start the walk
+    private func finishAndStartWalk(route: WalkingRoute) {
+        isRequestingPermissions = false
+        pendingRouteToStart = nil
+        
+        viewModel.selectRoute(route)
+        viewModel.startWalk()
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            isPresented = false
         }
     }
 }
