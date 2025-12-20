@@ -847,9 +847,6 @@ struct LocalRoutePickerSheet: View {
     @State private var errorMessage: String?
     @State private var customTimeValue: Double = 5
     
-    // Advanced options
-    @State private var showAdvancedOptions = false
-    @State private var selectedDifficulty: RouteDifficulty? = nil
     
     // Store last valid route for recycling when shuffle exhausts options
     @State private var lastValidRoute: WalkingRoute?
@@ -1138,112 +1135,6 @@ struct LocalRoutePickerSheet: View {
                             .padding(20)
                             .cardStyle()
                             
-                            // Advanced options (collapsible)
-                            VStack(spacing: 0) {
-                                Button(action: {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        showAdvancedOptions.toggle()
-                                    }
-                                }) {
-                                    HStack {
-                                        Image(systemName: "slider.horizontal.3")
-                                            .font(.subheadline)
-                                            .foregroundColor(.secondary)
-                                        
-                                        Text("Advanced options")
-                                            .font(.subheadline)
-                                            .foregroundColor(.secondary)
-                                        
-                                        Spacer()
-                                        
-                                        // Show active filter count
-                                        if activeFilterCount > 0 {
-                                            Text("\(activeFilterCount)")
-                                                .font(.caption2)
-                                                .fontWeight(.bold)
-                                                .foregroundColor(.white)
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(Color.tealAccent)
-                                                .clipShape(Capsule())
-                                        }
-                                        
-                                        Image(systemName: showAdvancedOptions ? "chevron.up" : "chevron.down")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .padding(.vertical, 12)
-                                    .padding(.horizontal, 16)
-                                }
-                                
-                                if showAdvancedOptions {
-                                    VStack(alignment: .leading, spacing: 16) {
-                                        Divider()
-                                        
-                                        // Difficulty selection
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            Text("Difficulty")
-                                                .font(.subheadline)
-                                                .fontWeight(.medium)
-                                                .foregroundColor(.primary)
-                                            
-                                            HStack(spacing: 8) {
-                                                DifficultyOptionButton(
-                                                    title: "Easy",
-                                                    icon: "leaf",
-                                                    color: .mintGreen,
-                                                    isSelected: selectedDifficulty == .easy,
-                                                    onTap: {
-                                                        selectedDifficulty = selectedDifficulty == .easy ? nil : .easy
-                                                    }
-                                                )
-                                                
-                                                DifficultyOptionButton(
-                                                    title: "Moderate",
-                                                    icon: "figure.walk",
-                                                    color: .softAmber,
-                                                    isSelected: selectedDifficulty == .moderate,
-                                                    onTap: {
-                                                        selectedDifficulty = selectedDifficulty == .moderate ? nil : .moderate
-                                                    }
-                                                )
-                                                
-                                                DifficultyOptionButton(
-                                                    title: "Hard",
-                                                    icon: "flame",
-                                                    color: .coralPink,
-                                                    isSelected: selectedDifficulty == .challenging,
-                                                    onTap: {
-                                                        selectedDifficulty = selectedDifficulty == .challenging ? nil : .challenging
-                                                    }
-                                                )
-                                            }
-                                            
-                                            Text("Tap to select, tap again to deselect")
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        
-                                        // Clear filters button
-                                        if activeFilterCount > 0 {
-                                            Button(action: {
-                                                selectedDifficulty = nil
-                                            }) {
-                                                HStack {
-                                                    Image(systemName: "xmark.circle")
-                                                    Text("Clear filter")
-                                                }
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                            }
-                                        }
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.bottom, 12)
-                                }
-                            }
-                            .background(Color(.secondarySystemBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             
                             // Error message
                             if let error = errorMessage {
@@ -1263,30 +1154,6 @@ struct LocalRoutePickerSheet: View {
                                         }
                                         .font(.caption)
                                         .foregroundColor(.tealAccent)
-                                    }
-                                    
-                                    // Show filter guidance if filters are active
-                                    if hasActiveFilters {
-                                        Divider()
-                                        
-                                        HStack(spacing: 8) {
-                                            Image(systemName: "lightbulb.fill")
-                                                .foregroundColor(.softAmber)
-                                                .font(.caption)
-                                            
-                                            Text("Try removing some filters to find more routes")
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
-                                            
-                                            Spacer()
-                                            
-                                            Button("Clear filter") {
-                                                selectedDifficulty = nil
-                                            }
-                                            .font(.caption2)
-                                            .fontWeight(.medium)
-                                            .foregroundColor(.tealAccent)
-                                        }
                                     }
                                 }
                                 .padding(12)
@@ -1423,13 +1290,6 @@ struct LocalRoutePickerSheet: View {
         selectedDuration * 80
     }
     
-    var activeFilterCount: Int {
-        selectedDifficulty != nil ? 1 : 0
-    }
-    
-    var hasActiveFilters: Bool {
-        activeFilterCount > 0
-    }
     
     /// Pre-fetch POIs in background while user selects duration
     func prefetchPOIsIfNeeded() {
@@ -1482,7 +1342,7 @@ struct LocalRoutePickerSheet: View {
                     let result = try await mapsService.generateLocalRouteWithRetry(
                         from: userLocation.coordinate,
                         targetDurationMinutes: selectedDuration,
-                        difficulty: selectedDifficulty,
+                        difficulty: nil,
                         prefetchedPOIs: poisToUse
                     )
                     
@@ -1514,13 +1374,8 @@ struct LocalRoutePickerSheet: View {
                         extractWalkingDirections(from: result.legs)
                     }
                     
-                    // Determine difficulty
-                    let routeDifficulty: RouteDifficulty
-                    if let userDifficulty = selectedDifficulty {
-                        routeDifficulty = userDifficulty
-                    } else {
-                        routeDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
-                    }
+                    // Determine difficulty based on duration
+                    let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
                     
                     // Generate AI-powered name and description with rich waypoint info
                     let waypointInfos = result.places.map { place in
@@ -1534,7 +1389,7 @@ struct LocalRoutePickerSheet: View {
                         waypoints: waypointInfos,
                         durationMinutes: result.durationMinutes,
                         distanceMeters: result.distanceMeters,
-                        difficulty: selectedDifficulty
+                        difficulty: nil
                     )
                     
                     // Use AI content or fallback
@@ -1547,15 +1402,7 @@ struct LocalRoutePickerSheet: View {
                     } else {
                         // Fallback name and description if AI fails
                         routeName = "Local Discovery"
-                        var descParts: [String] = ["A \(result.formattedDuration) walk passing \(result.places.count) local points of interest."]
-                        if let diff = selectedDifficulty {
-                            switch diff {
-                            case .easy: descParts.append("Easy pace route.")
-                            case .moderate: descParts.append("Moderate pace route.")
-                            case .challenging: descParts.append("Challenging route.")
-                            }
-                        }
-                        description = descParts.joined(separator: " ")
+                        description = "A \(result.formattedDuration) walk passing \(result.places.count) local points of interest."
                     }
                     
                     // Create the walking route with actual polyline and directions
@@ -1627,7 +1474,7 @@ struct LocalRoutePickerSheet: View {
                     let result = try await mapsService.generateLocalRoute(
                         from: userLocation.coordinate,
                         targetDurationMinutes: selectedDuration,
-                        difficulty: selectedDifficulty,
+                        difficulty: nil,
                         excludePlaceIds: excludedPlaceIds,
                         prefetchedPOIs: poisToUse
                     )
@@ -1672,12 +1519,8 @@ struct LocalRoutePickerSheet: View {
                         extractWalkingDirections(from: result.legs)
                     }
                     
-                    let routeDifficulty: RouteDifficulty
-                    if let userDifficulty = selectedDifficulty {
-                        routeDifficulty = userDifficulty
-                    } else {
-                        routeDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
-                    }
+                    // Determine difficulty based on duration
+                    let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
                     
                     let waypointInfos = result.places.map { place in
                         GeminiService.WaypointInfo(
@@ -1690,7 +1533,7 @@ struct LocalRoutePickerSheet: View {
                         waypoints: waypointInfos,
                         durationMinutes: result.durationMinutes,
                         distanceMeters: result.distanceMeters,
-                        difficulty: selectedDifficulty
+                        difficulty: nil
                     )
                     
                     let routeName: String
@@ -1845,7 +1688,7 @@ struct LocalRoutePickerSheet: View {
                     let result = try await mapsService.generateLocalRoute(
                         from: userLocation.coordinate,
                         targetDurationMinutes: selectedDuration,
-                        difficulty: selectedDifficulty,
+                        difficulty: nil,
                         excludePlaceIds: excludedPlaceIds,
                         prefetchedPOIs: poisToUse
                     )
@@ -1881,12 +1724,8 @@ struct LocalRoutePickerSheet: View {
                     }
                     
                     // Determine difficulty
-                    let routeDifficulty: RouteDifficulty
-                    if let userDifficulty = selectedDifficulty {
-                        routeDifficulty = userDifficulty
-                    } else {
-                        routeDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
-                    }
+                    // Determine difficulty based on duration
+                    let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
                     
                     // Generate AI content
                     let waypointInfos = result.places.map { place in
@@ -1900,7 +1739,7 @@ struct LocalRoutePickerSheet: View {
                         waypoints: waypointInfos,
                         durationMinutes: result.durationMinutes,
                         distanceMeters: result.distanceMeters,
-                        difficulty: selectedDifficulty
+                        difficulty: nil
                     )
                     
                     let routeName = aiContent?.name ?? "Local Discovery"
