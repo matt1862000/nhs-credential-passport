@@ -1804,6 +1804,13 @@ struct SettingsView: View {
         AppTheme(rawValue: appTheme) ?? .system
     }
     
+    // Get app version from bundle (e.g., "1.0.1 (2)")
+    var appVersion: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        return "\(version) (\(build))"
+    }
+    
     // Get the actual device color scheme (not the view's current scheme)
     var deviceColorScheme: ColorScheme {
         #if os(iOS)
@@ -1951,7 +1958,7 @@ struct SettingsView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.0.0")
+                        Text(appVersion)
                             .foregroundColor(.primary)
                     }
                     
