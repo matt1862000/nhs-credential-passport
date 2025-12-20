@@ -267,64 +267,61 @@ struct OnboardingPageView: View {
 }
 
 // MARK: - Delay Alert ViewModifier
-/// Uses a custom overlay alert that works reliably on iOS 18
-/// Shows above all content including sheets
+/// Uses UIKit UIAlertController to show alerts above ALL content including sheets
+/// This is the only reliable way to show alerts over presented views in iOS
 struct DelayAlertsModifier: ViewModifier {
     @ObservedObject var viewModel: WaitingRoomViewModel
-    
-    // Local state to isolate alerts from ViewModel changes (iOS 18 compatibility)
-    @State private var showAlert = false
-    @State private var alertTitle = ""
-    @State private var alertMessage = ""
     
     func body(content: Content) -> some View {
         content
             // Watch for ViewModel alert triggers
             .onChange(of: viewModel.showWaitTimeIncreasedAlert) { _, shouldShow in
                 if shouldShow {
-                    alertTitle = "Clinic Delay Updated"
-                    alertMessage = buildIncreaseMessage()
+                    let title = "Clinic Delay Updated"
+                    let message = buildIncreaseMessage()
                     viewModel.showWaitTimeIncreasedAlert = false
-                    // Delay to let any re-renders settle
+                    // Delay to let any re-renders settle, then show UIKit alert
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                        showAlert = true
+                        showUIKitAlert(title: title, message: message)
                     }
                 }
             }
             .onChange(of: viewModel.showWaitTimeDecreasedAlert) { _, shouldShow in
                 if shouldShow {
-                    alertTitle = "Delay Reduction"
-                    alertMessage = buildDecreaseMessage()
+                    let title = "Delay Reduction"
+                    let message = buildDecreaseMessage()
                     viewModel.showWaitTimeDecreasedAlert = false
-                    // Delay to let any re-renders settle
+                    // Delay to let any re-renders settle, then show UIKit alert
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                        showAlert = true
+                        showUIKitAlert(title: title, message: message)
                     }
                 }
             }
-            // Custom overlay alert - shows above everything
-            .overlay {
-                if showAlert {
-                    CustomAlertOverlay(
-                        title: alertTitle,
-                        message: alertMessage,
-                        onOK: {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                showAlert = false
-                            }
-                        },
-                        onStopAlerts: {
-                            viewModel.toggleNotifications()
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                showAlert = false
-                            }
-                        }
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                    .zIndex(999)
-                }
-            }
-            .animation(.easeInOut(duration: 0.25), value: showAlert)
+    }
+    
+    private func showUIKitAlert(title: String, message: String) {
+        // Get the top-most view controller (works even with sheets/covers)
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = windowScene.windows.first,
+              var topController = window.rootViewController else {
+            return
+        }
+        
+        // Find the top-most presented view controller
+        while let presented = topController.presentedViewController {
+            topController = presented
+        }
+        
+        // Create and show UIAlertController
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        
+        alert.addAction(UIAlertAction(title: "Stop Alerts", style: .destructive) { _ in
+            viewModel.toggleNotifications()
+        })
+        
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        
+        topController.present(alert, animated: true)
     }
     
     private func buildIncreaseMessage() -> String {
@@ -347,73 +344,6 @@ struct DelayAlertsModifier: ViewModifier {
             }
         }
         return "The clinic delay has been updated."
-    }
-}
-
-// MARK: - Custom Alert Overlay
-/// A custom alert that displays as an overlay, immune to iOS 18 re-render issues
-struct CustomAlertOverlay: View {
-    let title: String
-    let message: String
-    let onOK: () -> Void
-    let onStopAlerts: () -> Void
-    
-    var body: some View {
-        ZStack {
-            // Dimmed background
-            Color.black.opacity(0.4)
-                .ignoresSafeArea()
-                .onTapGesture { } // Prevent tap-through
-            
-            // Alert card
-            VStack(spacing: 0) {
-                // Content
-                VStack(spacing: 12) {
-                    Text(title)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .multilineTextAlignment(.center)
-                    
-                    Text(message)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 24)
-                .padding(.bottom, 20)
-                
-                Divider()
-                
-                // Buttons
-                HStack(spacing: 0) {
-                    Button(action: onStopAlerts) {
-                        Text("Stop Alerts")
-                            .font(.body)
-                            .foregroundColor(.red)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                    }
-                    
-                    Divider()
-                        .frame(height: 44)
-                    
-                    Button(action: onOK) {
-                        Text("OK")
-                            .font(.body)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.accentColor)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                    }
-                }
-            }
-            .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: 10)
-            .padding(.horizontal, 50)
-        }
     }
 }
 
