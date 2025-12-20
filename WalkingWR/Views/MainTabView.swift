@@ -322,6 +322,15 @@ struct DelayAlertsModifier: ViewModifier {
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         
         topController.present(alert, animated: true)
+        
+        // Auto-dismiss after 15 seconds if user doesn't interact (prevents stuck alerts)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak alert] in
+            // Only dismiss if this alert is still being presented
+            if alert?.presentingViewController != nil {
+                alert?.dismiss(animated: true)
+                print("⏱️ Auto-dismissed delay alert after 15 seconds")
+            }
+        }
     }
     
     private func buildIncreaseMessage() -> String {
