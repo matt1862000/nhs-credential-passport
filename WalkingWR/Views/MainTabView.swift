@@ -269,30 +269,65 @@ struct OnboardingPageView: View {
 
 // MARK: - Delay Alert ViewModifier
 /// Reusable modifier to add delay alerts to any view
+/// Uses local @State to isolate alert presentation from ViewModel re-renders (iOS 18 fix)
 struct DelayAlertsModifier: ViewModifier {
     @ObservedObject var viewModel: WaitingRoomViewModel
     
+    // Local state to isolate alerts from ViewModel changes (iOS 18 compatibility)
+    @State private var showIncreaseAlert = false
+    @State private var showDecreaseAlert = false
+    @State private var capturedMessage = ""
+    @State private var isIncrease = true
+    
     func body(content: Content) -> some View {
         content
-            .alert("Clinic Delay Updated", isPresented: $viewModel.showWaitTimeIncreasedAlert) {
-                Button("OK", role: .cancel) { }
-                Button("Stop Alerts", role: .destructive) {
-                    viewModel.toggleNotifications()
+            // Watch for ViewModel alert triggers, then copy to local state with delay
+            .onChange(of: viewModel.showWaitTimeIncreasedAlert) { _, shouldShow in
+                if shouldShow {
+                    // Capture the message NOW before any re-renders
+                    capturedMessage = buildIncreaseMessage()
+                    isIncrease = true
+                    // Reset ViewModel immediately to prevent re-triggers
+                    viewModel.showWaitTimeIncreasedAlert = false
+                    // Show local alert after a brief delay to let state settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        showIncreaseAlert = true
+                    }
                 }
-            } message: {
-                Text(increaseMessage)
             }
-            .alert("Delay Reduction", isPresented: $viewModel.showWaitTimeDecreasedAlert) {
+            .onChange(of: viewModel.showWaitTimeDecreasedAlert) { _, shouldShow in
+                if shouldShow {
+                    // Capture the message NOW before any re-renders
+                    capturedMessage = buildDecreaseMessage()
+                    isIncrease = false
+                    // Reset ViewModel immediately to prevent re-triggers
+                    viewModel.showWaitTimeDecreasedAlert = false
+                    // Show local alert after a brief delay to let state settle
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        showDecreaseAlert = true
+                    }
+                }
+            }
+            // Use LOCAL state for alert presentation (isolated from ViewModel re-renders)
+            .alert(isIncrease ? "Clinic Delay Updated" : "Delay Reduction", isPresented: $showIncreaseAlert) {
                 Button("OK", role: .cancel) { }
                 Button("Stop Alerts", role: .destructive) {
                     viewModel.toggleNotifications()
                 }
             } message: {
-                Text(decreaseMessage)
+                Text(capturedMessage)
+            }
+            .alert(isIncrease ? "Clinic Delay Updated" : "Delay Reduction", isPresented: $showDecreaseAlert) {
+                Button("OK", role: .cancel) { }
+                Button("Stop Alerts", role: .destructive) {
+                    viewModel.toggleNotifications()
+                }
+            } message: {
+                Text(capturedMessage)
             }
     }
     
-    private var increaseMessage: String {
+    private func buildIncreaseMessage() -> String {
         if let info = viewModel.waitTimeChangeInfo {
             let increase = info.newMinutes - info.oldMinutes
             return "The clinic delay has increased by \(increase) minutes (now \(info.newMinutes) min delay)."
@@ -300,7 +335,7 @@ struct DelayAlertsModifier: ViewModifier {
         return "The clinic delay has been updated."
     }
     
-    private var decreaseMessage: String {
+    private func buildDecreaseMessage() -> String {
         if let info = viewModel.waitTimeChangeInfo {
             if info.newMinutes == 0 {
                 return "The clinic is now running on time."
