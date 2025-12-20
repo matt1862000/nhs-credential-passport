@@ -1793,9 +1793,31 @@ struct SettingsView: View {
     @State private var showResetTodayAlert = false
     @State private var showResetAllAlert = false
     @State private var systemNotificationsEnabled = false
+    @State private var notificationsNeverAsked = true  // True if user was never prompted
     @State private var showHealthKitUnavailable = false
     @State private var showMotionUnavailable = false
     @State private var showHealthKitManageAlert = false
+    
+    // Only show permissions that have been interacted with (not .notDetermined)
+    var shouldShowNotifications: Bool {
+        !notificationsNeverAsked
+    }
+    
+    var shouldShowLocation: Bool {
+        locationService.authorizationStatus != .notDetermined
+    }
+    
+    var shouldShowMotion: Bool {
+        !healthKitService.isMotionNotDetermined
+    }
+    
+    var shouldShowHealthKit: Bool {
+        UserDefaults.standard.bool(forKey: "healthKitRequested")
+    }
+    
+    var hasAnyPermissions: Bool {
+        shouldShowNotifications || shouldShowLocation || shouldShowMotion || shouldShowHealthKit
+    }
     
     var selectedTheme: AppTheme {
         AppTheme(rawValue: appTheme) ?? .system
@@ -1829,97 +1851,108 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    Button(action: {
-                        if !systemNotificationsEnabled {
-                            // System notifications disabled - open settings
-                            requestNotificationPermission()
-                        } else if !viewModel.notificationsEnabled {
-                            // App alerts off - re-enable them
-                            viewModel.toggleNotifications()
-                        } else {
-                            // Everything enabled - open settings to manage
-                            requestNotificationPermission()
-                        }
-                    }) {
-                        HStack {
-                            Label("Notifications", systemImage: "bell.fill")
-                            Spacer()
-                            if !systemNotificationsEnabled {
-                                Text("Tap to enable")
-                                    .font(.caption)
-                                    .foregroundColor(.softAmber)
-                            } else if !viewModel.notificationsEnabled {
-                                Text("Alerts Off. Tap to re-enable")
-                                    .font(.caption)
-                                    .foregroundColor(.softAmber)
-                            } else {
-                                Text("Enabled")
-                                    .font(.caption)
-                                    .foregroundColor(.mintGreen)
+                // Only show Permissions section if user has interacted with any permission
+                if hasAnyPermissions {
+                    Section {
+                        if shouldShowNotifications {
+                            Button(action: {
+                                if !systemNotificationsEnabled {
+                                    // System notifications disabled - open settings
+                                    requestNotificationPermission()
+                                } else if !viewModel.notificationsEnabled {
+                                    // App alerts off - re-enable them
+                                    viewModel.toggleNotifications()
+                                } else {
+                                    // Everything enabled - open settings to manage
+                                    requestNotificationPermission()
+                                }
+                            }) {
+                                HStack {
+                                    Label("Notifications", systemImage: "bell.fill")
+                                    Spacer()
+                                    if !systemNotificationsEnabled {
+                                        Text("Denied")
+                                            .font(.caption)
+                                            .foregroundColor(.softAmber)
+                                    } else if !viewModel.notificationsEnabled {
+                                        Text("Alerts Off. Tap to re-enable")
+                                            .font(.caption)
+                                            .foregroundColor(.softAmber)
+                                    } else {
+                                        Text("Enabled")
+                                            .font(.caption)
+                                            .foregroundColor(.mintGreen)
+                                    }
+                                }
                             }
+                            .foregroundColor(.primary)
                         }
-                    }
-                    .foregroundColor(.primary)
-                    
-                    Button(action: requestLocationPermission) {
-                        HStack {
-                            Label("Location", systemImage: "location.fill")
-                            Spacer()
-                            if locationService.isAuthorized {
-                                Text("Enabled")
-                                    .font(.caption)
-                                    .foregroundColor(.mintGreen)
-                            } else {
-                                Text("Tap to enable")
-                                    .font(.caption)
-                                    .foregroundColor(.softAmber)
+                        
+                        if shouldShowLocation {
+                            Button(action: requestLocationPermission) {
+                                HStack {
+                                    Label("Location", systemImage: "location.fill")
+                                    Spacer()
+                                    if locationService.isAuthorized {
+                                        Text("Enabled")
+                                            .font(.caption)
+                                            .foregroundColor(.mintGreen)
+                                    } else {
+                                        Text("Denied")
+                                            .font(.caption)
+                                            .foregroundColor(.softAmber)
+                                    }
+                                }
                             }
+                            .foregroundColor(.primary)
                         }
-                    }
-                    .foregroundColor(.primary)
-                    
-                    Button(action: {
-                            print("🔴 BUTTON TAPPED - Steps & Motion")
-                            requestMotionPermission()
-                        }) {
-                        HStack {
-                            Label("Steps & Motion", systemImage: "figure.walk")
-                            Spacer()
-                            if healthKitService.isMotionAuthorized {
-                                Text("Enabled")
-                                    .font(.caption)
-                                    .foregroundColor(.mintGreen)
-                            } else {
-                                Text("Tap to enable")
-                                    .font(.caption)
-                                    .foregroundColor(.softAmber)
+                        
+                        if shouldShowMotion {
+                            Button(action: {
+                                print("🔴 BUTTON TAPPED - Steps & Motion")
+                                requestMotionPermission()
+                            }) {
+                                HStack {
+                                    Label("Steps & Motion", systemImage: "figure.walk")
+                                    Spacer()
+                                    if healthKitService.isMotionAuthorized {
+                                        Text("Enabled")
+                                            .font(.caption)
+                                            .foregroundColor(.mintGreen)
+                                    } else {
+                                        Text("Denied")
+                                            .font(.caption)
+                                            .foregroundColor(.softAmber)
+                                    }
+                                }
                             }
+                            .foregroundColor(.primary)
                         }
-                    }
-                    .foregroundColor(.primary)
-                    
-                    Button(action: requestHealthKitPermission) {
-                        HStack {
-                            Label("HealthKit Steps", systemImage: "heart.fill")
-                            Spacer()
-                            if healthKitService.isAuthorized {
-                                Text("Enabled")
-                                    .font(.caption)
-                                    .foregroundColor(.mintGreen)
-                            } else {
-                                Text("Tap to enable")
-                                    .font(.caption)
-                                    .foregroundColor(.softAmber)
+                        
+                        if shouldShowHealthKit {
+                            Button(action: requestHealthKitPermission) {
+                                HStack {
+                                    Label("HealthKit Steps", systemImage: "heart.fill")
+                                    Spacer()
+                                    if healthKitService.isAuthorized {
+                                        Text("Enabled")
+                                            .font(.caption)
+                                            .foregroundColor(.mintGreen)
+                                    } else {
+                                        Text("Denied")
+                                            .font(.caption)
+                                            .foregroundColor(.softAmber)
+                                    }
+                                }
                             }
+                            .foregroundColor(.primary)
                         }
+                    } header: {
+                        Text("Permissions")
+                    } footer: {
+                        Text("Permissions are requested when needed. Tap to manage in Settings.")
+                            .font(.caption)
                     }
-                    .foregroundColor(.primary)
-                } header: {
-                    Text("Permissions")
-                } footer: {
-                    Text("Steps & Motion tracks steps during walks. HealthKit syncs your daily step count.")
-                        .font(.caption)
                 }
                 
                 Section("Appearance") {
@@ -2132,6 +2165,7 @@ struct SettingsView: View {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
                 systemNotificationsEnabled = settings.authorizationStatus == .authorized
+                notificationsNeverAsked = settings.authorizationStatus == .notDetermined
             }
         }
         // HealthKit and Location are already reactive via their services
