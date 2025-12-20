@@ -84,7 +84,7 @@ class HealthKitService: ObservableObject {
         }
         
         // For read-only permissions, we need to try reading data to check access
-        // Query today's steps - if we get data (or no error), we have access
+        // Query today's steps - if no authorization error, we have access
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: Date())
         let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: Date(), options: .strictStartDate)
@@ -95,20 +95,28 @@ class HealthKitService: ObservableObject {
             options: .cumulativeSum
         ) { [weak self] _, result, error in
             DispatchQueue.main.async {
-                // If we get a result without authorization error, we have access
-                // HealthKit returns nil result (not an error) when access is revoked
-                if error == nil && result != nil {
-                    self?.isAuthorized = true
-                    // Also refresh total daily steps
-                    self?.refreshTotalDailySteps()
-                } else {
-                    // Check if we previously had authorization
-                    let previouslyRequested = UserDefaults.standard.bool(forKey: "healthKitRequested")
-                    // If we requested but now can't read, access was revoked
-                    self?.isAuthorized = false
-                    if previouslyRequested && result == nil {
-                        print("📱 HealthKit access appears to have been revoked")
+                // HealthKit behavior:
+                // - error == nil: Query succeeded, we have read access (result may be nil if no data)
+                // - error != nil with auth issue: Access denied
+                // - result == nil with no error: Access granted but no step data yet
+                
+                if let error = error {
+                    // Check if it's an authorization error
+                    let errorString = error.localizedDescription.lowercased()
+                    if errorString.contains("authorization") || errorString.contains("denied") || errorString.contains("not determined") {
+                        self?.isAuthorized = false
+                        print("📱 HealthKit authorization error: \(error.localizedDescription)")
+                    } else {
+                        // Other error (network, etc.) - assume authorized if we've requested before
+                        let previouslyRequested = UserDefaults.standard.bool(forKey: "healthKitRequested")
+                        self?.isAuthorized = previouslyRequested
+                        print("📱 HealthKit query error (non-auth): \(error.localizedDescription)")
                     }
+                } else {
+                    // No error means we have read access (even if result is nil/no data)
+                    self?.isAuthorized = true
+                    print("📱 HealthKit authorized - query succeeded")
+                    self?.refreshTotalDailySteps()
                 }
             }
         }
