@@ -842,9 +842,6 @@ struct LocalRoutePickerSheet: View {
     @State private var errorMessage: String?
     @State private var customTimeValue: Double = 5
     
-    // Permission request flow state
-    @State private var pendingRouteToStart: WalkingRoute?
-    
     
     // Store last valid route for recycling when shuffle exhausts options
     @State private var lastValidRoute: WalkingRoute?
@@ -931,19 +928,26 @@ struct LocalRoutePickerSheet: View {
                         currentRouteIndex: currentRouteIndex + 1,  // 1-based for display
                         totalRoutes: allRoutes.count,
                         isLoadingMoreRoutes: isPreGeneratingRoutes,
+                        healthKitService: viewModel.healthKitService,
+                        onRequestMotion: {
+                            // Request motion permission only
+                            viewModel.healthKitService.requestMotionAuthorization { _ in
+                                // View will re-render with new state
+                            }
+                        },
+                        onRequestHealthKit: {
+                            // Request HealthKit permission only
+                            Task {
+                                _ = await viewModel.healthKitService.requestAuthorization()
+                                // View will re-render with new state
+                            }
+                        },
                         onStartWalk: {
-                            // Check if permissions are needed before starting
-                            if needsWalkPermissions() {
-                                // Request permissions directly (no intermediate sheet)
-                                pendingRouteToStart = route
-                                requestPermissionsAndStartWalk()
-                            } else {
-                                // Permissions already granted, start walk directly
-                                viewModel.selectRoute(route)
-                                viewModel.startWalk()
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                    isPresented = false
-                                }
+                            // All permissions granted, start walk directly
+                            viewModel.selectRoute(route)
+                            viewModel.startWalk()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                isPresented = false
                             }
                         },
                         onShuffle: {
@@ -1970,57 +1974,6 @@ struct LocalRoutePickerSheet: View {
         return markers
     }
     
-    // MARK: - Permission Helpers
-    
-    /// Check if Motion or HealthKit permissions are needed
-    private func needsWalkPermissions() -> Bool {
-        let needsMotion = viewModel.healthKitService.isMotionNotDetermined
-        let needsHealthKit = !viewModel.healthKitService.isAuthorized
-        return needsMotion || needsHealthKit
-    }
-    
-    /// Request Motion and HealthKit permissions, then start the walk
-    private func requestPermissionsAndStartWalk() {
-        guard let route = pendingRouteToStart else {
-            return
-        }
-        
-        // Capture what we need before async work (avoid capturing self in struct)
-        let healthKitService = viewModel.healthKitService
-        let vm = viewModel
-        let needsMotion = healthKitService.isMotionNotDetermined
-        let needsHealthKit = !healthKitService.isAuthorized
-        
-        // Use Task to sequence permissions
-        Task { @MainActor in
-            // Request Motion permission first (if needed)
-            if needsMotion {
-                // Trigger motion dialog and wait for it
-                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    healthKitService.requestMotionAuthorization { _ in
-                        continuation.resume()
-                    }
-                }
-                // Wait for dialog to fully dismiss
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
-            }
-            
-            // Request HealthKit permission (if needed)
-            if needsHealthKit {
-                _ = await healthKitService.requestAuthorization()
-                // Wait for dialog to settle
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
-            }
-            
-            // Now start the walk
-            vm.selectRoute(route)
-            vm.startWalk()
-            
-            // Dismiss sheet after short delay
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
-            isPresented = false
-        }
-    }
 }
 
 // MARK: - Local Route Map Preview
@@ -2033,9 +1986,51 @@ struct LocalRouteMapPreview: View {
     var currentRouteIndex: Int = 1  // 1-based index for display
     var totalRoutes: Int = 1
     var isLoadingMoreRoutes: Bool = false  // True when pre-generating in background
-    let onStartWalk: () -> Void
-    let onShuffle: () -> Void      // Quick regenerate with same settings
-    let onChangeOptions: () -> Void // Go back to options screen
+    @ObservedObject var healthKitService: HealthKitService  // For permission state
+    let onRequestMotion: () -> Void      // Request motion permission
+    let onRequestHealthKit: () -> Void   // Request HealthKit permission
+    let onStartWalk: () -> Void          // Start the walk (permissions granted)
+    let onShuffle: () -> Void            // Quick regenerate with same settings
+    let onChangeOptions: () -> Void      // Go back to options screen
+    
+    /// What the primary button should do
+    enum PrimaryAction {
+        case requestMotion
+        case requestHealthKit
+        case startWalk
+    }
+    
+    var primaryAction: PrimaryAction {
+        if healthKitService.isMotionNotDetermined {
+            return .requestMotion
+        } else if !healthKitService.isAuthorized {
+            return .requestHealthKit
+        } else {
+            return .startWalk
+        }
+    }
+    
+    var primaryButtonText: String {
+        switch primaryAction {
+        case .requestMotion:
+            return "Enable Motion"
+        case .requestHealthKit:
+            return "Enable Steps"
+        case .startWalk:
+            return "Let's Go!"
+        }
+    }
+    
+    var primaryButtonIcon: String {
+        switch primaryAction {
+        case .requestMotion:
+            return "figure.walk.motion"
+        case .requestHealthKit:
+            return "heart.fill"
+        case .startWalk:
+            return "figure.walk"
+        }
+    }
     
     /// True if route duration exceeds requested target
     var isOverTarget: Bool {
@@ -2369,11 +2364,20 @@ struct LocalRouteMapPreview: View {
                     }
                     .buttonStyle(.plain)
                     
-                    // Let's Go - primary action
-                    Button(action: onStartWalk) {
+                    // Primary action - changes based on permission state
+                    Button {
+                        switch primaryAction {
+                        case .requestMotion:
+                            onRequestMotion()
+                        case .requestHealthKit:
+                            onRequestHealthKit()
+                        case .startWalk:
+                            onStartWalk()
+                        }
+                    } label: {
                         HStack {
-                            Image(systemName: "figure.walk")
-                            Text("Let's Go!")
+                            Image(systemName: primaryButtonIcon)
+                            Text(primaryButtonText)
                         }
                     }
                     .buttonStyle(PrimaryButtonStyle())
