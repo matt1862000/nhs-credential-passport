@@ -2037,11 +2037,11 @@ struct LocalRouteMapPreview: View {
     var primaryButtonColor: Color {
         switch primaryAction {
         case .requestMotion:
-            return .blue  // Motion/activity - blue
+            return Color(red: 0.4, green: 0.6, blue: 0.9)  // Soft sky blue - complements teal
         case .requestHealthKit:
-            return Color(red: 0.95, green: 0.45, blue: 0.45)  // Soft coral red
+            return Color(red: 0.9, green: 0.5, blue: 0.5)  // Soft coral - complements mint
         case .startWalk:
-            return .tealAccent  // Go/start - teal green
+            return .tealAccent  // Go/start - teal green (primary app color)
         }
     }
     
