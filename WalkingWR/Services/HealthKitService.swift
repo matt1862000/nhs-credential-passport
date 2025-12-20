@@ -125,14 +125,18 @@ class HealthKitService: ObservableObject {
         
         do {
             try await healthStore.requestAuthorization(toShare: [], read: typesToRead)
+            
+            // Save that we've requested authorization (even if denied)
+            UserDefaults.standard.set(true, forKey: "healthKitRequested")
+            
+            // IMPORTANT: requestAuthorization doesn't tell us if user granted or denied
+            // We need to actually check by querying - checkAuthorization does this
             await MainActor.run {
-                self.isAuthorized = true
-                // Save that we've requested authorization
-                UserDefaults.standard.set(true, forKey: "healthKitRequested")
-                // Fetch total daily steps now that we have access
-                self.refreshTotalDailySteps()
+                self.checkAuthorization()
             }
-            return true
+            
+            // Return current authorization status
+            return await MainActor.run { self.isAuthorized }
         } catch {
             await MainActor.run {
                 self.errorMessage = "Authorization failed: \(error.localizedDescription)"
