@@ -395,15 +395,24 @@ class WaitingRoomViewModel: ObservableObject {
     // MARK: - Permission Requests (Just-in-Time)
     
     /// Request permissions needed for walking - called when user starts a walk
+    /// Permissions are requested in sequence to avoid iOS dismissing dialogs
     private func requestWalkPermissions() {
-        // Request location permission if not already authorized
-        if !locationService.isAuthorized {
-            locationService.requestPermission()
-        }
-        
-        // Request HealthKit permission for step counting
         Task {
-            await healthKitService.requestAuthorization()
+            // Step 1: Location permission (if not already authorized)
+            if !locationService.isAuthorized {
+                locationService.requestPermission()
+                // Wait for user to respond to location dialog
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+            }
+            
+            // Step 2: Wait a moment for any motion permission that might be triggered
+            // Motion permission is triggered automatically by startObservingSteps
+            // so we don't request it explicitly here
+            
+            // Step 3: HealthKit permission (after other dialogs have settled)
+            // Delay to ensure motion dialog has finished
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+            _ = await healthKitService.requestAuthorization()
         }
     }
     
