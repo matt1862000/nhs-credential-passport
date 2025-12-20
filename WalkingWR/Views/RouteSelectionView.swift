@@ -3266,6 +3266,7 @@ struct ActiveWalkView: View {
                     CompactStatPill(icon: "figure.walk", value: "\(viewModel.walkSession.stepsThisSession)", label: "steps")
                     CompactStatPill(icon: "star.fill", value: "\(viewModel.userProgress.totalPoints)", label: "pts")
                     CompactStatPill(icon: "mappin", value: "\(viewModel.walkSession.markersScanned.count)", label: "spots")
+                    CompactStatPill(icon: "clock", value: "\(viewModel.waitTimeInfo.estimatedMinutes)", label: "min", highlightColor: .orange)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 10)

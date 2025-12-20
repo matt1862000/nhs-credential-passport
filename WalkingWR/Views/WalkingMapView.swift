@@ -562,18 +562,19 @@ struct CompactStatPill: View {
     let icon: String
     let value: String
     let label: String
+    var highlightColor: Color? = nil  // Optional highlight color for icon
     @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
                 .font(.caption)
-                .foregroundColor(.tealAccent)
+                .foregroundColor(highlightColor ?? .tealAccent)
             
             Text(value)
                 .font(.subheadline)
                 .fontWeight(.semibold)
-                .foregroundColor(.primary)
+                .foregroundColor(highlightColor ?? .primary)
             
             Text(label)
                 .font(.caption2)
