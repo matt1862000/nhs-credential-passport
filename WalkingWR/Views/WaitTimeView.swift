@@ -167,17 +167,22 @@ struct WaitTimeCard: View {
                     HStack(spacing: 8) {
                         Image(systemName: "bell.slash.fill")
                             .font(.subheadline)
-                        Text("Alerts off. Tap to re-enable notifications.")
+                        Text("Alerts off. Tap to re-enable.")
                             .font(.caption)
+                            .fontWeight(.medium)
                             .multilineTextAlignment(.leading)
                         Spacer()
                         Image(systemName: "chevron.right")
                             .font(.caption2)
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(Color.softAmber)
+                    .background(Color.orange.opacity(0.15))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.orange.opacity(0.5), lineWidth: 1)
+                    )
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
             }
