@@ -362,7 +362,8 @@ struct EmbeddedWalkMapView: View {
                                 name: marker.name,
                                 index: index + 1,
                                 isNext: isNext,
-                                isVisited: isVisited
+                                isVisited: isVisited,
+                                delayMinutes: viewModel.waitTimeInfo.estimatedMinutes
                             )
                         }
                     }
@@ -841,6 +842,7 @@ struct WaypointMarkerView: View {
     let index: Int
     let isNext: Bool
     let isVisited: Bool
+    var delayMinutes: Int = 0  // Clinic delay to show as badge
     
     @State private var isPulsing = false
     
@@ -884,6 +886,23 @@ struct WaypointMarkerView: View {
                     .font(.caption)
                     .fontWeight(.bold)
                     .foregroundColor(.white)
+            }
+        }
+        // Delay badge - positioned to top-right
+        .overlay(alignment: .topTrailing) {
+            if delayMinutes > 0 && !isVisited {
+                HStack(spacing: 2) {
+                    Image(systemName: "clock.fill")
+                        .font(.system(size: 8))
+                    Text("\(delayMinutes)m")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+                .background(Color.orange)
+                .clipShape(Capsule())
+                .offset(x: 8, y: -8)
             }
         }
     }
