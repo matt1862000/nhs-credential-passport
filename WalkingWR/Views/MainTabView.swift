@@ -272,6 +272,9 @@ struct OnboardingPageView: View {
 struct DelayAlertsModifier: ViewModifier {
     @ObservedObject var viewModel: WaitingRoomViewModel
     
+    // Track current alert to dismiss old ones when new alert comes in
+    private static weak var currentDelayAlert: UIAlertController?
+    
     func body(content: Content) -> some View {
         content
             // Watch for ViewModel alert triggers
@@ -300,6 +303,20 @@ struct DelayAlertsModifier: ViewModifier {
     }
     
     private func showUIKitAlert(title: String, message: String) {
+        // Dismiss any existing delay alert first (prevents stacking old alerts)
+        if let existingAlert = DelayAlertsModifier.currentDelayAlert,
+           existingAlert.presentingViewController != nil {
+            existingAlert.dismiss(animated: false) {
+                // Show new alert after dismissing old one
+                self.presentNewAlert(title: title, message: message)
+            }
+        } else {
+            // No existing alert, show new one directly
+            presentNewAlert(title: title, message: message)
+        }
+    }
+    
+    private func presentNewAlert(title: String, message: String) {
         // Get the top-most view controller (works even with sheets/covers)
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               let window = windowScene.windows.first,
@@ -316,10 +333,16 @@ struct DelayAlertsModifier: ViewModifier {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         
         alert.addAction(UIAlertAction(title: "Stop Alerts", style: .destructive) { _ in
+            DelayAlertsModifier.currentDelayAlert = nil
             viewModel.toggleNotifications()
         })
         
-        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in
+            DelayAlertsModifier.currentDelayAlert = nil
+        })
+        
+        // Store reference to dismiss later if new alert comes in
+        DelayAlertsModifier.currentDelayAlert = alert
         
         topController.present(alert, animated: true)
         
@@ -328,6 +351,7 @@ struct DelayAlertsModifier: ViewModifier {
             // Only dismiss if this alert is still being presented
             if alert?.presentingViewController != nil {
                 alert?.dismiss(animated: true)
+                DelayAlertsModifier.currentDelayAlert = nil
                 print("⏱️ Auto-dismissed delay alert after 15 seconds")
             }
         }
