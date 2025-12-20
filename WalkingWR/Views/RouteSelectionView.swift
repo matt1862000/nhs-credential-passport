@@ -1991,13 +1991,22 @@ struct LocalRoutePickerSheet: View {
         Task {
             // Request Motion permission first (if not determined)
             if viewModel.healthKitService.isMotionNotDetermined {
-                await withCheckedContinuation { continuation in
-                    viewModel.healthKitService.requestMotionAuthorization { _ in
-                        continuation.resume()
+                // Trigger the motion permission dialog
+                viewModel.healthKitService.requestMotionAuthorization(completion: nil)
+                
+                // Wait for user to respond to the dialog (poll for status change)
+                // Motion dialog typically takes 2-5 seconds for user to respond
+                for _ in 0..<20 { // Up to 10 seconds
+                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+                    
+                    // Check if user has responded (no longer "not determined")
+                    if !viewModel.healthKitService.isMotionNotDetermined {
+                        break
                     }
                 }
-                // Wait for dialog to settle
-                try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s
+                
+                // Extra delay for dialog to fully dismiss
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
             }
             
             // Request HealthKit permission (if not authorized)
