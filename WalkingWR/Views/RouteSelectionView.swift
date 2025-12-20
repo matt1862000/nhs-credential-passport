@@ -2034,6 +2034,43 @@ struct LocalRouteMapPreview: View {
         }
     }
     
+    /// Step indicator for permission flow (e.g., "Step 1 of 2")
+    var permissionStepText: String? {
+        switch primaryAction {
+        case .requestMotion:
+            // Motion is step 1, HealthKit might be step 2
+            let needsHealthKit = !healthKitService.isAuthorized
+            if needsHealthKit {
+                return "Step 1 of 2"
+            } else {
+                return "Step 1 of 1"
+            }
+        case .requestHealthKit:
+            // If we got here, Motion is done (or not needed)
+            // Check if Motion was available and is now authorized (meaning user went through it)
+            let motionWasCompleted = healthKitService.isPedometerAvailable && healthKitService.isMotionAuthorized
+            if motionWasCompleted {
+                return "Step 2 of 2"
+            } else {
+                return "Step 1 of 1"
+            }
+        case .startWalk:
+            return nil  // No step indicator needed
+        }
+    }
+    
+    /// Description for the current permission
+    var permissionDescription: String? {
+        switch primaryAction {
+        case .requestMotion:
+            return "Counts your steps as you walk"
+        case .requestHealthKit:
+            return "Syncs with Apple Health"
+        case .startWalk:
+            return nil
+        }
+    }
+    
     /// True if route duration exceeds requested target
     var isOverTarget: Bool {
         guard let data = generatedData, targetDurationMinutes > 0 else { return false }
@@ -2367,22 +2404,38 @@ struct LocalRouteMapPreview: View {
                     .buttonStyle(.plain)
                     
                     // Primary action - changes based on permission state
-                    Button {
-                        switch primaryAction {
-                        case .requestMotion:
-                            onRequestMotion()
-                        case .requestHealthKit:
-                            onRequestHealthKit()
-                        case .startWalk:
-                            onStartWalk()
+                    VStack(spacing: 6) {
+                        // Step indicator (only for permissions)
+                        if let stepText = permissionStepText {
+                            Text(stepText)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
-                    } label: {
-                        HStack {
-                            Image(systemName: primaryButtonIcon)
-                            Text(primaryButtonText)
+                        
+                        Button {
+                            switch primaryAction {
+                            case .requestMotion:
+                                onRequestMotion()
+                            case .requestHealthKit:
+                                onRequestHealthKit()
+                            case .startWalk:
+                                onStartWalk()
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: primaryButtonIcon)
+                                Text(primaryButtonText)
+                            }
+                        }
+                        .buttonStyle(PrimaryButtonStyle())
+                        
+                        // Permission description
+                        if let description = permissionDescription {
+                            Text(description)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
                     }
-                    .buttonStyle(PrimaryButtonStyle())
                 }
             }
             .padding(20)
