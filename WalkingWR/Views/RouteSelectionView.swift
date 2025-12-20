@@ -2001,7 +2001,9 @@ struct LocalRouteMapPreview: View {
     }
     
     var primaryAction: PrimaryAction {
-        if healthKitService.isMotionNotDetermined {
+        // Only show motion permission if pedometer is available (not on simulator)
+        // AND permission is not determined
+        if healthKitService.isPedometerAvailable && healthKitService.isMotionNotDetermined {
             return .requestMotion
         } else if !healthKitService.isAuthorized {
             return .requestHealthKit
