@@ -2123,21 +2123,6 @@ struct LocalRouteMapPreview: View {
             
             // Warning banners
             VStack(spacing: 0) {
-                // Recycled route indicator
-                if isRecycled {
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.caption)
-                        Text("No new routes found – showing previous suggestion")
-                            .font(.caption)
-                    }
-                    .foregroundColor(.softAmber)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .background(Color.softAmber.opacity(0.1))
-                }
-                
                 // Over target duration warning
                 if isOverTarget {
                     HStack(spacing: 8) {
