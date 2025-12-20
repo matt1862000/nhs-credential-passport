@@ -231,22 +231,34 @@ class GoogleMapsService: ObservableObject {
         await MainActor.run { isLoading = true }
         defer { Task { @MainActor in isLoading = false } }
         
-        // STRICT TIMING: Route can be shorter but NEVER exceed requested time
-        // Acceptable range: 75% to 100% of target (e.g., 20min request → 15-20min acceptable)
-        let minPercent = 0.75
+        // ADAPTIVE TIMING: More flexible for short routes in dense urban areas
+        // Short routes (≤15 min): 50-100% acceptable (dense areas have clustered POIs)
+        // Medium routes (16-30 min): 65-100% acceptable
+        // Long routes (>30 min): 75-100% acceptable (more options available)
+        let minPercent: Double
+        if targetDurationMinutes <= 15 {
+            minPercent = 0.50  // Very flexible for short routes
+        } else if targetDurationMinutes <= 30 {
+            minPercent = 0.65  // Moderately flexible
+        } else {
+            minPercent = 0.75  // Standard for long routes
+        }
+        
         let minAcceptableMinutes = max(1, Int(Double(targetDurationMinutes) * minPercent))
         let maxAcceptableMinutes = targetDurationMinutes  // 100% - never exceed
         let minAcceptableDuration = minAcceptableMinutes * 60
         let maxAcceptableDuration = maxAcceptableMinutes * 60
         
-        print("🗺️ STRICT: \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (75-100% of \(targetDurationMinutes)min, never exceed)")
+        print("🗺️ ADAPTIVE: \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (\(Int(minPercent * 100))-100% of \(targetDurationMinutes)min)")
         
         // Walking speed ~80m/min
         let walkingSpeedMeterPerMin = 80
         let totalDistanceTarget = targetDurationMinutes * walkingSpeedMeterPerMin
         
-        // Search radius based on route length
-        let searchRadius = max(600, totalDistanceTarget / 2)
+        // Search radius - LARGER for short routes to find POIs at better distances
+        // In dense areas, nearby POIs are too close for a proper loop
+        let baseRadius = max(600, totalDistanceTarget / 2)
+        let searchRadius = targetDurationMinutes <= 15 ? max(800, baseRadius * 3 / 2) : baseRadius
         
         print("🗺️ Target: \(targetDurationMinutes)min")
         print("🗺️ Search radius: \(searchRadius)m")
@@ -275,8 +287,11 @@ class GoogleMapsService: ObservableObject {
             print("🗺️ Excluded \(beforeCount - places.count) previously shown POIs, \(places.count) remaining")
         }
         
-        // For longer routes, we need more POIs - do additional searches at different points
-        if places.count < desiredSpots * 2 && targetDurationMinutes > 20 {
+        // For longer routes OR short routes with few POIs, do additional searches at different points
+        // Short routes in dense areas need POIs at BETTER distances, not just more nearby ones
+        let needsMorePOIs = places.count < desiredSpots * 2 || 
+                           (targetDurationMinutes <= 15 && places.count < 10)
+        if needsMorePOIs {
             print("🗺️ Fetching more POIs for \(targetDurationMinutes)min route...")
             
             // Search at cardinal directions from origin
@@ -326,8 +341,16 @@ class GoogleMapsService: ObservableObject {
         // This ensures we get as many verified walkable POIs as possible
         
         // Desired waypoints (1 per 5 min)
+        // For short routes in dense areas, try MORE waypoints to extend the route
+        // Zigzagging through multiple nearby POIs creates a longer path
         let desiredWaypoints = max(2, targetDurationMinutes / 5)
-        let maxWaypoints = min(desiredWaypoints, 8, places.count)
+        let maxWaypoints: Int
+        if targetDurationMinutes <= 15 {
+            // Short routes: try up to 5 waypoints even for 10-min route (creates longer path)
+            maxWaypoints = min(max(desiredWaypoints, 5), 8, places.count)
+        } else {
+            maxWaypoints = min(desiredWaypoints, 8, places.count)
+        }
         
         // Try waypoint counts in DESCENDING order (most first, then fewer)
         // First valid route (within 125%) wins - maximizing POI count
@@ -336,7 +359,8 @@ class GoogleMapsService: ObservableObject {
         print("🗺️ Will try waypoint counts: \(waypointCountsToTry) (maximize POIs within 125% time)")
         
         var totalAttempts = 0
-        let maxTotalAttempts = 25
+        // More attempts for short routes (harder to find valid combinations in dense areas)
+        let maxTotalAttempts = targetDurationMinutes <= 15 ? 35 : 25
         
         for waypointCount in waypointCountsToTry {
             guard totalAttempts < maxTotalAttempts else { break }
