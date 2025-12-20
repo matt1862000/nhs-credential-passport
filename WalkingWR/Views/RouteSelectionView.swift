@@ -884,9 +884,10 @@ struct LocalRoutePickerSheet: View {
                             .scaleEffect(1.5)
                             .tint(.tealAccent)
                         
-                        Text("Finding new route...")
+                        Text(mapsService.retryStatus ?? "Finding new route...")
                             .font(.headline)
                             .foregroundColor(.primary)
+                            .animation(.easeInOut, value: mapsService.retryStatus)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(.systemBackground))
@@ -1478,7 +1479,7 @@ struct LocalRoutePickerSheet: View {
                         print("⚡ Using pre-fetched POIs for instant route generation")
                     }
                     
-                    let result = try await mapsService.generateLocalRoute(
+                    let result = try await mapsService.generateLocalRouteWithRetry(
                         from: userLocation.coordinate,
                         targetDurationMinutes: selectedDuration,
                         difficulty: selectedDifficulty,

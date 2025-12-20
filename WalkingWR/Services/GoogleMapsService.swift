@@ -216,17 +216,99 @@ class GoogleMapsService: ObservableObject {
         return route
     }
     
-    // MARK: - Generate Local Walking Route
-    /// Generates a circular walking route from user's location using nearby POIs
-    /// DYNAMICALLY adjusts number of waypoints to match target duration
-    /// Keeps trying different combinations until within ±3 minutes of target
-    /// - Parameter prefetchedPOIs: Optional pre-fetched POIs to skip the Places API call (faster generation)
-    func generateLocalRoute(
+    // MARK: - Retry Status
+    @Published var retryStatus: String?
+    
+    // MARK: - Generate Route with Auto-Retry
+    /// Wrapper that implements multi-stage retry:
+    /// 1. Random selection (fast)
+    /// 2. If fails: Systematic selection with expanded search
+    /// 3. If still fails: Try shorter durations (drop 5 min at a time)
+    /// 4. If all fails: Throw no route found
+    func generateLocalRouteWithRetry(
         from location: CLLocationCoordinate2D,
         targetDurationMinutes: Int,
         difficulty: RouteDifficulty? = nil,
         excludePlaceIds: Set<String> = [],
         prefetchedPOIs: [PlaceResult]? = nil
+    ) async throws -> GeneratedRoute {
+        
+        // Stage 1: Random selection (current behavior)
+        do {
+            let route = try await generateLocalRoute(
+                from: location,
+                targetDurationMinutes: targetDurationMinutes,
+                difficulty: difficulty,
+                excludePlaceIds: excludePlaceIds,
+                prefetchedPOIs: prefetchedPOIs,
+                useSystematicSelection: false
+            )
+            await MainActor.run { retryStatus = nil }
+            return route
+        } catch {
+            print("🔄 Stage 1 (random) failed, trying systematic...")
+        }
+        
+        // Stage 2: Systematic selection with expanded search
+        await MainActor.run { retryStatus = "Retrying with expanded search..." }
+        do {
+            let route = try await generateLocalRoute(
+                from: location,
+                targetDurationMinutes: targetDurationMinutes,
+                difficulty: difficulty,
+                excludePlaceIds: excludePlaceIds,
+                prefetchedPOIs: nil,  // Fresh POI fetch with larger radius
+                useSystematicSelection: true,
+                expandedSearch: true
+            )
+            await MainActor.run { retryStatus = nil }
+            return route
+        } catch {
+            print("🔄 Stage 2 (systematic) failed, trying shorter durations...")
+        }
+        
+        // Stage 3: Try shorter durations (drop 5 min at a time, but not below 5 min)
+        for reducedDuration in stride(from: targetDurationMinutes - 5, through: 5, by: -5) {
+            let currentDuration = reducedDuration  // Capture for concurrent access
+            await MainActor.run { retryStatus = "Trying \(currentDuration) min route..." }
+            do {
+                let route = try await generateLocalRoute(
+                    from: location,
+                    targetDurationMinutes: currentDuration,
+                    difficulty: difficulty,
+                    excludePlaceIds: excludePlaceIds,
+                    prefetchedPOIs: nil,
+                    useSystematicSelection: true,
+                    expandedSearch: true
+                )
+                await MainActor.run { retryStatus = nil }
+                print("🔄 Found route at \(currentDuration) min (originally requested \(targetDurationMinutes) min)")
+                return route
+            } catch {
+                print("🔄 \(currentDuration) min also failed...")
+            }
+        }
+        
+        // All stages failed
+        await MainActor.run { retryStatus = nil }
+        throw GoogleMapsError.noRouteFound
+    }
+    
+    // MARK: - Generate Local Walking Route
+    /// Generates a circular walking route from user's location using nearby POIs
+    /// DYNAMICALLY adjusts number of waypoints to match target duration
+    /// Keeps trying different combinations until within ±3 minutes of target
+    /// - Parameter prefetchedPOIs: Optional pre-fetched POIs to skip the Places API call (faster generation)
+    /// - Parameter useSystematicSelection: If true, tries POI combinations in order of likelihood to succeed
+    /// - Parameter expandedSearch: If true, uses larger search radius
+    func generateLocalRoute(
+        from location: CLLocationCoordinate2D,
+        targetDurationMinutes: Int,
+        difficulty: RouteDifficulty? = nil,
+        excludePlaceIds: Set<String> = [],
+        prefetchedPOIs: [PlaceResult]? = nil,
+        useSystematicSelection: Bool = false,
+        expandedSearch: Bool = false
     ) async throws -> GeneratedRoute {
         await MainActor.run { isLoading = true }
         defer { Task { @MainActor in isLoading = false } }
@@ -235,8 +317,11 @@ class GoogleMapsService: ObservableObject {
         // Short routes (≤15 min): 50-100% acceptable (dense areas have clustered POIs)
         // Medium routes (16-30 min): 65-100% acceptable
         // Long routes (>30 min): 75-100% acceptable (more options available)
+        // When in expanded search mode, be even more flexible
         let minPercent: Double
-        if targetDurationMinutes <= 15 {
+        if expandedSearch {
+            minPercent = 0.40  // Very flexible during retry
+        } else if targetDurationMinutes <= 15 {
             minPercent = 0.50  // Very flexible for short routes
         } else if targetDurationMinutes <= 30 {
             minPercent = 0.65  // Moderately flexible
@@ -257,10 +342,19 @@ class GoogleMapsService: ObservableObject {
         
         // Search radius - LARGER for short routes to find POIs at better distances
         // In dense areas, nearby POIs are too close for a proper loop
+        // Expanded search uses 2x radius to find more options
         let baseRadius = max(600, totalDistanceTarget / 2)
-        let searchRadius = targetDurationMinutes <= 15 ? max(800, baseRadius * 3 / 2) : baseRadius
+        let searchRadius: Int
+        if expandedSearch {
+            searchRadius = baseRadius * 2  // Double radius for retry
+        } else if targetDurationMinutes <= 15 {
+            searchRadius = max(800, baseRadius * 3 / 2)
+        } else {
+            searchRadius = baseRadius
+        }
         
-        print("🗺️ Target: \(targetDurationMinutes)min")
+        let searchMode = expandedSearch ? "EXPANDED" : (useSystematicSelection ? "SYSTEMATIC" : "RANDOM")
+        print("🗺️ Target: \(targetDurationMinutes)min [\(searchMode)]")
         print("🗺️ Search radius: \(searchRadius)m")
         
         // Step 1: Find nearby POIs - use pre-fetched if available (faster!)
@@ -359,8 +453,15 @@ class GoogleMapsService: ObservableObject {
         print("🗺️ Will try waypoint counts: \(waypointCountsToTry) (maximize POIs within 125% time)")
         
         var totalAttempts = 0
-        // More attempts for short routes (harder to find valid combinations in dense areas)
-        let maxTotalAttempts = targetDurationMinutes <= 15 ? 35 : 25
+        // More attempts for short routes and systematic/expanded search
+        let maxTotalAttempts: Int
+        if expandedSearch || useSystematicSelection {
+            maxTotalAttempts = 50  // More thorough during retry
+        } else if targetDurationMinutes <= 15 {
+            maxTotalAttempts = 35
+        } else {
+            maxTotalAttempts = 25
+        }
         
         for waypointCount in waypointCountsToTry {
             guard totalAttempts < maxTotalAttempts else { break }
