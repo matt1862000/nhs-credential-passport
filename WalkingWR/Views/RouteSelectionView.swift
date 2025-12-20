@@ -3262,13 +3262,26 @@ struct ActiveWalkView: View {
             // Bottom section with stats and end button
             VStack(spacing: 12) {
                 // Compact stats row
-                HStack(spacing: 12) {
+                HStack(spacing: 8) {
                     CompactStatPill(icon: "figure.walk", value: "\(viewModel.walkSession.stepsThisSession)", label: "steps")
                     CompactStatPill(icon: "star.fill", value: "\(viewModel.userProgress.totalPoints)", label: "pts")
                     CompactStatPill(icon: "mappin", value: "\(viewModel.walkSession.markersScanned.count)", label: "spots")
-                    CompactStatPill(icon: "clock", value: "\(viewModel.waitTimeInfo.estimatedMinutes)", label: "min", highlightColor: .orange)
+                    
+                    // Delay badge - more compact inline format
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock.fill")
+                            .font(.caption2)
+                        Text("\(viewModel.waitTimeInfo.estimatedMinutes)m")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                    }
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.orange.opacity(0.15))
+                    .cornerRadius(12)
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .padding(.top, 10)
                 
                 // End walk button
