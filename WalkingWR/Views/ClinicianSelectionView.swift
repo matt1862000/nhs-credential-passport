@@ -63,19 +63,39 @@ struct ClinicianSelectionView: View {
                         
                         // Clinician list
                         VStack(spacing: 12) {
-                            ForEach(filteredClinicians) { clinician in
-                                ClinicianCard(
-                                    clinician: clinician,
-                                    isSelected: viewModel.selectedClinician?.id == clinician.id,
-                                    onSelect: {
-                                        viewModel.selectClinician(clinician)
-                                        
-                                        // Dismiss after short delay
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                            isPresented = false
+                            if filteredClinicians.isEmpty {
+                                // Empty state
+                                VStack(spacing: 16) {
+                                    Image(systemName: "clock.badge.questionmark")
+                                        .font(.system(size: 50))
+                                        .foregroundColor(.secondary.opacity(0.5))
+                                    
+                                    Text("No Active Clinics")
+                                        .font(.headline)
+                                        .foregroundColor(.primary)
+                                    
+                                    Text("There are no clinicians currently available.\nPlease check back later.")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                        .multilineTextAlignment(.center)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 60)
+                            } else {
+                                ForEach(filteredClinicians) { clinician in
+                                    ClinicianCard(
+                                        clinician: clinician,
+                                        isSelected: viewModel.selectedClinician?.id == clinician.id,
+                                        onSelect: {
+                                            viewModel.selectClinician(clinician)
+                                            
+                                            // Dismiss after short delay
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                                isPresented = false
+                                            }
                                         }
-                                    }
-                                )
+                                    )
+                                }
                             }
                         }
                         

@@ -235,9 +235,9 @@ class WaitingRoomViewModel: ObservableObject {
     
     private func rebuildCliniciansFromFirebase(_ firebaseClinicians: [FirebaseClinicianData]) {
         guard !firebaseClinicians.isEmpty else {
-            // If Firebase has no data yet, show all clinicians as fallback
-            availableClinicians = allClinicians
-            print("⏳ No Firebase data yet, using fallback clinicians")
+            // No clinicians in Firebase - show empty list
+            availableClinicians = []
+            print("⏳ No clinicians in Firebase - clinic not active")
             return
         }
         
@@ -280,6 +280,9 @@ class WaitingRoomViewModel: ObservableObject {
                         
                         if hasPendingPush {
                             print("⏸️ Skipping in-app alert - pending push notification will show instead")
+                        } else if !notificationsEnabled {
+                            // Alerts are disabled - don't show in-app alerts
+                            print("🔕 Skipping in-app alert - notifications disabled")
                         } else {
                             // Clear any stale suppress flag - we need to show this alert
                             AppDelegate.suppressInAppAlertsFlag = false
@@ -648,8 +651,12 @@ class WaitingRoomViewModel: ObservableObject {
     
     // MARK: - Clinician Selection
     func selectClinician(_ clinician: Clinician) {
-        // Unsubscribe from old clinician topic
-        if let old = selectedClinician {
+        // Check if selecting the same clinician - preserve notification settings
+        // Compare by name since UUIDs are regenerated each time clinicians are rebuilt from Firebase
+        let isSameClinician = selectedClinician?.fullTitle == clinician.fullTitle
+        
+        // Unsubscribe from old clinician topic (only if different)
+        if let old = selectedClinician, !isSameClinician {
             let oldTopic = "clinician_" + old.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
             Messaging.messaging().unsubscribe(fromTopic: oldTopic) { error in
                 if let error = error {
@@ -674,15 +681,21 @@ class WaitingRoomViewModel: ObservableObject {
         
         selectedClinician = clinician
         waitTimeInfo = WaitTimeInfo(from: clinician)
-        notificationsEnabled = true  // Enable notifications for new clinician
         
-        // Save selection, notification preference, and the date (for auto-reset next day)
+        // Only enable notifications if selecting a DIFFERENT clinician
+        // This preserves the user's "Stop Alerts" preference when re-selecting same clinician
+        if !isSameClinician {
+            notificationsEnabled = true  // Enable notifications for new clinician
+            UserDefaults.standard.set(true, forKey: "notificationsEnabled")
+            UserDefaults.standard.set(Date(), forKey: "notificationsEnabledDate")
+            print("📱 Saved clinician: \(clinician.fullTitle), notifications enabled for today")
+        } else {
+            print("📱 Same clinician selected, preserving notification preference: \(notificationsEnabled)")
+        }
+        
+        // Save selection
         UserDefaults.standard.set(clinician.id.uuidString, forKey: "selectedClinicianId")
         UserDefaults.standard.set(clinician.fullTitle, forKey: "selectedClinicianName")
-        UserDefaults.standard.set(true, forKey: "notificationsEnabled")
-        UserDefaults.standard.set(Date(), forKey: "notificationsEnabledDate")
-        
-        print("📱 Saved clinician: \(clinician.fullTitle), notifications enabled for today")
     }
     
     // MARK: - Notification Management
