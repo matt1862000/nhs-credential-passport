@@ -2390,7 +2390,7 @@ struct LocalRouteMapPreview: View {
                     HStack(spacing: 8) {
                         Image(systemName: "sparkles")
                             .foregroundColor(.orange)
-                        Text("Want more routes? Premium coming soon!")
+                        Text("Want more routes? Upgrade to Premium - coming soon!")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
