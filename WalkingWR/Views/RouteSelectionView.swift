@@ -855,6 +855,7 @@ struct LocalRoutePickerSheet: View {
     @State private var isPreGeneratingRoutes = false
     @State private var preGenerationComplete = false
     @State private var viewedRouteIndices: Set<Int> = []  // Track which routes user has seen
+    @State private var showPremiumUpsell = false  // Show upgrade message when all routes viewed
     
     // Pre-fetched POIs for faster route generation
     @State private var prefetchedPOIs: [PlaceResult] = []
@@ -928,6 +929,7 @@ struct LocalRoutePickerSheet: View {
                         currentRouteIndex: currentRouteIndex + 1,  // 1-based for display
                         totalRoutes: allRoutes.count,
                         isLoadingMoreRoutes: isPreGeneratingRoutes,
+                        showPremiumUpsell: showPremiumUpsell,
                         healthKitService: viewModel.healthKitService,
                         onRequestMotion: {
                             // Request motion permission only
@@ -964,6 +966,7 @@ struct LocalRoutePickerSheet: View {
                             currentRouteIndex = 0
                             preGenerationComplete = false
                             viewedRouteIndices = []  // Reset viewed tracking
+                            showPremiumUpsell = false  // Reset premium upsell
                             showMapPreview = false
                             errorMessage = nil
                         }
@@ -1652,7 +1655,8 @@ struct LocalRoutePickerSheet: View {
             generatedRoute = firstRoute.route
             generatedRouteData = firstRoute.data
             isRecycledRoute = true  // Always recycled when cycling back
-            print("🔄 Cycling back to route 1 of \(allRoutes.count)")
+            showPremiumUpsell = true  // Show upgrade message when all routes viewed
+            print("🔄 Cycling back to route 1 of \(allRoutes.count) - showing premium upsell")
         } else {
             // First shuffle or still generating - trigger new route generation
             isShuffling = true
@@ -1986,6 +1990,7 @@ struct LocalRouteMapPreview: View {
     var currentRouteIndex: Int = 1  // 1-based index for display
     var totalRoutes: Int = 1
     var isLoadingMoreRoutes: Bool = false  // True when pre-generating in background
+    var showPremiumUpsell: Bool = false  // True when all routes have been viewed
     @ObservedObject var healthKitService: HealthKitService  // For permission state
     let onRequestMotion: () -> Void      // Request motion permission
     let onRequestHealthKit: () -> Void   // Request HealthKit permission
@@ -2379,6 +2384,22 @@ struct LocalRouteMapPreview: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                
+                // Premium upsell message
+                if showPremiumUpsell {
+                    HStack(spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .foregroundColor(.orange)
+                        Text("Want more routes? Premium coming soon!")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.orange.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 
                 // Action buttons
                 HStack(spacing: 10) {
