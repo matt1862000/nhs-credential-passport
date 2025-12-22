@@ -107,7 +107,7 @@ class NotificationService: ObservableObject {
     func scheduleHalfwayNotification(in seconds: TimeInterval) {
         let content = UNMutableNotificationContent()
         content.title = "Halfway Point! 🚶"
-        content.body = "Time to start heading back to the clinic. Your appointment will be ready soon."
+        content.body = "Time to consider heading back to the clinic. Check the app for your current wait time."
         content.sound = .default
         content.categoryIdentifier = "WALKING_ALERT"
         content.interruptionLevel = .timeSensitive
@@ -125,7 +125,7 @@ class NotificationService: ObservableObject {
     func scheduleReturnNowNotification(in seconds: TimeInterval) {
         let content = UNMutableNotificationContent()
         content.title = "Return Now 🏥"
-        content.body = "Please head back to the waiting area. Your clinician is nearly ready for you."
+        content.body = "Please consider heading back to the waiting area. Check the app for your current wait time."
         content.sound = .defaultCritical
         content.categoryIdentifier = "RETURN_ALERT"
         
