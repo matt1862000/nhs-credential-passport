@@ -37,7 +37,19 @@ class WaitingRoomViewModel: ObservableObject {
     // Clinician selection
     @Published var availableClinicians: [Clinician] = []
     @Published var selectedClinician: Clinician?
+    @Published var notificationsEnabled: Bool = true
+    
+    // Push notification dialog
+    @Published var showPushNotificationDialog: Bool = false
+    @Published var pushNotificationTitle: String = ""
+    @Published var pushNotificationBody: String = ""
+    @Published var pushNotificationTopic: String = ""
+    private var suppressInAppAlerts: Bool = false  // Prevents duplicate alerts when opened from push
+    @Published var showClinicianSelection: Bool = false
     private let allClinicians: [Clinician] = Clinician.sampleClinicians
+    
+    // Data loading state
+    @Published var isDataReady: Bool = false
     
     // Simulated EPR updates
     @Published var isSimulatingUpdates: Bool = true
