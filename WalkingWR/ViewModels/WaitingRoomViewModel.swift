@@ -185,6 +185,18 @@ class WaitingRoomViewModel: ObservableObject {
             }
         }
         
+        // Listen for walk notification taps to reset in-app alerts
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ResetWalkAlerts"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.showHalfwayAlert = false
+                self?.showReturnAlert = false
+                print("📱 Reset walk alerts - user came from push notification")
+            }
+        }
         
         // Record app usage for streak tracking
         userProgress.recordAppUsage()

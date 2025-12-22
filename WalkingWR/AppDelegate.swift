@@ -132,6 +132,14 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
                 AppDelegate.cameFromWalkNotification = true
                 print("📱 Walk notification tapped (\(categoryIdentifier)) - suppressing in-app walk alerts")
                 
+                // Post notification to reset any already-shown alerts
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("ResetWalkAlerts"),
+                        object: nil
+                    )
+                }
+                
                 // Reset the flag after a short delay (so the app has time to check it)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                     AppDelegate.cameFromWalkNotification = false
