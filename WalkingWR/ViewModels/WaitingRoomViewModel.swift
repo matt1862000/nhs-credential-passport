@@ -37,18 +37,6 @@ class WaitingRoomViewModel: ObservableObject {
     // Clinician selection
     @Published var availableClinicians: [Clinician] = []
     @Published var selectedClinician: Clinician?
-    @Published var notificationsEnabled: Bool = true
-    
-    // Data loading state - splash screen waits for this
-    @Published var isDataReady: Bool = false
-    
-    // Push notification dialog
-    @Published var showPushNotificationDialog: Bool = false
-    @Published var pushNotificationTitle: String = ""
-    @Published var pushNotificationBody: String = ""
-    @Published var pushNotificationTopic: String = ""
-    private var suppressInAppAlerts: Bool = false  // Prevents duplicate alerts when opened from push
-    @Published var showClinicianSelection: Bool = false
     private let allClinicians: [Clinician] = Clinician.sampleClinicians
     
     // Simulated EPR updates
@@ -341,6 +329,9 @@ class WaitingRoomViewModel: ObservableObject {
                 if isFirstFirebaseUpdate {
                     isFirstFirebaseUpdate = false
                     print("🔄 First Firebase sync - skipping alert (this is expected)")
+                } else if newDelay == 0 {
+                    // Delay is 0 = clinic on time, no notification needed
+                    print("✅ Clinic on time (delay = 0) - no notification needed")
                 } else if previousDelay > 0 && newDelay != previousDelay {
                     // Delay actually changed - only show alert if notifications are enabled
                     if !notificationsEnabled {
@@ -618,11 +609,17 @@ class WaitingRoomViewModel: ObservableObject {
            let returnTime = walkSession.estimatedReturnTime,
            Date() >= returnTime {
             walkSession.halfwayAlertSent = true
-            showHalfwayAlert = true
+            
+            // Only show in-app alert if NOT coming from a push notification tap
+            if !AppDelegate.cameFromWalkNotification {
+                showHalfwayAlert = true
+            } else {
+                print("📱 Skipping halfway in-app alert - user came from push notification")
+            }
         }
         
         // Check if walk should be complete
-        if walkSession.progress >= 1.0 {
+        if walkSession.progress >= 1.0 && !AppDelegate.cameFromWalkNotification {
             showReturnAlert = true
         }
     }

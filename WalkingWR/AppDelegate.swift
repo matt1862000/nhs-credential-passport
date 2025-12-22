@@ -14,6 +14,8 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     static var pendingNotification: [String: String]? = nil
     // Flag to suppress in-app alerts when coming from push
     static var suppressInAppAlertsFlag: Bool = false
+    // Flag to suppress walk alerts (halfway/return) when coming from walk push notification
+    static var cameFromWalkNotification: Bool = false
     
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         
@@ -113,6 +115,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         let isDelayNotification = categoryIdentifier == AppDelegate.delayNotificationCategory ||
                                    categoryIdentifier.isEmpty // FCM push notifications may not have category set
         
+        // Check if this is a walk notification (halfway, return, marker arrival, etc.)
+        let isWalkNotification = categoryIdentifier == "WALKING_ALERT" || 
+                                  categoryIdentifier == "RETURN_ALERT"
+        
         switch actionIdentifier {
         case AppDelegate.stopNotificationsAction:
             // User tapped "Stop Notifications"
@@ -120,6 +126,20 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
             
         case AppDelegate.viewDetailsAction, UNNotificationDefaultActionIdentifier:
             // User tapped "View Details" or tapped the notification itself
+            
+            // If this is a walk notification, set flag to suppress in-app duplicate alerts
+            if isWalkNotification {
+                AppDelegate.cameFromWalkNotification = true
+                print("📱 Walk notification tapped (\(categoryIdentifier)) - suppressing in-app walk alerts")
+                
+                // Reset the flag after a short delay (so the app has time to check it)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    AppDelegate.cameFromWalkNotification = false
+                }
+                
+                completionHandler()
+                return
+            }
             
             // Only show delay dialog for delay-related notifications
             guard isDelayNotification else {
