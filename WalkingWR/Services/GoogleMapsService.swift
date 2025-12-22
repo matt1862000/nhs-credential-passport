@@ -26,11 +26,20 @@ class GoogleMapsService: ObservableObject {
     // MARK: - Find Nearby Places
     /// Finds points of interest near a location using Google Places API
     /// Searches multiple place types in parallel for maximum variety
+    /// Uses POI cache to reduce API calls - POIs don't move!
     func findNearbyPlaces(
         location: CLLocationCoordinate2D,
         radiusMeters: Int = 500,
         types: [String] = ["point_of_interest"]
     ) async throws -> [PlaceResult] {
+        
+        // 🎯 CHECK CACHE FIRST - Save £££ on API calls!
+        if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: location) {
+            let stats = POICacheService.shared.getCacheStats()
+            print("💰 SAVED API CALLS! Using \(cachedPOIs.count) cached POIs (\(stats.locations) locations cached)")
+            return cachedPOIs
+        }
+        
         guard !apiKey.isEmpty else {
             throw GoogleMapsError.missingAPIKey
         }
@@ -134,6 +143,12 @@ class GoogleMapsService: ObservableObject {
         }
         
         print("🗺️ Multi-type search found \(allResults.count) unique POIs from \(placeTypesToSearch.count) categories")
+        
+        // 💾 CACHE RESULTS - Next time at this location = FREE!
+        if !allResults.isEmpty {
+            POICacheService.shared.cachePOIs(allResults, for: location)
+            print("💰 Cached \(allResults.count) POIs - future calls at this location will be FREE!")
+        }
         
         return allResults
     }

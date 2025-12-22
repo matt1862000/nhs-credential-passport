@@ -1,0 +1,169 @@
+//
+//  POICacheService.swift
+//  WalkingWR
+//
+//  Created by Raihan Talukdar on 22/12/2025.
+//
+
+import Foundation
+import CoreLocation
+
+/// Caches POIs by location to reduce Places API calls
+/// - No expiry (POIs are landmarks, they don't move)
+/// - Multiple locations supported (up to 10)
+/// - Uses 1km radius for cache matching
+class POICacheService {
+    static let shared = POICacheService()
+    
+    private let cacheKey = "cachedPOILocations"
+    private let maxCachedLocations = 10
+    private let matchRadiusMeters: Double = 1000 // 1km
+    
+    private init() {}
+    
+    // MARK: - Cache Entry Structure
+    
+    struct CachedPOILocation: Codable {
+        let latitude: Double
+        let longitude: Double
+        let pois: [CachedPOI]
+        let fetchedAt: Date
+        
+        var coordinate: CLLocationCoordinate2D {
+            CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        }
+    }
+    
+    struct CachedPOI: Codable {
+        let placeId: String
+        let name: String
+        let latitude: Double
+        let longitude: Double
+        let types: [String]
+        let vicinity: String?
+        let rating: Double?
+        
+        var coordinate: CLLocationCoordinate2D {
+            CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        }
+    }
+    
+    // MARK: - Public Methods
+    
+    /// Check if we have cached POIs near the given location
+    /// Returns cached POIs if within 1km, nil otherwise
+    func getCachedPOIs(near location: CLLocationCoordinate2D) -> [PlaceResult]? {
+        let cached = loadCache()
+        
+        for entry in cached {
+            let distance = distanceBetween(entry.coordinate, location)
+            if distance <= matchRadiusMeters {
+                print("📦 POI Cache HIT! Found \(entry.pois.count) POIs cached \(Int(distance))m away")
+                return entry.pois.map { $0.toPlaceResult() }
+            }
+        }
+        
+        print("📦 POI Cache MISS - no cached POIs within \(Int(matchRadiusMeters))m")
+        return nil
+    }
+    
+    /// Save POIs for a location
+    func cachePOIs(_ pois: [PlaceResult], for location: CLLocationCoordinate2D) {
+        var cached = loadCache()
+        
+        // Remove any existing cache for nearby location (within 500m)
+        cached.removeAll { entry in
+            distanceBetween(entry.coordinate, location) < 500
+        }
+        
+        // Create new cache entry
+        let newEntry = CachedPOILocation(
+            latitude: location.latitude,
+            longitude: location.longitude,
+            pois: pois.map { CachedPOI(from: $0) },
+            fetchedAt: Date()
+        )
+        
+        // Add to front of list
+        cached.insert(newEntry, at: 0)
+        
+        // Keep only the most recent locations
+        if cached.count > maxCachedLocations {
+            cached = Array(cached.prefix(maxCachedLocations))
+        }
+        
+        saveCache(cached)
+        print("📦 POI Cache SAVED: \(pois.count) POIs for location (\(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude)))")
+    }
+    
+    /// Clear all cached POIs
+    func clearCache() {
+        UserDefaults.standard.removeObject(forKey: cacheKey)
+        print("📦 POI Cache CLEARED")
+    }
+    
+    /// Get cache statistics
+    func getCacheStats() -> (locations: Int, totalPOIs: Int) {
+        let cached = loadCache()
+        let totalPOIs = cached.reduce(0) { $0 + $1.pois.count }
+        return (cached.count, totalPOIs)
+    }
+    
+    // MARK: - Private Methods
+    
+    private func loadCache() -> [CachedPOILocation] {
+        guard let data = UserDefaults.standard.data(forKey: cacheKey) else {
+            return []
+        }
+        
+        do {
+            return try JSONDecoder().decode([CachedPOILocation].self, from: data)
+        } catch {
+            print("📦 Error loading POI cache: \(error)")
+            return []
+        }
+    }
+    
+    private func saveCache(_ cache: [CachedPOILocation]) {
+        do {
+            let data = try JSONEncoder().encode(cache)
+            UserDefaults.standard.set(data, forKey: cacheKey)
+        } catch {
+            print("📦 Error saving POI cache: \(error)")
+        }
+    }
+    
+    private func distanceBetween(_ coord1: CLLocationCoordinate2D, _ coord2: CLLocationCoordinate2D) -> Double {
+        let loc1 = CLLocation(latitude: coord1.latitude, longitude: coord1.longitude)
+        let loc2 = CLLocation(latitude: coord2.latitude, longitude: coord2.longitude)
+        return loc1.distance(from: loc2)
+    }
+}
+
+// MARK: - Conversion Extensions
+
+extension POICacheService.CachedPOI {
+    init(from place: PlaceResult) {
+        self.placeId = place.placeId
+        self.name = place.name
+        self.latitude = place.geometry.location.lat
+        self.longitude = place.geometry.location.lng
+        self.types = place.types
+        self.vicinity = place.vicinity
+        self.rating = place.rating
+    }
+    
+    func toPlaceResult() -> PlaceResult {
+        PlaceResult(
+            placeId: placeId,
+            name: name,
+            geometry: PlaceGeometry(
+                location: PlaceLocation(lat: latitude, lng: longitude)
+            ),
+            types: types,
+            vicinity: vicinity,
+            rating: rating
+        )
+    }
+}
+
