@@ -149,6 +149,13 @@ function closeFinishedClinics() {
 var isProcessing = false;
 
 // ========================================
+// 🔑 TOKEN CACHE (reduces URL fetches by ~50%)
+// ========================================
+
+var cachedToken = null;
+var tokenExpiry = 0;
+
+// ========================================
 // 🔍 DEBUG FUNCTION - RUN THIS FIRST!
 // ========================================
 
@@ -608,6 +615,14 @@ function deleteFirestoreDocument(collection, docId) {
 
 function getFirebaseToken() {
   var now = Math.floor(Date.now() / 1000);
+  
+  // Return cached token if still valid (with 5-minute buffer)
+  if (cachedToken && tokenExpiry > now + 300) {
+    return cachedToken;
+  }
+  
+  Logger.log("🔑 Fetching new Firebase token...");
+  
   var expiry = now + 3600;
   
   var claimSet = {
@@ -645,7 +660,13 @@ function getFirebaseToken() {
     throw new Error("Authentication failed");
   }
   
-  return tokenData.access_token;
+  // Cache the token
+  cachedToken = tokenData.access_token;
+  tokenExpiry = expiry;
+  
+  Logger.log("🔑 Token cached (expires in 1 hour)");
+  
+  return cachedToken;
 }
 
 // ========================================
@@ -673,35 +694,75 @@ function manualSync() {
 // ========================================
 
 function setupAutoSync() {
-  // Delete existing triggers for syncToFirestore
+  // Delete existing triggers
   var triggers = ScriptApp.getProjectTriggers();
   for (var i = 0; i < triggers.length; i++) {
-    if (triggers[i].getHandlerFunction() === 'syncToFirestore') {
+    var handler = triggers[i].getHandlerFunction();
+    if (handler === 'syncToFirestore' || handler === 'midnightClearClinic') {
       ScriptApp.deleteTrigger(triggers[i]);
-      Logger.log("Deleted existing syncToFirestore trigger");
+      Logger.log("Deleted existing " + handler + " trigger");
     }
   }
   
-  // Create new trigger to run every 1 minute
+  // Create sync trigger (every 1 minute)
   ScriptApp.newTrigger('syncToFirestore')
     .timeBased()
     .everyMinutes(1)
     .create();
   
-  Logger.log("✅ Created new syncToFirestore trigger (every 1 minute)");
-  SpreadsheetApp.getUi().alert("✅ Auto-sync enabled!\n\nThe app will update every 1 minute automatically.");
+  // Create midnight clear trigger (runs at 00:00-01:00 daily)
+  ScriptApp.newTrigger('midnightClearClinic')
+    .timeBased()
+    .atHour(0)
+    .everyDays(1)
+    .create();
+  
+  Logger.log("✅ Created syncToFirestore trigger (every 1 minute)");
+  Logger.log("✅ Created midnightClearClinic trigger (daily at midnight)");
+  SpreadsheetApp.getUi().alert("✅ Auto-sync enabled!\n\n• App updates every 1 minute\n• Clinic auto-clears at midnight");
 }
 
 function disableAutoSync() {
   var triggers = ScriptApp.getProjectTriggers();
   var count = 0;
   for (var i = 0; i < triggers.length; i++) {
-    if (triggers[i].getHandlerFunction() === 'syncToFirestore') {
+    var handler = triggers[i].getHandlerFunction();
+    if (handler === 'syncToFirestore' || handler === 'midnightClearClinic') {
       ScriptApp.deleteTrigger(triggers[i]);
       count++;
     }
   }
   
-  Logger.log("Deleted " + count + " syncToFirestore triggers");
-  SpreadsheetApp.getUi().alert("✅ Auto-sync disabled!\n\nDeleted " + count + " trigger(s).");
+  Logger.log("Deleted " + count + " trigger(s)");
+  SpreadsheetApp.getUi().alert("✅ All automation disabled!\n\nDeleted " + count + " trigger(s).");
+}
+
+// ========================================
+// 🌙 MIDNIGHT AUTO-CLEAR
+// ========================================
+
+function midnightClearClinic() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var todaysClinic = ss.getSheetByName(TODAYS_CLINIC_SHEET);
+  
+  if (!todaysClinic) {
+    Logger.log("❌ Error: Sheet '" + TODAYS_CLINIC_SHEET + "' not found!");
+    return;
+  }
+  
+  var lastRow = todaysClinic.getLastRow();
+  
+  // Delete all data rows (keep header)
+  if (lastRow > 1) {
+    todaysClinic.deleteRows(2, lastRow - 1);
+    Logger.log("🌙 Midnight clear: Removed " + (lastRow - 1) + " clinician(s)");
+  } else {
+    Logger.log("🌙 Midnight clear: No clinicians to remove");
+  }
+  
+  // Sync to Firebase to clear the app
+  SpreadsheetApp.flush();
+  syncToFirestore();
+  
+  Logger.log("✅ Midnight clear complete - clinic reset for new day");
 }

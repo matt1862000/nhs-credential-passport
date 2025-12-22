@@ -281,6 +281,8 @@ struct EmbeddedWalkMapView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var route: MKRoute?
+    @State private var returnRoute: MKRoute?  // Route back to starting point
+    @State private var isShowingReturnRoute: Bool = false  // Whether we're showing return directions
     @State private var hasPlayedIntro: Bool = false
     @State private var showingIntroOverlay: Bool = false
     @State private var introPhase: IntroPhase = .showingFirstWaypoint
@@ -373,6 +375,12 @@ struct EmbeddedWalkMapView: View {
                     MapPolyline(route.polyline)
                         .stroke(Color.tealAccent.opacity(0.5), lineWidth: 3)
                 }
+                
+                // Return route polyline (directions back to start)
+                if isShowingReturnRoute, let returnRoute = returnRoute {
+                    MapPolyline(returnRoute.polyline)
+                        .stroke(Color.blue, lineWidth: 5)
+                }
             }
             .mapStyle(.standard)
             .mapControls {
@@ -390,6 +398,9 @@ struct EmbeddedWalkMapView: View {
                         startLocation: currentRoute.routePath.first,
                         onTapWaypoint: { coordinate in
                             zoomToWaypoint(coordinate)
+                        },
+                        onSelectReturnToStart: {
+                            calculateReturnRoute()
                         },
                         colorScheme: colorScheme
                     )
@@ -555,6 +566,37 @@ struct EmbeddedWalkMapView: View {
             }
         }
     }
+    
+    /// Calculate walking directions from current location back to starting point
+    private func calculateReturnRoute() {
+        guard let currentLocation = viewModel.locationService.currentLocation,
+              let currentRoute = viewModel.walkSession.currentRoute,
+              let startPoint = currentRoute.routePath.first else {
+            print("📍 Cannot calculate return route - missing location or start point")
+            return
+        }
+        
+        print("📍 Calculating return directions to start point...")
+        isShowingReturnRoute = true
+        
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: currentLocation.coordinate))
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: startPoint))
+        request.transportType = .walking
+        
+        let directions = MKDirections(request: request)
+        directions.calculate { response, error in
+            if let error = error {
+                print("❌ Return directions error: \(error.localizedDescription)")
+                return
+            }
+            
+            if let route = response?.routes.first {
+                self.returnRoute = route
+                print("✅ Return route calculated: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
+            }
+        }
+    }
 }
 
 // MARK: - Compact Stat Pill
@@ -594,6 +636,7 @@ struct WaypointCarousel: View {
     let visitedIds: Set<UUID>
     let startLocation: CLLocationCoordinate2D?
     let onTapWaypoint: (CLLocationCoordinate2D) -> Void
+    let onSelectReturnToStart: (() -> Void)?  // Called when Return to Start is selected
     let colorScheme: ColorScheme
     
     @State private var selectedIndex: Int = 0
@@ -649,6 +692,8 @@ struct WaypointCarousel: View {
                         if let start = startLocation {
                             onTapWaypoint(start)
                         }
+                        // Trigger return directions calculation
+                        onSelectReturnToStart?()
                     },
                     colorScheme: colorScheme
                 )
@@ -662,8 +707,9 @@ struct WaypointCarousel: View {
                     let marker = unvisitedMarkers[newIndex].marker
                     onTapWaypoint(marker.coordinate)
                 } else if newIndex == unvisitedMarkers.count, let start = startLocation {
-                    // Return to Start card
+                    // Return to Start card - calculate directions
                     onTapWaypoint(start)
+                    onSelectReturnToStart?()
                 }
             }
         }
