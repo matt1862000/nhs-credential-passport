@@ -8,14 +8,17 @@
 import SwiftUI
 
 struct MainTabView: View {
-    @StateObject private var viewModel = WaitingRoomViewModel()
+    // ViewModel is passed in from SplashScreenView (already loaded data)
+    @ObservedObject var viewModel: WaitingRoomViewModel
+    
     @State private var selectedTab = 0
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
-    @State private var showOnboarding = false
+    @State private var showOnboarding: Bool
     @State private var hasCheckedPendingNotification = false
     @Environment(\.scenePhase) private var scenePhase
     
-    init() {
+    init(viewModel: WaitingRoomViewModel) {
+        self.viewModel = viewModel
         // Only show onboarding if user hasn't completed it before
         _showOnboarding = State(initialValue: !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding"))
     }
@@ -387,7 +390,7 @@ extension View {
 }
 
 #Preview {
-    MainTabView()
+    MainTabView(viewModel: WaitingRoomViewModel())
 }
 
 

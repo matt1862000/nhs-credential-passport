@@ -8,14 +8,24 @@
 import SwiftUI
 
 struct SplashScreenView: View {
-    @State private var isActive = false
+    // Create ViewModel early so data starts loading immediately
+    @StateObject private var viewModel = WaitingRoomViewModel()
+    
+    @State private var minimumTimeElapsed = false
     @State private var logoOpacity = 0.0
     @State private var improvingLivesOpacity = 0.0
     @State private var scaleEffect = 0.9
     
+    // Show main app only when BOTH conditions are met:
+    // 1. Minimum splash time has passed (for animations)
+    // 2. Data is ready (clinician restored or confirmed no saved clinician)
+    private var shouldShowMainApp: Bool {
+        minimumTimeElapsed && viewModel.isDataReady
+    }
+    
     var body: some View {
-        if isActive {
-            MainTabView()
+        if shouldShowMainApp {
+            MainTabView(viewModel: viewModel)
         } else {
             ZStack {
                 // NHS Blue background
@@ -56,11 +66,18 @@ struct SplashScreenView: View {
                     improvingLivesOpacity = 1.0
                 }
                 
-                // Transition to main app after delay
+                // Set minimum time elapsed after 2.5 seconds
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                     withAnimation(.easeInOut(duration: 0.5)) {
-                        isActive = true
+                        minimumTimeElapsed = true
                     }
+                }
+            }
+            // Also watch for data ready changes to trigger transition
+            .onChange(of: viewModel.isDataReady) { _, isReady in
+                if isReady && minimumTimeElapsed {
+                    // Both conditions met - will transition via shouldShowMainApp
+                    print("✅ Data ready + minimum time elapsed - transitioning to main app")
                 }
             }
         }

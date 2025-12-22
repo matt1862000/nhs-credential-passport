@@ -39,6 +39,9 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var selectedClinician: Clinician?
     @Published var notificationsEnabled: Bool = true
     
+    // Data loading state - splash screen waits for this
+    @Published var isDataReady: Bool = false
+    
     // Push notification dialog
     @Published var showPushNotificationDialog: Bool = false
     @Published var pushNotificationTitle: String = ""
@@ -125,6 +128,9 @@ class WaitingRoomViewModel: ObservableObject {
                 }
             }
             print("📱 Restored clinician from sampleClinicians: \(clinician.fullTitle)")
+            
+            // Data is ready - clinician found in sampleClinicians
+            self.isDataReady = true
         } else if savedClinicianName != nil {
             // Clinician not in sampleClinicians - will be restored when Firebase loads
             // Keep notification preference for when Firebase restores the clinician
@@ -150,6 +156,9 @@ class WaitingRoomViewModel: ObservableObject {
                 queuePosition: 0
             )
             print("📱 No saved clinician found")
+            
+            // Data is ready - no saved clinician, user needs to select one
+            self.isDataReady = true
         }
         
         // Listen to Firebase for real wait times
@@ -259,6 +268,12 @@ class WaitingRoomViewModel: ObservableObject {
             // No clinicians in Firebase - show empty list
             availableClinicians = []
             print("⏳ No clinicians in Firebase - clinic not active")
+            
+            // Data is ready - Firebase responded (even if empty)
+            if !isDataReady {
+                isDataReady = true
+                print("✅ Data ready - Firebase empty but responded")
+            }
             return
         }
         
@@ -273,6 +288,12 @@ class WaitingRoomViewModel: ObservableObject {
         
         availableClinicians = result
         print("👥 Total clinicians from Firebase: \(availableClinicians.count)")
+        
+        // Data is ready - Firebase has loaded (even if empty)
+        if !isDataReady {
+            isDataReady = true
+            print("✅ Data ready - Firebase loaded")
+        }
         
         // If selectedClinician is nil but we have a saved name, try to restore from Firebase
         // This handles clinicians added via Google Sheets that aren't in sampleClinicians
