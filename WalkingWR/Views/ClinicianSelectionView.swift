@@ -61,6 +61,21 @@ struct ClinicianSelectionView: View {
                         .background(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.8))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         
+                        // Last updated info
+                        if !viewModel.availableClinicians.isEmpty {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.caption2)
+                                Text("Last updated:")
+                                    .font(.caption)
+                                Text(viewModel.waitTimeInfo.lastUpdated, style: .time)
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            }
+                            .foregroundColor(.secondary)
+                            .padding(.vertical, 4)
+                        }
+                        
                         // Clinician list
                         VStack(spacing: 12) {
                             if filteredClinicians.isEmpty {
@@ -131,7 +146,7 @@ struct ClinicianSelectionView: View {
             .alert("Clinic Delay Updated", isPresented: $viewModel.showWaitTimeIncreasedAlert) {
                 Button("OK", role: .cancel) { }
                 Button("Stop Alerts", role: .destructive) {
-                    viewModel.toggleNotifications()
+                    viewModel.disableNotifications()
                 }
             } message: {
                 if let info = viewModel.waitTimeChangeInfo {
@@ -144,7 +159,7 @@ struct ClinicianSelectionView: View {
             .alert("Delay Reduction", isPresented: $viewModel.showWaitTimeDecreasedAlert) {
                 Button("OK", role: .cancel) { }
                 Button("Stop Alerts", role: .destructive) {
-                    viewModel.toggleNotifications()
+                    viewModel.disableNotifications()
                 }
             } message: {
                 if let info = viewModel.waitTimeChangeInfo {

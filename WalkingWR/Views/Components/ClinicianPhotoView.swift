@@ -8,11 +8,15 @@
 import SwiftUI
 
 /// A view that displays a clinician's photo from either a local asset or remote URL
+/// Uses 24-hour caching to avoid unnecessary network requests
 /// Falls back to showing initials if no photo is available
 struct ClinicianPhotoView: View {
     let clinician: Clinician
     let size: CGFloat
     var showBorder: Bool = false
+    
+    @State private var cachedImage: UIImage?
+    @State private var isLoading = true
     
     var body: some View {
         ZStack {
@@ -22,27 +26,13 @@ struct ClinicianPhotoView: View {
                 .frame(width: size, height: size)
             
             // Photo or initials
-            if let photoURL = clinician.photoURL, let url = URL(string: photoURL) {
-                // Remote photo from Google Sheets
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        // Loading state
-                        ProgressView()
-                            .frame(width: size, height: size)
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: size, height: size)
-                            .clipShape(Circle())
-                    case .failure:
-                        // Failed to load - show initials
-                        initialsView
-                    @unknown default:
-                        initialsView
-                    }
-                }
+            if let image = cachedImage {
+                // Cached remote photo
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
             } else if let photoName = clinician.photoName, UIImage(named: photoName) != nil {
                 // Local asset photo
                 Image(photoName)
@@ -50,6 +40,10 @@ struct ClinicianPhotoView: View {
                     .scaledToFill()
                     .frame(width: size, height: size)
                     .clipShape(Circle())
+            } else if isLoading && clinician.photoURL != nil {
+                // Loading state
+                ProgressView()
+                    .frame(width: size, height: size)
             } else {
                 // No photo - show initials
                 initialsView
@@ -59,6 +53,36 @@ struct ClinicianPhotoView: View {
             Circle()
                 .stroke(showBorder ? Color.white : Color.clear, lineWidth: showBorder ? 4 : 0)
         )
+        .onAppear {
+            loadCachedImage()
+        }
+        .onChange(of: clinician.photoURL) { _, newURL in
+            // Reload if clinician changes
+            cachedImage = nil
+            isLoading = true
+            loadCachedImage()
+        }
+        .id(clinician.photoURL ?? clinician.name) // Force view refresh when clinician changes
+    }
+    
+    private func loadCachedImage() {
+        guard let photoURL = clinician.photoURL else {
+            isLoading = false
+            return
+        }
+        
+        // Debug: Print URL being loaded
+        print("📷 Loading photo for \(clinician.name): \(photoURL)")
+        
+        ImageCacheService.shared.getImage(for: photoURL) { image in
+            if image != nil {
+                print("✅ Photo loaded for \(clinician.name)")
+            } else {
+                print("❌ Failed to load photo for \(clinician.name)")
+            }
+            self.cachedImage = image
+            self.isLoading = false
+        }
     }
     
     private var initialsView: some View {
@@ -69,9 +93,13 @@ struct ClinicianPhotoView: View {
 }
 
 /// A larger version for profile pages with gradient background
+/// Uses 24-hour caching to avoid unnecessary network requests
 struct ClinicianProfilePhotoView: View {
     let clinician: Clinician
     let size: CGFloat
+    
+    @State private var cachedImage: UIImage?
+    @State private var isLoading = true
     
     var body: some View {
         ZStack {
@@ -87,29 +115,18 @@ struct ClinicianProfilePhotoView: View {
                 .frame(width: size + 10, height: size + 10)
             
             // Photo or initials
-            if let photoURL = clinician.photoURL, let url = URL(string: photoURL) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .empty:
-                        ProgressView()
-                            .frame(width: size, height: size)
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: size, height: size)
-                            .clipShape(Circle())
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.white, lineWidth: 4)
-                            )
-                            .shadow(color: Color.black.opacity(0.1), radius: 10, y: 5)
-                    case .failure:
-                        initialsView
-                    @unknown default:
-                        initialsView
-                    }
-                }
+            if let image = cachedImage {
+                // Cached remote photo
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white, lineWidth: 4)
+                    )
+                    .shadow(color: Color.black.opacity(0.1), radius: 10, y: 5)
             } else if let photoName = clinician.photoName, let uiImage = UIImage(named: photoName) {
                 Image(uiImage: uiImage)
                     .resizable()
@@ -121,9 +138,27 @@ struct ClinicianProfilePhotoView: View {
                             .stroke(Color.white, lineWidth: 4)
                     )
                     .shadow(color: Color.black.opacity(0.1), radius: 10, y: 5)
+            } else if isLoading && clinician.photoURL != nil {
+                ProgressView()
+                    .frame(width: size, height: size)
             } else {
                 initialsView
             }
+        }
+        .onAppear {
+            loadCachedImage()
+        }
+    }
+    
+    private func loadCachedImage() {
+        guard let photoURL = clinician.photoURL else {
+            isLoading = false
+            return
+        }
+        
+        ImageCacheService.shared.getImage(for: photoURL) { image in
+            self.cachedImage = image
+            self.isLoading = false
         }
     }
     

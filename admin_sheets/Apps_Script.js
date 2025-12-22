@@ -14,6 +14,135 @@ const ALL_CLINICIANS_SHEET = "All Clinicians";
 const TODAYS_CLINIC_SHEET = "Today's Clinic";
 
 // ========================================
+// 📋 CUSTOM MENU (Friendly Labels)
+// ========================================
+
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('🏥 Clinic Tools')
+    .addItem('✅ Add to Today\'s Clinic', 'addSelectedToClinic')
+    .addSeparator()
+    .addItem('👋 Close Finished Clinics', 'closeFinishedClinics')
+    .addItem('🏁 Close All (End of Day)', 'endAllClinics')
+    .addSeparator()
+    .addItem('🔄 Sync Now', 'manualSync')
+    .addToUi();
+}
+
+// ========================================
+// ✅ ADD SELECTED CLINICIANS TO TODAY'S CLINIC
+// ========================================
+
+function addSelectedToClinic() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var allClinicians = ss.getSheetByName(ALL_CLINICIANS_SHEET);
+  var todaysClinic = ss.getSheetByName(TODAYS_CLINIC_SHEET);
+  
+  if (!allClinicians || !todaysClinic) {
+    SpreadsheetApp.getUi().alert("❌ Sheets not found!");
+    return;
+  }
+  
+  var allData = allClinicians.getDataRange().getValues();
+  var headers = allData[0];
+  
+  var cols = {};
+  for (var h = 0; h < headers.length; h++) {
+    cols[headers[h].toString().toLowerCase().trim().replace(/ /g, '_').replace(/[?]/g, '')] = h;
+  }
+  
+  var todaysData = todaysClinic.getDataRange().getValues();
+  var existingNames = [];
+  for (var t = 1; t < todaysData.length; t++) {
+    if (todaysData[t][0]) existingNames.push(todaysData[t][0].toString().trim());
+  }
+  
+  var added = [];
+  var skipped = [];
+  
+  for (var i = 1; i < allData.length; i++) {
+    var isChecked = allData[i][0];
+    
+    if (isChecked === true) {
+      var name = allData[i][cols['name']] || '';
+      var title = allData[i][cols['title']] || '';
+      var specialty = allData[i][cols['specialty']] || '';
+      
+      if (!name) continue;
+      
+      if (existingNames.indexOf(name.toString().trim()) !== -1) {
+        skipped.push(name);
+        allClinicians.getRange(i + 1, 1).setValue(false);
+        continue;
+      }
+      
+      var nextRow = todaysClinic.getLastRow() + 1;
+      todaysClinic.getRange(nextRow, 1, 1, 4).setValues([[name, title, specialty, 0]]);
+      todaysClinic.getRange(nextRow, 5).insertCheckboxes();
+      
+      existingNames.push(name.toString().trim());
+      added.push(name);
+      allClinicians.getRange(i + 1, 1).setValue(false);
+    }
+  }
+  
+  SpreadsheetApp.flush();
+  
+  var message = "";
+  if (added.length > 0) {
+    message = "✅ Added " + added.length + " clinician(s):\n• " + added.join("\n• ");
+  } else {
+    message = "ℹ️ No clinicians selected.\n\nTick checkboxes in 'All Clinicians' first!";
+  }
+  if (skipped.length > 0) {
+    message += "\n\n⚠️ Already in clinic: " + skipped.join(", ");
+  }
+  
+  SpreadsheetApp.getUi().alert(message);
+}
+
+// ========================================
+// 👋 CLOSE FINISHED CLINICS
+// ========================================
+
+function closeFinishedClinics() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var todaysClinic = ss.getSheetByName(TODAYS_CLINIC_SHEET);
+  
+  if (!todaysClinic) {
+    SpreadsheetApp.getUi().alert("❌ Sheet not found!");
+    return;
+  }
+  
+  var data = todaysClinic.getDataRange().getValues();
+  var removed = [];
+  var rowsToDelete = [];
+  
+  for (var i = 1; i < data.length; i++) {
+    var isFinished = data[i][4];
+    var name = data[i][0];
+    
+    if (isFinished === true && name) {
+      removed.push(name);
+      rowsToDelete.push(i + 1);
+    }
+  }
+  
+  if (rowsToDelete.length === 0) {
+    SpreadsheetApp.getUi().alert("ℹ️ No clinicians marked as finished.\n\nTick the 'Finished?' checkbox for clinicians who are done.");
+    return;
+  }
+  
+  // Delete from bottom to top to preserve row numbers
+  for (var j = rowsToDelete.length - 1; j >= 0; j--) {
+    todaysClinic.deleteRow(rowsToDelete[j]);
+  }
+  
+  SpreadsheetApp.flush();
+  SpreadsheetApp.getUi().alert("👋 Closed " + removed.length + " clinic(s):\n• " + removed.join("\n• "));
+}
+
+// ========================================
 // 🔒 LOCK TO PREVENT DUPLICATE TRIGGERS
 // ========================================
 
@@ -219,29 +348,35 @@ function removeClinicianFromTodaysClinic(sheet, row) {
 // ========================================
 
 function endAllClinics() {
+  var ui = SpreadsheetApp.getUi();
+  
+  // Confirmation dialog
+  var response = ui.alert(
+    '🏁 Close All Clinics?',
+    'This will remove ALL clinicians from Today\'s Clinic.\n\nAre you sure?',
+    ui.ButtonSet.YES_NO
+  );
+  
+  if (response !== ui.Button.YES) return;
+  
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var todaysClinic = ss.getSheetByName(TODAYS_CLINIC_SHEET);
   
   if (!todaysClinic) {
-    Logger.log("❌ Error: Sheet '" + TODAYS_CLINIC_SHEET + "' not found!");
-    SpreadsheetApp.getUi().alert("❌ Error: Sheet '" + TODAYS_CLINIC_SHEET + "' not found!");
+    ui.alert("❌ Sheet not found!");
     return;
   }
   
   var lastRow = todaysClinic.getLastRow();
   
-  // Keep header row (row 1), clear all data rows
+  // Delete all data rows (keep header)
   if (lastRow > 1) {
-    todaysClinic.getRange(2, 1, lastRow - 1, 5).clearContent();
-    Logger.log("✅ Cleared all clinicians from Today's Clinic");
-  } else {
-    Logger.log("Today's Clinic is already empty");
+    todaysClinic.deleteRows(2, lastRow - 1);
+    Logger.log("✅ Closed all clinics");
   }
   
   SpreadsheetApp.flush();
-  
-  // Show confirmation
-  SpreadsheetApp.getUi().alert("✅ All clinics ended!\n\nThe app will update within 1 minute.");
+  ui.alert("🏁 All clinics closed!\n\nThe app will update within 1 minute.");
 }
 
 // ========================================
@@ -530,7 +665,7 @@ function testConnection() {
 
 function manualSync() {
   syncToFirestore();
-  SpreadsheetApp.getUi().alert("✅ Manual sync complete! Check the logs for details.");
+  SpreadsheetApp.getUi().alert("🔄 Synced to app!");
 }
 
 // ========================================

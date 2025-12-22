@@ -113,7 +113,7 @@ struct WaitTimeView: View {
             .alert("Clinic Delay Updated", isPresented: $viewModel.showWaitTimeIncreasedAlert) {
                 Button("OK", role: .cancel) { }
                 Button("Stop Alerts", role: .destructive) {
-                    viewModel.toggleNotifications()
+                    viewModel.disableNotifications()
                 }
             } message: {
                 if let info = viewModel.waitTimeChangeInfo {
@@ -126,7 +126,7 @@ struct WaitTimeView: View {
             .alert("Delay Reduction", isPresented: $viewModel.showWaitTimeDecreasedAlert) {
                 Button("OK", role: .cancel) { }
                 Button("Stop Alerts", role: .destructive) {
-                    viewModel.toggleNotifications()
+                    viewModel.disableNotifications()
                 }
             } message: {
                 if let info = viewModel.waitTimeChangeInfo {
@@ -161,7 +161,7 @@ struct WaitTimeCard: View {
             // Notification reminder when alerts are off
             if !viewModel.notificationsEnabled {
                 Button(action: {
-                    viewModel.toggleNotifications()
+                    viewModel.enableNotifications()
                 }) {
                     HStack(spacing: 8) {
                         Image(systemName: "bell.slash.fill")

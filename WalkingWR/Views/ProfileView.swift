@@ -1861,7 +1861,7 @@ struct SettingsView: View {
                                     requestNotificationPermission()
                                 } else if !viewModel.notificationsEnabled {
                                     // App alerts off - re-enable them
-                                    viewModel.toggleNotifications()
+                                    viewModel.enableNotifications()
                                 } else {
                                     // Everything enabled - open settings to manage
                                     requestNotificationPermission()

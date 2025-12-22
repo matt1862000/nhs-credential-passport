@@ -334,7 +334,7 @@ struct DelayAlertsModifier: ViewModifier {
         
         alert.addAction(UIAlertAction(title: "Stop Alerts", style: .destructive) { _ in
             DelayAlertsModifier.currentDelayAlert = nil
-            viewModel.toggleNotifications()
+            viewModel.disableNotifications()
         })
         
         alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in

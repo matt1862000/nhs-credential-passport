@@ -79,7 +79,7 @@ class WaitingRoomViewModel: ObservableObject {
         // Load saved clinician name (more reliable than UUID which changes)
         let savedClinicianName = UserDefaults.standard.string(forKey: "selectedClinicianName")
         
-        // Try to find clinician by name first, then by UUID as fallback
+        // Try to find clinician by name first in sampleClinicians (for immediate availability)
         var foundClinician: Clinician? = nil
         
         if let name = savedClinicianName {
@@ -104,8 +104,9 @@ class WaitingRoomViewModel: ObservableObject {
             self.notificationsEnabled = savedNotificationPref ?? true
             
             // Re-subscribe to this clinician's topic if notifications are enabled
+            let topic = "clinician_" + clinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+            
             if notificationsEnabled {
-                let topic = "clinician_" + clinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
                 print("📱 Attempting to subscribe to topic: \(topic)")
                 Messaging.messaging().subscribe(toTopic: topic) { error in
                     if let error = error {
@@ -115,8 +116,28 @@ class WaitingRoomViewModel: ObservableObject {
                     }
                 }
             } else {
-                print("🔕 Notifications disabled, not subscribing on launch")
+                // Notifications disabled - ensure we're unsubscribed (in case previous unsubscription didn't complete)
+                print("🔕 Notifications disabled - ensuring unsubscribed from: \(topic)")
+                Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+                    if error == nil {
+                        print("✅ Confirmed unsubscribed on launch: \(topic)")
+                    }
+                }
             }
+            print("📱 Restored clinician from sampleClinicians: \(clinician.fullTitle)")
+        } else if savedClinicianName != nil {
+            // Clinician not in sampleClinicians - will be restored when Firebase loads
+            // Keep notification preference for when Firebase restores the clinician
+            self.notificationsEnabled = savedNotificationPref ?? true
+            
+            // Temporary wait time info until Firebase loads
+            self.waitTimeInfo = WaitTimeInfo(
+                estimatedMinutes: 20,
+                lastUpdated: Date(),
+                clinicianName: savedClinicianName ?? "Loading...",
+                queuePosition: 0
+            )
+            print("📱 Clinician '\(savedClinicianName!)' not in sampleClinicians - waiting for Firebase to restore")
         } else {
             // No clinician selected - default to notifications disabled
             self.notificationsEnabled = false
@@ -252,6 +273,35 @@ class WaitingRoomViewModel: ObservableObject {
         
         availableClinicians = result
         print("👥 Total clinicians from Firebase: \(availableClinicians.count)")
+        
+        // If selectedClinician is nil but we have a saved name, try to restore from Firebase
+        // This handles clinicians added via Google Sheets that aren't in sampleClinicians
+        if selectedClinician == nil,
+           let savedName = UserDefaults.standard.string(forKey: "selectedClinicianName") {
+            if let matchingData = firebaseClinicians.first(where: {
+                $0.fullName.lowercased() == savedName.lowercased() ||
+                $0.name.lowercased() == savedName.replacingOccurrences(of: "Dr. ", with: "").replacingOccurrences(of: "Mr. ", with: "").lowercased()
+            }) {
+                let restoredClinician = createClinicianFromFirebase(matchingData)
+                selectedClinician = restoredClinician
+                waitTimeInfo = WaitTimeInfo(from: restoredClinician)
+                
+                // Re-subscribe if notifications are enabled
+                if notificationsEnabled {
+                    let topic = "clinician_" + restoredClinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+                    Messaging.messaging().subscribe(toTopic: topic) { error in
+                        if error == nil {
+                            print("🔔 Re-subscribed to restored clinician: \(topic)")
+                        }
+                    }
+                }
+                
+                print("📱 Restored clinician from Firebase: \(restoredClinician.fullTitle)")
+                isFirstFirebaseUpdate = false  // Don't show alert for restoration
+            } else {
+                print("⚠️ Saved clinician '\(savedName)' not found in Firebase - may have been removed")
+            }
+        }
         
         // Update selected clinician if they exist in new data
         if let selected = selectedClinician {
@@ -667,16 +717,22 @@ class WaitingRoomViewModel: ObservableObject {
             }
         }
         
-        // Subscribe to new clinician topic
+        // Subscribe to new clinician topic - but only if:
+        // 1. It's a different clinician, OR
+        // 2. Notifications are still enabled (user hasn't disabled them)
         let newTopic = "clinician_" + clinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
-        print("🔔🔔🔔 SUBSCRIBING TO TOPIC: \(newTopic) 🔔🔔🔔")
-        print("🔔 Clinician fullTitle: '\(clinician.fullTitle)'")
-        Messaging.messaging().subscribe(toTopic: newTopic) { error in
-            if let error = error {
-                print("❌❌❌ SUBSCRIPTION FAILED: \(error) ❌❌❌")
-            } else {
-                print("✅✅✅ SUBSCRIPTION SUCCESS: \(newTopic) ✅✅✅")
+        
+        if !isSameClinician || notificationsEnabled {
+            print("🔔 Subscribing to topic: \(newTopic)")
+            Messaging.messaging().subscribe(toTopic: newTopic) { error in
+                if let error = error {
+                    print("❌ Subscription failed: \(error)")
+                } else {
+                    print("✅ Subscription success: \(newTopic)")
+                }
             }
+        } else {
+            print("🔕 Skipping subscription - same clinician and notifications disabled")
         }
         
         selectedClinician = clinician
@@ -722,38 +778,62 @@ class WaitingRoomViewModel: ObservableObject {
         print("🧹 Cleaned up all clinician topic subscriptions")
     }
     
-    func toggleNotifications() {
+    /// Disable notifications only - used by "Stop Alerts" button
+    /// This will NOT re-enable if already disabled (safe to call multiple times)
+    func disableNotifications() {
+        guard let clinician = selectedClinician else { return }
+        
+        // If already disabled, do nothing (prevents old alerts from re-enabling)
+        guard notificationsEnabled else {
+            print("🔕 Notifications already disabled, ignoring Stop Alerts tap")
+            return
+        }
+        
+        let topic = "clinician_" + clinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+        
+        // IMMEDIATELY set preference (before async call) so it's saved even if app closes
+        notificationsEnabled = false
+        UserDefaults.standard.set(false, forKey: "notificationsEnabled")
+        print("🔕 Notifications disabled for: \(topic)")
+        
+        // Then unsubscribe in background
+        Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+            if let error = error {
+                print("❌ Error unsubscribing (preference already saved): \(error)")
+            } else {
+                print("✅ Unsubscription confirmed for: \(topic)")
+            }
+        }
+    }
+    
+    /// Enable notifications - used by UI toggle or re-enable button
+    func enableNotifications() {
         guard let clinician = selectedClinician else { return }
         
         let topic = "clinician_" + clinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
         
+        // IMMEDIATELY set preference
+        notificationsEnabled = true
+        UserDefaults.standard.set(true, forKey: "notificationsEnabled")
+        UserDefaults.standard.set(Date(), forKey: "notificationsEnabledDate")
+        print("🔔 Notifications enabled for: \(topic)")
+        
+        // Then subscribe in background
+        Messaging.messaging().subscribe(toTopic: topic) { error in
+            if let error = error {
+                print("❌ Error subscribing: \(error)")
+            } else {
+                print("✅ Subscription confirmed for: \(topic)")
+            }
+        }
+    }
+    
+    /// Toggle notifications on/off - used by settings UI
+    func toggleNotifications() {
         if notificationsEnabled {
-            // Currently enabled, so disable (unsubscribe)
-            Messaging.messaging().unsubscribe(fromTopic: topic) { [weak self] error in
-                if let error = error {
-                    print("❌ Error unsubscribing: \(error)")
-                } else {
-                    print("🔕 Notifications disabled for: \(topic)")
-                    DispatchQueue.main.async {
-                        self?.notificationsEnabled = false
-                        UserDefaults.standard.set(false, forKey: "notificationsEnabled")
-                    }
-                }
-            }
+            disableNotifications()
         } else {
-            // Currently disabled, so enable (subscribe)
-            Messaging.messaging().subscribe(toTopic: topic) { [weak self] error in
-                if let error = error {
-                    print("❌ Error subscribing: \(error)")
-                } else {
-                    print("🔔 Notifications enabled for: \(topic)")
-                    DispatchQueue.main.async {
-                        self?.notificationsEnabled = true
-                        UserDefaults.standard.set(true, forKey: "notificationsEnabled")
-                        UserDefaults.standard.set(Date(), forKey: "notificationsEnabledDate")
-                    }
-                }
-            }
+            enableNotifications()
         }
     }
     
