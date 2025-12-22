@@ -255,6 +255,31 @@ class GoogleMapsService: ObservableObject {
                 allPolylinePoints.append(contentsOf: coords.dropFirst())
             }
             
+            // Extract step-by-step directions from MapKit
+            var legSteps: [DirectionsStep] = []
+            for step in route.steps {
+                // Skip steps with no instructions (usually the first "depart" step)
+                guard !step.instructions.isEmpty else { continue }
+                
+                let stepDistance = Int(step.distance)
+                // Estimate duration based on walking speed (~80m/min)
+                let stepDuration = max(1, stepDistance / 80) * 60
+                
+                // Encode step polyline
+                let stepPolylineCount = step.polyline.pointCount
+                var stepCoords = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: stepPolylineCount)
+                step.polyline.getCoordinates(&stepCoords, range: NSRange(location: 0, length: stepPolylineCount))
+                let stepPolylineEncoded = encodePolyline(stepCoords)
+                
+                let directionsStep = DirectionsStep(
+                    distance: DirectionsValue(text: formatDistance(stepDistance), value: stepDistance),
+                    duration: DirectionsValue(text: formatDuration(stepDuration), value: stepDuration),
+                    htmlInstructions: step.instructions,
+                    polyline: StepPolyline(points: stepPolylineEncoded)
+                )
+                legSteps.append(directionsStep)
+            }
+            
             // Create leg data
             let legDistance = Int(route.distance)
             let legDuration = Int(route.expectedTravelTime)
@@ -266,7 +291,7 @@ class GoogleMapsService: ObservableObject {
                 duration: DirectionsValue(text: formatDuration(legDuration), value: legDuration),
                 startAddress: nil,
                 endAddress: nil,
-                steps: nil
+                steps: legSteps.isEmpty ? nil : legSteps
             )
             allLegs.append(leg)
         }
