@@ -329,9 +329,9 @@ class WaitingRoomViewModel: ObservableObject {
                 if isFirstFirebaseUpdate {
                     isFirstFirebaseUpdate = false
                     print("🔄 First Firebase sync - skipping alert (this is expected)")
-                } else if newDelay == 0 {
-                    // Delay is 0 = clinic on time, no notification needed
-                    print("✅ Clinic on time (delay = 0) - no notification needed")
+                } else if newDelay == 0 && previousDelay == 0 {
+                    // Was already on time, still on time - no notification needed
+                    print("✅ Clinic still on time (delay = 0) - no notification needed")
                 } else if previousDelay > 0 && newDelay != previousDelay {
                     // Delay actually changed - only show alert if notifications are enabled
                     if !notificationsEnabled {
