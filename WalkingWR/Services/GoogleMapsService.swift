@@ -7,6 +7,7 @@
 
 import Foundation
 import CoreLocation
+import MapKit
 
 // MARK: - Google Maps Service
 class GoogleMapsService: ObservableObject {
@@ -184,51 +185,194 @@ class GoogleMapsService: ObservableObject {
         return placesResponse.results
     }
     
-    // MARK: - Get Walking Directions
-    /// Gets walking directions between points using Google Directions API
+    // MARK: - Get Walking Directions (Apple MapKit - FREE!)
+    /// Gets walking directions between points using Apple MapKit (FREE, unlimited!)
+    /// Replaces Google Directions API to eliminate costs
     func getWalkingDirections(
         origin: CLLocationCoordinate2D,
         destination: CLLocationCoordinate2D,
         waypoints: [CLLocationCoordinate2D] = []
     ) async throws -> DirectionsResult {
-        guard !apiKey.isEmpty else {
-            throw GoogleMapsError.missingAPIKey
-        }
         
-        var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
-        urlString += "origin=\(origin.latitude),\(origin.longitude)"
-        urlString += "&destination=\(destination.latitude),\(destination.longitude)"
-        urlString += "&mode=walking"
+        // Build list of all points: origin → waypoints → destination
+        var allPoints = [origin] + waypoints + [destination]
         
-        if !waypoints.isEmpty {
-            // Use optimize:true to let Google order waypoints for the most efficient route
-            let waypointString = waypoints.map { "\($0.latitude),\($0.longitude)" }.joined(separator: "|")
-            urlString += "&waypoints=optimize:true|\(waypointString)"
-        }
-        
-        urlString += "&key=\(apiKey)"
-        
-        guard let url = URL(string: urlString) else {
-            throw GoogleMapsError.invalidURL
-        }
-        
-        let (data, response) = try await session.data(from: url)
-        
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw GoogleMapsError.serverError
-        }
-        
-        let directionsResponse = try JSONDecoder().decode(DirectionsResponse.self, from: data)
-        
-        if directionsResponse.status != "OK" {
-            throw GoogleMapsError.apiError(directionsResponse.status)
-        }
-        
-        guard let route = directionsResponse.routes.first else {
+        // For circular routes (origin == destination), we need at least one waypoint
+        if waypoints.isEmpty && origin.latitude == destination.latitude && origin.longitude == destination.longitude {
             throw GoogleMapsError.noRouteFound
         }
         
-        return route
+        var allLegs: [DirectionsLeg] = []
+        var totalDistance: Int = 0
+        var totalDuration: Int = 0
+        var allPolylinePoints: [CLLocationCoordinate2D] = []
+        var optimizedWaypointOrder: [Int]? = nil
+        
+        // If we have waypoints, try to optimize their order (simple nearest-neighbor)
+        if waypoints.count > 1 {
+            let optimized = optimizeWaypointOrder(from: origin, waypoints: waypoints, to: destination)
+            allPoints = [origin] + optimized.waypoints + [destination]
+            optimizedWaypointOrder = optimized.order
+            print("🍎 MapKit: Optimized waypoint order: \(optimized.order)")
+        } else if waypoints.count == 1 {
+            optimizedWaypointOrder = [0] // Single waypoint, no reordering needed
+        }
+        
+        // Calculate directions for each leg (point to point)
+        for i in 0..<(allPoints.count - 1) {
+            let legOrigin = allPoints[i]
+            let legDestination = allPoints[i + 1]
+            
+            let request = MKDirections.Request()
+            request.source = MKMapItem(placemark: MKPlacemark(coordinate: legOrigin))
+            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: legDestination))
+            request.transportType = .walking
+            
+            let directions = MKDirections(request: request)
+            
+            let response: MKDirections.Response
+            do {
+                response = try await directions.calculate()
+            } catch {
+                print("🍎 MapKit leg \(i+1) failed: \(error.localizedDescription)")
+                throw GoogleMapsError.noRouteFound
+            }
+            
+            guard let route = response.routes.first else {
+                throw GoogleMapsError.noRouteFound
+            }
+            
+            // Extract polyline points
+            let polyline = route.polyline
+            let pointCount = polyline.pointCount
+            var coords = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
+            polyline.getCoordinates(&coords, range: NSRange(location: 0, length: pointCount))
+            
+            // Append to overall polyline (skip first point of subsequent legs to avoid duplicates)
+            if allPolylinePoints.isEmpty {
+                allPolylinePoints.append(contentsOf: coords)
+            } else {
+                allPolylinePoints.append(contentsOf: coords.dropFirst())
+            }
+            
+            // Create leg data
+            let legDistance = Int(route.distance)
+            let legDuration = Int(route.expectedTravelTime)
+            totalDistance += legDistance
+            totalDuration += legDuration
+            
+            let leg = DirectionsLeg(
+                distance: DirectionsValue(text: formatDistance(legDistance), value: legDistance),
+                duration: DirectionsValue(text: formatDuration(legDuration), value: legDuration),
+                startAddress: nil,
+                endAddress: nil,
+                steps: nil
+            )
+            allLegs.append(leg)
+        }
+        
+        // Encode combined polyline to Google's format (for compatibility)
+        let encodedPolyline = encodePolyline(allPolylinePoints)
+        
+        print("🍎 MapKit: \(allLegs.count) legs, \(totalDistance)m, \(totalDuration/60)min (FREE!)")
+        
+        return DirectionsResult(
+            legs: allLegs,
+            overviewPolyline: OverviewPolyline(points: encodedPolyline),
+            summary: nil,
+            warnings: nil,
+            waypointOrder: optimizedWaypointOrder
+        )
+    }
+    
+    // MARK: - Waypoint Optimization (Nearest Neighbor)
+    /// Simple nearest-neighbor algorithm to order waypoints efficiently
+    private func optimizeWaypointOrder(
+        from origin: CLLocationCoordinate2D,
+        waypoints: [CLLocationCoordinate2D],
+        to destination: CLLocationCoordinate2D
+    ) -> (waypoints: [CLLocationCoordinate2D], order: [Int]) {
+        var remaining = Array(waypoints.enumerated())
+        var ordered: [CLLocationCoordinate2D] = []
+        var orderIndices: [Int] = []
+        var currentPoint = origin
+        
+        while !remaining.isEmpty {
+            // Find nearest unvisited waypoint
+            let nearest = remaining.min(by: { 
+                distanceBetween(currentPoint, $0.element) < distanceBetween(currentPoint, $1.element)
+            })!
+            
+            ordered.append(nearest.element)
+            orderIndices.append(nearest.offset)
+            currentPoint = nearest.element
+            remaining.removeAll { $0.offset == nearest.offset }
+        }
+        
+        return (ordered, orderIndices)
+    }
+    
+    // MARK: - Polyline Encoding (Google format for compatibility)
+    /// Encodes coordinates to Google's polyline format
+    private func encodePolyline(_ coordinates: [CLLocationCoordinate2D]) -> String {
+        var encodedString = ""
+        var prevLat: Int = 0
+        var prevLng: Int = 0
+        
+        for coord in coordinates {
+            let lat = Int(round(coord.latitude * 1e5))
+            let lng = Int(round(coord.longitude * 1e5))
+            
+            encodedString += encodeSignedNumber(lat - prevLat)
+            encodedString += encodeSignedNumber(lng - prevLng)
+            
+            prevLat = lat
+            prevLng = lng
+        }
+        
+        return encodedString
+    }
+    
+    private func encodeSignedNumber(_ num: Int) -> String {
+        var sgn_num = num << 1
+        if num < 0 {
+            sgn_num = ~sgn_num
+        }
+        return encodeNumber(sgn_num)
+    }
+    
+    private func encodeNumber(_ num: Int) -> String {
+        var encoded = ""
+        var number = num
+        
+        while number >= 0x20 {
+            let nextValue = (0x20 | (number & 0x1f)) + 63
+            encoded += String(UnicodeScalar(nextValue)!)
+            number >>= 5
+        }
+        encoded += String(UnicodeScalar(number + 63)!)
+        
+        return encoded
+    }
+    
+    // MARK: - Formatting Helpers
+    private func formatDistance(_ meters: Int) -> String {
+        if meters < 1000 {
+            return "\(meters) m"
+        } else {
+            return String(format: "%.1f km", Double(meters) / 1000.0)
+        }
+    }
+    
+    private func formatDuration(_ seconds: Int) -> String {
+        let mins = seconds / 60
+        if mins < 60 {
+            return "\(mins) mins"
+        } else {
+            let hours = mins / 60
+            let remainingMins = mins % 60
+            return "\(hours) hour\(hours > 1 ? "s" : "") \(remainingMins) mins"
+        }
     }
     
     // MARK: - Retry Status

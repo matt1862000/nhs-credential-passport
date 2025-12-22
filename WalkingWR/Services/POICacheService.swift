@@ -148,7 +148,7 @@ extension POICacheService.CachedPOI {
         self.name = place.name
         self.latitude = place.geometry.location.lat
         self.longitude = place.geometry.location.lng
-        self.types = place.types
+        self.types = place.types ?? []
         self.vicinity = place.vicinity
         self.rating = place.rating
     }
@@ -157,12 +157,13 @@ extension POICacheService.CachedPOI {
         PlaceResult(
             placeId: placeId,
             name: name,
+            vicinity: vicinity,
             geometry: PlaceGeometry(
                 location: PlaceLocation(lat: latitude, lng: longitude)
             ),
+            rating: rating,
             types: types,
-            vicinity: vicinity,
-            rating: rating
+            businessStatus: nil
         )
     }
 }
