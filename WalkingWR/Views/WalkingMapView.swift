@@ -608,7 +608,7 @@ struct CompactStatPill: View {
     @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.caption)
                 .foregroundColor(highlightColor ?? .tealAccent)
@@ -617,16 +617,20 @@ struct CompactStatPill: View {
                 .font(.subheadline)
                 .fontWeight(.semibold)
                 .foregroundColor(highlightColor ?? .primary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
             
             Text(label)
                 .font(.caption2)
                 .foregroundColor(.secondary)
+                .lineLimit(1)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(colorScheme == .dark ? Color.darkCardBackground : Color.white)
         .cornerRadius(20)
         .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.05), radius: 2)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
