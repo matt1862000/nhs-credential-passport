@@ -104,10 +104,10 @@ class NotificationService: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
     
-    func scheduleHalfwayNotification(in seconds: TimeInterval) {
+    func scheduleHalfwayNotification(in seconds: TimeInterval, walkDuration: Int) {
         let content = UNMutableNotificationContent()
         content.title = "Halfway Point! 🚶"
-        content.body = "Time to consider heading back to the clinic. Check the app for your current wait time."
+        content.body = "You've completed half of your \(walkDuration)-minute walk. Check the app for your clinic delay."
         content.sound = .default
         content.categoryIdentifier = "WALKING_ALERT"
         content.interruptionLevel = .timeSensitive
@@ -122,16 +122,34 @@ class NotificationService: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
     
-    func scheduleReturnNowNotification(in seconds: TimeInterval) {
+    func scheduleReturnNowNotification(in seconds: TimeInterval, walkDuration: Int) {
         let content = UNMutableNotificationContent()
-        content.title = "Return Now 🏥"
-        content.body = "Please consider heading back to the waiting area. Check the app for your current wait time."
-        content.sound = .defaultCritical
-        content.categoryIdentifier = "RETURN_ALERT"
+        content.title = "Time to Head Back 🏥"
+        content.body = "You've completed 80% of your \(walkDuration)-minute walk. Consider heading back to the clinic."
+        content.sound = .default
+        content.categoryIdentifier = "WALKING_ALERT"
+        content.interruptionLevel = .timeSensitive
         
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: seconds, repeats: false)
         let request = UNNotificationRequest(
             identifier: "return-\(UUID().uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        
+        UNUserNotificationCenter.current().add(request)
+    }
+    
+    func scheduleWalkCompleteNotification(in seconds: TimeInterval, walkDuration: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = "Walk Complete! 🎉"
+        content.body = "Great job completing your \(walkDuration)-minute walk! Head back to the waiting area when ready."
+        content.sound = .default
+        content.categoryIdentifier = "WALKING_ALERT"
+        
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: seconds, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "complete-\(UUID().uuidString)",
             content: content,
             trigger: trigger
         )

@@ -179,17 +179,22 @@ struct RouteSelectionView: View {
             .sheet(isPresented: $viewModel.showPostWalkWellbeing) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPostWalkWellbeing, isPostWalk: true, isWalkActivity: true)
             }
-            .alert("Time to Head Back!", isPresented: $viewModel.showHalfwayAlert) {
+            .alert("Halfway Point! 🚶", isPresented: $viewModel.showHalfwayAlert) {
                 Button("Got it") { }
             } message: {
-                Text("You've reached the halfway point. Start heading back to reception.")
+                Text("You've completed half your walk. Check your clinic delay and consider heading back.")
             }
-            .alert("Return Now", isPresented: $viewModel.showReturnAlert) {
+            .alert("Time to Head Back 🏥", isPresented: $viewModel.showReturnNowAlert) {
+                Button("Got it") { }
+            } message: {
+                Text("You've completed 80% of your walk. Consider heading back to the clinic.")
+            }
+            .alert("Walk Complete! 🎉", isPresented: $viewModel.showWalkCompleteAlert) {
                 Button("End Walk") {
                     viewModel.endWalk(completed: true)
                 }
             } message: {
-                Text("Your route is complete. Please return to the waiting area.")
+                Text("Great job completing your walk! Head back to the waiting area when ready.")
             }
         }
     }

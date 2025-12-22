@@ -21,7 +21,8 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var userProgress: UserProgress = UserProgress()
     
     @Published var showHalfwayAlert: Bool = false
-    @Published var showReturnAlert: Bool = false
+    @Published var showReturnNowAlert: Bool = false  // 80% - time to head back
+    @Published var showWalkCompleteAlert: Bool = false  // 100% - walk finished
     @Published var showClinicianReadyAlert: Bool = false
     @Published var showWaitTimeIncreasedAlert: Bool = false
     @Published var showWaitTimeDecreasedAlert: Bool = false
@@ -193,7 +194,8 @@ class WaitingRoomViewModel: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.showHalfwayAlert = false
-                self?.showReturnAlert = false
+                self?.showReturnNowAlert = false
+                self?.showWalkCompleteAlert = false
                 print("📱 Reset walk alerts - user came from push notification")
             }
         }
@@ -516,6 +518,8 @@ class WaitingRoomViewModel: ObservableObject {
         walkSession.startTime = Date()
         walkSession.currentRoute = route
         walkSession.halfwayAlertSent = false
+        walkSession.returnNowAlertSent = false
+        walkSession.walkCompleteAlertSent = false
         walkSession.stepsThisSession = 0
         walkSession.markersScanned = []
         
@@ -628,7 +632,7 @@ class WaitingRoomViewModel: ObservableObject {
         // Force view update for nested observable
         objectWillChange.send()
         
-        // Check for halfway point
+        // Check for halfway point (50%)
         if !walkSession.halfwayAlertSent,
            let returnTime = walkSession.estimatedReturnTime,
            Date() >= returnTime {
@@ -642,9 +646,26 @@ class WaitingRoomViewModel: ObservableObject {
             }
         }
         
-        // Check if walk should be complete
-        if walkSession.progress >= 1.0 && !AppDelegate.cameFromWalkNotification {
-            showReturnAlert = true
+        // Check for return now point (80%)
+        if !walkSession.returnNowAlertSent && walkSession.progress >= 0.8 && walkSession.progress < 1.0 {
+            walkSession.returnNowAlertSent = true
+            
+            if !AppDelegate.cameFromWalkNotification {
+                showReturnNowAlert = true
+            } else {
+                print("📱 Skipping return now in-app alert - user came from push notification")
+            }
+        }
+        
+        // Check if walk is complete (100%)
+        if !walkSession.walkCompleteAlertSent && walkSession.progress >= 1.0 {
+            walkSession.walkCompleteAlertSent = true
+            
+            if !AppDelegate.cameFromWalkNotification {
+                showWalkCompleteAlert = true
+            } else {
+                print("📱 Skipping walk complete in-app alert - user came from push notification")
+            }
         }
     }
     
@@ -688,12 +709,17 @@ class WaitingRoomViewModel: ObservableObject {
     
     // MARK: - Notifications
     private func scheduleWalkNotifications(routeDuration: Int) {
+        // Halfway at 50%
         let halfwaySeconds = Double(routeDuration * 60) / 2
-        notificationService.scheduleHalfwayNotification(in: halfwaySeconds)
+        notificationService.scheduleHalfwayNotification(in: halfwaySeconds, walkDuration: routeDuration)
         
-        // Return notification at 80% of route
+        // Return Now at 80%
         let returnSeconds = Double(routeDuration * 60) * 0.8
-        notificationService.scheduleReturnNowNotification(in: returnSeconds)
+        notificationService.scheduleReturnNowNotification(in: returnSeconds, walkDuration: routeDuration)
+        
+        // Walk Complete at 100%
+        let completeSeconds = Double(routeDuration * 60)
+        notificationService.scheduleWalkCompleteNotification(in: completeSeconds, walkDuration: routeDuration)
     }
     
     // MARK: - Simulated EPR Updates (Disabled - using Firebase)
@@ -997,7 +1023,7 @@ extension WaitingRoomViewModel {
         notificationService.scheduleClinicianReadyNotification()
         
         if walkSession.isActive {
-            showReturnAlert = true
+            showWalkCompleteAlert = true
         }
     }
     

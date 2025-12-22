@@ -900,6 +900,8 @@ class WalkSession: ObservableObject {
     @Published var currentRoute: WalkingRoute?
     @Published var estimatedReturnTime: Date?
     @Published var halfwayAlertSent: Bool = false
+    @Published var returnNowAlertSent: Bool = false
+    @Published var walkCompleteAlertSent: Bool = false
     @Published var stepsThisSession: Int = 0
     @Published var markersScanned: [QRMarker] = []
     @Published var elapsedSeconds: Int = 0
