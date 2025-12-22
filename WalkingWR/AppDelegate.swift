@@ -102,9 +102,16 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         let actionIdentifier = response.actionIdentifier
         let userInfo = response.notification.request.content.userInfo
+        let categoryIdentifier = response.notification.request.content.categoryIdentifier
         
         print("📱 Notification action: \(actionIdentifier)")
+        print("📱 Notification category: \(categoryIdentifier)")
         print("📱 Notification data: \(userInfo)")
+        
+        // Only handle delay notifications with OK/Stop dialog
+        // Walking notifications (halfway, return, etc.) just open the app
+        let isDelayNotification = categoryIdentifier == AppDelegate.delayNotificationCategory ||
+                                   categoryIdentifier.isEmpty // FCM push notifications may not have category set
         
         switch actionIdentifier {
         case AppDelegate.stopNotificationsAction:
@@ -113,8 +120,16 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
             
         case AppDelegate.viewDetailsAction, UNNotificationDefaultActionIdentifier:
             // User tapped "View Details" or tapped the notification itself
+            
+            // Only show delay dialog for delay-related notifications
+            guard isDelayNotification else {
+                print("📱 Non-delay notification tapped (\(categoryIdentifier)) - just opening app")
+                completionHandler()
+                return
+            }
+            
             // Post notification so app can show dialog with OK/Stop options
-            print("📱 User tapped notification - showing dialog")
+            print("📱 User tapped delay notification - showing dialog")
             
             let title = response.notification.request.content.title
             let body = response.notification.request.content.body
