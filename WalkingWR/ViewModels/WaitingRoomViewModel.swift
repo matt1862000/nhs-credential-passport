@@ -52,6 +52,10 @@ class WaitingRoomViewModel: ObservableObject {
     // Data loading state
     @Published var isDataReady: Bool = false
     
+    // Clinic availability state
+    @Published var isClinicEnded: Bool = false        // Selected clinician no longer in Firebase
+    @Published var hasNoClinicsAvailable: Bool = false // Firebase returned no clinicians
+    
     // Simulated EPR updates
     @Published var isSimulatingUpdates: Bool = true
     
@@ -281,6 +285,14 @@ class WaitingRoomViewModel: ObservableObject {
         guard !firebaseClinicians.isEmpty else {
             // No clinicians in Firebase - show empty list
             availableClinicians = []
+            hasNoClinicsAvailable = true
+            
+            // If user had a clinician selected, their clinic has ended
+            if selectedClinician != nil {
+                isClinicEnded = true
+                print("📋 Selected clinician's clinic has ended (Firebase empty)")
+            }
+            
             print("⏳ No clinicians in Firebase - clinic not active")
             
             // Data is ready - Firebase responded (even if empty)
@@ -290,6 +302,9 @@ class WaitingRoomViewModel: ObservableObject {
             }
             return
         }
+        
+        // Firebase has clinicians - reset the "no clinics" flag
+        hasNoClinicsAvailable = false
         
         // Build clinicians entirely from Firebase data
         var result: [Clinician] = []
@@ -334,7 +349,9 @@ class WaitingRoomViewModel: ObservableObject {
                 print("📱 Restored clinician from Firebase: \(restoredClinician.fullTitle)")
                 isFirstFirebaseUpdate = false  // Don't show alert for restoration
             } else {
-                print("⚠️ Saved clinician '\(savedName)' not found in Firebase - may have been removed")
+                // Clinician was saved but not found in Firebase - clinic has ended
+                isClinicEnded = true
+                print("📋 Saved clinician '\(savedName)' not found in Firebase - clinic ended")
             }
         }
         
@@ -344,6 +361,8 @@ class WaitingRoomViewModel: ObservableObject {
                 $0.name.lowercased() == selected.name.lowercased() ||
                 $0.fullName.lowercased() == selected.fullTitle.lowercased()
             }) {
+                // Clinician found - clinic is active
+                isClinicEnded = false
                 let previousDelay = waitTimeInfo.estimatedMinutes
                 let newDelay = updatedData.delay
                 let isWalking = walkSession.isActive
@@ -425,6 +444,18 @@ class WaitingRoomViewModel: ObservableObject {
                 }
                 
                 print("🔄 Updated selected clinician: \(updatedData.fullName) - all fields refreshed")
+            } else {
+                // Selected clinician is NOT in Firebase anymore - clinic has ended
+                isClinicEnded = true
+                print("📋 Selected clinician '\(selected.fullTitle)' no longer in Firebase - clinic ended")
+                
+                // Unsubscribe from notifications since clinic is over
+                let topic = "clinician_" + selected.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
+                Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+                    if error == nil {
+                        print("🔕 Unsubscribed from ended clinic: \(topic)")
+                    }
+                }
             }
         }
     }
@@ -805,6 +836,9 @@ class WaitingRoomViewModel: ObservableObject {
         
         selectedClinician = clinician
         waitTimeInfo = WaitTimeInfo(from: clinician)
+        
+        // Reset clinic ended flag - user selected an active clinician
+        isClinicEnded = false
         
         // Only enable notifications if selecting a DIFFERENT clinician
         // This preserves the user's "Stop Alerts" preference when re-selecting same clinician

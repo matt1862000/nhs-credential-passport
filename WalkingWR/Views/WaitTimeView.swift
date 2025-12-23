@@ -201,7 +201,35 @@ struct WaitTimeCard: View {
             }
             
             // Time display - large
-            if waitInfo.isOnTime {
+            if viewModel.hasNoClinicsAvailable {
+                // No clinics running at all
+                VStack(spacing: 8) {
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(.secondary)
+                    Text("No Active Clinics")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundColor(.secondary)
+                    Text("Check back during clinic hours")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary.opacity(0.8))
+                }
+                .padding(.vertical, 8)
+            } else if viewModel.isClinicEnded {
+                // User had a clinician selected, but clinic has ended
+                VStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(.tealAccent)
+                    Text("Clinic Ended")
+                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                        .foregroundColor(.primary)
+                    Text("Thank you for waiting with us")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 8)
+            } else if waitInfo.isOnTime {
                 Text("On Time")
                     .font(.system(size: 48, weight: .bold, design: .rounded))
                     .foregroundColor(.mintGreen)
@@ -219,10 +247,28 @@ struct WaitTimeCard: View {
             }
             
             // Clinician info with change option
-            if let clinician = viewModel.selectedClinician {
+            if viewModel.hasNoClinicsAvailable {
+                // No clinics running - show button to check available clinicians
+                Button(action: onShowClinicianSelection) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "person.2.fill")
+                            .font(.callout)
+                        Text("View Clinicians")
+                            .font(.callout)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundColor(.tealAccent)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(Color.tealAccent.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                .padding(.top, 8)
+            } else if let clinician = viewModel.selectedClinician {
                 HStack(spacing: 20) {
-                    // Clinician photo/initial - larger
+                    // Clinician photo/initial - larger (greyed out if clinic ended)
                     ClinicianPhotoView(clinician: clinician, size: 80)
+                        .opacity(viewModel.isClinicEnded ? 0.6 : 1.0)
                     
                     // Name and specialty
                     VStack(alignment: .leading, spacing: 6) {
@@ -231,13 +277,16 @@ struct WaitTimeCard: View {
                                 Text(clinician.fullTitle)
                                     .font(.headline)
                                     .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
+                                    .foregroundColor(viewModel.isClinicEnded ? .secondary : .primary)
                                 
-                                Image(systemName: "info.circle")
-                                    .font(.subheadline)
-                                    .foregroundColor(.tealAccent)
+                                if !viewModel.isClinicEnded {
+                                    Image(systemName: "info.circle")
+                                        .font(.subheadline)
+                                        .foregroundColor(.tealAccent)
+                                }
                             }
                         }
+                        .disabled(viewModel.isClinicEnded)
                         
                         Text(clinician.specialty)
                             .font(.subheadline)
@@ -246,9 +295,9 @@ struct WaitTimeCard: View {
                         // Change clinician button - fixed size to prevent truncation
                         Button(action: onShowClinicianSelection) {
                             HStack(spacing: 8) {
-                                Image(systemName: "arrow.triangle.2.circlepath")
+                                Image(systemName: viewModel.isClinicEnded ? "person.2.fill" : "arrow.triangle.2.circlepath")
                                     .font(.callout)
-                                Text("Change Clinician")
+                                Text(viewModel.isClinicEnded ? "Select New Clinician" : "Change Clinician")
                                     .font(.callout)
                                     .fontWeight(.medium)
                                     .lineLimit(1)
