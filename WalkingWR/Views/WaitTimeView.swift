@@ -192,8 +192,8 @@ struct WaitTimeCard: View {
     
     var body: some View {
         VStack(spacing: 12) {
-            // Notification reminder when alerts are off
-            if !viewModel.notificationsEnabled {
+            // Notification reminder when alerts are off - only show if clinician is selected
+            if !viewModel.notificationsEnabled && viewModel.selectedClinician != nil {
                 Button(action: {
                     viewModel.enableNotifications()
                 }) {
@@ -220,22 +220,57 @@ struct WaitTimeCard: View {
                 }
             }
             
-            // Last updated - top right
-            HStack {
-                Spacer()
-                HStack(spacing: 4) {
-                    Text("Updated")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Text(waitInfo.lastUpdated, style: .time)
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                        .foregroundColor(.secondary)
+            // Last updated - top right (only show if clinician is selected)
+            if viewModel.selectedClinician != nil {
+                HStack {
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Text("Updated")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(waitInfo.lastUpdated, style: .time)
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             
             // Time display - large
-            if viewModel.hasNoClinicsAvailable {
+            if viewModel.selectedClinician == nil && !viewModel.hasNoClinicsAvailable {
+                // User skipped selection but clinics are available
+                VStack(spacing: 12) {
+                    Image(systemName: "person.crop.circle.badge.questionmark")
+                        .font(.system(size: 50))
+                        .foregroundColor(.tealAccent.opacity(0.7))
+                    
+                    Text("Select a Clinician")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundColor(.primary)
+                    
+                    Text("Choose your clinician to see their delay time")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                    
+                    Button(action: onShowClinicianSelection) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "person.2.fill")
+                                .font(.callout)
+                            Text("View Available Clinicians")
+                                .font(.callout)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
+                        .background(Color.tealAccent)
+                        .clipShape(Capsule())
+                    }
+                    .padding(.top, 8)
+                }
+                .padding(.vertical, 16)
+            } else if viewModel.hasNoClinicsAvailable {
                 // No clinics running at all
                 VStack(spacing: 8) {
                     Image(systemName: "moon.zzz.fill")
