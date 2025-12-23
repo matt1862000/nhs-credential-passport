@@ -155,32 +155,55 @@ class POICacheService {
     }
     
     /// Reverse geocode a coordinate to get a human-readable place name
+    /// Prioritizes specific areas (neighborhood/street) over general city names
     func getLocationName(for coordinate: CLLocationCoordinate2D, completion: @escaping (String) -> Void) {
         let geocoder = CLGeocoder()
         let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         
         geocoder.reverseGeocodeLocation(location) { placemarks, error in
             if let placemark = placemarks?.first {
-                // Build a friendly name: "Locality, Area" or "Area" or "City"
-                let components = [
-                    placemark.subLocality,      // Neighborhood
-                    placemark.locality,          // City
-                    placemark.administrativeArea // County/State
-                ].compactMap { $0 }
+                // Priority order for specificity (most specific first):
+                // 1. Street name + subLocality (e.g., "Ecclesall Road, Sharrow")
+                // 2. SubLocality + locality (e.g., "Sharrow, Sheffield")
+                // 3. Name + locality (e.g., "Kelham Island, Sheffield")
+                // 4. Locality only (e.g., "Sheffield")
                 
-                if !components.isEmpty {
-                    // Take first two unique components
-                    var uniqueComponents: [String] = []
-                    for comp in components {
-                        if !uniqueComponents.contains(comp) {
-                            uniqueComponents.append(comp)
-                        }
-                        if uniqueComponents.count >= 2 { break }
+                var result: String?
+                
+                // Try: Neighborhood/SubLocality + City
+                if let subLocality = placemark.subLocality {
+                    if let locality = placemark.locality, locality != subLocality {
+                        result = "\(subLocality), \(locality)"
+                    } else {
+                        result = subLocality
                     }
-                    completion(uniqueComponents.joined(separator: ", "))
-                } else {
-                    completion(placemark.name ?? "Unknown Area")
                 }
+                // Try: Thoroughfare (street) + SubLocality or Locality
+                else if let street = placemark.thoroughfare {
+                    if let subLocality = placemark.subLocality {
+                        result = "\(street), \(subLocality)"
+                    } else if let locality = placemark.locality {
+                        result = "\(street), \(locality)"
+                    } else {
+                        result = street
+                    }
+                }
+                // Try: Name (landmark/POI name) + Locality
+                else if let name = placemark.name, !name.contains(coordinate.latitude.description) {
+                    if let locality = placemark.locality, name != locality {
+                        result = "\(name), \(locality)"
+                    } else {
+                        result = name
+                    }
+                }
+                // Fallback: Locality or administrative area
+                else if let locality = placemark.locality {
+                    result = locality
+                } else if let admin = placemark.administrativeArea {
+                    result = admin
+                }
+                
+                completion(result ?? "Unknown Area")
             } else {
                 // Fallback to coordinates if geocoding fails
                 let latDir = coordinate.latitude >= 0 ? "N" : "S"
