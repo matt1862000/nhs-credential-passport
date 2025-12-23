@@ -727,11 +727,11 @@ class GoogleMapsService: ObservableObject {
             guard validRoutes.count < 3 else { break } // Stop if we have enough valid routes
             
             // IMPORTANT: Scale ideal distance based on waypoint count
-            // For circular route: total segments = waypointCount + 1
-            // Each segment = totalDistance / (waypointCount + 1)
-            // Ideal waypoint distance = varies, but roughly totalDistance / 2 for the furthest point
+            // MapKit routes follow roads, not straight lines - typically 1.5-2x longer
+            // Apply a routing factor to convert from walking distance to straight-line POI distance
+            let routingFactor = 0.5  // Roads are ~2x longer than straight-line
             let segmentsInRoute = waypointCount + 1
-            let idealSegmentDistance = totalDistanceTarget / segmentsInRoute
+            let idealSegmentDistance = Int(Double(totalDistanceTarget) * routingFactor / Double(segmentsInRoute))
             
             // Re-select candidates with appropriate distance for this waypoint count
             let candidatesForCount = selectCandidateWaypoints(
