@@ -2002,6 +2002,9 @@ struct SettingsView: View {
                     }
                 }
                 
+                // Cached Locations Section
+                CachedLocationsSection()
+                
                 // Privacy Section
                 Section {
                     NavigationLink {
@@ -2638,6 +2641,120 @@ struct ControlPoint: View {
                 .font(.subheadline)
                 .foregroundColor(.primary)
         }
+    }
+}
+
+// MARK: - Cached Locations Section
+struct CachedLocationsSection: View {
+    @State private var cachedLocations: [POICacheService.CachedLocationInfo] = []
+    @State private var showClearConfirmation = false
+    
+    var body: some View {
+        Section {
+            // Header with count
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Saved Locations")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    
+                    Text("\(cachedLocations.count) of \(POICacheService.freeTierLocationLimit) free locations used")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                // Progress indicator
+                ZStack {
+                    Circle()
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 4)
+                        .frame(width: 36, height: 36)
+                    
+                    Circle()
+                        .trim(from: 0, to: CGFloat(cachedLocations.count) / CGFloat(POICacheService.freeTierLocationLimit))
+                        .stroke(
+                            cachedLocations.count >= POICacheService.freeTierLocationLimit ? Color.softAmber : Color.tealAccent,
+                            style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                        )
+                        .frame(width: 36, height: 36)
+                        .rotationEffect(.degrees(-90))
+                    
+                    Text("\(cachedLocations.count)")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(cachedLocations.count >= POICacheService.freeTierLocationLimit ? .softAmber : .tealAccent)
+                }
+            }
+            .padding(.vertical, 4)
+            
+            // List of cached locations
+            if cachedLocations.isEmpty {
+                HStack {
+                    Image(systemName: "mappin.slash")
+                        .foregroundColor(.secondary)
+                    Text("No locations saved yet")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 8)
+            } else {
+                ForEach(cachedLocations) { location in
+                    HStack(spacing: 12) {
+                        Image(systemName: "mappin.circle.fill")
+                            .foregroundColor(.tealAccent)
+                            .font(.title3)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(location.locationDescription)
+                                .font(.subheadline)
+                            Text("\(location.poiCount) places • Saved \(location.fetchedAt, style: .relative) ago")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            
+            // Clear cache button (if there are cached locations)
+            if !cachedLocations.isEmpty {
+                Button(role: .destructive) {
+                    showClearConfirmation = true
+                } label: {
+                    HStack {
+                        Image(systemName: "trash")
+                        Text("Clear All Saved Locations")
+                    }
+                    .font(.subheadline)
+                }
+            }
+        } header: {
+            HStack {
+                Image(systemName: "map.fill")
+                Text("Walking Routes Cache")
+            }
+        } footer: {
+            Text("Routes are cached to reduce data usage and speed up generation. Upgrade to WaitWell+ for unlimited locations.")
+        }
+        .onAppear {
+            refreshCachedLocations()
+        }
+        .confirmationDialog("Clear Saved Locations?", isPresented: $showClearConfirmation, titleVisibility: .visible) {
+            Button("Clear All", role: .destructive) {
+                POICacheService.shared.clearCache()
+                refreshCachedLocations()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will remove all cached walking routes. You'll need an internet connection to generate new routes at these locations.")
+        }
+    }
+    
+    private func refreshCachedLocations() {
+        cachedLocations = POICacheService.shared.getCachedLocationsInfo()
     }
 }
 

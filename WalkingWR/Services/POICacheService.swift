@@ -19,7 +19,31 @@ class POICacheService {
     private let maxCachedLocations = 10
     private let matchRadiusMeters: Double = 1000 // 1km
     
+    // Free tier limit
+    static let freeTierLocationLimit = 3
+    
     private init() {}
+    
+    /// Check if user has reached free tier location limit
+    var hasReachedFreeLimit: Bool {
+        loadCache().count >= POICacheService.freeTierLocationLimit
+    }
+    
+    /// Check if adding a new location at this coordinate would exceed free limit
+    /// Returns true if OK to add, false if would exceed limit
+    func canAddLocation(at location: CLLocationCoordinate2D) -> Bool {
+        let cached = loadCache()
+        
+        // Check if already cached nearby (no new slot needed)
+        for entry in cached {
+            if distanceBetween(entry.coordinate, location) <= matchRadiusMeters {
+                return true // Already cached, no new slot needed
+            }
+        }
+        
+        // Would need a new slot - check limit
+        return cached.count < POICacheService.freeTierLocationLimit
+    }
     
     // MARK: - Cache Entry Structure
     
@@ -107,6 +131,37 @@ class POICacheService {
         let cached = loadCache()
         let totalPOIs = cached.reduce(0) { $0 + $1.pois.count }
         return (cached.count, totalPOIs)
+    }
+    
+    /// Get detailed info about each cached location for display in settings
+    struct CachedLocationInfo: Identifiable {
+        let id = UUID()
+        let coordinate: CLLocationCoordinate2D
+        let poiCount: Int
+        let fetchedAt: Date
+        let locationDescription: String // Human-readable location
+    }
+    
+    func getCachedLocationsInfo() -> [CachedLocationInfo] {
+        let cached = loadCache()
+        return cached.map { entry in
+            CachedLocationInfo(
+                coordinate: entry.coordinate,
+                poiCount: entry.pois.count,
+                fetchedAt: entry.fetchedAt,
+                locationDescription: describeLocation(entry.coordinate)
+            )
+        }
+    }
+    
+    /// Generate a human-readable description of a coordinate
+    private func describeLocation(_ coordinate: CLLocationCoordinate2D) -> String {
+        // Format: "Near 51.5°N, 0.1°W" style
+        let latDir = coordinate.latitude >= 0 ? "N" : "S"
+        let lonDir = coordinate.longitude >= 0 ? "E" : "W"
+        return String(format: "%.2f°%@, %.2f°%@", 
+                      abs(coordinate.latitude), latDir,
+                      abs(coordinate.longitude), lonDir)
     }
     
     // MARK: - Private Methods

@@ -902,6 +902,7 @@ struct LocalRoutePickerSheet: View {
     @State private var preGenerationComplete = false
     @State private var viewedRouteIndices: Set<Int> = []  // Track which routes user has seen
     @State private var showPremiumUpsell = false  // Show upgrade message when all routes viewed
+    @State private var showLocationLimitAlert = false  // Show when free tier location limit reached
     
     // Pre-fetched POIs for faster route generation
     @State private var prefetchedPOIs: [PlaceResult] = []
@@ -1330,6 +1331,18 @@ struct LocalRoutePickerSheet: View {
                 }
             }
             // Delay alerts - must show even when route sheet is open
+            .alert("Location Limit Reached", isPresented: $showLocationLimitAlert) {
+                Button("Maybe Later", role: .cancel) {
+                    isPresented = false // Close the sheet
+                }
+                Button("Upgrade") {
+                    // TODO: Open subscription/upgrade flow
+                    print("🔓 User tapped Upgrade - show subscription options")
+                }
+            } message: {
+                let stats = POICacheService.shared.getCacheStats()
+                Text("You've saved routes in \(stats.locations) different locations. Upgrade to WaitWell+ for unlimited locations and more features!")
+            }
         }
     }
     
@@ -1355,6 +1368,25 @@ struct LocalRoutePickerSheet: View {
         guard mapsService.hasAPIKey else { return }
         guard !isPrefetchingPOIs else { return }
         guard prefetchedPOIs.isEmpty else { return }  // Already fetched
+        
+        // Check if this location is already cached (free) or would need a new slot
+        let cacheService = POICacheService.shared
+        
+        // First check if we already have cached POIs for this location
+        if let cachedPOIs = cacheService.getCachedPOIs(near: userLocation.coordinate) {
+            prefetchedPOIs = cachedPOIs
+            prefetchedForLocation = userLocation.coordinate
+            print("📦 Using \(cachedPOIs.count) cached POIs - no API call needed!")
+            return
+        }
+        
+        // Would need a new cache slot - check if allowed
+        if !cacheService.canAddLocation(at: userLocation.coordinate) {
+            // Show subscription prompt
+            showLocationLimitAlert = true
+            print("🔒 Location limit reached (\(POICacheService.freeTierLocationLimit) locations) - showing upgrade prompt")
+            return
+        }
         
         isPrefetchingPOIs = true
         prefetchedForLocation = userLocation.coordinate
