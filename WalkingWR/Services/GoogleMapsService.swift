@@ -583,12 +583,11 @@ class GoogleMapsService: ObservableObject {
         }
         
         let minAcceptableMinutes = max(1, Int(Double(targetDurationMinutes) * minPercent))
-        // Allow 20% over target - MapKit routing is unpredictable (follows roads, not straight lines)
-        let maxAcceptableMinutes = Int(Double(targetDurationMinutes) * 1.2)
+        let maxAcceptableMinutes = targetDurationMinutes  // 100% - never exceed target
         let minAcceptableDuration = minAcceptableMinutes * 60
         let maxAcceptableDuration = maxAcceptableMinutes * 60
         
-        print("🗺️ ADAPTIVE: \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (\(Int(minPercent * 100))-120% of \(targetDurationMinutes)min)")
+        print("🗺️ ADAPTIVE: \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (\(Int(minPercent * 100))-100% of \(targetDurationMinutes)min)")
         
         // Walking speed ~80m/min
         let walkingSpeedMeterPerMin = 80
