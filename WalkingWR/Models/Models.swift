@@ -482,13 +482,17 @@ enum MarkerContentType: String {
 }
 
 // MARK: - Wellbeing Content
-struct WellbeingContent: Identifiable {
+struct WellbeingContent: Identifiable, Equatable {
     let id = UUID()
     let title: String
     let description: String
     let icon: String
     let duration: Int? // in seconds, nil for instant content
     let steps: [String]?
+    
+    static func == (lhs: WellbeingContent, rhs: WellbeingContent) -> Bool {
+        lhs.title == rhs.title && lhs.description == rhs.description
+    }
 }		
 
 // MARK: - Badge/Achievement

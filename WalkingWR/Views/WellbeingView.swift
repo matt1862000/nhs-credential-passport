@@ -131,6 +131,18 @@ struct WellbeingView: View {
             .sheet(isPresented: $showPostWellbeingCheck) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $showPostWellbeingCheck, isPostWalk: true)
             }
+            .onAppear {
+                // Handle deep link exercise (e.g., from empty clinic screen)
+                if selectedExercise != nil {
+                    handleDeepLinkExercise(selectedExercise)
+                }
+            }
+            .onChange(of: selectedExercise) { oldValue, newValue in
+                // Handle deep link exercise set after view appeared
+                if oldValue == nil && newValue != nil {
+                    handleDeepLinkExercise(newValue)
+                }
+            }
         }
     }
     
@@ -143,6 +155,21 @@ struct WellbeingView: View {
         } else {
             // Pre-check already done - start exercise directly
             selectedExercise = exercise
+        }
+    }
+    
+    // Handle external deep link to breathing exercise
+    private func handleDeepLinkExercise(_ exercise: WellbeingContent?) {
+        guard let exercise = exercise else { return }
+        
+        // Clear the binding immediately to prevent loops
+        DispatchQueue.main.async {
+            selectedExercise = nil
+        }
+        
+        // Small delay to let the view settle, then run through the check flow
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            startExerciseWithCheck(exercise)
         }
     }
 }
