@@ -583,11 +583,12 @@ class GoogleMapsService: ObservableObject {
         }
         
         let minAcceptableMinutes = max(1, Int(Double(targetDurationMinutes) * minPercent))
-        let maxAcceptableMinutes = targetDurationMinutes  // 100% - never exceed
+        // Allow 20% over target - MapKit routing is unpredictable (follows roads, not straight lines)
+        let maxAcceptableMinutes = Int(Double(targetDurationMinutes) * 1.2)
         let minAcceptableDuration = minAcceptableMinutes * 60
         let maxAcceptableDuration = maxAcceptableMinutes * 60
         
-        print("🗺️ ADAPTIVE: \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (\(Int(minPercent * 100))-100% of \(targetDurationMinutes)min)")
+        print("🗺️ ADAPTIVE: \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (\(Int(minPercent * 100))-120% of \(targetDurationMinutes)min)")
         
         // Walking speed ~80m/min
         let walkingSpeedMeterPerMin = 80
@@ -683,24 +684,28 @@ class GoogleMapsService: ObservableObject {
         var bestFallbackRoute: GeneratedRoute?
         var bestFallbackDiff = Int.max
         
-        // PRIORITY: 1) Timing within 125%  2) Maximum POIs
-        // Strategy: Start with MAXIMUM waypoints and reduce if route too long
-        // This ensures we get as many verified walkable POIs as possible
+        // PRIORITY: 1) Timing within tolerance  2) Maximum POIs
+        // Strategy: Start with realistic waypoint count based on duration
+        // MapKit routes follow roads (not straight lines), adding ~50% overhead
         
-        // Desired waypoints (1 per 5 min)
-        // For short routes in dense areas, try MORE waypoints to extend the route
-        // Zigzagging through multiple nearby POIs creates a longer path
-        let desiredWaypoints = max(2, targetDurationMinutes / 5)
+        // Realistic waypoints based on actual MapKit routing behavior:
+        // - Each waypoint adds ~3-4 min to route (road following overhead)
+        // - 10 min walk → 2-3 waypoints max
+        // - 15 min walk → 3-4 waypoints max
+        // - 20 min walk → 4-5 waypoints max
         let maxWaypoints: Int
-        if targetDurationMinutes <= 15 {
-            // Short routes: try up to 5 waypoints even for 10-min route (creates longer path)
-            maxWaypoints = min(max(desiredWaypoints, 5), 8, places.count)
+        if targetDurationMinutes <= 10 {
+            maxWaypoints = min(3, places.count)  // 10 min: max 3 waypoints
+        } else if targetDurationMinutes <= 15 {
+            maxWaypoints = min(4, places.count)  // 15 min: max 4 waypoints
+        } else if targetDurationMinutes <= 20 {
+            maxWaypoints = min(5, places.count)  // 20 min: max 5 waypoints
         } else {
-            maxWaypoints = min(desiredWaypoints, 8, places.count)
+            maxWaypoints = min(targetDurationMinutes / 4, 8, places.count)  // Longer: ~1 per 4 min
         }
         
         // Try waypoint counts in DESCENDING order (most first, then fewer)
-        // First valid route (within 125%) wins - maximizing POI count
+        // First valid route (within tolerance) wins - maximizing POI count
         let waypointCountsToTry = Array((1...maxWaypoints).reversed())
         
         print("🗺️ Will try waypoint counts: \(waypointCountsToTry) (maximize POIs within 125% time)")
