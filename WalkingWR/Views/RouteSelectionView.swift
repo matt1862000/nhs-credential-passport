@@ -85,8 +85,13 @@ struct RouteSelectionView: View {
                 } else {
                     ScrollView {
                         VStack(spacing: 16) {
-                            // Time remaining banner
-                            TimeRemainingBanner(minutes: viewModel.waitTimeInfo.estimatedMinutes)
+                            // Time remaining banner - only show when clinician is selected
+                            if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
+                                TimeRemainingBanner(minutes: viewModel.waitTimeInfo.estimatedMinutes)
+                            } else {
+                                // No clinician selected - show different message
+                                NoClinicianBanner()
+                            }
                             
                             // Featured: Local Route (most popular)
                             LocalRouteCard(
@@ -242,6 +247,37 @@ struct TimeRemainingBanner: View {
             Text("Choose a route that fits")
                 .font(.caption)
                 .foregroundColor(.primary)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(16)
+        .cardStyle()
+    }
+}
+
+// MARK: - No Clinician Banner
+struct NoClinicianBanner: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "figure.walk")
+                .font(.title3)
+                .foregroundColor(.tealAccent)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Explore walking routes")
+                    .font(.caption)
+                    .foregroundColor(.primary)
+                
+                Text("Stay active while you wait")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            Text("Select a clinician for\npersonalised timing")
+                .font(.caption2)
+                .foregroundColor(.secondary)
                 .multilineTextAlignment(.trailing)
         }
         .padding(16)
