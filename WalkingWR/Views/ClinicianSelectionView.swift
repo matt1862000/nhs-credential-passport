@@ -113,6 +113,7 @@ struct ClinicianSelectionView: View {
                                             subtitle: "Discover routes nearby",
                                             color: .tealAccent
                                         ) {
+                                            viewModel.hasSkippedClinicianSelection = true
                                             isPresented = false
                                             // Navigate to Walk tab and open route picker (delay for dismiss animation)
                                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -127,6 +128,7 @@ struct ClinicianSelectionView: View {
                                             subtitle: "Calm your mind",
                                             color: .lavenderMist
                                         ) {
+                                            viewModel.hasSkippedClinicianSelection = true
                                             isPresented = false
                                             // Navigate to Wellbeing and open random breathing exercise (delay for dismiss animation)
                                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -141,6 +143,7 @@ struct ClinicianSelectionView: View {
                                             subtitle: "Learn something new",
                                             color: .tealAccent
                                         ) {
+                                            viewModel.hasSkippedClinicianSelection = true
                                             isPresented = false
                                             // Navigate to Wellbeing > Digital Skills (delay for dismiss animation)
                                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -195,6 +198,9 @@ struct ClinicianSelectionView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(viewModel.hasSelectedClinician ? "Cancel" : "Skip") {
+                        if !viewModel.hasSelectedClinician {
+                            viewModel.hasSkippedClinicianSelection = true
+                        }
                         isPresented = false
                     }
                 }

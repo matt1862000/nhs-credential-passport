@@ -65,7 +65,7 @@ struct MainTabView: View {
         }
         .animation(.easeInOut(duration: 0.5), value: showOnboarding)
         .fullScreenCover(isPresented: .init(
-            get: { !showOnboarding && (viewModel.showClinicianSelection || !viewModel.hasSelectedClinician) },
+            get: { !showOnboarding && (viewModel.showClinicianSelection || (!viewModel.hasSelectedClinician && !viewModel.hasSkippedClinicianSelection)) },
             set: { if !$0 { viewModel.showClinicianSelection = false } }
         )) {
             ClinicianSelectionView(

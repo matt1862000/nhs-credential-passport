@@ -47,6 +47,7 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var pushNotificationTopic: String = ""
     private var suppressInAppAlerts: Bool = false  // Prevents duplicate alerts when opened from push
     @Published var showClinicianSelection: Bool = false
+    @Published var hasSkippedClinicianSelection: Bool = false  // User chose to explore without selecting clinician
     private let allClinicians: [Clinician] = Clinician.sampleClinicians
     
     // Data loading state
