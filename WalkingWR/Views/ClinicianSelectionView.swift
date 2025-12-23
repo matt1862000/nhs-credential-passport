@@ -79,23 +79,65 @@ struct ClinicianSelectionView: View {
                         // Clinician list
                         VStack(spacing: 12) {
                             if filteredClinicians.isEmpty {
-                                // Empty state
-                                VStack(spacing: 16) {
-                                    Image(systemName: "clock.badge.questionmark")
+                                // Empty state with feature shortcuts
+                                VStack(spacing: 20) {
+                                    Image(systemName: "moon.zzz.fill")
                                         .font(.system(size: 50))
-                                        .foregroundColor(.secondary.opacity(0.5))
+                                        .foregroundColor(.secondary.opacity(0.6))
                                     
                                     Text("No Active Clinics")
-                                        .font(.headline)
+                                        .font(.title2)
+                                        .fontWeight(.bold)
                                         .foregroundColor(.primary)
                                     
-                                    Text("There are no clinicians currently available.\nPlease check back later.")
+                                    Text("Clinics are currently closed.\nCheck back during clinic hours.")
                                         .font(.subheadline)
                                         .foregroundColor(.secondary)
                                         .multilineTextAlignment(.center)
+                                    
+                                    // Feature shortcuts
+                                    VStack(spacing: 12) {
+                                        Text("Explore Other Features")
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(.secondary)
+                                            .padding(.top, 8)
+                                        
+                                        // Take a Walk
+                                        FeatureShortcutButton(
+                                            icon: "figure.walk",
+                                            title: "Take a Walk",
+                                            subtitle: "Discover routes nearby",
+                                            color: .tealAccent
+                                        ) {
+                                            isPresented = false
+                                            // Navigate to Walk tab will happen via parent
+                                        }
+                                        
+                                        // Breathing Exercises
+                                        FeatureShortcutButton(
+                                            icon: "wind",
+                                            title: "Breathing Exercises",
+                                            subtitle: "Calm your mind",
+                                            color: .mintGreen
+                                        ) {
+                                            isPresented = false
+                                        }
+                                        
+                                        // Digital Skills
+                                        FeatureShortcutButton(
+                                            icon: "iphone.gen3",
+                                            title: "Digital Skills",
+                                            subtitle: "Learn something new",
+                                            color: .blue
+                                        ) {
+                                            isPresented = false
+                                        }
+                                    }
+                                    .padding(.top, 8)
                                 }
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 60)
+                                .padding(.vertical, 40)
                             } else {
                                 ForEach(filteredClinicians) { clinician in
                                     ClinicianCard(
@@ -134,11 +176,9 @@ struct ClinicianSelectionView: View {
             .navigationTitle("Select Clinician")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if viewModel.hasSelectedClinician {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") {
-                            isPresented = false
-                        }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(viewModel.hasSelectedClinician ? "Cancel" : "Skip") {
+                        isPresented = false
                     }
                 }
             }
@@ -274,6 +314,55 @@ struct ClinicianCard: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(isSelected ? Color.tealAccent : Color.clear, lineWidth: 2)
             )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Feature Shortcut Button
+struct FeatureShortcutButton: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    let color: Color
+    let action: () -> Void
+    @Environment(\.colorScheme) var colorScheme
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 16) {
+                // Icon circle
+                ZStack {
+                    Circle()
+                        .fill(color.opacity(0.15))
+                        .frame(width: 44, height: 44)
+                    
+                    Image(systemName: icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(color)
+                }
+                
+                // Text
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(14)
+            .background(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.9))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
     }
