@@ -307,6 +307,13 @@ class WaitingRoomViewModel: ObservableObject {
         // Firebase has clinicians - reset the "no clinics" flag
         hasNoClinicsAvailable = false
         
+        // If user skipped clinician selection because none were available,
+        // but now there are clinicians, prompt them to select one
+        if hasSkippedClinicianSelection && selectedClinician == nil {
+            hasSkippedClinicianSelection = false
+            print("📋 Clinicians now available - prompting user to select")
+        }
+        
         // Build clinicians entirely from Firebase data
         var result: [Clinician] = []
         
