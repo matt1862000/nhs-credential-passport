@@ -9,6 +9,63 @@ import Foundation
 import CoreLocation
 import MapKit
 
+// MARK: - MapKit Rate Limiter
+/// Prevents hitting Apple's 50 requests/60 seconds limit
+actor MapKitRateLimiter {
+    static let shared = MapKitRateLimiter()
+    
+    private var requestTimes: [Date] = []
+    private let maxRequests = 40  // Stay under 50 limit with buffer
+    private let windowSeconds: TimeInterval = 60
+    private var isThrottled = false
+    private var throttleResetTime: Date?
+    
+    /// Wait if necessary before making a request
+    func waitForSlot() async {
+        // If throttled, wait until reset time
+        if isThrottled, let resetTime = throttleResetTime {
+            let waitTime = resetTime.timeIntervalSinceNow
+            if waitTime > 0 {
+                print("⏳ MapKit throttled - waiting \(Int(waitTime))s...")
+                try? await Task.sleep(nanoseconds: UInt64(waitTime * 1_000_000_000))
+            }
+            isThrottled = false
+            requestTimes.removeAll()
+        }
+        
+        // Clean old requests outside the window
+        let cutoff = Date().addingTimeInterval(-windowSeconds)
+        requestTimes = requestTimes.filter { $0 > cutoff }
+        
+        // If at limit, wait for oldest request to expire
+        if requestTimes.count >= maxRequests {
+            if let oldest = requestTimes.first {
+                let waitTime = oldest.timeIntervalSinceNow + windowSeconds + 1
+                if waitTime > 0 {
+                    print("⏳ MapKit rate limit - waiting \(Int(waitTime))s for slot...")
+                    try? await Task.sleep(nanoseconds: UInt64(waitTime * 1_000_000_000))
+                    requestTimes.removeAll { $0 <= oldest }
+                }
+            }
+        }
+        
+        requestTimes.append(Date())
+    }
+    
+    /// Mark that we've been throttled by Apple
+    func markThrottled(resetInSeconds: TimeInterval = 60) {
+        isThrottled = true
+        throttleResetTime = Date().addingTimeInterval(resetInSeconds)
+        print("🛑 MapKit throttled! Will retry after \(Int(resetInSeconds))s")
+    }
+    
+    /// Get current request count in window
+    func currentCount() -> Int {
+        let cutoff = Date().addingTimeInterval(-windowSeconds)
+        return requestTimes.filter { $0 > cutoff }.count
+    }
+}
+
 // MARK: - Google Maps Service
 class GoogleMapsService: ObservableObject {
     static let shared = GoogleMapsService()
@@ -23,6 +80,7 @@ class GoogleMapsService: ObservableObject {
     @Published var errorMessage: String?
     
     private let session = URLSession.shared
+    private let rateLimiter = MapKitRateLimiter.shared
     
     // MARK: - Find Nearby Places
     /// Finds points of interest near a location using Google Places API
@@ -223,6 +281,9 @@ class GoogleMapsService: ObservableObject {
             let legOrigin = allPoints[i]
             let legDestination = allPoints[i + 1]
             
+            // Wait for rate limiter slot before making request
+            await rateLimiter.waitForSlot()
+            
             let request = MKDirections.Request()
             request.source = MKMapItem(placemark: MKPlacemark(coordinate: legOrigin))
             request.destination = MKMapItem(placemark: MKPlacemark(coordinate: legDestination))
@@ -233,7 +294,15 @@ class GoogleMapsService: ObservableObject {
             let response: MKDirections.Response
             do {
                 response = try await directions.calculate()
-            } catch {
+            } catch let error as NSError {
+                // Check if this is a throttle error
+                if error.domain == "GEOErrorDomain" && error.code == -3 {
+                    // Extract reset time from error if available
+                    let resetTime = error.userInfo["timeUntilReset"] as? TimeInterval ?? 60
+                    await rateLimiter.markThrottled(resetInSeconds: resetTime + 1)
+                    print("🍎 MapKit leg \(i+1) throttled - will retry after wait")
+                    throw GoogleMapsError.noRouteFound
+                }
                 print("🍎 MapKit leg \(i+1) failed: \(error.localizedDescription)")
                 throw GoogleMapsError.noRouteFound
             }
@@ -637,14 +706,16 @@ class GoogleMapsService: ObservableObject {
         print("🗺️ Will try waypoint counts: \(waypointCountsToTry) (maximize POIs within 125% time)")
         
         var totalAttempts = 0
-        // More attempts for short routes and systematic/expanded search
+        // REDUCED to respect MapKit rate limit (50 req/60s)
+        // Each attempt with N waypoints = N+1 MapKit requests
+        // So 5 waypoints = 6 requests. Keep total attempts low!
         let maxTotalAttempts: Int
         if expandedSearch || useSystematicSelection {
-            maxTotalAttempts = 50  // More thorough during retry
+            maxTotalAttempts = 8  // Reduced from 50
         } else if targetDurationMinutes <= 15 {
-            maxTotalAttempts = 35
+            maxTotalAttempts = 6  // Reduced from 35
         } else {
-            maxTotalAttempts = 25
+            maxTotalAttempts = 5  // Reduced from 25
         }
         
         for waypointCount in waypointCountsToTry {
@@ -675,7 +746,8 @@ class GoogleMapsService: ObservableObject {
             
             // Try multiple combinations with this waypoint count
             // FIRST attempt uses best candidates (deterministic), then randomize for variety
-            let combinationsToTry = min(8, candidatesForCount.count)
+            // REDUCED to avoid MapKit rate limiting (50 req/60s)
+            let combinationsToTry = min(3, candidatesForCount.count)
             var triedCombinations = Set<String>()
             
             for comboIndex in 0..<combinationsToTry {
@@ -730,6 +802,11 @@ class GoogleMapsService: ObservableObject {
                 let waypointNames = selectedWaypoints.prefix(3).map { $0.name }.joined(separator: ", ")
                 let suffix = selectedWaypoints.count > 3 ? "..." : ""
                 print("🗺️ Attempt \(totalAttempts): \(waypointCount) POIs [\(waypointNames)\(suffix)]")
+                
+                // Small delay between attempts to respect rate limits
+                if totalAttempts > 1 {
+                    try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 second
+                }
                 
                 // Try this combination
                 if let route = await tryRouteAndEvaluate(
