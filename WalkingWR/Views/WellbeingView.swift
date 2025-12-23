@@ -42,7 +42,8 @@ struct WellbeingView: View {
     @State private var showPostWellbeingCheck = false
     @State private var pendingExercise: WellbeingContent? // Exercise to start after pre-check
     @State private var exerciseCompleted = false // Track if exercise was completed
-    @State private var isHandlingDeepLink = false // Prevent infinite loop from deep link handling
+    @State private var localSelectedExercise: WellbeingContent? // Internal state for exercise sheet
+    @State private var hasHandledDeepLink = false // Track if we've already handled the initial deep link
     
     init(viewModel: WaitingRoomViewModel, selectedCategory: Binding<WellbeingCategory> = .constant(.breathing), selectedExercise: Binding<WellbeingContent?> = .constant(nil)) {
         self.viewModel = viewModel
@@ -94,14 +95,15 @@ struct WellbeingView: View {
             .sheet(isPresented: $showHelpSheet) {
                 HelpView()
             }
-            .sheet(item: $selectedExercise) { exercise in
+            .sheet(item: $localSelectedExercise) { exercise in
                 BreathingExerciseSheet(
                     exercise: exercise,
                     onDismiss: {
                         // Check if we need to show post-wellbeing check when sheet closes
                         let shouldShowPostCheck = exerciseCompleted
                         exerciseCompleted = false
-                        selectedExercise = nil
+                        localSelectedExercise = nil
+                        selectedExercise = nil // Also clear the binding
                         
                         if shouldShowPostCheck {
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -123,7 +125,7 @@ struct WellbeingView: View {
                         // Start the pending exercise after pre-check
                         if let exercise = pendingExercise {
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                selectedExercise = exercise
+                                localSelectedExercise = exercise
                                 pendingExercise = nil
                             }
                         }
@@ -134,16 +136,33 @@ struct WellbeingView: View {
             }
             .onAppear {
                 // Handle deep link exercise (e.g., from empty clinic screen)
-                if selectedExercise != nil && !isHandlingDeepLink {
-                    handleDeepLinkExercise(selectedExercise)
+                // Only handle once per view appearance
+                if let exercise = selectedExercise, !hasHandledDeepLink {
+                    hasHandledDeepLink = true
+                    selectedExercise = nil // Clear the binding immediately
+                    
+                    // Route through the check flow
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        startExerciseWithCheck(exercise)
+                    }
                 }
             }
             .onChange(of: selectedExercise) { oldValue, newValue in
                 // Handle deep link exercise set after view appeared
-                // Only trigger if not already handling a deep link (prevents infinite loop)
-                if oldValue == nil && newValue != nil && !isHandlingDeepLink {
-                    handleDeepLinkExercise(newValue)
+                // Only handle if we haven't already handled a deep link
+                if let exercise = newValue, !hasHandledDeepLink {
+                    hasHandledDeepLink = true
+                    selectedExercise = nil // Clear the binding immediately
+                    
+                    // Route through the check flow
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        startExerciseWithCheck(exercise)
+                    }
                 }
+            }
+            .onDisappear {
+                // Reset deep link flag when view disappears
+                hasHandledDeepLink = false
             }
         }
     }
@@ -156,32 +175,10 @@ struct WellbeingView: View {
             showPreWellbeingCheck = true
         } else {
             // Pre-check already done - start exercise directly
-            selectedExercise = exercise
+            localSelectedExercise = exercise
         }
     }
     
-    // Handle external deep link to breathing exercise
-    private func handleDeepLinkExercise(_ exercise: WellbeingContent?) {
-        guard let exercise = exercise else { return }
-        
-        // Set flag to prevent onChange from triggering again
-        isHandlingDeepLink = true
-        
-        // Clear the binding immediately to prevent loops
-        DispatchQueue.main.async {
-            selectedExercise = nil
-        }
-        
-        // Small delay to let the view settle, then run through the check flow
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            startExerciseWithCheck(exercise)
-            
-            // Reset the flag after a short delay to allow normal operation
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                isHandlingDeepLink = false
-            }
-        }
-    }
 }
 
 // MARK: - Wellbeing Header Card
