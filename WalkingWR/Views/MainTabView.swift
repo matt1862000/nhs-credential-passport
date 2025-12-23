@@ -35,7 +35,13 @@ struct MainTabView: View {
                     .transition(.opacity)
             } else {
                 TabView(selection: $selectedTab) {
-                    WaitTimeView(viewModel: viewModel, selectedTab: $selectedTab)
+                    WaitTimeView(
+                        viewModel: viewModel,
+                        selectedTab: $selectedTab,
+                        showLocalRoutePicker: $showLocalRoutePicker,
+                        wellbeingCategory: $wellbeingCategory,
+                        wellbeingExercise: $wellbeingExercise
+                    )
                         .tabItem {
                             Label("Delay", systemImage: "clock.fill")
                         }

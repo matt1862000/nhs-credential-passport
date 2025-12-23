@@ -27,6 +27,9 @@ enum WaitTimeSheetType: Identifiable {
 struct WaitTimeView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var selectedTab: Int
+    @Binding var showLocalRoutePicker: Bool
+    @Binding var wellbeingCategory: WellbeingCategory
+    @Binding var wellbeingExercise: WellbeingContent?
     
     @State private var pulseAnimation = false
     @State private var activeSheet: WaitTimeSheetType?
@@ -96,10 +99,41 @@ struct WaitTimeView: View {
                             ClinicianProfileView(clinician: clinician)
                         }
                     case .clinicianSelection:
-                        ClinicianSelectionView(viewModel: viewModel, isPresented: .init(
-                            get: { activeSheet == .clinicianSelection },
-                            set: { if !$0 { activeSheet = nil } }
-                        ))
+                        ClinicianSelectionView(
+                            viewModel: viewModel,
+                            isPresented: .init(
+                                get: { activeSheet == .clinicianSelection },
+                                set: { if !$0 { activeSheet = nil } }
+                            ),
+                            onNavigateToWalk: {
+                                activeSheet = nil
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                    selectedTab = 1
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                        showLocalRoutePicker = true
+                                    }
+                                }
+                            },
+                            onNavigateToBreathing: {
+                                activeSheet = nil
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                    selectedTab = 2
+                                    wellbeingCategory = .breathing
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                        wellbeingExercise = WellbeingContent.breathingExercises.randomElement()
+                                    }
+                                }
+                            },
+                            onNavigateToDigitalSkills: {
+                                activeSheet = nil
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                    selectedTab = 2
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                        wellbeingCategory = .digital
+                                    }
+                                }
+                            }
+                        )
                     }
                 }
             }
@@ -841,7 +875,13 @@ struct AnxietyCheckSheet: View {
 }
 
 #Preview {
-    WaitTimeView(viewModel: WaitingRoomViewModel(), selectedTab: .constant(0))
+    WaitTimeView(
+        viewModel: WaitingRoomViewModel(),
+        selectedTab: .constant(0),
+        showLocalRoutePicker: .constant(false),
+        wellbeingCategory: .constant(.breathing),
+        wellbeingExercise: .constant(nil)
+    )
 }
 
 
