@@ -2700,22 +2700,35 @@ struct CachedLocationsSection: View {
                 .padding(.vertical, 8)
             } else {
                 ForEach(cachedLocations) { location in
-                    HStack(spacing: 12) {
-                        Image(systemName: "mappin.circle.fill")
-                            .foregroundColor(.tealAccent)
-                            .font(.title3)
-                        
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(locationNames[location.id] ?? "Loading...")
-                                .font(.subheadline)
-                            Text("\(location.poiCount) places • Saved \(location.fetchedAt, style: .relative) ago")
-                                .font(.caption2)
+                    NavigationLink {
+                        CachedPOIsDetailView(
+                            locationName: locationNames[location.id] ?? "Cached Location",
+                            coordinate: location.coordinate,
+                            fetchedAt: location.fetchedAt
+                        )
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "mappin.circle.fill")
+                                .foregroundColor(.tealAccent)
+                                .font(.title3)
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(locationNames[location.id] ?? "Loading...")
+                                    .font(.subheadline)
+                                    .foregroundColor(.primary)
+                                Text("\(location.poiCount) places • Saved \(location.fetchedAt, style: .relative) ago")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
+                            
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        
-                        Spacer()
+                        .padding(.vertical, 4)
                     }
-                    .padding(.vertical, 4)
                     .onAppear {
                         // Reverse geocode this location if not already done
                         if locationNames[location.id] == nil {
@@ -2748,6 +2761,161 @@ struct CachedLocationsSection: View {
     private func refreshCachedLocations() {
         cachedLocations = POICacheService.shared.getCachedLocationsInfo()
         locationNames = [:] // Reset names to trigger re-geocoding
+    }
+}
+
+// MARK: - Cached POIs Detail View
+struct CachedPOIsDetailView: View {
+    let locationName: String
+    let coordinate: CLLocationCoordinate2D
+    let fetchedAt: Date
+    
+    @State private var pois: [POICacheService.CachedPOI] = []
+    @State private var searchText: String = ""
+    
+    var filteredPOIs: [POICacheService.CachedPOI] {
+        if searchText.isEmpty {
+            return pois
+        }
+        return pois.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+    
+    // Group POIs by category
+    var groupedPOIs: [(category: String, pois: [POICacheService.CachedPOI])] {
+        var groups: [String: [POICacheService.CachedPOI]] = [:]
+        
+        for poi in filteredPOIs {
+            let category = categorize(poi: poi)
+            groups[category, default: []].append(poi)
+        }
+        
+        // Sort categories and POIs
+        return groups.map { (category: $0.key, pois: $0.value.sorted { $0.name < $1.name }) }
+            .sorted { $0.category < $1.category }
+    }
+    
+    var body: some View {
+        List {
+            // Header info
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "mappin.circle.fill")
+                            .font(.title)
+                            .foregroundColor(.tealAccent)
+                        
+                        VStack(alignment: .leading) {
+                            Text(locationName)
+                                .font(.headline)
+                            Text("\(pois.count) places discovered")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    HStack {
+                        Image(systemName: "clock")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Saved \(fetchedAt, style: .relative) ago")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            
+            // POI List by category
+            ForEach(groupedPOIs, id: \.category) { group in
+                Section(header: Text(group.category)) {
+                    ForEach(group.pois, id: \.placeId) { poi in
+                        HStack(spacing: 12) {
+                            Image(systemName: iconFor(poi: poi))
+                                .font(.title3)
+                                .foregroundColor(.tealAccent)
+                                .frame(width: 30)
+                            
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(poi.name)
+                                    .font(.subheadline)
+                                
+                                if let vicinity = poi.vicinity {
+                                    Text(vicinity)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            
+                            Spacer()
+                            
+                            if let rating = poi.rating, rating > 0 {
+                                HStack(spacing: 2) {
+                                    Image(systemName: "star.fill")
+                                        .font(.caption2)
+                                        .foregroundColor(.softAmber)
+                                    Text(String(format: "%.1f", rating))
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
+        .searchable(text: $searchText, prompt: "Search places")
+        .navigationTitle("Cached Places")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            pois = POICacheService.shared.getPOIsForLocation(at: coordinate)
+        }
+    }
+    
+    private func categorize(poi: POICacheService.CachedPOI) -> String {
+        let types = poi.types
+        
+        if types.contains("restaurant") || types.contains("food") || types.contains("cafe") || types.contains("bakery") {
+            return "🍽️ Food & Drink"
+        } else if types.contains("lodging") || types.contains("hotel") {
+            return "🏨 Hotels"
+        } else if types.contains("store") || types.contains("shopping_mall") || types.contains("clothing_store") {
+            return "🛍️ Shopping"
+        } else if types.contains("park") || types.contains("natural_feature") {
+            return "🌳 Parks & Nature"
+        } else if types.contains("museum") || types.contains("art_gallery") || types.contains("tourist_attraction") {
+            return "🎨 Arts & Culture"
+        } else if types.contains("health") || types.contains("hospital") || types.contains("pharmacy") {
+            return "🏥 Health"
+        } else if types.contains("gym") || types.contains("spa") {
+            return "💪 Fitness & Wellness"
+        } else if types.contains("bank") || types.contains("atm") {
+            return "🏦 Finance"
+        } else {
+            return "📍 Other Places"
+        }
+    }
+    
+    private func iconFor(poi: POICacheService.CachedPOI) -> String {
+        let types = poi.types
+        
+        if types.contains("restaurant") { return "fork.knife" }
+        if types.contains("cafe") { return "cup.and.saucer.fill" }
+        if types.contains("bar") { return "wineglass.fill" }
+        if types.contains("bakery") { return "birthday.cake.fill" }
+        if types.contains("hotel") || types.contains("lodging") { return "bed.double.fill" }
+        if types.contains("store") || types.contains("shopping") { return "bag.fill" }
+        if types.contains("park") { return "leaf.fill" }
+        if types.contains("museum") { return "building.columns.fill" }
+        if types.contains("pharmacy") { return "cross.case.fill" }
+        if types.contains("hospital") { return "cross.circle.fill" }
+        if types.contains("gym") { return "dumbbell.fill" }
+        if types.contains("spa") { return "sparkles" }
+        if types.contains("bank") { return "banknote.fill" }
+        if types.contains("church") { return "cross.fill" }
+        
+        return "mappin"
     }
 }
 
