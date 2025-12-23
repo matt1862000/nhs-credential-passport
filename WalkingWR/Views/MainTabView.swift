@@ -74,7 +74,7 @@ struct MainTabView: View {
                 onNavigateToWalk: {
                     // Switch to Walk tab and open route picker
                     selectedTab = 1
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         showLocalRoutePicker = true
                     }
                 },
@@ -82,7 +82,7 @@ struct MainTabView: View {
                     // Switch to Wellbeing tab and open random breathing exercise
                     selectedTab = 2
                     wellbeingCategory = .breathing
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         // Pick a random breathing exercise
                         wellbeingExercise = WellbeingContent.breathingExercises.randomElement()
                     }
@@ -90,7 +90,9 @@ struct MainTabView: View {
                 onNavigateToDigitalSkills: {
                     // Switch to Wellbeing tab and select Digital Skills category
                     selectedTab = 2
-                    wellbeingCategory = .digital
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        wellbeingCategory = .digital
+                    }
                 }
             )
         }

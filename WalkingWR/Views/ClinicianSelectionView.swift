@@ -114,8 +114,8 @@ struct ClinicianSelectionView: View {
                                             color: .tealAccent
                                         ) {
                                             isPresented = false
-                                            // Navigate to Walk tab and open route picker
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                            // Navigate to Walk tab and open route picker (delay for dismiss animation)
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                                                 onNavigateToWalk?()
                                             }
                                         }
@@ -128,8 +128,8 @@ struct ClinicianSelectionView: View {
                                             color: .lavenderMist
                                         ) {
                                             isPresented = false
-                                            // Navigate to Wellbeing and open random breathing exercise
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                            // Navigate to Wellbeing and open random breathing exercise (delay for dismiss animation)
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                                                 onNavigateToBreathing?()
                                             }
                                         }
@@ -142,8 +142,8 @@ struct ClinicianSelectionView: View {
                                             color: .tealAccent
                                         ) {
                                             isPresented = false
-                                            // Navigate to Wellbeing > Digital Skills
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                            // Navigate to Wellbeing > Digital Skills (delay for dismiss animation)
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                                                 onNavigateToDigitalSkills?()
                                             }
                                         }
