@@ -377,8 +377,8 @@ class WaitingRoomViewModel: ObservableObject {
                 } else if newDelay == 0 && previousDelay == 0 {
                     // Was already on time, still on time - no notification needed
                     print("✅ Clinic still on time (delay = 0) - no notification needed")
-                } else if previousDelay > 0 && newDelay != previousDelay {
-                    // Delay actually changed - only show alert if notifications are enabled
+                } else if newDelay != previousDelay {
+                    // Delay changed (including 0 → positive, positive → 0, or any change)
                     if !notificationsEnabled {
                         print("🔕 Notifications disabled - skipping delay alert (data will still update)")
                     } else {
