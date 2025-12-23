@@ -7,39 +7,46 @@
 
 import SwiftUI
 
+// MARK: - Wellbeing Category (extracted for reuse)
+enum WellbeingCategory: String, CaseIterable {
+    case breathing = "Breathing"
+    case gratitude = "Gratitude"
+    case nature = "Nature"
+    case digital = "Digital Skills"
+    
+    var icon: String {
+        switch self {
+        case .breathing: return "wind"
+        case .gratitude: return "heart.fill"
+        case .nature: return "leaf.fill"
+        case .digital: return "iphone"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .breathing: return .lavenderMist
+        case .gratitude: return .coralPink
+        case .nature: return .mintGreen
+        case .digital: return .tealAccent
+        }
+    }
+}
+
 struct WellbeingView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
-    @State private var selectedCategory: WellbeingCategory = .breathing
-    @State private var selectedExercise: WellbeingContent?
+    @Binding var selectedCategory: WellbeingCategory
+    @Binding var selectedExercise: WellbeingContent?
     @State private var showHelpSheet = false
     @State private var showPreWellbeingCheck = false
     @State private var showPostWellbeingCheck = false
     @State private var pendingExercise: WellbeingContent? // Exercise to start after pre-check
     @State private var exerciseCompleted = false // Track if exercise was completed
     
-    enum WellbeingCategory: String, CaseIterable {
-        case breathing = "Breathing"
-        case gratitude = "Gratitude"
-        case nature = "Nature"
-        case digital = "Digital Skills"
-        
-        var icon: String {
-            switch self {
-            case .breathing: return "wind"
-            case .gratitude: return "heart.fill"
-            case .nature: return "leaf.fill"
-            case .digital: return "iphone"
-            }
-        }
-        
-        var color: Color {
-            switch self {
-            case .breathing: return .lavenderMist
-            case .gratitude: return .coralPink
-            case .nature: return .mintGreen
-            case .digital: return .tealAccent
-            }
-        }
+    init(viewModel: WaitingRoomViewModel, selectedCategory: Binding<WellbeingCategory> = .constant(.breathing), selectedExercise: Binding<WellbeingContent?> = .constant(nil)) {
+        self.viewModel = viewModel
+        self._selectedCategory = selectedCategory
+        self._selectedExercise = selectedExercise
     }
     
     var body: some View {
@@ -182,12 +189,12 @@ struct WellbeingHeaderCard: View {
 
 // MARK: - Category Selector
 struct CategorySelector: View {
-    @Binding var selectedCategory: WellbeingView.WellbeingCategory
+    @Binding var selectedCategory: WellbeingCategory
     
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
-                ForEach(WellbeingView.WellbeingCategory.allCases, id: \.self) { category in
+                ForEach(WellbeingCategory.allCases, id: \.self) { category in
                     CategoryTab(
                         category: category,
                         isSelected: selectedCategory == category
@@ -203,7 +210,7 @@ struct CategorySelector: View {
 }
 
 struct CategoryTab: View {
-    let category: WellbeingView.WellbeingCategory
+    let category: WellbeingCategory
     let isSelected: Bool
     let action: () -> Void
     

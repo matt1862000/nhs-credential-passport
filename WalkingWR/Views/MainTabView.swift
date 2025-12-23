@@ -17,6 +17,11 @@ struct MainTabView: View {
     @State private var hasCheckedPendingNotification = false
     @Environment(\.scenePhase) private var scenePhase
     
+    // Navigation state for deep linking from empty clinic screen
+    @State private var showLocalRoutePicker = false
+    @State private var wellbeingCategory: WellbeingCategory = .breathing
+    @State private var wellbeingExercise: WellbeingContent? = nil
+    
     init(viewModel: WaitingRoomViewModel) {
         self.viewModel = viewModel
         // Only show onboarding if user hasn't completed it before
@@ -36,13 +41,13 @@ struct MainTabView: View {
                         }
                         .tag(0)
                     
-                    RouteSelectionView(viewModel: viewModel)
+                    RouteSelectionView(viewModel: viewModel, showLocalRoutePicker: $showLocalRoutePicker)
                         .tabItem {
                             Label("Walk", systemImage: "figure.walk")
                         }
                         .tag(1)
                     
-                    WellbeingView(viewModel: viewModel)
+                    WellbeingView(viewModel: viewModel, selectedCategory: $wellbeingCategory, selectedExercise: $wellbeingExercise)
                         .tabItem {
                             Label("Wellbeing", systemImage: "heart.fill")
                         }
@@ -65,7 +70,28 @@ struct MainTabView: View {
         )) {
             ClinicianSelectionView(
                 viewModel: viewModel,
-                isPresented: $viewModel.showClinicianSelection
+                isPresented: $viewModel.showClinicianSelection,
+                onNavigateToWalk: {
+                    // Switch to Walk tab and open route picker
+                    selectedTab = 1
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        showLocalRoutePicker = true
+                    }
+                },
+                onNavigateToBreathing: {
+                    // Switch to Wellbeing tab and open random breathing exercise
+                    selectedTab = 2
+                    wellbeingCategory = .breathing
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        // Pick a random breathing exercise
+                        wellbeingExercise = WellbeingContent.breathingExercises.randomElement()
+                    }
+                },
+                onNavigateToDigitalSkills: {
+                    // Switch to Wellbeing tab and select Digital Skills category
+                    selectedTab = 2
+                    wellbeingCategory = .digital
+                }
             )
         }
         .onAppear {

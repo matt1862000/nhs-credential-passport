@@ -10,6 +10,9 @@ import SwiftUI
 struct ClinicianSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var isPresented: Bool
+    var onNavigateToWalk: (() -> Void)? = nil
+    var onNavigateToBreathing: (() -> Void)? = nil
+    var onNavigateToDigitalSkills: (() -> Void)? = nil
     @State private var searchText = ""
     @Environment(\.colorScheme) var colorScheme
     
@@ -97,7 +100,7 @@ struct ClinicianSelectionView: View {
                                     
                                     // Feature shortcuts
                                     VStack(spacing: 12) {
-                                        Text("Explore Other Features")
+                                        Text("While You Wait")
                                             .font(.caption)
                                             .fontWeight(.medium)
                                             .foregroundColor(.secondary)
@@ -111,7 +114,10 @@ struct ClinicianSelectionView: View {
                                             color: .tealAccent
                                         ) {
                                             isPresented = false
-                                            // Navigate to Walk tab will happen via parent
+                                            // Navigate to Walk tab and open route picker
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                                onNavigateToWalk?()
+                                            }
                                         }
                                         
                                         // Breathing Exercises
@@ -119,9 +125,13 @@ struct ClinicianSelectionView: View {
                                             icon: "wind",
                                             title: "Breathing Exercises",
                                             subtitle: "Calm your mind",
-                                            color: .mintGreen
+                                            color: .lavenderMist
                                         ) {
                                             isPresented = false
+                                            // Navigate to Wellbeing and open random breathing exercise
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                                onNavigateToBreathing?()
+                                            }
                                         }
                                         
                                         // Digital Skills
@@ -129,15 +139,20 @@ struct ClinicianSelectionView: View {
                                             icon: "iphone.gen3",
                                             title: "Digital Skills",
                                             subtitle: "Learn something new",
-                                            color: .blue
+                                            color: .tealAccent
                                         ) {
                                             isPresented = false
+                                            // Navigate to Wellbeing > Digital Skills
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                                onNavigateToDigitalSkills?()
+                                            }
                                         }
                                     }
                                     .padding(.top, 8)
                                 }
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 40)
+                                .padding(.top, 16)
+                                .padding(.bottom, 20)
                             } else {
                                 ForEach(filteredClinicians) { clinician in
                                     ClinicianCard(
@@ -156,17 +171,19 @@ struct ClinicianSelectionView: View {
                             }
                         }
                         
-                        // Info note
-                        HStack(spacing: 12) {
-                            Image(systemName: "info.circle.fill")
-                                .foregroundColor(.tealAccent)
-                            
-                            Text("Delay times are estimates. Thank you for your patience.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                        // Info note - only show when clinicians are available
+                        if !filteredClinicians.isEmpty {
+                            HStack(spacing: 12) {
+                                Image(systemName: "info.circle.fill")
+                                    .foregroundColor(.tealAccent)
+                                
+                                Text("Delay times are estimates. Thank you for your patience.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(16)
+                            .cardStyle()
                         }
-                        .padding(16)
-                        .cardStyle()
                         
                         Spacer(minLength: 100)
                     }

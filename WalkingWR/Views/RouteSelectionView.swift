@@ -11,14 +11,19 @@ import CoreLocation
 
 struct RouteSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
+    @Binding var showLocalRoutePicker: Bool
     @State private var selectedDifficulty: RouteDifficulty? = nil
     @State private var showIndoorOnly = false
     @State private var showAccessibleOnly = false
     @State private var showActiveWalk = false
     @State private var showHelpSheet = false
-    @State private var showLocalRoutePicker = false
     @State private var localRouteDuration: Int = 10
     @State private var localRouteUseCustom = false
+    
+    init(viewModel: WaitingRoomViewModel, showLocalRoutePicker: Binding<Bool> = .constant(false)) {
+        self.viewModel = viewModel
+        self._showLocalRoutePicker = showLocalRoutePicker
+    }
     
     // Calculate recommended duration based on delay time (with 5 min buffer)
     private var recommendedDuration: Int {
