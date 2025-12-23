@@ -2647,7 +2647,7 @@ struct ControlPoint: View {
 // MARK: - Cached Locations Section
 struct CachedLocationsSection: View {
     @State private var cachedLocations: [POICacheService.CachedLocationInfo] = []
-    @State private var showClearConfirmation = false
+    @State private var locationNames: [UUID: String] = [:] // Store resolved names by location ID
     
     var body: some View {
         Section {
@@ -2706,7 +2706,7 @@ struct CachedLocationsSection: View {
                             .font(.title3)
                         
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(location.locationDescription)
+                            Text(locationNames[location.id] ?? "Loading...")
                                 .font(.subheadline)
                             Text("\(location.poiCount) places • Saved \(location.fetchedAt, style: .relative) ago")
                                 .font(.caption2)
@@ -2716,19 +2716,16 @@ struct CachedLocationsSection: View {
                         Spacer()
                     }
                     .padding(.vertical, 4)
-                }
-            }
-            
-            // Clear cache button (if there are cached locations)
-            if !cachedLocations.isEmpty {
-                Button(role: .destructive) {
-                    showClearConfirmation = true
-                } label: {
-                    HStack {
-                        Image(systemName: "trash")
-                        Text("Clear All Saved Locations")
+                    .onAppear {
+                        // Reverse geocode this location if not already done
+                        if locationNames[location.id] == nil {
+                            POICacheService.shared.getLocationName(for: location.coordinate) { name in
+                                DispatchQueue.main.async {
+                                    locationNames[location.id] = name
+                                }
+                            }
+                        }
                     }
-                    .font(.subheadline)
                 }
             }
         } header: {
@@ -2737,24 +2734,20 @@ struct CachedLocationsSection: View {
                 Text("Walking Routes Cache")
             }
         } footer: {
-            Text("Routes are cached to reduce data usage and speed up generation. Upgrade to WaitWell+ for unlimited locations.")
+            if cachedLocations.count >= POICacheService.freeTierLocationLimit {
+                Text("You've used all \(POICacheService.freeTierLocationLimit) free locations. Upgrade to WaitWell+ for unlimited locations.")
+            } else {
+                Text("Routes are cached to speed up generation. \(POICacheService.freeTierLocationLimit - cachedLocations.count) free location\(cachedLocations.count == POICacheService.freeTierLocationLimit - 1 ? "" : "s") remaining.")
+            }
         }
         .onAppear {
             refreshCachedLocations()
-        }
-        .confirmationDialog("Clear Saved Locations?", isPresented: $showClearConfirmation, titleVisibility: .visible) {
-            Button("Clear All", role: .destructive) {
-                POICacheService.shared.clearCache()
-                refreshCachedLocations()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will remove all cached walking routes. You'll need an internet connection to generate new routes at these locations.")
         }
     }
     
     private func refreshCachedLocations() {
         cachedLocations = POICacheService.shared.getCachedLocationsInfo()
+        locationNames = [:] // Reset names to trigger re-geocoding
     }
 }
 

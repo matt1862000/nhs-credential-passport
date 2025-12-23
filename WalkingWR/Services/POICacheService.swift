@@ -139,7 +139,7 @@ class POICacheService {
         let coordinate: CLLocationCoordinate2D
         let poiCount: Int
         let fetchedAt: Date
-        let locationDescription: String // Human-readable location
+        var locationName: String = "Loading..." // Human-readable location name
     }
     
     func getCachedLocationsInfo() -> [CachedLocationInfo] {
@@ -149,19 +149,47 @@ class POICacheService {
                 coordinate: entry.coordinate,
                 poiCount: entry.pois.count,
                 fetchedAt: entry.fetchedAt,
-                locationDescription: describeLocation(entry.coordinate)
+                locationName: "Loading..."
             )
         }
     }
     
-    /// Generate a human-readable description of a coordinate
-    private func describeLocation(_ coordinate: CLLocationCoordinate2D) -> String {
-        // Format: "Near 51.5°N, 0.1°W" style
-        let latDir = coordinate.latitude >= 0 ? "N" : "S"
-        let lonDir = coordinate.longitude >= 0 ? "E" : "W"
-        return String(format: "%.2f°%@, %.2f°%@", 
-                      abs(coordinate.latitude), latDir,
-                      abs(coordinate.longitude), lonDir)
+    /// Reverse geocode a coordinate to get a human-readable place name
+    func getLocationName(for coordinate: CLLocationCoordinate2D, completion: @escaping (String) -> Void) {
+        let geocoder = CLGeocoder()
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        
+        geocoder.reverseGeocodeLocation(location) { placemarks, error in
+            if let placemark = placemarks?.first {
+                // Build a friendly name: "Locality, Area" or "Area" or "City"
+                let components = [
+                    placemark.subLocality,      // Neighborhood
+                    placemark.locality,          // City
+                    placemark.administrativeArea // County/State
+                ].compactMap { $0 }
+                
+                if !components.isEmpty {
+                    // Take first two unique components
+                    var uniqueComponents: [String] = []
+                    for comp in components {
+                        if !uniqueComponents.contains(comp) {
+                            uniqueComponents.append(comp)
+                        }
+                        if uniqueComponents.count >= 2 { break }
+                    }
+                    completion(uniqueComponents.joined(separator: ", "))
+                } else {
+                    completion(placemark.name ?? "Unknown Area")
+                }
+            } else {
+                // Fallback to coordinates if geocoding fails
+                let latDir = coordinate.latitude >= 0 ? "N" : "S"
+                let lonDir = coordinate.longitude >= 0 ? "E" : "W"
+                completion(String(format: "%.2f°%@, %.2f°%@", 
+                                  abs(coordinate.latitude), latDir,
+                                  abs(coordinate.longitude), lonDir))
+            }
+        }
     }
     
     // MARK: - Private Methods
