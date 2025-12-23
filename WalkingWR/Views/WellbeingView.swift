@@ -42,6 +42,7 @@ struct WellbeingView: View {
     @State private var showPostWellbeingCheck = false
     @State private var pendingExercise: WellbeingContent? // Exercise to start after pre-check
     @State private var exerciseCompleted = false // Track if exercise was completed
+    @State private var isHandlingDeepLink = false // Prevent infinite loop from deep link handling
     
     init(viewModel: WaitingRoomViewModel, selectedCategory: Binding<WellbeingCategory> = .constant(.breathing), selectedExercise: Binding<WellbeingContent?> = .constant(nil)) {
         self.viewModel = viewModel
@@ -133,13 +134,14 @@ struct WellbeingView: View {
             }
             .onAppear {
                 // Handle deep link exercise (e.g., from empty clinic screen)
-                if selectedExercise != nil {
+                if selectedExercise != nil && !isHandlingDeepLink {
                     handleDeepLinkExercise(selectedExercise)
                 }
             }
             .onChange(of: selectedExercise) { oldValue, newValue in
                 // Handle deep link exercise set after view appeared
-                if oldValue == nil && newValue != nil {
+                // Only trigger if not already handling a deep link (prevents infinite loop)
+                if oldValue == nil && newValue != nil && !isHandlingDeepLink {
                     handleDeepLinkExercise(newValue)
                 }
             }
@@ -162,6 +164,9 @@ struct WellbeingView: View {
     private func handleDeepLinkExercise(_ exercise: WellbeingContent?) {
         guard let exercise = exercise else { return }
         
+        // Set flag to prevent onChange from triggering again
+        isHandlingDeepLink = true
+        
         // Clear the binding immediately to prevent loops
         DispatchQueue.main.async {
             selectedExercise = nil
@@ -170,6 +175,11 @@ struct WellbeingView: View {
         // Small delay to let the view settle, then run through the check flow
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             startExerciseWithCheck(exercise)
+            
+            // Reset the flag after a short delay to allow normal operation
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                isHandlingDeepLink = false
+            }
         }
     }
 }
