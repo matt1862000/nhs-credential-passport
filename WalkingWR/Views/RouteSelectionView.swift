@@ -909,7 +909,7 @@ struct LocalRoutePickerSheet: View {
     @State private var prefetchedForLocation: CLLocationCoordinate2D?
     
     let durationOptions = [10, 15, 20, 25, 30]
-    let maxRoutesToGenerate = 3  // Reduced from 10 to save API costs (can increase for premium tier later)
+    let maxRoutesToGenerate = 10  // Back to 10 - directions now use free Apple MapKit!
     
     var body: some View {
         NavigationStack {
