@@ -9,60 +9,41 @@ import Foundation
 import CoreLocation
 import MapKit
 
-// MARK: - MapKit Rate Limiter
-/// Prevents hitting Apple's 50 requests/60 seconds limit
-actor MapKitRateLimiter {
-    static let shared = MapKitRateLimiter()
+// MARK: - MapKit Rate Limiter Actor (Thread-Safe)
+/// Actor to manage MapKit rate limiting with thread-safe access from concurrent tasks
+private actor MapKitRateLimiter {
+    private var timestamps: [Date] = []
     
-    private var requestTimes: [Date] = []
-    private let maxRequests = 40  // Stay under 50 limit with buffer
-    private let windowSeconds: TimeInterval = 60
-    private var isThrottled = false
-    private var throttleResetTime: Date?
-    
-    /// Wait if necessary before making a request
-    func waitForSlot() async {
-        // If throttled, wait until reset time
-        if isThrottled, let resetTime = throttleResetTime {
-            let waitTime = resetTime.timeIntervalSinceNow
-            if waitTime > 0 {
-                print("⏳ MapKit throttled - waiting \(Int(waitTime))s...")
-                try? await Task.sleep(nanoseconds: UInt64(waitTime * 1_000_000_000))
-            }
-            isThrottled = false
-            requestTimes.removeAll()
-        }
-        
-        // Clean old requests outside the window
-        let cutoff = Date().addingTimeInterval(-windowSeconds)
-        requestTimes = requestTimes.filter { $0 > cutoff }
-        
-        // If at limit, wait for oldest request to expire
-        if requestTimes.count >= maxRequests {
-            if let oldest = requestTimes.first {
-                let waitTime = oldest.timeIntervalSinceNow + windowSeconds + 1
-                if waitTime > 0 {
-                    print("⏳ MapKit rate limit - waiting \(Int(waitTime))s for slot...")
-                    try? await Task.sleep(nanoseconds: UInt64(waitTime * 1_000_000_000))
-                    requestTimes.removeAll { $0 <= oldest }
-                }
-            }
-        }
-        
-        requestTimes.append(Date())
+    struct RateLimitStatus {
+        let currentCount: Int
+        let shouldWait: Bool
+        let waitTime: TimeInterval?
     }
     
-    /// Mark that we've been throttled by Apple
-    func markThrottled(resetInSeconds: TimeInterval = 60) {
-        isThrottled = true
-        throttleResetTime = Date().addingTimeInterval(resetInSeconds)
-        print("🛑 MapKit throttled! Will retry after \(Int(resetInSeconds))s")
+    /// Check rate limit status and clean up old timestamps
+    func checkAndCleanup(limit: Int, window: TimeInterval) -> RateLimitStatus {
+        let now = Date()
+        timestamps = timestamps.filter { now.timeIntervalSince($0) < window }
+        
+        let shouldWait = timestamps.count >= limit
+        var waitTime: TimeInterval? = nil
+        
+        if shouldWait, let oldest = timestamps.first {
+            waitTime = window - now.timeIntervalSince(oldest) + 1
+        }
+        
+        return RateLimitStatus(currentCount: timestamps.count, shouldWait: shouldWait, waitTime: waitTime)
     }
     
-    /// Get current request count in window
-    func currentCount() -> Int {
-        let cutoff = Date().addingTimeInterval(-windowSeconds)
-        return requestTimes.filter { $0 > cutoff }.count
+    /// Record a new request timestamp
+    func recordRequest() {
+        timestamps.append(Date())
+    }
+    
+    /// Get current count of requests in window
+    func getCurrentCount(window: TimeInterval) -> Int {
+        let now = Date()
+        return timestamps.filter { now.timeIntervalSince($0) < window }.count
     }
 }
 
@@ -79,32 +60,272 @@ class GoogleMapsService: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     
+    
     private let session = URLSession.shared
-    private let rateLimiter = MapKitRateLimiter.shared
+    
+    // MARK: - Alternative Routes Buffer
+    // Stores valid endpoint routes that weren't returned as primary (e.g., "boring" single-waypoint routes)
+    // Caller can retrieve these to add to the route pool for more variety
+    private(set) var alternativeEndpointRoutes: [GeneratedRoute] = []
+    
+    // MARK: - MapKit Rate Limiting
+    // MapKit allows 50 requests per 60 seconds
+    // Using actor for thread-safe access from concurrent tasks
+    private let rateLimiter = MapKitRateLimiter()
+    private let mapKitRateLimit = 45  // Stay under 50 to be safe
+    private let mapKitRateLimitWindow: TimeInterval = 60
+    
+    /// Check if we're approaching rate limit and wait if needed (thread-safe via actor)
+    private func checkMapKitRateLimit() async {
+        let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
+        
+        // If approaching limit, wait for oldest request to expire
+        if status.shouldWait, let waitTime = status.waitTime, waitTime > 0 {
+            print("⏳ Approaching MapKit rate limit (\(status.currentCount)/50), waiting \(Int(waitTime))s...")
+            try? await Task.sleep(nanoseconds: UInt64(waitTime * 1_000_000_000))
+        }
+    }
+    
+    /// Record a MapKit request (thread-safe via actor)
+    private func recordMapKitRequest() {
+        Task { await rateLimiter.recordRequest() }
+    }
+    
+    // MARK: - Leg Time Cache
+    // Caches walking time between origin grid cells and POIs to avoid repeated MapKit calls
+    // Key: (originGrid50m, poiId) → Value: (minutes, meters, timestamp)
+    
+    private struct LegCacheKey: Hashable {
+        let originGrid: String  // Lat/Lon rounded to 50m grid
+        let poiId: String
+    }
+    
+    private struct LegCacheValue {
+        let minutes: Int
+        let meters: Int
+        let polyline: String
+        let updatedAt: Date
+    }
+    
+    private var legCache: [LegCacheKey: LegCacheValue] = [:]
+    private let legCacheMaxAge: TimeInterval = 7 * 24 * 60 * 60  // 7 days
+    
+    /// Convert coordinate to 50m grid cell string
+    private func gridKey(for coordinate: CLLocationCoordinate2D) -> String {
+        // ~50m precision: 0.00045° latitude, 0.0007° longitude at UK latitudes
+        let latGrid = round(coordinate.latitude / 0.00045) * 0.00045
+        let lonGrid = round(coordinate.longitude / 0.0007) * 0.0007
+        return String(format: "%.5f,%.4f", latGrid, lonGrid)
+    }
+    
+    /// Get cached leg time if available
+    private func getCachedLegTime(from origin: CLLocationCoordinate2D, to poi: PlaceResult) -> LegCacheValue? {
+        let key = LegCacheKey(originGrid: gridKey(for: origin), poiId: poi.placeId)
+        
+        guard let cached = legCache[key] else { return nil }
+        
+        // Check if cache is still valid
+        if Date().timeIntervalSince(cached.updatedAt) > legCacheMaxAge {
+            legCache.removeValue(forKey: key)
+            return nil
+        }
+        
+        return cached
+    }
+    
+    /// Cache leg time for future use
+    private func cacheLegTime(from origin: CLLocationCoordinate2D, to poi: PlaceResult, minutes: Int, meters: Int, polyline: String) {
+        let key = LegCacheKey(originGrid: gridKey(for: origin), poiId: poi.placeId)
+        legCache[key] = LegCacheValue(minutes: minutes, meters: meters, polyline: polyline, updatedAt: Date())
+        
+        // Limit cache size
+        if legCache.count > 500 {
+            // Remove oldest entries
+            let sortedKeys = legCache.sorted { $0.value.updatedAt < $1.value.updatedAt }
+            for (key, _) in sortedKeys.prefix(100) {
+                legCache.removeValue(forKey: key)
+            }
+        }
+    }
+    
+    // MARK: - Adaptive Walking Speed
+    // Learns user's actual walking pace from completed walks
+    // Uses moving average, clamped to 65-90 m/min
+    
+    private let walkSpeedKey = "adaptiveWalkingSpeed"
+    private let walkSpeedSamplesKey = "walkingSpeedSamples"
+    private let defaultWalkingSpeed = 80  // m/min baseline
+    private let minWalkingSpeed = 65
+    private let maxWalkingSpeed = 90
+    private let maxSpeedSamples = 10  // Keep last 10 walks for average
+    
+    /// Get the adaptive walking speed (m/min)
+    var adaptiveWalkingSpeed: Int {
+        let stored = UserDefaults.standard.integer(forKey: walkSpeedKey)
+        return stored > 0 ? stored : defaultWalkingSpeed
+    }
+    
+    /// Record a completed walk to update adaptive speed
+    /// Call this when user finishes a walk with actual distance and duration
+    func recordCompletedWalk(distanceMeters: Int, durationMinutes: Int) {
+        guard durationMinutes > 0 else { return }
+        
+        let actualSpeed = distanceMeters / durationMinutes
+        
+        // Ignore unrealistic speeds (user paused, drove, etc.)
+        guard actualSpeed >= 40 && actualSpeed <= 120 else {
+            print("🚶 Ignoring unrealistic speed: \(actualSpeed)m/min")
+            return
+        }
+        
+        // Get existing samples
+        var samples = UserDefaults.standard.array(forKey: walkSpeedSamplesKey) as? [Int] ?? []
+        samples.append(actualSpeed)
+        
+        // Keep only last N samples
+        if samples.count > maxSpeedSamples {
+            samples = Array(samples.suffix(maxSpeedSamples))
+        }
+        
+        // Calculate moving average
+        let average = samples.reduce(0, +) / samples.count
+        
+        // Clamp to reasonable range
+        let clampedSpeed = min(maxWalkingSpeed, max(minWalkingSpeed, average))
+        
+        // Save
+        UserDefaults.standard.set(samples, forKey: walkSpeedSamplesKey)
+        UserDefaults.standard.set(clampedSpeed, forKey: walkSpeedKey)
+        
+        print("🚶 Updated walking speed: \(clampedSpeed)m/min (from \(samples.count) walks, this walk: \(actualSpeed)m/min)")
+    }
+    
+    /// Get one-way walking time to a POI (uses cache if available)
+    func getOneWayWalkingTime(from origin: CLLocationCoordinate2D, to poi: PlaceResult) async -> (minutes: Int, meters: Int)? {
+        // Check cache first
+        if let cached = getCachedLegTime(from: origin, to: poi) {
+            print("🗄️ Leg cache HIT: \(poi.name) = \(cached.minutes)min")
+            return (cached.minutes, cached.meters)
+        }
+        
+        // Calculate via MapKit
+        do {
+            await checkMapKitRateLimit()
+            
+            let request = MKDirections.Request()
+            request.source = MKMapItem(placemark: MKPlacemark(coordinate: origin))
+            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: poi.coordinate))
+            request.transportType = .walking
+            
+            let directions = MKDirections(request: request)
+            let response = try await directions.calculate()
+            recordMapKitRequest()
+            
+            guard let route = response.routes.first else { return nil }
+            
+            let minutes = Int(route.expectedTravelTime / 60)
+            let meters = Int(route.distance)
+            
+            // Encode polyline for cache
+            let polylinePoints = route.polyline.pointCount
+            var coords = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: polylinePoints)
+            route.polyline.getCoordinates(&coords, range: NSRange(location: 0, length: polylinePoints))
+            let encodedPolyline = encodePolyline(coords)
+            
+            // Cache the result
+            cacheLegTime(from: origin, to: poi, minutes: minutes, meters: meters, polyline: encodedPolyline)
+            print("🗄️ Leg cache MISS: \(poi.name) = \(minutes)min (cached)")
+            
+            return (minutes, meters)
+        } catch {
+            print("🗄️ Leg time failed: \(poi.name) - \(error.localizedDescription)")
+            return nil
+        }
+    }
     
     // MARK: - Find Nearby Places
-    /// Finds points of interest near a location using Google Places API
-    /// Searches multiple place types in parallel for maximum variety
-    /// Uses POI cache to reduce API calls - POIs don't move!
+    /// Finds points of interest near a location using multiple sources:
+    /// 1. Google Places API (cached daily - one API call per 24 hours)
+    /// 2. Apple Maps (FREE, always called to supplement)
+    /// 3. OpenStreetMap (FREE, always called to supplement)
     func findNearbyPlaces(
         location: CLLocationCoordinate2D,
         radiusMeters: Int = 500,
         types: [String] = ["point_of_interest"]
     ) async throws -> [PlaceResult] {
         
-        // 🎯 CHECK CACHE FIRST - Save £££ on API calls!
-        if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: location) {
-            let stats = POICacheService.shared.getCacheStats()
-            print("💰 SAVED API CALLS! Using \(cachedPOIs.count) cached POIs (\(stats.locations) locations cached)")
-            return cachedPOIs
+        var allResults: [PlaceResult] = []
+        var seenPlaceIds = Set<String>()
+        
+        // 🎯 PRIORITY 1: Check cached Google data (refreshed daily)
+        let cacheResult = POICacheService.shared.getCachedPOIsWithFreshness(near: location, searchRadius: Double(radiusMeters))
+        
+        if let cached = cacheResult, !cached.isStale {
+            // Fresh cache - use it as base, skip Google API call
+            print("💰 Using FRESH cached data (\(cached.ageHours)h old) - skipping Google API!")
+            allResults = cached.pois
+            for poi in allResults {
+                seenPlaceIds.insert(poi.placeId)
+            }
+        } else {
+            // No cache or stale (> 24h) - call Google API to refresh
+            let needsRefresh = cacheResult?.isStale ?? true
+            if needsRefresh {
+                print("🔄 Cache is stale or missing - fetching fresh data from Google API...")
+            }
+            
+            // Call Google API if we have a valid key
+            if !apiKey.isEmpty {
+                let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
+                for poi in googlePOIs {
+                    if !seenPlaceIds.contains(poi.placeId) {
+                        seenPlaceIds.insert(poi.placeId)
+                        allResults.append(poi)
+                    }
+                }
+                print("🗺️ Google API: Found \(googlePOIs.count) POIs")
+            } else {
+                print("⚠️ No Google API key - using Apple + OSM only")
+            }
         }
         
-        guard !apiKey.isEmpty else {
-            throw GoogleMapsError.missingAPIKey
+        // 🍎 PRIORITY 2: Always supplement with Apple Maps (FREE!)
+        print("🍎 Supplementing with Apple Maps (FREE!)...")
+        let applePOIs = await searchAppleMapsForPOIs(location: location, radiusMeters: radiusMeters)
+        var appleAdded = 0
+        for poi in applePOIs {
+            let isDuplicate = allResults.contains { existing in
+                existing.name.lowercased() == poi.name.lowercased() ||
+                distanceBetween(existing.coordinate, poi.coordinate) < 50
+            }
+            if !isDuplicate {
+                allResults.append(poi)
+                appleAdded += 1
+            }
         }
+        if appleAdded > 0 {
+            print("🍎 Added \(appleAdded) unique Apple Maps POIs (total: \(allResults.count))")
+        }
+        
+        // Note: OpenStreetMap POIs not used - Google cached daily + Apple Maps is sufficient
+        // OSRM still used for routing when MapKit is rate-limited
+        
+        // 💾 Cache combined results for next time
+        if !allResults.isEmpty {
+            POICacheService.shared.cachePOIs(allResults, for: location)
+            print("💾 Cached \(allResults.count) POIs (Google + Apple + OSM) - valid for 24 hours")
+        }
+        
+        return allResults
+    }
+    
+    /// Fetch POIs from Google Places API (called at most once per 24 hours)
+    private func fetchGooglePOIs(
+        location: CLLocationCoordinate2D,
+        radiusMeters: Int
+    ) async -> [PlaceResult] {
         
         // Search multiple specific types in parallel to maximize POI variety
-        // Google's default "prominence" ranking favors famous places over local businesses
         let placeTypesToSearch = [
             // Retail & Shopping
             "store",              // General retail
@@ -201,14 +422,7 @@ class GoogleMapsService: ObservableObject {
             }
         }
         
-        print("🗺️ Multi-type search found \(allResults.count) unique POIs from \(placeTypesToSearch.count) categories")
-        
-        // 💾 CACHE RESULTS - Next time at this location = FREE!
-        if !allResults.isEmpty {
-            POICacheService.shared.cachePOIs(allResults, for: location)
-            print("💰 Cached \(allResults.count) POIs - future calls at this location will be FREE!")
-        }
-        
+        print("🗺️ Google API: Found \(allResults.count) unique POIs from \(placeTypesToSearch.count) categories")
         return allResults
     }
     
@@ -243,13 +457,488 @@ class GoogleMapsService: ObservableObject {
         return placesResponse.results
     }
     
-    // MARK: - Get Walking Directions (Apple MapKit - FREE!)
-    /// Gets walking directions between points using Apple MapKit (FREE, unlimited!)
-    /// Replaces Google Directions API to eliminate costs
-    func getWalkingDirections(
+    // MARK: - Apple Maps POI Search (FREE - No Limits!)
+    /// Search for POIs using Apple MapKit - completely FREE with no rate limits!
+    /// Finds local venues that Google often misses (village halls, community centres, etc.)
+    func searchAppleMapsForPOIs(
+        location: CLLocationCoordinate2D,
+        radiusMeters: Int = 500
+    ) async -> [PlaceResult] {
+        var allResults: [PlaceResult] = []
+        var seenNames = Set<String>()
+        
+        // Apple Maps has 50 requests/minute limit - maximize usage with 45 queries
+        let searchQueries = [
+            // PRIORITY: Community venues (what we're looking for!)
+            "village hall",           // Village halls
+            "community centre",       // Community centers
+            "town hall",              // Town halls, civic buildings
+            "church",                 // Churches, chapels
+            "memorial hall",          // Memorial halls, war memorials
+            "sports club",            // Sports clubs
+            "social club",            // Social clubs, working men's clubs
+            
+            // Food & Drink
+            "pub",                    // Pubs, inns
+            "restaurant",             // Restaurants
+            "cafe",                   // Coffee shops, cafes
+            "takeaway",               // Fish & chips, kebabs
+            "bakery",                 // Bakeries
+            "bar",                    // Bars
+            
+            // Retail
+            "supermarket",            // Supermarkets
+            "convenience store",      // Corner shops
+            "shop",                   // General retail
+            "pharmacy",               // Chemists
+            "newsagent",              // Newsagents
+            "butcher",                // Butchers
+            "florist",                // Florists
+            
+            // Services
+            "post office",            // Post offices
+            "bank",                   // Banks
+            "library",                // Libraries
+            "hairdresser",            // Hair salons, barbers
+            
+            // Health
+            "doctor",                 // GP surgeries
+            "dentist",                // Dentists
+            "veterinary",             // Vets
+            
+            // Education
+            "school",                 // Schools
+            "nursery",                // Nurseries, preschools
+            
+            // Leisure
+            "park",                   // Parks
+            "gym",                    // Gyms
+            "swimming pool",          // Swimming pools
+            "leisure centre",         // Leisure centres
+            "playground",             // Playgrounds
+            
+            // Culture
+            "museum",                 // Museums
+            "theatre",                // Theatres
+            "cinema",                 // Cinemas
+            
+            // Transport & Auto
+            "train station",          // Railway stations
+            "petrol station",         // Petrol stations
+            "car park",               // Car parks
+            
+            // Accommodation
+            "hotel",                  // Hotels
+            "bed and breakfast"       // B&Bs, guest houses
+        ]
+        
+        print("🍎 Searching Apple Maps for \(searchQueries.count) categories (limit: 50/min)...")
+        
+        for query in searchQueries {
+            do {
+                let request = MKLocalSearch.Request()
+                request.naturalLanguageQuery = query
+                request.region = MKCoordinateRegion(
+                    center: location,
+                    latitudinalMeters: Double(radiusMeters * 2),
+                    longitudinalMeters: Double(radiusMeters * 2)
+                )
+                
+                let search = MKLocalSearch(request: request)
+                let response = try await search.start()
+                
+                for item in response.mapItems {
+                    guard let name = item.name, !seenNames.contains(name) else { continue }
+                    
+                    // DISTANCE FILTER: Only keep POIs actually within search radius
+                    let itemCoord = item.placemark.coordinate
+                    let distance = distanceBetween(location, itemCoord)
+                    guard distance <= Double(radiusMeters) else { continue }
+                    
+                    seenNames.insert(name)
+                    
+                    // Convert MKMapItem to PlaceResult
+                    let placeResult = PlaceResult(
+                        placeId: "apple_\(name.hashValue)",
+                        name: name,
+                        vicinity: item.placemark.title,
+                        geometry: PlaceGeometry(
+                            location: PlaceLocation(
+                                lat: item.placemark.coordinate.latitude,
+                                lng: item.placemark.coordinate.longitude
+                            )
+                        ),
+                        rating: nil,
+                        types: [query],
+                        businessStatus: nil
+                    )
+                    allResults.append(placeResult)
+                }
+            } catch {
+                // Silently continue - some queries may fail
+            }
+        }
+        
+        print("🍎 Apple Maps found \(allResults.count) POIs (FREE!)")
+        return allResults
+    }
+    
+    // MARK: - Search OpenStreetMap for POIs (Overpass API - FREE!)
+    /// Searches OpenStreetMap using the Overpass API for POIs near a location
+    /// This is completely FREE with no API key required!
+    private func searchOpenStreetMapForPOIs(location: CLLocationCoordinate2D, radiusMeters: Int) async -> [PlaceResult] {
+        var allResults: [PlaceResult] = []
+        
+        // Overpass API query for amenities, shops, leisure, tourism, historic POIs
+        let query = """
+        [out:json][timeout:30];
+        (
+          node["amenity"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["shop"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["leisure"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["tourism"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["historic"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["building"="church"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["building"="hall"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["amenity"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["leisure"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["building"="church"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["building"="hall"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+        );
+        out center tags;
+        """
+        
+        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let urlString = "https://overpass-api.de/api/interpreter?data=\(encodedQuery)"
+        
+        guard let url = URL(string: urlString) else {
+            print("🗺️ OSM: Invalid URL")
+            return []
+        }
+        
+        print("🗺️ Searching OpenStreetMap (Overpass API - FREE!)...")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                print("🗺️ OSM: Bad response")
+                return []
+            }
+            
+            // Parse Overpass JSON response
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let elements = json["elements"] as? [[String: Any]] {
+                
+                for element in elements {
+                    guard let tags = element["tags"] as? [String: String] else { continue }
+                    
+                    // Get name - skip if no name
+                    guard let name = tags["name"] else { continue }
+                    
+                    // Get coordinates (handle both nodes and ways with center)
+                    var lat: Double?
+                    var lon: Double?
+                    
+                    if let nodeLat = element["lat"] as? Double, let nodeLon = element["lon"] as? Double {
+                        lat = nodeLat
+                        lon = nodeLon
+                    } else if let center = element["center"] as? [String: Double] {
+                        lat = center["lat"]
+                        lon = center["lon"]
+                    }
+                    
+                    guard let finalLat = lat, let finalLon = lon else { continue }
+                    
+                    // Get type from tags
+                    let poiType = tags["amenity"] ?? tags["shop"] ?? tags["leisure"] ?? tags["tourism"] ?? tags["historic"] ?? "place"
+                    
+                    // Get address if available
+                    var address: String? = nil
+                    if let street = tags["addr:street"] {
+                        let houseNumber = tags["addr:housenumber"] ?? ""
+                        address = "\(houseNumber) \(street)".trimmingCharacters(in: .whitespaces)
+                    }
+                    
+                    let osmId = element["id"] as? Int ?? name.hashValue
+                    
+                    let placeResult = PlaceResult(
+                        placeId: "osm_\(osmId)",
+                        name: name,
+                        vicinity: address,
+                        geometry: PlaceGeometry(
+                            location: PlaceLocation(lat: finalLat, lng: finalLon)
+                        ),
+                        rating: nil,
+                        types: [poiType],
+                        businessStatus: nil
+                    )
+                    allResults.append(placeResult)
+                }
+            }
+            
+            print("🗺️ OpenStreetMap found \(allResults.count) POIs (FREE!)")
+            
+        } catch {
+            print("🗺️ OSM search failed: \(error.localizedDescription)")
+        }
+        
+        return allResults
+    }
+    
+    // MARK: - OSRM Walking Directions (OpenStreetMap - FREE, NO LIMITS!)
+    /// Gets walking directions using OSRM (Open Source Routing Machine)
+    /// Completely FREE with NO rate limits - uses OpenStreetMap data
+    /// 
+    /// LIMITATIONS & CONSIDERATIONS:
+    /// - Public OSRM server only supports CAR routing (we estimate walking time from distance)
+    /// - Max ~100 waypoints per request
+    /// - No waypoint optimization (we use MapKit's optimization before calling OSRM)
+    /// - Polyline may be less detailed than MapKit
+    /// - Server may be slow or down (10 second timeout)
+    /// - OSM data may be outdated in some areas
+    private func getOSRMWalkingDirections(
         origin: CLLocationCoordinate2D,
         destination: CLLocationCoordinate2D,
         waypoints: [CLLocationCoordinate2D] = []
+    ) async throws -> (distance: Int, duration: Int, polyline: [CLLocationCoordinate2D]) {
+        
+        // LIMITATION: OSRM has a max coordinate limit (~100)
+        // If we have too many waypoints, throw error to fall back to MapKit
+        if waypoints.count > 25 {
+            print("🗺️ OSRM: Too many waypoints (\(waypoints.count)), falling back to MapKit")
+            throw GoogleMapsError.apiError("Too many waypoints for OSRM")
+        }
+        
+        // Build coordinates string: lon,lat;lon,lat;...
+        var coordStrings: [String] = []
+        coordStrings.append("\(origin.longitude),\(origin.latitude)")
+        for wp in waypoints {
+            coordStrings.append("\(wp.longitude),\(wp.latitude)")
+        }
+        coordStrings.append("\(destination.longitude),\(destination.latitude)")
+        
+        let coordsPath = coordStrings.joined(separator: ";")
+        // Note: Using "driving" profile as public server doesn't support "foot"
+        // We estimate walking time from distance afterwards
+        let urlString = "https://router.project-osrm.org/route/v1/driving/\(coordsPath)?overview=full&geometries=polyline"
+        
+        guard let url = URL(string: urlString) else {
+            throw GoogleMapsError.invalidURL
+        }
+        
+        // Create request with timeout (public server can be slow)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10  // 10 second timeout
+        
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            print("🗺️ OSRM: Network error - \(error.localizedDescription)")
+            throw GoogleMapsError.apiError("OSRM network error")
+        }
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GoogleMapsError.apiError("OSRM invalid response")
+        }
+        
+        // Handle HTTP errors
+        if httpResponse.statusCode != 200 {
+            print("🗺️ OSRM: HTTP error \(httpResponse.statusCode)")
+            throw GoogleMapsError.apiError("OSRM HTTP \(httpResponse.statusCode)")
+        }
+        
+        // Parse JSON response
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GoogleMapsError.apiError("OSRM invalid JSON")
+        }
+        
+        // Check OSRM status code (not HTTP, but in JSON)
+        if let code = json["code"] as? String, code != "Ok" {
+            let message = json["message"] as? String ?? "Unknown error"
+            print("🗺️ OSRM: API error - \(code): \(message)")
+            throw GoogleMapsError.noRouteFound
+        }
+        
+        guard let routes = json["routes"] as? [[String: Any]],
+              let firstRoute = routes.first,
+              let distance = firstRoute["distance"] as? Double,
+              let duration = firstRoute["duration"] as? Double,
+              let geometry = firstRoute["geometry"] as? String else {
+            print("🗺️ OSRM: No route found in response")
+            throw GoogleMapsError.noRouteFound
+        }
+        
+        // Validate distance is reasonable
+        if distance <= 0 {
+            throw GoogleMapsError.noRouteFound
+        }
+        
+        // Decode polyline
+        let polylinePoints = decodePolyline(geometry)
+        
+        // Handle empty polyline
+        if polylinePoints.isEmpty {
+            print("🗺️ OSRM: Empty polyline returned")
+            throw GoogleMapsError.noRouteFound
+        }
+        
+        // IMPORTANT: OSRM public server returns CAR routing times
+        // We ALWAYS estimate walking time from distance
+        // Walking speed: ~80 m/min (5 km/h) - adjustable based on user's actual speed
+        let userWalkingSpeed = Double(adaptiveWalkingSpeed)  // m/min from user's history
+        let walkingMinutes = distance / userWalkingSpeed
+        let finalDuration = Int(walkingMinutes * 60)  // Convert to seconds
+        
+        let osrmMinutes = Int(duration / 60)
+        let walkingMins = Int(walkingMinutes)
+        if osrmMinutes != walkingMins {
+            print("🗺️ OSRM: Converted driving time to walking (\(osrmMinutes)min → \(walkingMins)min @ \(Int(userWalkingSpeed))m/min)")
+        }
+        
+        return (distance: Int(distance), duration: finalDuration, polyline: polylinePoints)
+    }
+    
+    /// Check if we should use OSRM instead of MapKit (when approaching rate limit)
+    private func shouldUseOSRM() async -> Bool {
+        let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
+        // Use OSRM at 80% of rate limit (40+ requests) for speed
+        // OSRM durations are corrected via osrmCalibrationFactor
+        return status.currentCount >= 40
+    }
+    
+    // MARK: - OSRM Dynamic Calibration
+    // OSRM often overestimates distances/durations compared to MapKit
+    // We dynamically calibrate by comparing results from both services
+    
+    private let osrmCalibrationKey = "osrmCalibrationFactor"
+    private let osrmCalibrationSamplesKey = "osrmCalibrationSamples"
+    private let osrmCalibrationCountKey = "osrmCalibrationCallCount"
+    private let maxCalibrationSamples = 15           // Keep last 15 samples for robust average
+    private let calibrationInterval = 5              // Calibrate every 5 OSRM calls
+    private let minSamplesForConfidence = 3          // Need at least 3 samples before trusting calibration
+    private let defaultCalibrationFactor = 0.65      // Default factor (65% of OSRM = MapKit)
+    
+    /// Get OSRM calibration factor (MapKit duration / OSRM duration)
+    /// Values < 1.0 mean OSRM overestimates, so we multiply OSRM result by this
+    var osrmCalibrationFactor: Double {
+        let stored = UserDefaults.standard.double(forKey: osrmCalibrationKey)
+        return stored > 0 ? stored : defaultCalibrationFactor
+    }
+    
+    /// Check if we need to run a calibration (compares MapKit vs OSRM for same route)
+    private func shouldCalibrateOSRM() -> Bool {
+        let samples = UserDefaults.standard.array(forKey: osrmCalibrationSamplesKey) as? [Double] ?? []
+        let callCount = UserDefaults.standard.integer(forKey: osrmCalibrationCountKey)
+        
+        // Always calibrate if we don't have minimum samples
+        if samples.count < minSamplesForConfidence {
+            return true
+        }
+        
+        // Calibrate every N OSRM calls to keep factor accurate as user moves around
+        return callCount % calibrationInterval == 0
+    }
+    
+    /// Increment OSRM call counter
+    private func recordOSRMCall() {
+        let count = UserDefaults.standard.integer(forKey: osrmCalibrationCountKey)
+        UserDefaults.standard.set(count + 1, forKey: osrmCalibrationCountKey)
+    }
+    
+    /// Record a calibration sample comparing MapKit vs OSRM for same route
+    func recordOSRMCalibration(mapKitDuration: Int, osrmDuration: Int) {
+        guard mapKitDuration > 0 && osrmDuration > 0 else { return }
+        
+        let ratio = Double(mapKitDuration) / Double(osrmDuration)
+        
+        // Ignore extreme outliers (data errors)
+        guard ratio >= 0.3 && ratio <= 1.5 else {
+            print("🔧 Ignoring extreme calibration ratio: \(String(format: "%.2f", ratio)) (MapKit:\(mapKitDuration)s, OSRM:\(osrmDuration)s)")
+            return
+        }
+        
+        var samples = UserDefaults.standard.array(forKey: osrmCalibrationSamplesKey) as? [Double] ?? []
+        samples.append(ratio)
+        
+        if samples.count > maxCalibrationSamples {
+            samples = Array(samples.suffix(maxCalibrationSamples))
+        }
+        
+        // Calculate weighted average (recent samples matter more)
+        var weightedSum = 0.0
+        var weightTotal = 0.0
+        for (index, sample) in samples.enumerated() {
+            let weight = Double(index + 1)  // Later samples have higher weight
+            weightedSum += sample * weight
+            weightTotal += weight
+        }
+        let weightedAverage = weightedSum / weightTotal
+        let clampedAverage = max(0.4, min(1.0, weightedAverage))  // Clamp to reasonable range
+        
+        UserDefaults.standard.set(samples, forKey: osrmCalibrationSamplesKey)
+        UserDefaults.standard.set(clampedAverage, forKey: osrmCalibrationKey)
+        
+        print("🔧 OSRM calibration: \(String(format: "%.2f", clampedAverage)) (from \(samples.count) samples, MapKit:\(mapKitDuration/60)min vs OSRM:\(osrmDuration/60)min)")
+    }
+    
+    /// Apply calibration factor to OSRM duration
+    func calibrateOSRMDuration(_ osrmDuration: Int) -> Int {
+        let factor = osrmCalibrationFactor
+        let calibrated = Int(Double(osrmDuration) * factor)
+        return max(60, calibrated)  // At least 1 minute
+    }
+    
+    /// Perform a calibration check by getting both MapKit and OSRM for the same route
+    private func performCalibrationCheck(
+        origin: CLLocationCoordinate2D,
+        destination: CLLocationCoordinate2D
+    ) async {
+        // Get a simple point-to-point route from both services
+        do {
+            // Get OSRM result (raw, uncalibrated)
+            let osrmResult = try await getOSRMWalkingDirections(
+                origin: origin,
+                destination: destination,
+                waypoints: []
+            )
+            let osrmDuration = osrmResult.duration  // Raw, uncalibrated
+            
+            // Get MapKit result (wait for rate limit if needed)
+            await checkMapKitRateLimit()
+            
+            let request = MKDirections.Request()
+            request.source = MKMapItem(placemark: MKPlacemark(coordinate: origin))
+            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: destination))
+            request.transportType = .walking
+            
+            let directions = MKDirections(request: request)
+            recordMapKitRequest()
+            
+            let response = try await directions.calculate()
+            guard let route = response.routes.first else { return }
+            
+            let mapKitDuration = Int(route.expectedTravelTime)
+            
+            // Record the calibration sample
+            recordOSRMCalibration(mapKitDuration: mapKitDuration, osrmDuration: osrmDuration)
+            
+        } catch {
+            print("🔧 Calibration check failed: \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - Get Walking Directions (Apple MapKit - FREE!)
+    /// Gets walking directions between points using Apple MapKit (FREE, unlimited!)
+    /// Replaces Google Directions API to eliminate costs
+    /// - Parameter preserveWaypointOrder: If true, waypoints are visited in the order provided (no optimization)
+    func getWalkingDirections(
+        origin: CLLocationCoordinate2D,
+        destination: CLLocationCoordinate2D,
+        waypoints: [CLLocationCoordinate2D] = [],
+        preserveWaypointOrder: Bool = false
     ) async throws -> DirectionsResult {
         
         // Build list of all points: origin → waypoints → destination
@@ -267,22 +956,95 @@ class GoogleMapsService: ObservableObject {
         var optimizedWaypointOrder: [Int]? = nil
         
         // If we have waypoints, try to optimize their order (simple nearest-neighbor)
-        if waypoints.count > 1 {
+        // UNLESS preserveWaypointOrder is true (used for enhancement where order is already optimal)
+        if waypoints.count > 1 && !preserveWaypointOrder {
             let optimized = optimizeWaypointOrder(from: origin, waypoints: waypoints, to: destination)
             allPoints = [origin] + optimized.waypoints + [destination]
             optimizedWaypointOrder = optimized.order
             print("🍎 MapKit: Optimized waypoint order: \(optimized.order)")
+        } else if waypoints.count > 1 && preserveWaypointOrder {
+            optimizedWaypointOrder = Array(0..<waypoints.count)
+            print("🍎 MapKit: Preserving waypoint order (no optimization)")
         } else if waypoints.count == 1 {
             optimizedWaypointOrder = [0] // Single waypoint, no reordering needed
         }
         
         // Calculate directions for each leg (point to point)
+        // Use OSRM when approaching MapKit rate limit to avoid hitting the cap
+        let useOSRM = await shouldUseOSRM()
+        
+        if useOSRM {
+            // 🗺️ Use OSRM for all legs at once (more efficient)
+            recordOSRMCall()
+            let needsCalibration = shouldCalibrateOSRM()
+            
+            print("🗺️ Using OSRM for directions (MapKit near limit)\(needsCalibration ? " + calibrating" : "")")
+            
+            do {
+                let osrmResult = try await getOSRMWalkingDirections(
+                    origin: origin,
+                    destination: destination,
+                    waypoints: waypoints
+                )
+                
+                // If we need to calibrate, also get MapKit for the first leg and compare
+                if needsCalibration && allPoints.count >= 2 {
+                    // Do calibration in background - don't block the route result
+                    Task {
+                        await performCalibrationCheck(
+                            origin: allPoints[0],
+                            destination: allPoints[min(1, allPoints.count - 1)]
+                        )
+                    }
+                }
+                
+                // Apply calibration factor to OSRM duration (OSRM often overestimates)
+                let rawDuration = osrmResult.duration
+                let calibratedDuration = calibrateOSRMDuration(rawDuration)
+                
+                // Create a single leg with calibrated OSRM results
+                let leg = DirectionsLeg(
+                    distance: DirectionsValue(text: formatDistance(osrmResult.distance), value: osrmResult.distance),
+                    duration: DirectionsValue(text: formatDuration(calibratedDuration), value: calibratedDuration),
+                    startAddress: nil,
+                    endAddress: nil,
+                    steps: nil
+                )
+                
+                // Encode polyline
+                let encodedPolyline = encodePolyline(osrmResult.polyline)
+                
+                // OSRM returns total route, so we only have one "leg"
+                let rawMinutes = rawDuration / 60
+                let calibratedMinutes = calibratedDuration / 60
+                let factor = osrmCalibrationFactor
+                let samples = (UserDefaults.standard.array(forKey: osrmCalibrationSamplesKey) as? [Double])?.count ?? 0
+                print("🗺️ OSRM: \(allPoints.count - 1) legs, \(osrmResult.distance)m, \(rawMinutes)min → \(calibratedMinutes)min (×\(String(format: "%.2f", factor)) from \(samples) samples)")
+                
+                return DirectionsResult(
+                    legs: [leg],
+                    overviewPolyline: OverviewPolyline(points: encodedPolyline),
+                    summary: nil,
+                    warnings: nil,
+                    waypointOrder: optimizedWaypointOrder
+                )
+            } catch {
+                print("🗺️ OSRM failed, falling back to MapKit: \(error.localizedDescription)")
+                // Fall through to MapKit
+            }
+        }
+        
+        // 🍎 Use MapKit for directions
+        // Check if we should do opportunistic calibration on first leg
+        let samples = UserDefaults.standard.array(forKey: osrmCalibrationSamplesKey) as? [Double] ?? []
+        let shouldOpportunisticallyCalibrate = samples.count < minSamplesForConfidence && allPoints.count >= 2
+        
         for i in 0..<(allPoints.count - 1) {
             let legOrigin = allPoints[i]
             let legDestination = allPoints[i + 1]
             
-            // Wait for rate limiter slot before making request
-            await rateLimiter.waitForSlot()
+            // Check rate limit before making request
+            await checkMapKitRateLimit()
             
             let request = MKDirections.Request()
             request.source = MKMapItem(placemark: MKPlacemark(coordinate: legOrigin))
@@ -291,19 +1053,79 @@ class GoogleMapsService: ObservableObject {
             
             let directions = MKDirections(request: request)
             
+            // Record this request
+            recordMapKitRequest()
+            
             let response: MKDirections.Response
             do {
                 response = try await directions.calculate()
-            } catch let error as NSError {
-                // Check if this is a throttle error
-                if error.domain == "GEOErrorDomain" && error.code == -3 {
-                    // Extract reset time from error if available
-                    let resetTime = error.userInfo["timeUntilReset"] as? TimeInterval ?? 60
-                    await rateLimiter.markThrottled(resetInSeconds: resetTime + 1)
-                    print("🍎 MapKit leg \(i+1) throttled - will retry after wait")
-                    throw GoogleMapsError.noRouteFound
+                
+                // Opportunistically calibrate on first leg when we need samples
+                if i == 0 && shouldOpportunisticallyCalibrate {
+                    if let mapKitRoute = response.routes.first {
+                        let mapKitDuration = Int(mapKitRoute.expectedTravelTime)
+                        // Get OSRM for same leg in background
+                        Task {
+                            do {
+                                let osrmResult = try await getOSRMWalkingDirections(
+                                    origin: legOrigin,
+                                    destination: legDestination,
+                                    waypoints: []
+                                )
+                                recordOSRMCalibration(mapKitDuration: mapKitDuration, osrmDuration: osrmResult.duration)
+                            } catch {
+                                // Silently ignore calibration failures
+                            }
+                        }
+                    }
                 }
-                print("🍎 MapKit leg \(i+1) failed: \(error.localizedDescription)")
+            } catch {
+                let errorDesc = error.localizedDescription
+                print("🍎 MapKit leg \(i+1) failed: \(errorDesc)")
+                
+                // Check for rate limiting (MapKit returns GEOErrorDomain Code=-3)
+                let nsError = error as NSError
+                if nsError.domain == "GEOErrorDomain" && nsError.code == -3 {
+                    // Extract timeUntilReset from userInfo if available
+                    var waitTime = 60 // Default to 60 seconds
+                    if let userInfo = nsError.userInfo["timeUntilReset"] as? Int {
+                        waitTime = userInfo
+                    }
+                    print("🚫 MapKit rate limited! Trying OSRM fallback...")
+                    
+                    // Try OSRM as fallback when rate limited
+                    do {
+                        let osrmResult = try await getOSRMWalkingDirections(
+                            origin: origin,
+                            destination: destination,
+                            waypoints: waypoints
+                        )
+                        
+                        let leg = DirectionsLeg(
+                            distance: DirectionsValue(text: formatDistance(osrmResult.distance), value: osrmResult.distance),
+                            duration: DirectionsValue(text: formatDuration(osrmResult.duration), value: osrmResult.duration),
+                            startAddress: nil,
+                            endAddress: nil,
+                            steps: nil
+                        )
+                        
+                        let encodedPolyline = encodePolyline(osrmResult.polyline)
+                        let durationMinutes = osrmResult.duration / 60
+                        print("🗺️ OSRM fallback success: \(osrmResult.distance)m, \(durationMinutes)min")
+                        
+                        return DirectionsResult(
+                            legs: [leg],
+                            overviewPolyline: OverviewPolyline(points: encodedPolyline),
+                            summary: nil,
+                            warnings: nil,
+                            waypointOrder: optimizedWaypointOrder
+                        )
+                    } catch {
+                        print("🗺️ OSRM fallback also failed")
+                        throw GoogleMapsError.rateLimited(timeUntilReset: waitTime)
+                    }
+                }
+                
                 throw GoogleMapsError.noRouteFound
             }
             
@@ -365,8 +1187,30 @@ class GoogleMapsService: ObservableObject {
             allLegs.append(leg)
         }
         
+        // ENSURE POLYLINE CONNECTS TO ACTUAL ORIGIN/DESTINATION
+        // MapKit may snap to nearest walkable path, so prepend/append actual coordinates
+        var finalPolylinePoints = allPolylinePoints
+        
+        // Prepend origin if polyline doesn't start close enough (within 50m)
+        if let firstPoint = finalPolylinePoints.first {
+            let distanceToOrigin = distanceBetween(origin, firstPoint)
+            if distanceToOrigin > 50 {
+                print("🍎 Polyline starts \(Int(distanceToOrigin))m from origin - prepending actual origin")
+                finalPolylinePoints.insert(origin, at: 0)
+            }
+        }
+        
+        // Append destination if polyline doesn't end close enough (within 50m)
+        if let lastPoint = finalPolylinePoints.last {
+            let distanceToDestination = distanceBetween(destination, lastPoint)
+            if distanceToDestination > 50 {
+                print("🍎 Polyline ends \(Int(distanceToDestination))m from destination - appending actual destination")
+                finalPolylinePoints.append(destination)
+            }
+        }
+        
         // Encode combined polyline to Google's format (for compatibility)
-        let encodedPolyline = encodePolyline(allPolylinePoints)
+        let encodedPolyline = encodePolyline(finalPolylinePoints)
         
         print("🍎 MapKit: \(allLegs.count) legs, \(totalDistance)m, \(totalDuration/60)min (FREE!)")
         
@@ -377,6 +1221,108 @@ class GoogleMapsService: ObservableObject {
             warnings: nil,
             waypointOrder: optimizedWaypointOrder
         )
+    }
+    
+    // MARK: - Batch Walking Directions (Parallel MapKit Calls)
+    
+    /// Result from a batched endpoint route calculation
+    struct BatchedEndpointResult {
+        let poi: PlaceResult
+        let route: GeneratedRoute?
+        let durationMinutes: Int
+        let error: Error?
+    }
+    
+    /// Get the current MapKit request count (for rate limit awareness) - thread-safe via actor
+    var currentMapKitRequestCount: Int {
+        get async {
+            await rateLimiter.getCurrentCount(window: mapKitRateLimitWindow)
+        }
+    }
+    
+    /// Batch get walking directions for multiple endpoint candidates in parallel
+    /// - Parameters:
+    ///   - origin: Starting point (user's location)
+    ///   - candidates: Array of POI candidates to try as endpoints
+    ///   - maxConcurrent: Maximum number of concurrent requests (default 5)
+    /// - Returns: Array of BatchedEndpointResult with routes for each candidate
+    func batchGetWalkingDirectionsForEndpoints(
+        origin: CLLocationCoordinate2D,
+        candidates: [(poi: PlaceResult, distance: Double, score: Double)],
+        maxConcurrent: Int = 5
+    ) async -> [BatchedEndpointResult] {
+        
+        print("🔀 BATCH MODE: Processing \(candidates.count) candidates in parallel (max \(maxConcurrent) concurrent)")
+        
+        // Use TaskGroup for parallel execution with controlled concurrency
+        var results: [BatchedEndpointResult] = []
+        
+        // Process in chunks to respect rate limits
+        let chunks = stride(from: 0, to: candidates.count, by: maxConcurrent).map {
+            Array(candidates[$0..<min($0 + maxConcurrent, candidates.count)])
+        }
+        
+        for (chunkIndex, chunk) in chunks.enumerated() {
+            print("🔀 Processing batch \(chunkIndex + 1)/\(chunks.count) (\(chunk.count) candidates)")
+            
+            // Check rate limit before each batch
+            await checkMapKitRateLimit()
+            
+            // Process chunk in parallel
+            let chunkResults = await withTaskGroup(of: BatchedEndpointResult.self) { group in
+                for candidate in chunk {
+                    group.addTask {
+                        do {
+                            let directions = try await self.getWalkingDirections(
+                                origin: origin,
+                                destination: origin,
+                                waypoints: [candidate.poi.coordinate]
+                            )
+                            
+                            let totalDurationSeconds = directions.legs.reduce(0) { $0 + $1.duration.value }
+                            let totalDistanceMeters = directions.legs.reduce(0) { $0 + $1.distance.value }
+                            let routeMinutes = totalDurationSeconds / 60
+                            
+                            let route = GeneratedRoute(
+                                places: [candidate.poi],
+                                polyline: directions.overviewPolyline.points,
+                                distanceMeters: totalDistanceMeters,
+                                durationSeconds: totalDurationSeconds,
+                                legs: directions.legs
+                            )
+                            
+                            return BatchedEndpointResult(
+                                poi: candidate.poi,
+                                route: route,
+                                durationMinutes: routeMinutes,
+                                error: nil
+                            )
+                        } catch {
+                            return BatchedEndpointResult(
+                                poi: candidate.poi,
+                                route: nil,
+                                durationMinutes: 0,
+                                error: error
+                            )
+                        }
+                    }
+                }
+                
+                var collected: [BatchedEndpointResult] = []
+                for await result in group {
+                    collected.append(result)
+                }
+                return collected
+            }
+            
+            results.append(contentsOf: chunkResults)
+        }
+        
+        // Log results summary
+        let successful = results.filter { $0.route != nil }.count
+        print("🔀 BATCH COMPLETE: \(successful)/\(candidates.count) routes calculated successfully")
+        
+        return results
     }
     
     // MARK: - Waypoint Optimization (Nearest Neighbor)
@@ -498,6 +1444,12 @@ class GoogleMapsService: ObservableObject {
             )
             await MainActor.run { retryStatus = nil }
             return route
+        } catch GoogleMapsError.rateLimited(let waitTime) {
+            // Rate limited - wait and retry once
+            print("🚫 Stage 1 rate limited, waiting \(waitTime)s...")
+            await MainActor.run { retryStatus = "Waiting for rate limit reset..." }
+            try? await Task.sleep(nanoseconds: UInt64(waitTime) * 1_000_000_000)
+            // Don't retry all stages, just continue to stage 2
         } catch {
             print("🔄 Stage 1 (random) failed, trying systematic...")
         }
@@ -516,6 +1468,11 @@ class GoogleMapsService: ObservableObject {
             )
             await MainActor.run { retryStatus = nil }
             return route
+        } catch GoogleMapsError.rateLimited(let waitTime) {
+            // Rate limited - wait and continue
+            print("🚫 Stage 2 rate limited, waiting \(waitTime)s...")
+            await MainActor.run { retryStatus = "Waiting for rate limit reset..." }
+            try? await Task.sleep(nanoseconds: UInt64(waitTime) * 1_000_000_000)
         } catch {
             print("🔄 Stage 2 (systematic) failed, trying shorter durations...")
         }
@@ -537,6 +1494,11 @@ class GoogleMapsService: ObservableObject {
                 await MainActor.run { retryStatus = nil }
                 print("🔄 Found route at \(currentDuration) min (originally requested \(targetDurationMinutes) min)")
                 return route
+            } catch GoogleMapsError.rateLimited(let waitTime) {
+                // Rate limited in stage 3 - wait and continue to next duration
+                print("🚫 Rate limited at \(currentDuration)min, waiting \(waitTime)s...")
+                await MainActor.run { retryStatus = "Waiting for rate limit reset..." }
+                try? await Task.sleep(nanoseconds: UInt64(waitTime) * 1_000_000_000)
             } catch {
                 print("🔄 \(currentDuration) min also failed...")
             }
@@ -547,6 +1509,358 @@ class GoogleMapsService: ObservableObject {
         throw GoogleMapsError.noRouteFound
     }
     
+    // MARK: - Generate Initial Route with Google Fallback
+    /// Generates the INITIAL route for the user. Uses Google Directions as fallback
+    /// ONLY if NO valid routes (80-100% of target) are found via MapKit.
+    /// This is the only place where Google Directions should be called.
+    func generateInitialRouteWithGoogleFallback(
+        from location: CLLocationCoordinate2D,
+        targetDurationMinutes: Int,
+        difficulty: RouteDifficulty? = nil,
+        prefetchedPOIs: [PlaceResult]? = nil
+    ) async throws -> GeneratedRoute {
+        
+        // Step 1: Try MapKit with ENDPOINT-FIRST approach (FREE, simpler, more predictable)
+        // This finds a single POI at half the target distance and routes there and back
+        let mapKitRoute = try await generateLocalRoute(
+            from: location,
+            targetDurationMinutes: targetDurationMinutes,
+            difficulty: difficulty,
+            prefetchedPOIs: prefetchedPOIs,
+            useEndpointFirst: true  // NEW: Use simpler endpoint approach for Route 1
+        )
+        
+        // Step 2: Check if route is within 80-100% tolerance
+        let mins = mapKitRoute.durationSeconds / 60
+        let toleranceMin = Int(Double(targetDurationMinutes) * 0.80)
+        let toleranceMax = targetDurationMinutes
+        let isWithinTolerance = mins >= toleranceMin && mins <= toleranceMax
+        
+        // Step 2b: If route is "boring" (1 waypoint), try SHORTER ENDPOINT + WAYPOINTS for variety
+        if mapKitRoute.places.count <= 1, let pois = prefetchedPOIs {
+            print("🎯 🔄 Route has only \(mapKitRoute.places.count) waypoint(s) - trying SHORTER ENDPOINT + WAYPOINTS for variety...")
+            
+            // For SHORTER endpoint, target 50-80% of requested time to leave room for waypoints
+            // Based on observed data: 222m → 8min, so ~28m per min walking
+            // To get 13min base route (middle of 10-16), need ~13 * 28 = 364m
+            let shorterTargetMinutes = Int(Double(targetDurationMinutes) * 0.65)  // 65% of target
+            let shorterHalfDuration = shorterTargetMinutes / 2
+            // Use 0.7 factor - the 0.4 was too aggressive (gave 6-8min routes)
+            let shorterIdealDistance = Double(shorterHalfDuration * adaptiveWalkingSpeed) * 0.7
+            
+            // Exclude the POI already used
+            let usedPlaceIds = Set(mapKitRoute.places.map { $0.placeId })
+            let shorterCandidates = pois
+                .filter { !usedPlaceIds.contains($0.placeId) }
+                .map { poi -> (poi: PlaceResult, distance: Double, score: Double) in
+                    let dist = distanceBetween(location, poi.coordinate)
+                    let score = abs(dist - shorterIdealDistance)
+                    return (poi, dist, score)
+                }
+                .filter { $0.distance >= shorterIdealDistance * 0.3 && $0.distance <= shorterIdealDistance * 2.0 }
+                .sorted { $0.score < $1.score }
+            
+            print("🎯 🔄 Found \(shorterCandidates.count) shorter endpoint candidates (ideal: \(Int(shorterIdealDistance))m)")
+            
+            for candidate in shorterCandidates.prefix(3) {
+                print("🎯 🔄 Trying shorter endpoint: '\(candidate.poi.name)' at \(Int(candidate.distance))m")
+                
+                do {
+                    let directions = try await getWalkingDirections(
+                        origin: location,
+                        destination: location,
+                        waypoints: [candidate.poi.coordinate]
+                    )
+                    
+                    let routeDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                    let routeDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                    let routeMinutes = routeDuration / 60
+                    
+                    // Must be 50-80% of target (room for waypoints)
+                    let minShorter = Int(Double(targetDurationMinutes) * 0.50)
+                    let maxShorter = Int(Double(targetDurationMinutes) * 0.80)
+                    
+                    if routeMinutes >= minShorter && routeMinutes <= maxShorter {
+                        print("🎯 🔄 Shorter route: \(routeMinutes)min (\(minShorter)-\(maxShorter) target) - enhancing...")
+                        
+                        let shorterRoute = GeneratedRoute(
+                            places: [candidate.poi],
+                            polyline: directions.overviewPolyline.points,
+                            distanceMeters: routeDistance,
+                            durationSeconds: routeDuration,
+                            legs: directions.legs
+                        )
+                        
+                        let enhanced = try await enhanceRouteWithWaypoints(
+                            existingRoute: shorterRoute,
+                            origin: location,
+                            targetDurationMinutes: targetDurationMinutes,
+                            prefetchedPOIs: pois
+                        )
+                        
+                        let enhancedMins = enhanced.durationSeconds / 60
+                        if enhanced.places.count > 1 && enhancedMins >= toleranceMin && enhancedMins <= toleranceMax {
+                            print("🎯 ✨ ENHANCED shorter route: \(enhanced.places.count) waypoints, \(enhancedMins)min - adding as alternative!")
+                            alternativeEndpointRoutes.append(enhanced)
+                            break  // Found one good enhanced route
+                        } else {
+                            print("🎯 🔄 Enhanced not valid: \(enhanced.places.count) wp, \(enhancedMins)min (need \(toleranceMin)-\(toleranceMax))")
+                        }
+                    } else {
+                        print("🎯 🔄 Route \(routeMinutes)min outside \(minShorter)-\(maxShorter) range")
+                    }
+                } catch {
+                    print("🎯 🔄 Failed: \(error.localizedDescription)")
+                }
+            }
+            
+            if alternativeEndpointRoutes.isEmpty {
+                print("🎯 🔄 No valid shorter+enhanced route found")
+            } else {
+                print("🎯 📦 Added \(alternativeEndpointRoutes.count) alternative route(s) to pool")
+            }
+        }
+        
+        if isWithinTolerance {
+            print("🗺️ ✅ Initial route within 80-100%: \(mins)min - no Google needed")
+            return mapKitRoute
+        }
+        
+        // Step 3: MapKit route is outside tolerance - try Google (PAID, 1 attempt only)
+        print("🗺️ ⚠️ Initial route outside 80-100%: \(mins)min - trying Google fallback...")
+        
+        if let googleRoute = await getGoogleDirectionsRoute(
+            origin: location,
+            waypoints: mapKitRoute.places,
+            targetDurationMinutes: targetDurationMinutes
+        ) {
+            let googleMins = googleRoute.durationSeconds / 60
+            let googleWithinTolerance = googleMins >= toleranceMin && googleMins <= toleranceMax
+            
+            if googleWithinTolerance {
+                print("🌐 ✅ Google route within tolerance: \(googleMins)min - using Google")
+                return googleRoute
+            } else if abs(googleMins - targetDurationMinutes) < abs(mins - targetDurationMinutes) {
+                print("🌐 ✓ Google route closer to target: \(googleMins)min vs MapKit \(mins)min")
+                return googleRoute
+            } else {
+                print("🌐 ✗ Google not better, using MapKit: \(mins)min")
+            }
+        } else {
+            print("🌐 ✗ Google fallback failed, using MapKit: \(mins)min")
+        }
+        
+        // Return MapKit route as fallback
+        return mapKitRoute
+    }
+    
+    // MARK: - Enhance Route with More Waypoints
+    /// Takes an existing route (often with 1-2 waypoints) and adds more POIs along the path
+    /// This creates a more interesting walk without significantly changing the route duration
+    /// - Parameter existingRoute: The quick-generated route to enhance
+    /// - Parameter targetDurationMinutes: Original target duration (to calculate ideal waypoint count)
+    /// - Parameter prefetchedPOIs: POIs to choose from (should include all nearby POIs)
+    /// - Returns: Enhanced route with more waypoints, or original if enhancement fails
+    @Published var enhancementStatus: String? = nil
+    
+    func enhanceRouteWithWaypoints(
+        existingRoute: GeneratedRoute,
+        origin: CLLocationCoordinate2D,
+        targetDurationMinutes: Int,
+        prefetchedPOIs: [PlaceResult]
+    ) async throws -> GeneratedRoute {
+        let currentWaypoints = existingRoute.places.count
+        let maxDurationSeconds = targetDurationMinutes * 60  // Hard limit - never exceed
+        let currentDurationMins = existingRoute.durationSeconds / 60
+        
+        // SKIP if already at or near target time (within 2 minutes)
+        let timeBuffer = 2
+        if currentDurationMins >= targetDurationMinutes - timeBuffer {
+            print("🗺️ 📍 Route already at target time (\(currentDurationMins)min / \(targetDurationMinutes)min) - no enhancement needed")
+            return existingRoute
+        }
+        
+        print("🗺️ 📍 PROGRESSIVE ENHANCEMENT: \(currentDurationMins)min → target \(targetDurationMinutes)min, \(currentWaypoints) waypoints")
+        await MainActor.run { enhancementStatus = "Adding waypoints..." }
+        
+        // Decode existing polyline to find points along the route
+        let routePoints = decodePolyline(existingRoute.polyline)
+        guard routePoints.count >= 2 else {
+            print("🗺️ 📍 Cannot enhance - not enough route points")
+            await MainActor.run { enhancementStatus = nil }
+            return existingRoute
+        }
+        
+        // Get existing waypoint IDs to exclude
+        let existingIds = Set(existingRoute.places.map { $0.placeId })
+        let availablePOIs = prefetchedPOIs.filter { !existingIds.contains($0.placeId) }
+        
+        guard !availablePOIs.isEmpty else {
+            print("🗺️ 📍 No additional POIs available for enhancement")
+            await MainActor.run { enhancementStatus = nil }
+            return existingRoute
+        }
+        
+        // Find POIs that are NEAR the route path (within 150m of route line)
+        var poisNearRoute: [(poi: PlaceResult, routeIndex: Int, distanceFromRoute: Double)] = []
+        
+        for poi in availablePOIs {
+            var closestDistance = Double.infinity
+            var closestRouteIndex = 0
+            
+            for (index, routePoint) in routePoints.enumerated() {
+                let dist = distanceBetween(poi.coordinate, routePoint)
+                if dist < closestDistance {
+                    closestDistance = dist
+                    closestRouteIndex = index
+                }
+            }
+            
+            // Only include POIs within 150m of the route path
+            if closestDistance < 150 {
+                poisNearRoute.append((poi: poi, routeIndex: closestRouteIndex, distanceFromRoute: closestDistance))
+            }
+        }
+        
+        guard !poisNearRoute.isEmpty else {
+            print("🗺️ 📍 No POIs found near route path (within 150m)")
+            await MainActor.run { enhancementStatus = nil }
+            return existingRoute
+        }
+        
+        print("🗺️ 📍 Found \(poisNearRoute.count) POIs near route path")
+        
+        // Sort by distance from route (closest first - these add least time)
+        poisNearRoute.sort { $0.distanceFromRoute < $1.distanceFromRoute }
+        
+        // MINIMUM DISTANCE: Waypoints should be spaced ~5 min of walking apart
+        // At ~80m/min walking speed, 5 min = 400m minimum spacing
+        let minWaypointDistance: Double = 350  // Slightly less than 5 min to allow flexibility
+        
+        // Start with the existing route and add waypoints ONE AT A TIME
+        var currentRoute = existingRoute
+        var currentWaypointsList = Array(existingRoute.places)
+        var addedCount = 0
+        let maxWaypointsToAdd = 5  // Cap at 5 additional waypoints
+        
+        for candidateInfo in poisNearRoute {
+            // Check if we've added enough
+            if addedCount >= maxWaypointsToAdd {
+                print("🗺️ 📍 Reached max waypoints to add (\(maxWaypointsToAdd))")
+                break
+            }
+            
+            let candidate = candidateInfo.poi
+            
+            // Skip if already in list
+            if currentWaypointsList.contains(where: { $0.placeId == candidate.placeId }) {
+                continue
+            }
+            
+            // Skip if too close to any existing waypoint
+            let currentCoordinates = currentWaypointsList.map { $0.coordinate }
+            let tooClose = currentCoordinates.contains { coord in
+                distanceBetween(candidate.coordinate, coord) < minWaypointDistance
+            }
+            if tooClose {
+                print("🗺️ 📍 Skipping \(candidate.name) - too close to existing waypoint")
+                continue
+            }
+            
+            // Try adding this waypoint and calculate new route time
+            var testWaypoints = currentWaypointsList
+            testWaypoints.append(candidate)
+            
+            // Sort waypoints by ANGLE from origin to form a smooth loop
+            // This creates a clockwise/counter-clockwise circuit instead of back-and-forth
+            let waypointsWithAngle: [(poi: PlaceResult, angle: Double)] = testWaypoints.map { poi in
+                let bearing = bearingBetween(origin, poi.coordinate)
+                return (poi: poi, angle: bearing)
+            }
+            
+            // Find the farthest waypoint (the endpoint) - this determines the direction
+            let farthestWaypoint = testWaypoints.max { distanceBetween(origin, $0.coordinate) < distanceBetween(origin, $1.coordinate) }
+            let endpointAngle = farthestWaypoint.map { bearingBetween(origin, $0.coordinate) } ?? 0
+            
+            // Sort waypoints in a loop: start from origin direction, go to endpoint, return
+            // Use angular distance from the "out" direction (origin to endpoint)
+            let sortedByLoop = waypointsWithAngle.sorted { wp1, wp2 in
+                // Calculate angular distance from endpoint direction
+                let angDist1 = abs(wp1.angle - endpointAngle)
+                let angDist2 = abs(wp2.angle - endpointAngle)
+                
+                // Also consider distance from origin for tiebreaking
+                let dist1 = distanceBetween(origin, wp1.poi.coordinate)
+                let dist2 = distanceBetween(origin, wp2.poi.coordinate)
+                
+                // Waypoints closer to the endpoint angle go first (outbound), then others (return)
+                if abs(angDist1 - angDist2) > 30 {
+                    return angDist1 < angDist2  // Closer to endpoint direction first
+                } else {
+                    return dist1 > dist2  // Farther waypoints first when similar angle
+                }
+            }
+            let sortedWaypoints = sortedByLoop.map { $0.poi }
+            
+            print("🗺️ 📍 Testing: + \(candidate.name) (\(Int(candidateInfo.distanceFromRoute))m from route)")
+            
+            do {
+                // Check rate limit
+                await checkMapKitRateLimit()
+                recordMapKitRequest()
+                
+                let testDirections = try await getWalkingDirections(
+                    origin: origin,
+                    destination: origin,
+                    waypoints: sortedWaypoints.map { $0.coordinate },
+                    preserveWaypointOrder: true
+                )
+                
+                let testDuration = testDirections.legs.reduce(0) { $0 + $1.duration.value }
+                let testMins = testDuration / 60
+                
+                // CHECK: Would adding this waypoint exceed the time limit?
+                if testDuration > maxDurationSeconds {
+                    print("🗺️ 📍 ✗ \(candidate.name) would make route \(testMins)min (over \(targetDurationMinutes)min limit) - SKIPPING")
+                    continue  // Try next candidate instead of stopping
+                }
+                
+                // SUCCESS: Adding this waypoint keeps us within limits
+                let testDistance = testDirections.legs.reduce(0) { $0 + $1.distance.value }
+                let polylinePoints = testDirections.overviewPolyline.points
+                
+                currentRoute = GeneratedRoute(
+                    places: sortedWaypoints,
+                    polyline: polylinePoints,
+                    distanceMeters: testDistance,
+                    durationSeconds: testDuration,
+                    legs: testDirections.legs
+                )
+                currentWaypointsList = sortedWaypoints
+                addedCount += 1
+                
+                print("🗺️ 📍 ✅ Added \(candidate.name) → now \(currentWaypointsList.count) waypoints, \(testMins)min")
+                
+            } catch {
+                print("🗺️ 📍 ⚠️ Failed to test \(candidate.name): \(error.localizedDescription)")
+                continue
+            }
+        }
+        
+        // Report results
+        let originalMins = existingRoute.durationSeconds / 60
+        let finalMins = currentRoute.durationSeconds / 60
+        
+        if addedCount > 0 {
+            print("🗺️ 📍 🎉 ENHANCED! \(existingRoute.places.count) → \(currentWaypointsList.count) waypoints, \(originalMins)min → \(finalMins)min")
+        } else {
+            print("🗺️ 📍 Could not add any waypoints without exceeding \(targetDurationMinutes)min limit")
+        }
+        
+        await MainActor.run { enhancementStatus = nil }
+        return currentRoute
+    }
+    
     // MARK: - Generate Local Walking Route
     /// Generates a circular walking route from user's location using nearby POIs
     /// DYNAMICALLY adjusts number of waypoints to match target duration
@@ -554,6 +1868,45 @@ class GoogleMapsService: ObservableObject {
     /// - Parameter prefetchedPOIs: Optional pre-fetched POIs to skip the Places API call (faster generation)
     /// - Parameter useSystematicSelection: If true, tries POI combinations in order of likelihood to succeed
     /// - Parameter expandedSearch: If true, uses larger search radius
+    
+    /// Route generation method based on duration
+    enum RouteMethod {
+        case endpointOnly           // 10-25 min: endpoint-first, no loop fallback
+        case endpointWithEnhancement // 26-45 min: endpoint + enhancement
+        case loopFallback           // 50-60 min: can use loop-based as fallback
+    }
+    
+    /// Direction quadrant for route generation variety
+    enum RouteDirection: Int, CaseIterable {
+        case north = 0      // 315° to 45°
+        case east = 1       // 45° to 135°
+        case south = 2      // 135° to 225°
+        case west = 3       // 225° to 315°
+        
+        var angleRange: ClosedRange<Double> {
+            switch self {
+            case .north: return -45...45
+            case .east: return 45...135
+            case .south: return 135...225  // Note: will need to handle wrap
+            case .west: return -135...(-45)  // Note: will need to handle wrap
+            }
+        }
+        
+        func contains(angle: Double) -> Bool {
+            // Normalize angle to -180 to 180
+            var normalized = angle
+            while normalized > 180 { normalized -= 360 }
+            while normalized < -180 { normalized += 360 }
+            
+            switch self {
+            case .north: return normalized >= -45 && normalized <= 45
+            case .east: return normalized > 45 && normalized <= 135
+            case .south: return normalized > 135 || normalized < -135
+            case .west: return normalized >= -135 && normalized < -45
+            }
+        }
+    }
+    
     func generateLocalRoute(
         from location: CLLocationCoordinate2D,
         targetDurationMinutes: Int,
@@ -561,7 +1914,9 @@ class GoogleMapsService: ObservableObject {
         excludePlaceIds: Set<String> = [],
         prefetchedPOIs: [PlaceResult]? = nil,
         useSystematicSelection: Bool = false,
-        expandedSearch: Bool = false
+        expandedSearch: Bool = false,
+        preferredDirection: RouteDirection? = nil,  // Try to generate route in this direction
+        useEndpointFirst: Bool = false  // NEW: Use single endpoint approach (better for Route 1)
     ) async throws -> GeneratedRoute {
         await MainActor.run { isLoading = true }
         defer { Task { @MainActor in isLoading = false } }
@@ -569,49 +1924,118 @@ class GoogleMapsService: ObservableObject {
         // ADAPTIVE TIMING: More flexible for short routes in dense urban areas
         // Short routes (≤15 min): 50-100% acceptable (dense areas have clustered POIs)
         // Medium routes (16-30 min): 65-100% acceptable
-        // Long routes (>30 min): 75-100% acceptable (more options available)
-        // When in expanded search mode, be even more flexible
+        // Quick mode (initial generation): 70-100% for fast, accurate results
+        // Retry modes: more flexible to find any route
+        let isQuickMode = !useSystematicSelection && !expandedSearch
+        
+        // Tolerance matches RouteCacheService: 80-120% (or 75-125% for edge cases)
+        let isEdgeCase = targetDurationMinutes <= 10 || targetDurationMinutes >= 55
         let minPercent: Double
-        if expandedSearch {
+        let maxPercent: Double
+        
+        if isQuickMode {
+            // QUICK mode: use proper tolerance range (not just up to 100%)
+            if isEdgeCase {
+                minPercent = 0.75  // Edge cases: 75-125%
+                maxPercent = 1.25
+            } else {
+                minPercent = 0.80  // Standard: 80-120%
+                maxPercent = 1.20
+            }
+        } else if expandedSearch {
             minPercent = 0.40  // Very flexible during retry
-        } else if targetDurationMinutes <= 15 {
-            minPercent = 0.50  // Very flexible for short routes
-        } else if targetDurationMinutes <= 30 {
-            minPercent = 0.65  // Moderately flexible
+            maxPercent = 1.50
         } else {
-            minPercent = 0.75  // Standard for long routes
+            minPercent = 0.50  // Systematic retry
+            maxPercent = 1.30
         }
         
         let minAcceptableMinutes = max(1, Int(Double(targetDurationMinutes) * minPercent))
-        let maxAcceptableMinutes = targetDurationMinutes  // 100% - never exceed target
+        let maxAcceptableMinutes = Int(Double(targetDurationMinutes) * maxPercent)
         let minAcceptableDuration = minAcceptableMinutes * 60
         let maxAcceptableDuration = maxAcceptableMinutes * 60
         
-        print("🗺️ ADAPTIVE: \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (\(Int(minPercent * 100))-100% of \(targetDurationMinutes)min)")
+        let modeLabel = isQuickMode ? "⚡ QUICK" : (expandedSearch ? "EXPANDED" : "SYSTEMATIC")
+        print("🗺️ \(modeLabel): \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (\(Int(minPercent * 100))-\(Int(maxPercent * 100))% of \(targetDurationMinutes)min)")
         
-        // Walking speed ~80m/min
-        let walkingSpeedMeterPerMin = 80
-        let totalDistanceTarget = targetDurationMinutes * walkingSpeedMeterPerMin
+        // Walking speed ~80m/min, but actual routes are 2-4x longer than straight-line
+        // Use ADAPTIVE walking speed (learned from user's completed walks)
+        // Defaults to 80m/min, adjusts to 65-90m/min based on actual pace
+        let walkingSpeedMeterPerMin = adaptiveWalkingSpeed
+        let routeMultiplier: Double
+        // REALISTIC DISTANCE MODEL
+        // Walking speed ~80m/min, so 10min walk = 800m total loop
+        // Use 0.85-0.95 multiplier to account for route overhead (not 0.30!)
+        // Road layout typically adds 10-20% vs straight line, not 200-300%
+        if targetDurationMinutes <= 10 {
+            routeMultiplier = 0.85  // Short: slight buffer for route overhead
+        } else if targetDurationMinutes <= 20 {
+            routeMultiplier = 0.88  // Medium-short
+        } else if targetDurationMinutes <= 35 {
+            routeMultiplier = 0.90  // Medium
+        } else {
+            routeMultiplier = 0.92  // Long routes: even less overhead
+        }
+        let totalDistanceTarget = Int(Double(targetDurationMinutes * walkingSpeedMeterPerMin) * routeMultiplier)
+        print("🗺️ Distance target: \(totalDistanceTarget)m (10min=\(10*walkingSpeedMeterPerMin)m baseline, multiplier: \(routeMultiplier))")
         
         // Search radius - LARGER for short routes to find POIs at better distances
         // In dense areas, nearby POIs are too close for a proper loop
         // Expanded search uses 2x radius to find more options
+        // Long routes need larger radius to find distant POIs
         let baseRadius = max(600, totalDistanceTarget / 2)
         let searchRadius: Int
         if expandedSearch {
             searchRadius = baseRadius * 2  // Double radius for retry
+        } else if targetDurationMinutes >= 30 {
+            searchRadius = max(1500, baseRadius * 2)  // 30+ min: largest radius
+            print("🗺️ 🔍 Extended search radius for \(targetDurationMinutes)min route (30+ tier)")
+        } else if targetDurationMinutes >= 20 {
+            searchRadius = max(1200, baseRadius * 2)  // 20-29 min: large radius
+            print("🗺️ 🔍 Extended search radius for \(targetDurationMinutes)min route (20+ tier)")
         } else if targetDurationMinutes <= 15 {
-            searchRadius = max(800, baseRadius * 3 / 2)
+            searchRadius = max(800, baseRadius * 3 / 2)  // Short routes need wider search
         } else {
-            searchRadius = baseRadius
+            searchRadius = baseRadius  // 16-19 min: standard
         }
         
         let searchMode = expandedSearch ? "EXPANDED" : (useSystematicSelection ? "SYSTEMATIC" : "RANDOM")
         print("🗺️ Target: \(targetDurationMinutes)min [\(searchMode)]")
         print("🗺️ Search radius: \(searchRadius)m")
         
+        // DURATION-BASED METHOD SELECTION
+        // Short routes: endpoint-first only (skip loops - they're too unpredictable)
+        // Medium routes: endpoint-first + enhancement
+        // Long routes: can fall back to loop-based if needed
+        let routeMethod: RouteMethod
+        var dynamicMaxWaypoints: Int  // var: can be increased as fallback for short routes
+        
+        // Waypoints spaced ~5 mins apart: N waypoints = N+1 segments
+        // Example: 20min = 4 segments of 5min → 3 waypoints between them
+        // Tier caps ensure routes don't get too complex
+        switch targetDurationMinutes {
+        case 5...15:
+            routeMethod = .endpointOnly  // Very short: simple out-and-back or small loop
+            dynamicMaxWaypoints = 2  // 5-15min → 1-2 waypoints (segments of 5-7.5min)
+            print("🗺️ 📋 Method: ENDPOINT-ONLY (5-15min tier), max \(dynamicMaxWaypoints) waypoints")
+        case 16...25:
+            routeMethod = .endpointOnly  // Short: endpoint-first is more reliable
+            dynamicMaxWaypoints = 4  // 16-25min → 2-4 waypoints (segments of 4-6min)
+            print("🗺️ 📋 Method: ENDPOINT-ONLY (16-25min tier), max \(dynamicMaxWaypoints) waypoints")
+        case 26...45:
+            routeMethod = .endpointWithEnhancement  // Medium: endpoint + add waypoints if under target
+            dynamicMaxWaypoints = 7  // 26-45min → 4-8 waypoints (segments of 4-6min)
+            print("🗺️ 📋 Method: ENDPOINT+ENHANCE (26-45min tier), max \(dynamicMaxWaypoints) waypoints")
+        default:  // 50-60 min
+            routeMethod = .loopFallback  // Long: can fall back to loop-based with angular diversity
+            dynamicMaxWaypoints = 10  // 50-60min → 9-11 waypoints (segments of 5-6min)
+            print("🗺️ 📋 Method: LOOP-FALLBACK (50+min tier), max \(dynamicMaxWaypoints) waypoints")
+        }
+        
         // Step 1: Find nearby POIs - use pre-fetched if available (faster!)
-        let desiredSpots = max(2, targetDurationMinutes / 5)
+        // Waypoints spaced 5 min apart: N waypoints = N+1 segments
+        // desiredSpots = (duration / 5) - 1, but minimum 2 for variety
+        let desiredSpots = max(2, (targetDurationMinutes / 5) - 1)
         var places: [PlaceResult]
         
         if let prefetched = prefetchedPOIs, !prefetched.isEmpty {
@@ -678,68 +2102,567 @@ class GoogleMapsService: ObservableObject {
         
         print("🗺️ Have \(places.count) POIs to select from")
         
+        // 🔍 DIAGNOSTIC: Show all available POIs with distances, directions, and source
+        print("🔍 === POI DIAGNOSTIC ===")
+        for (index, poi) in places.prefix(15).enumerated() {
+            let dist = Int(distanceBetween(location, poi.coordinate))
+            let angle = Int(bearingBetween(location, poi.coordinate))
+            let direction: String
+            if angle >= -45 && angle <= 45 { direction = "N" }
+            else if angle > 45 && angle <= 135 { direction = "E" }
+            else if angle > 135 || angle < -135 { direction = "S" }
+            else { direction = "W" }
+            
+            // Determine source from placeId prefix
+            let source: String
+            if poi.placeId.hasPrefix("apple_") {
+                source = "🍎"  // Apple Maps
+            } else if poi.placeId.hasPrefix("osm_") {
+                source = "🗺️"  // OpenStreetMap
+            } else {
+                source = "📍"  // Google
+            }
+            
+            print("🔍 \(index+1). \(source) '\(poi.name)' - \(dist)m \(direction) (\(angle)°)")
+        }
+        if places.count > 15 {
+            print("🔍 ... and \(places.count - 15) more POIs")
+        }
+        print("🔍 ======================")
+        
+        // ========================================
+        // ENDPOINT-FIRST APPROACH (for Route 1)
+        // ========================================
+        // Find a single endpoint at half the target distance, route there and back
+        // This is simpler and more predictable than loop-based routing
+        if useEndpointFirst {
+            print("🎯 ENDPOINT-FIRST: Looking for POI at ~\(targetDurationMinutes/2) min distance")
+            
+            // Calculate ideal endpoint distance (half of total loop)
+            // Use ADAPTIVE walking speed for better accuracy
+            // FIX: Use ceiling division for short routes (5min/2 = 3, not 2)
+            let halfDurationMinutes: Int
+            if targetDurationMinutes <= 10 {
+                // For very short walks, round UP to avoid being too restrictive
+                halfDurationMinutes = (targetDurationMinutes + 1) / 2  // 5→3, 10→5
+            } else {
+                halfDurationMinutes = targetDurationMinutes / 2
+            }
+            let idealEndpointDistance = Double(halfDurationMinutes * walkingSpeedMeterPerMin) * 0.9
+            
+            // ADAPTIVE RANGE: Wider for short routes (high road overhead makes close POIs too long)
+            // Short routes need more flexibility to find ANY valid endpoint
+            let minMultiplier: Double
+            let maxMultiplier: Double
+            if targetDurationMinutes <= 10 {
+                minMultiplier = 0.1  // Very short: accept VERY close POIs (even 20m away)
+                maxMultiplier = 3.0  // And much farther ones too (school at 240m)
+            } else if targetDurationMinutes <= 15 {
+                minMultiplier = 0.2
+                maxMultiplier = 2.5
+            } else if targetDurationMinutes <= 25 {
+                minMultiplier = 0.3
+                maxMultiplier = 2.0
+            } else {
+                minMultiplier = 0.4
+                maxMultiplier = 1.8
+            }
+            let minEndpointDistance = idealEndpointDistance * minMultiplier
+            let maxEndpointDistance = idealEndpointDistance * maxMultiplier
+            let targetTotalMeters = Double(targetDurationMinutes * walkingSpeedMeterPerMin)
+            
+            print("🎯 Ideal endpoint: \(Int(idealEndpointDistance))m (range: \(Int(minEndpointDistance))-\(Int(maxEndpointDistance))m) [speed: \(walkingSpeedMeterPerMin)m/min]")
+            
+            // Find POIs at the right distance, with CORRIDOR PENALTY scoring
+            // Score = 0.7 * |distance - ideal| + 0.3 * (2×distance / targetTotal) * 100
+            // This penalizes POIs that would create overly long out-and-backs
+            let endpointCandidates = places
+                .filter { !excludePlaceIds.contains($0.placeId) }
+                .map { poi -> (poi: PlaceResult, distance: Double, score: Double) in
+                    let dist = distanceBetween(location, poi.coordinate)
+                    let distanceScore = abs(dist - idealEndpointDistance)
+                    // Corridor penalty: penalize if 2×distance significantly exceeds target
+                    let twoLegDistance = dist * 2
+                    let distanceRatio = twoLegDistance / targetTotalMeters
+                    let corridorPenalty = max(0, distanceRatio - 1.0) * 100  // Penalty if ratio > 1.0
+                    let score = 0.7 * distanceScore + 0.3 * corridorPenalty
+                    return (poi, dist, score)
+                }
+                .filter { $0.distance >= minEndpointDistance && $0.distance <= maxEndpointDistance }
+                .sorted { $0.score < $1.score }  // Best matches first (lower score = better)
+            
+            print("🎯 Found \(endpointCandidates.count) endpoint candidates")
+            
+            // PRE-CHECK POI DENSITY: If fewer than 3 candidates, skip endpoint-first entirely
+            // Go straight to loop approach which handles sparse areas better
+            if endpointCandidates.count < 3 && targetDurationMinutes <= 15 {
+                print("🎯 ⚠️ Only \(endpointCandidates.count) endpoint candidates - too sparse for short route, using loop fallback")
+                // Skip to loop approach
+            } else {
+            
+            // PRE-FILTER: Check one-way time before attempting full route
+            // This saves MapKit calls by rejecting POIs that are clearly too far
+            // FIX: More generous buffer for short walks (need to find POIs!)
+            let oneWayBuffer = targetDurationMinutes <= 10 ? 2 : 1  // +2 min for very short, +1 otherwise
+            let maxOneWayMinutes = halfDurationMinutes + oneWayBuffer
+            var filteredCandidates: [(poi: PlaceResult, distance: Double, score: Double)] = []
+            
+            for candidate in endpointCandidates.prefix(10) {
+                // Check cached one-way time first
+                if let cached = getCachedLegTime(from: location, to: candidate.poi) {
+                    if cached.minutes > maxOneWayMinutes {
+                        print("🎯 ⏱️ Skipping '\(candidate.poi.name)' - cached one-way: \(cached.minutes)min > \(maxOneWayMinutes)min max")
+                        continue
+                    }
+                }
+                // Estimate based on distance (80m/min walking speed)
+                let estimatedOneWayMins = Int(candidate.distance / Double(walkingSpeedMeterPerMin))
+                if estimatedOneWayMins > maxOneWayMinutes + 3 {  // Extra buffer since estimate is rough
+                    print("🎯 ⏱️ Skipping '\(candidate.poi.name)' - estimated one-way: \(estimatedOneWayMins)min too long")
+                    continue
+                }
+                filteredCandidates.append(candidate)
+            }
+            
+            print("🎯 \(filteredCandidates.count) candidates after time pre-filter (max one-way: \(maxOneWayMinutes)min)")
+            
+            // Track valid endpoint routes to find one with enhancement potential
+            var validEndpointRoutes: [(route: GeneratedRoute, enhanceable: Bool, poisNearby: Int)] = []
+            
+            // FALLBACK: Track best route even if outside tolerance (for sparse areas)
+            var bestEndpointFallback: GeneratedRoute?
+            var bestEndpointFallbackDiff = Int.max
+            
+            // Clear previous alternative routes
+            alternativeEndpointRoutes = []
+            
+            // BATCH vs SEQUENTIAL DECISION:
+            // - Use BATCH for short routes (10-20 min) where tolerance is tight and failures are common
+            // - Use SEQUENTIAL for longer routes where first candidate usually works
+            // - Rate-limit aware: fall back to sequential if already near limit
+            let currentRateLimitCount = await currentMapKitRequestCount
+            let useBatchMode = targetDurationMinutes <= 20 && currentRateLimitCount < 35 && filteredCandidates.count >= 3
+            
+            if useBatchMode {
+                // ========================================
+                // BATCH MODE: Process multiple candidates in parallel
+                // ========================================
+                let batchSize = min(6, filteredCandidates.count)  // Process up to 6 at once
+                let candidatesToBatch = Array(filteredCandidates.prefix(batchSize))
+                
+                print("🔀 BATCH MODE: Processing \(candidatesToBatch.count) candidates in parallel (rate limit: \(currentRateLimitCount)/50)")
+                
+                let batchResults = await batchGetWalkingDirectionsForEndpoints(
+                    origin: location,
+                    candidates: candidatesToBatch,
+                    maxConcurrent: 3  // 3 concurrent to stay well under rate limit
+                )
+                
+                // Process batch results - find best routes
+                for result in batchResults {
+                    guard let route = result.route else {
+                        print("🔀 ✗ '\(result.poi.name)' failed: \(result.error?.localizedDescription ?? "unknown")")
+                        continue
+                    }
+                    
+                    let routeMinutes = result.durationMinutes
+                    print("🔀 '\(result.poi.name)': \(routeMinutes)min (target: \(targetDurationMinutes)min)")
+                    
+                    // Check if within tolerance
+                    if routeMinutes >= minAcceptableMinutes && routeMinutes <= maxAcceptableMinutes {
+                        print("🔀 ✅ VALID: \(routeMinutes)min to '\(result.poi.name)'")
+                        
+                        // CHECK ENHANCEMENT POTENTIAL
+                        let timeHeadroom = targetDurationMinutes - routeMinutes
+                        let routePoints = decodePolyline(route.polyline)
+                        
+                        let poisNearRoute = places.filter { poi in
+                            guard poi.placeId != result.poi.placeId else { return false }
+                            return routePoints.contains { routePoint in
+                                distanceBetween(poi.coordinate, routePoint) < 150
+                            }
+                        }
+                        
+                        let hasEnhancementPotential = timeHeadroom >= 2 && poisNearRoute.count >= 1
+                        validEndpointRoutes.append((route: route, enhanceable: hasEnhancementPotential, poisNearby: poisNearRoute.count))
+                        
+                        if hasEnhancementPotential {
+                            print("🔀 ✨ Has enhancement potential: \(timeHeadroom)min headroom, \(poisNearRoute.count) POIs nearby")
+                        }
+                    } else {
+                        // Track as fallback
+                        let diff = abs(routeMinutes - targetDurationMinutes)
+                        if diff < bestEndpointFallbackDiff {
+                            bestEndpointFallbackDiff = diff
+                            bestEndpointFallback = route
+                            print("🔀 📌 Best fallback: \(routeMinutes)min (diff: \(diff)min)")
+                        }
+                    }
+                }
+                
+                // Sort valid routes: enhanceable first, then by time closest to target
+                validEndpointRoutes.sort { a, b in
+                    if a.enhanceable != b.enhanceable { return a.enhanceable }
+                    let aDiff = abs(a.route.durationMinutes - targetDurationMinutes)
+                    let bDiff = abs(b.route.durationMinutes - targetDurationMinutes)
+                    return aDiff < bDiff
+                }
+                
+                print("🔀 BATCH RESULT: \(validEndpointRoutes.count) valid routes, \(validEndpointRoutes.filter { $0.enhanceable }.count) enhanceable")
+                
+            } else {
+                // ========================================
+                // SEQUENTIAL MODE: Try candidates one by one (original logic)
+                // ========================================
+                print("🎯 SEQUENTIAL MODE: Processing candidates one by one")
+                
+                for (index, candidate) in filteredCandidates.prefix(8).enumerated() {
+                    print("🎯 Trying endpoint \(index+1): '\(candidate.poi.name)' at \(Int(candidate.distance))m")
+                    
+                    do {
+                        let directions = try await getWalkingDirections(
+                            origin: location,
+                            destination: location,
+                            waypoints: [candidate.poi.coordinate]
+                        )
+                        
+                        let totalDurationSeconds = directions.legs.reduce(0) { $0 + ($1.duration.value) }
+                        let totalDistanceMeters = directions.legs.reduce(0) { $0 + ($1.distance.value) }
+                        let routeMinutes = totalDurationSeconds / 60
+                        
+                        print("🎯 Route duration: \(routeMinutes)min (target: \(targetDurationMinutes)min)")
+                        
+                        if routeMinutes >= minAcceptableMinutes && routeMinutes <= maxAcceptableMinutes {
+                            print("🎯 ✅ VALID endpoint route! \(routeMinutes)min to '\(candidate.poi.name)'")
+                            
+                            let route = GeneratedRoute(
+                                places: [candidate.poi],
+                                polyline: directions.overviewPolyline.points,
+                                distanceMeters: totalDistanceMeters,
+                                durationSeconds: totalDurationSeconds,
+                                legs: directions.legs
+                            )
+                            
+                            let timeHeadroom = targetDurationMinutes - routeMinutes
+                            let routePoints = decodePolyline(route.polyline)
+                            
+                            let poisNearRoute = places.filter { poi in
+                                guard poi.placeId != candidate.poi.placeId else { return false }
+                                return routePoints.contains { routePoint in
+                                    distanceBetween(poi.coordinate, routePoint) < 150
+                                }
+                            }
+                            
+                            let hasEnhancementPotential = timeHeadroom >= 2 && poisNearRoute.count >= 1
+                            
+                            if hasEnhancementPotential {
+                                print("🎯 ✨ Route has enhancement potential: \(timeHeadroom)min headroom, \(poisNearRoute.count) POIs nearby")
+                                validEndpointRoutes.append((route: route, enhanceable: true, poisNearby: poisNearRoute.count))
+                                break  // Found an enhanceable route
+                            } else {
+                                print("🎯 ⚠️ Route may be boring: only 1 waypoint")
+                                validEndpointRoutes.append((route: route, enhanceable: false, poisNearby: poisNearRoute.count))
+                            }
+                        } else {
+                            print("🎯 ✗ Outside tolerance: \(routeMinutes)min")
+                            
+                            let diff = abs(routeMinutes - targetDurationMinutes)
+                            if diff < bestEndpointFallbackDiff {
+                                bestEndpointFallbackDiff = diff
+                                bestEndpointFallback = GeneratedRoute(
+                                    places: [candidate.poi],
+                                    polyline: directions.overviewPolyline.points,
+                                    distanceMeters: totalDistanceMeters,
+                                    durationSeconds: totalDurationSeconds,
+                                    legs: directions.legs
+                                )
+                                print("🎯 📌 Saved as best fallback: \(routeMinutes)min (diff: \(diff)min)")
+                            }
+                        }
+                    } catch {
+                        print("🎯 ✗ Route failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+            
+            // Return best endpoint route (prefer enhanceable, otherwise first valid)
+            // Store ALL other valid routes as alternatives for the caller to use
+            // ALSO try shorter endpoint + waypoints strategy for variety
+            
+            // Helper function to try shorter endpoint strategy
+            func tryShorterEndpointStrategy() async {
+                print("🎯 🔄 Trying SHORTER ENDPOINT + WAYPOINTS for variety...")
+                
+                let shorterTargetMinutes = Int(Double(targetDurationMinutes) * 0.75)
+                let shorterHalfDuration = shorterTargetMinutes / 2
+                let shorterIdealDistance = Double(shorterHalfDuration * walkingSpeedMeterPerMin) * 0.9
+                
+                // Exclude already-found endpoints
+                let usedPlaceIds = Set(validEndpointRoutes.compactMap { $0.route.places.first?.placeId })
+                let shorterCandidates = places
+                    .filter { !excludePlaceIds.contains($0.placeId) && !usedPlaceIds.contains($0.placeId) }
+                    .map { poi -> (poi: PlaceResult, distance: Double, score: Double) in
+                        let dist = distanceBetween(location, poi.coordinate)
+                        let score = abs(dist - shorterIdealDistance)
+                        return (poi, dist, score)
+                    }
+                    .filter { $0.distance >= shorterIdealDistance * 0.4 && $0.distance <= shorterIdealDistance * 1.6 }
+                    .sorted { $0.score < $1.score }
+                
+                for candidate in shorterCandidates.prefix(3) {
+                    print("🎯 🔄 Trying shorter endpoint: '\(candidate.poi.name)' at \(Int(candidate.distance))m")
+                    
+                    do {
+                        let directions = try await getWalkingDirections(
+                            origin: location,
+                            destination: location,
+                            waypoints: [candidate.poi.coordinate]
+                        )
+                        
+                        let routeDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                        let routeDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                        let routeMinutes = routeDuration / 60
+                        
+                        // Must be 50-80% of target (room for waypoints)
+                        let minShorter = Int(Double(targetDurationMinutes) * 0.50)
+                        let maxShorter = Int(Double(targetDurationMinutes) * 0.80)
+                        
+                        if routeMinutes >= minShorter && routeMinutes <= maxShorter {
+                            print("🎯 🔄 Shorter route: \(routeMinutes)min (\(minShorter)-\(maxShorter) target) - enhancing...")
+                            
+                            let shorterRoute = GeneratedRoute(
+                                places: [candidate.poi],
+                                polyline: directions.overviewPolyline.points,
+                                distanceMeters: routeDistance,
+                                durationSeconds: routeDuration,
+                                legs: directions.legs
+                            )
+                            
+                            let enhanced = try await enhanceRouteWithWaypoints(
+                                existingRoute: shorterRoute,
+                                origin: location,
+                                targetDurationMinutes: targetDurationMinutes,
+                                prefetchedPOIs: places
+                            )
+                            
+                            let enhancedMins = enhanced.durationSeconds / 60
+                            if enhanced.places.count > 1 && enhancedMins >= minAcceptableMinutes && enhancedMins <= maxAcceptableMinutes {
+                                print("🎯 ✨ ENHANCED shorter route: \(enhanced.places.count) waypoints, \(enhancedMins)min - adding as alternative")
+                                alternativeEndpointRoutes.append(enhanced)
+                                return  // Found one good enhanced route
+                            } else {
+                                print("🎯 🔄 Enhanced not valid: \(enhanced.places.count) wp, \(enhancedMins)min (need \(minAcceptableMinutes)-\(maxAcceptableMinutes))")
+                            }
+                        } else {
+                            print("🎯 🔄 Route \(routeMinutes)min outside \(minShorter)-\(maxShorter) range")
+                        }
+                    } catch {
+                        print("🎯 🔄 Failed: \(error.localizedDescription)")
+                    }
+                }
+                print("🎯 🔄 No valid shorter+enhanced route found")
+            }
+            
+            if let bestEnhanceable = validEndpointRoutes.first(where: { $0.enhanceable }) {
+                print("🎯 ✅ Found enhanceable endpoint route")
+                
+                // ALSO try shorter endpoint strategy for variety (adds as alternative)
+                await tryShorterEndpointStrategy()
+                
+                // Store other routes as alternatives
+                for otherRoute in validEndpointRoutes where otherRoute.route.polyline != bestEnhanceable.route.polyline {
+                    alternativeEndpointRoutes.append(otherRoute.route)
+                }
+                if !alternativeEndpointRoutes.isEmpty {
+                    print("🎯 📦 Stored \(alternativeEndpointRoutes.count) alternative route(s) for pool")
+                }
+                return bestEnhanceable.route
+            } else if let firstValid = validEndpointRoutes.first {
+                print("🎯 ⚠️ Only boring routes found")
+                
+                // Try shorter endpoint + waypoints strategy for variety
+                await tryShorterEndpointStrategy()
+                
+                // Store other valid routes as alternatives
+                for otherRoute in validEndpointRoutes.dropFirst() {
+                    alternativeEndpointRoutes.append(otherRoute.route)
+                }
+                if !alternativeEndpointRoutes.isEmpty {
+                    print("🎯 📦 Stored \(alternativeEndpointRoutes.count) alternative route(s) for pool")
+                }
+                return firstValid.route
+            }
+            
+            // If no valid routes but we have a fallback, use it (better than nothing)
+            if let fallback = bestEndpointFallback {
+                let fallbackMins = fallback.durationSeconds / 60
+                print("🎯 ⚠️ No routes in tolerance, using best fallback: \(fallbackMins)min (target: \(targetDurationMinutes)min)")
+                print("🎯 💡 Note: This area has high road overhead - closest route is \(fallbackMins)min")
+                return fallback
+            }
+            
+            print("🎯 No valid endpoint routes found, falling back to loop approach...")
+            }  // End of POI density else block
+        }
+        
+        // ========================================
+        // LOOP APPROACH (for Routes 2+ or fallback)
+        // ========================================
+        
+        // For short routes (10-25 min), use MINIMAL loop attempts as last resort
+        // Don't skip entirely - high road overhead areas need fallback options
+        let loopAttemptsLimit: Int
+        if routeMethod == .endpointOnly {
+            loopAttemptsLimit = 4  // Quick fallback with minimal attempts
+            print("🗺️ ⚡ Using minimal loop fallback for \(targetDurationMinutes)min route (endpoint-only tier)")
+        } else {
+            loopAttemptsLimit = 8  // Standard attempts for longer routes
+        }
+        
         // Step 3: MAXIMIZE POIs while staying within time limit
         var validRoutes: [GeneratedRoute] = []
         var bestFallbackRoute: GeneratedRoute?
         var bestFallbackDiff = Int.max
         
         // PRIORITY: 1) Timing within tolerance  2) Maximum POIs
-        // Strategy: Start with realistic waypoint count based on duration
-        // MapKit routes follow roads (not straight lines), adding ~50% overhead
+        let quickMode = !useSystematicSelection && !expandedSearch
         
-        // Realistic waypoints based on actual MapKit routing behavior:
-        // - Each waypoint adds ~3-4 min to route (road following overhead)
-        // - 10 min walk → 2-3 waypoints max
-        // - 15 min walk → 3-4 waypoints max
-        // - 20 min walk → 4-5 waypoints max
-        let maxWaypoints: Int
-        if targetDurationMinutes <= 10 {
-            maxWaypoints = min(3, places.count)  // 10 min: max 3 waypoints
-        } else if targetDurationMinutes <= 15 {
-            maxWaypoints = min(4, places.count)  // 15 min: max 4 waypoints
-        } else if targetDurationMinutes <= 20 {
-            maxWaypoints = min(5, places.count)  // 20 min: max 5 waypoints
+        // Calculate appropriate waypoint counts based on target duration
+        // Waypoints should be SPACED ~5 mins of walking apart (user spends ~2 min at each, not counted in route time)
+        // For circular route: Start → WP1 → WP2 → ... → Start
+        // With N waypoints, there are N+1 walking segments
+        // If segments are ~5 mins each: totalWalkingTime = 5 * (N+1)
+        // So: N = (walkingTime / 5) - 1
+        // Example: 20min route → (20/5) - 1 = 3 waypoints (4 segments of 5 mins each)
+        let idealWaypoints = max(1, (targetDurationMinutes / 5) - 1)
+        let standardMaxWaypoints = min(dynamicMaxWaypoints, idealWaypoints + 1, places.count)
+        
+        // FALLBACK: Allow extra waypoints if routes are too short
+        // Can reduce spacing to ~4 mins between waypoints as fallback
+        // Example: 20min route fallback → (20/4) - 1 = 4 waypoints (5 segments of 4 mins each)
+        let fallbackMaxWaypoints = max(1, (targetDurationMinutes / 4) - 1)
+        let extendedMaxWaypoints = min(max(standardMaxWaypoints, fallbackMaxWaypoints), places.count)
+        
+        // For quick mode, start much lower to find valid routes faster
+        let minWaypoints = quickMode ? max(1, idealWaypoints / 2) : max(1, idealWaypoints - 2)
+        
+        // QUICK MODE: Try ASCENDING order (fewest waypoints first) for faster matching
+        // This gets a valid route quickly, even if it has fewer POIs
+        // Retry modes: Try DESCENDING to maximize POIs
+        var waypointCountsToTry: [Int]
+        if quickMode {
+            // Start small for fast matching: [1, 2, 3] for 10-min route
+            // Include extra waypoints at the end as fallback if routes are too short
+            waypointCountsToTry = Array(minWaypoints...standardMaxWaypoints)
+            if extendedMaxWaypoints > standardMaxWaypoints {
+                waypointCountsToTry += Array((standardMaxWaypoints + 1)...extendedMaxWaypoints)
+                print("🗺️ 📋 Including fallback waypoints: \(standardMaxWaypoints + 1)-\(extendedMaxWaypoints) if routes too short")
+            }
         } else {
-            maxWaypoints = min(targetDurationMinutes / 4, 8, places.count)  // Longer: ~1 per 4 min
+            // Start big to maximize POIs: [5, 4, 3, 2, 1]
+            // Include extra waypoints at the START for retry modes (try most first)
+            if extendedMaxWaypoints > standardMaxWaypoints {
+                waypointCountsToTry = Array((minWaypoints...extendedMaxWaypoints).reversed())
+                print("🗺️ 📋 Extended waypoint range: up to \(extendedMaxWaypoints) (fallback for short routes)")
+            } else {
+                waypointCountsToTry = Array((minWaypoints...standardMaxWaypoints).reversed())
+            }
         }
-        
-        // Try waypoint counts in DESCENDING order (most first, then fewer)
-        // First valid route (within tolerance) wins - maximizing POI count
-        let waypointCountsToTry = Array((1...maxWaypoints).reversed())
-        
-        print("🗺️ Will try waypoint counts: \(waypointCountsToTry) (maximize POIs within 125% time)")
+        _ = extendedMaxWaypoints  // Extended max available for fallback waypoint counts
         
         var totalAttempts = 0
-        // REDUCED to respect MapKit rate limit (50 req/60s)
-        // Each attempt with N waypoints = N+1 MapKit requests
-        // So 5 waypoints = 6 requests. Keep total attempts low!
         let maxTotalAttempts: Int
-        if expandedSearch || useSystematicSelection {
-            maxTotalAttempts = 8  // Reduced from 50
-        } else if targetDurationMinutes <= 15 {
-            maxTotalAttempts = 6  // Reduced from 35
+        if quickMode {
+            maxTotalAttempts = loopAttemptsLimit  // Use duration-based limit
+            print("🗺️ ⚡ QUICK MODE: Trying \(waypointCountsToTry) waypoints (max \(loopAttemptsLimit) attempts)")
+        } else if expandedSearch || useSystematicSelection {
+            maxTotalAttempts = 20  // Retry mode: more thorough
+            print("🗺️ Will try waypoint counts: \(waypointCountsToTry) (most first for max POIs)")
         } else {
-            maxTotalAttempts = 5  // Reduced from 25
+            maxTotalAttempts = 10
+            print("🗺️ Will try waypoint counts: \(waypointCountsToTry)")
         }
         
         for waypointCount in waypointCountsToTry {
-            guard totalAttempts < maxTotalAttempts else { break }
+            print("🗺️ 🔄 OUTER LOOP: waypointCount=\(waypointCount), totalAttempts=\(totalAttempts)/\(maxTotalAttempts)")
+            guard totalAttempts < maxTotalAttempts else {
+                print("🗺️ ⛔ Stopping: reached max attempts (\(maxTotalAttempts))")
+                break
+            }
+            
+            // In quick mode, return immediately if we have a valid route that meets minimum threshold
+            // If route is too short (< 75% of target), continue trying more waypoints
+            if quickMode && !validRoutes.isEmpty {
+                let bestRouteMinutes = validRoutes.first!.durationSeconds / 60
+                let minimumAcceptable = Int(Double(targetDurationMinutes) * 0.75)  // 75% minimum
+                if bestRouteMinutes >= minimumAcceptable {
+                    print("🗺️ ⚡ Quick mode: returning valid route (\(bestRouteMinutes)min >= \(minimumAcceptable)min threshold)")
+                    break
+                } else if waypointCount <= standardMaxWaypoints {
+                    // Route too short, but we have fallback waypoint counts to try
+                    print("🗺️ ⚡ Quick mode: route too short (\(bestRouteMinutes)min < \(minimumAcceptable)min), trying more waypoints...")
+                } else {
+                    // Tried fallback waypoints, return what we have
+                    print("🗺️ ⚡ Quick mode: returning best available route (\(bestRouteMinutes)min)")
+                    break
+                }
+            }
+            
             guard validRoutes.count < 3 else { break } // Stop if we have enough valid routes
             
             // IMPORTANT: Scale ideal distance based on waypoint count
-            // MapKit routes follow roads, not straight lines - typically 1.5-2x longer
-            // Apply a routing factor to convert from walking distance to straight-line POI distance
-            let routingFactor = 0.5  // Roads are ~2x longer than straight-line
+            // Walking routes are ~1.5-2x longer than straight-line distance due to streets/turns
+            // For longer routes, we need to target farther POIs to hit the target duration
+            // Segment distance factor - keep POIs closer for more predictable routes
+            // Rural areas especially need closer POIs to avoid very long indirect routes
+            let routeOverheadFactor: Double = 0.8  // Use 80% of ideal distance for all routes
             let segmentsInRoute = waypointCount + 1
-            let idealSegmentDistance = Int(Double(totalDistanceTarget) * routingFactor / Double(segmentsInRoute))
+            let idealSegmentDistance = Int(Double(totalDistanceTarget) * routeOverheadFactor) / segmentsInRoute
             
             // Re-select candidates with appropriate distance for this waypoint count
-            let candidatesForCount = selectCandidateWaypoints(
+            var candidatesForCount = selectCandidateWaypoints(
                 from: places,
                 origin: location,
                 idealWaypointDistance: idealSegmentDistance,
                 difficulty: difficulty
             )
+            
+            // TIME-BASED PRE-FILTER: Remove candidates whose one-way time exceeds half target + 1 min
+            // This prevents attempting routes that are clearly too long
+            let maxOneWayForLoop = (targetDurationMinutes / 2) + 1
+            let timeFilteredCandidates = candidatesForCount.filter { poi in
+                // Check cached time first
+                if let cached = getCachedLegTime(from: location, to: poi) {
+                    if cached.minutes > maxOneWayForLoop {
+                        return false  // Cached time too long
+                    }
+                    return true
+                }
+                // Estimate based on distance
+                let dist = distanceBetween(location, poi.coordinate)
+                let estimatedMins = Int(dist / Double(adaptiveWalkingSpeed))
+                return estimatedMins <= maxOneWayForLoop + 2  // +2 buffer since estimate is rough
+            }
+            
+            if timeFilteredCandidates.count < candidatesForCount.count {
+                print("🎯 ⏱️ Time filter: \(candidatesForCount.count) → \(timeFilteredCandidates.count) candidates (max one-way: \(maxOneWayForLoop)min)")
+                candidatesForCount = timeFilteredCandidates
+            }
+            
+            // DIRECTIONAL PREFERENCE: If a direction is specified, prefer POIs in that quadrant
+            if let direction = preferredDirection {
+                let directedCandidates = candidatesForCount.filter { poi in
+                    let angle = bearingBetween(location, poi.coordinate)
+                    return direction.contains(angle: angle)
+                }
+                
+                if directedCandidates.count >= waypointCount {
+                    candidatesForCount = directedCandidates
+                    print("🧭 Filtered to \(directedCandidates.count) POIs in \(direction) direction")
+                } else {
+                    print("🧭 Not enough POIs in \(direction) direction (\(directedCandidates.count)), using all candidates")
+                }
+            }
             
             print("🗺️ --- Trying \(waypointCount) waypoint(s) (ideal segment: \(idealSegmentDistance)m) ---")
             
@@ -749,9 +2672,8 @@ class GoogleMapsService: ObservableObject {
             }
             
             // Try multiple combinations with this waypoint count
-            // FIRST attempt uses best candidates (deterministic), then randomize for variety
-            // REDUCED to avoid MapKit rate limiting (50 req/60s)
-            let combinationsToTry = min(3, candidatesForCount.count)
+            // Quick mode: just try 1 combination for speed
+            let combinationsToTry = quickMode ? 1 : min(8, candidatesForCount.count)
             var triedCombinations = Set<String>()
             
             for comboIndex in 0..<combinationsToTry {
@@ -807,13 +2729,9 @@ class GoogleMapsService: ObservableObject {
                 let suffix = selectedWaypoints.count > 3 ? "..." : ""
                 print("🗺️ Attempt \(totalAttempts): \(waypointCount) POIs [\(waypointNames)\(suffix)]")
                 
-                // Small delay between attempts to respect rate limits
-                if totalAttempts > 1 {
-                    try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 second
-                }
-                
                 // Try this combination
-                if let route = await tryRouteAndEvaluate(
+                do {
+                    if let route = try await tryRouteAndEvaluate(
                     origin: location,
                     waypoints: selectedWaypoints,
                     targetDurationMinutes: targetDurationMinutes,
@@ -829,13 +2747,39 @@ class GoogleMapsService: ObservableObject {
                     if routeMins >= minAcceptableMinutes && routeMins <= maxAcceptableMinutes {
                         print("🗺️ ✓ Found valid route with \(waypointCount) POIs")
                     }
-                    // If route is too long, continue to try fewer waypoints
-                    if routeMins > maxAcceptableMinutes {
-                        print("🗺️ Route too long (\(routeMins)min), trying fewer waypoints...")
+                        // If route is too long, break and try fewer waypoints
+                        if routeMins > maxAcceptableMinutes + 5 {
+                            print("🗺️ Route too long (\(routeMins)min vs max \(maxAcceptableMinutes)min), breaking to try fewer waypoints...")
+                            break  // Exit this waypoint count loop, try fewer waypoints
+                        }
                     }
+                } catch GoogleMapsError.rateLimited(let waitTime) {
+                    // Rate limited - wait for cooldown then return best route so far
+                    print("🚫 Rate limited! Waiting \(waitTime) seconds before continuing...")
+                    
+                    // Return best valid route if we have one
+                    if !validRoutes.isEmpty {
+                        let best = validRoutes.max(by: { $0.places.count < $1.places.count })!
+                        print("🗺️ ⚠️ Returning best route found before rate limit: \(best.durationSeconds/60)min, \(best.places.count) POIs")
+                        return best
+                    }
+                    
+                    // Return fallback if we have one
+                    if let fallback = bestFallbackRoute {
+                        print("🗺️ ⚠️ Returning fallback route before rate limit: \(fallback.durationSeconds/60)min, \(fallback.places.count) POIs")
+                        return fallback
+                    }
+                    
+                    // No routes found yet - propagate the error
+                    throw GoogleMapsError.rateLimited(timeUntilReset: waitTime)
+                } catch {
+                    // Other errors - just continue trying
+                    print("🗺️ Route generation error: \(error.localizedDescription)")
                 }
             }
+            print("🗺️ 🔄 END of waypointCount=\(waypointCount) loop, totalAttempts=\(totalAttempts)")
         }
+        print("🗺️ 🏁 OUTER LOOP COMPLETE. validRoutes=\(validRoutes.count), hasFallback=\(bestFallbackRoute != nil)")
         
         // Return best valid route (50-100% of target, never exceeds)
         // PRIORITY: 1) Most waypoints  2) Less backtracking  3) Closest to target time
@@ -866,8 +2810,8 @@ class GoogleMapsService: ObservableObject {
             let selectedScore = sorted.first!.backtrackScore
             print("🗺️ Route backtracking score: \(String(format: "%.0f", selectedScore * 100))% (lower = more loop-like)")
             
-            // Remove waypoints that are too close together (within 100m)
-            selected = removeCloseWaypoints(from: selected, minDistance: 100)
+            // Remove waypoints that are too close together (should be ~5 min / 300m+ apart)
+            selected = removeCloseWaypoints(from: selected, minDistance: 250)
             
             let finalMins = selected.durationSeconds / 60
             print("🗺️ ✓ SUCCESS! Selected: \(finalMins)min, \(selected.places.count) POIs (target: \(targetDurationMinutes)min)")
@@ -875,19 +2819,29 @@ class GoogleMapsService: ObservableObject {
             return selected
         }
         
-        // Only return fallback if it meets minimum duration (75% of target)
+        // Return BEST fallback route we found - better to show something than nothing
         if var best = bestFallbackRoute {
             let mins = best.durationSeconds / 60
             
-            // Check if fallback meets minimum threshold
-            if mins >= minAcceptableMinutes {
-                // Remove waypoints that are too close together
-                best = removeCloseWaypoints(from: best, minDistance: 100)
-                print("🗺️ ⚠️ Using fallback route: \(mins)min with \(best.places.count) POIs (target: \(targetDurationMinutes)min, min: \(minAcceptableMinutes)min)")
-                return best
+                // Remove waypoints that are too close together (should be ~5 min / 300m+ apart)
+                best = removeCloseWaypoints(from: best, minDistance: 250)
+            
+            // Check if route is within 80-100% tolerance
+            let toleranceMin = Int(Double(targetDurationMinutes) * 0.80)
+            let toleranceMax = targetDurationMinutes
+            let isWithinTolerance = mins >= toleranceMin && mins <= toleranceMax
+            
+            if isWithinTolerance {
+                print("🗺️ ✓ Fallback route within 80-100%: \(mins)min (target: \(targetDurationMinutes)min)")
+            } else if mins < toleranceMin {
+                print("🗺️ ⚠️ Returning shorter route: \(mins)min (target: \(targetDurationMinutes)min)")
             } else {
-                print("🗺️ ❌ Fallback route too short: \(mins)min (need at least \(minAcceptableMinutes)min)")
+                print("🗺️ ⚠️ Returning longer route: \(mins)min (target: \(targetDurationMinutes)min)")
             }
+            
+            // Note: Google fallback is handled separately in generateLocalRouteWithGoogleFallback
+            // This function just returns the best MapKit route
+            return best
         }
         
         throw GoogleMapsError.noRouteFound
@@ -988,7 +2942,7 @@ class GoogleMapsService: ObservableObject {
         validRoutes: inout [GeneratedRoute],
         bestFallback: inout GeneratedRoute?,
         bestFallbackDiff: inout Int
-    ) async -> GeneratedRoute? {
+    ) async throws -> GeneratedRoute? {
         do {
             let waypointCoords = waypoints.map { $0.coordinate }
             let directions = try await getWalkingDirections(
@@ -1009,7 +2963,7 @@ class GoogleMapsService: ObservableObject {
             }
             
             let polylinePoints = directions.overviewPolyline.points
-            let decodedCount = PolylineDecoder.decode(polylinePoints).count
+            let decodedCount = decodePolyline(polylinePoints).count
             
             // Reorder waypoints based on Google's optimized order
             var orderedWaypoints = waypoints
@@ -1033,28 +2987,69 @@ class GoogleMapsService: ObservableObject {
                 validRoutes.append(route)
             } else {
                 print("🗺️ ✗ Outside tolerance: \(durationMin)min (diff: \(diff)min)")
+                
+                // TRIM FARTHEST WAYPOINT: If route too long and has 2+ waypoints, try trimming
+                if totalDuration > maxAcceptable && orderedWaypoints.count > 1 {
+                    print("🗺️ ✂️ Route too long, trying to trim farthest waypoint...")
+                    
+                    // Find farthest waypoint from origin
+                    if let farthestIndex = orderedWaypoints.enumerated().max(by: { 
+                        distanceBetween(origin, $0.element.coordinate) < distanceBetween(origin, $1.element.coordinate)
+                    })?.offset {
+                        let farthestPOI = orderedWaypoints[farthestIndex]
+                        print("🗺️ ✂️ Removing '\(farthestPOI.name)' (farthest at \(Int(distanceBetween(origin, farthestPOI.coordinate)))m)")
+                        
+                        var trimmedWaypoints = orderedWaypoints
+                        trimmedWaypoints.remove(at: farthestIndex)
+                        
+                        // Recalculate route with trimmed waypoints
+                        if let trimmedDirections = try? await getWalkingDirections(
+                            origin: origin,
+                            destination: origin,
+                            waypoints: trimmedWaypoints.map { $0.coordinate }
+                        ) {
+                            let trimmedDuration = trimmedDirections.legs.reduce(0) { $0 + $1.duration.value }
+                            let trimmedDistance = trimmedDirections.legs.reduce(0) { $0 + $1.distance.value }
+                            let trimmedMins = trimmedDuration / 60
+                            
+                            if trimmedDuration >= minAcceptable && trimmedDuration <= maxAcceptable {
+                                print("🗺️ ✂️ ✅ Trimmed route is valid: \(trimmedMins)min (was \(durationMin)min)")
+                                
+                                let trimmedRoute = GeneratedRoute(
+                                    places: trimmedWaypoints,
+                                    polyline: trimmedDirections.overviewPolyline.points,
+                                    distanceMeters: trimmedDistance,
+                                    durationSeconds: trimmedDuration,
+                                    legs: trimmedDirections.legs
+                                )
+                                validRoutes.append(trimmedRoute)
+                                return trimmedRoute
+                            } else {
+                                print("🗺️ ✂️ ✗ Trimmed route still outside tolerance: \(trimmedMins)min")
+                            }
+                        }
+                    }
+                }
             }
             
-            // Track best fallback - ONLY consider routes that don't exceed target
-            let isUnderOrAtTarget = durationMin <= targetDurationMinutes
-            
-            // Only track as fallback if it doesn't exceed the target time
-            if isUnderOrAtTarget {
-                let currentBestPOIs = bestFallback?.places.count ?? 0
-                let thisPOIs = route.places.count
-                
-                // Prefer: more POIs, then closer to target time
-                let shouldUpdate = bestFallback == nil ||
-                    thisPOIs > currentBestPOIs ||
-                    (thisPOIs == currentBestPOIs && diff < bestFallbackDiff)
+            // Track best fallback - save ANY route as fallback, preferring closest to target
+            // This ensures we always have SOMETHING to show rather than leaving user waiting
+            let shouldUpdate = bestFallback == nil || diff < bestFallbackDiff
                 
                 if shouldUpdate {
                     bestFallbackDiff = diff
                     bestFallback = route
-                }
+                print("🗺️ 📌 Best fallback so far: \(durationMin)min (diff: \(diff)min)")
             }
             
             return route
+        } catch let error as GoogleMapsError {
+            // Propagate rate limit errors so caller can handle them
+            if case .rateLimited = error {
+                throw error
+            }
+            print("🗺️ Route failed: \(error.localizedDescription)")
+            return nil
         } catch {
             print("🗺️ Route failed: \(error.localizedDescription)")
             return nil
@@ -1063,24 +3058,80 @@ class GoogleMapsService: ObservableObject {
     
     /// Select candidate waypoints sorted by preference
     /// Difficulty affects order: easy prefers closer, hard prefers further (within reasonable range)
-    private func selectCandidateWaypoints(from places: [PlaceResult], origin: CLLocationCoordinate2D, idealWaypointDistance: Int, difficulty: RouteDifficulty?) -> [PlaceResult] {
+    /// Uses ELASTIC windows: expands range if not enough candidates found
+    private func selectCandidateWaypoints(from places: [PlaceResult], origin: CLLocationCoordinate2D, idealWaypointDistance: Int, difficulty: RouteDifficulty?, minRequired: Int = 3) -> [PlaceResult] {
         let idealDistance = Double(idealWaypointDistance)
-        
-        // Minimum distance to avoid "arrived immediately" issues
-        let minDistance: Double = max(100, idealDistance * 0.3)
-        
-        // Maximum distance - don't go too far or route will be too long
-        let maxDistance: Double = idealDistance * 1.5
         
         // Excluded types
         let excludedTypes = Set(["transit_station", "locality", "political", "sublocality"])
         
+        // ELASTIC WINDOWS: Start with default range, expand if needed
+        var expansionFactor: Double = 1.0
+        let maxExpansions = 3  // Up to 3x expansion
+        var filtered: [PlaceResult] = []
+        var minDistance: Double = 0
+        var maxDistance: Double = 0
+        
+        for attempt in 0..<maxExpansions {
+            // Calculate range with current expansion
+            minDistance = max(50, idealDistance * 0.3 / expansionFactor)  // Shrink min
+            maxDistance = max(400, idealDistance * 2.5 * expansionFactor)  // Grow max
+            
+            if attempt == 0 {
+                print("🎯 Candidate selection: ideal=\(Int(idealDistance))m, range=\(Int(minDistance))-\(Int(maxDistance))m")
+            } else {
+                print("🎯 📈 ELASTIC EXPANSION \(attempt): range=\(Int(minDistance))-\(Int(maxDistance))m (factor: \(expansionFactor)x)")
+            }
+        
         // Filter places within acceptable range
-        let filtered = places.filter { place in
+            var tooClose: [(String, Int)] = []
+            var tooFar: [(String, Int)] = []
+            
+            filtered = places.filter { place in
             let distance = distanceBetween(origin, place.coordinate)
             let types = Set(place.types ?? [])
             let hasExcludedType = !types.isDisjoint(with: excludedTypes)
-            return distance >= minDistance && distance <= maxDistance && !hasExcludedType
+                
+                if hasExcludedType { return false }
+                if distance < minDistance {
+                    tooClose.append((place.name, Int(distance)))
+                    return false
+                }
+                if distance > maxDistance {
+                    tooFar.append((place.name, Int(distance)))
+                    return false
+                }
+                return true
+            }
+            
+            // Log what was filtered out (only on first attempt)
+            if attempt == 0 {
+                if !tooClose.isEmpty {
+                    print("🎯 ❌ Too close (<\(Int(minDistance))m): \(tooClose.prefix(5).map { "\($0.0) (\($0.1)m)" }.joined(separator: ", "))")
+                }
+                if !tooFar.isEmpty {
+                    print("🎯 ❌ Too far (>\(Int(maxDistance))m): \(tooFar.prefix(5).map { "\($0.0) (\($0.1)m)" }.joined(separator: ", "))")
+                }
+            }
+            
+            // Check if we have enough candidates
+            if filtered.count >= minRequired {
+                print("🎯 ✓ \(filtered.count) candidates in range")
+                break
+            } else {
+                print("🎯 ⚠️ Only \(filtered.count) candidates (need \(minRequired)) - expanding range...")
+                expansionFactor *= 1.5  // 1x → 1.5x → 2.25x
+            }
+        }
+        
+        // Final fallback: if still not enough, include "too far" POIs
+        if filtered.count < minRequired {
+            print("🎯 🆘 FALLBACK: Including all non-excluded POIs")
+            filtered = places.filter { place in
+                let types = Set(place.types ?? [])
+                return types.isDisjoint(with: excludedTypes)
+            }
+            print("🎯 ✓ \(filtered.count) candidates after fallback")
         }
         
         // Calculate bearing (angle) from origin for each POI
@@ -1225,7 +3276,7 @@ class GoogleMapsService: ObservableObject {
         desiredCount: Int,
         origin: CLLocationCoordinate2D
     ) async -> GeneratedRoute {
-        let routePath = PolylineDecoder.decode(route.polyline)
+        let routePath = decodePolyline(route.polyline)
         guard routePath.count > 2 else { return route }
         
         var existingPlaceIds = Set(route.places.map { $0.placeId })
@@ -1397,6 +3448,145 @@ class GoogleMapsService: ObservableObject {
     var hasAPIKey: Bool {
         !apiKey.isEmpty
     }
+    
+    // MARK: - Google Directions API Fallback (PAID - Use Sparingly!)
+    
+    /// Uses Google Directions API as fallback when MapKit route is outside tolerance
+    /// This is a PAID API - only use when MapKit fails to find acceptable route
+    /// Returns nil if Google also fails or API key is missing
+    func getGoogleDirectionsRoute(
+        origin: CLLocationCoordinate2D,
+        waypoints: [PlaceResult],
+        targetDurationMinutes: Int
+    ) async -> GeneratedRoute? {
+        guard !apiKey.isEmpty else {
+            print("🌐 Google Directions: No API key available")
+            return nil
+        }
+        
+        print("🌐 Google Directions: Attempting fallback route (PAID API)...")
+        
+        // Build waypoints string for Google API using coordinate property
+        let waypointCoords = waypoints.map { "\($0.coordinate.latitude),\($0.coordinate.longitude)" }
+        let waypointsParam = waypointCoords.joined(separator: "|")
+        
+        // Google Directions API URL
+        var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
+        urlString += "origin=\(origin.latitude),\(origin.longitude)"
+        urlString += "&destination=\(origin.latitude),\(origin.longitude)"  // Round trip
+        urlString += "&waypoints=optimize:true|\(waypointsParam)"
+        urlString += "&mode=walking"
+        urlString += "&key=\(apiKey)"
+        
+        guard let url = URL(string: urlString) else {
+            print("🌐 Google Directions: Invalid URL")
+            return nil
+        }
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                print("🌐 Google Directions: HTTP error")
+                return nil
+            }
+            
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let status = json["status"] as? String,
+                  status == "OK",
+                  let routes = json["routes"] as? [[String: Any]],
+                  let firstRoute = routes.first,
+                  let legs = firstRoute["legs"] as? [[String: Any]],
+                  let overviewPolyline = firstRoute["overview_polyline"] as? [String: Any],
+                  let polylinePoints = overviewPolyline["points"] as? String else {
+                let errorStatus = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["status"] as? String ?? "unknown"
+                print("🌐 Google Directions: Failed - status: \(errorStatus)")
+                return nil
+            }
+            
+            // Calculate total distance and duration
+            var totalDistance = 0
+            var totalDuration = 0
+            var directionsLegs: [DirectionsLeg] = []
+            
+            for leg in legs {
+                guard let distance = leg["distance"] as? [String: Any],
+                      let distanceValue = distance["value"] as? Int,
+                      let distanceText = distance["text"] as? String,
+                      let duration = leg["duration"] as? [String: Any],
+                      let durationValue = duration["value"] as? Int,
+                      let durationText = duration["text"] as? String else {
+                    continue
+                }
+                
+                totalDistance += distanceValue
+                totalDuration += durationValue
+                
+                // Extract steps for directions
+                var steps: [DirectionsStep] = []
+                if let stepsData = leg["steps"] as? [[String: Any]] {
+                    for step in stepsData {
+                        let instruction = step["html_instructions"] as? String
+                        let stepDistanceVal = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
+                        let stepDistanceText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
+                        let stepDurationVal = (step["duration"] as? [String: Any])?["value"] as? Int ?? 0
+                        let stepDurationText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
+                        let stepPolyline = (step["polyline"] as? [String: Any])?["points"] as? String
+                        
+                        steps.append(DirectionsStep(
+                            distance: DirectionsValue(text: stepDistanceText, value: stepDistanceVal),
+                            duration: DirectionsValue(text: stepDurationText, value: stepDurationVal),
+                            htmlInstructions: instruction,
+                            polyline: stepPolyline != nil ? StepPolyline(points: stepPolyline!) : nil
+                        ))
+                    }
+                }
+                
+                let startAddress = leg["start_address"] as? String
+                let endAddress = leg["end_address"] as? String
+                
+                directionsLegs.append(DirectionsLeg(
+                    distance: DirectionsValue(text: distanceText, value: distanceValue),
+                    duration: DirectionsValue(text: durationText, value: durationValue),
+                    startAddress: startAddress,
+                    endAddress: endAddress,
+                    steps: steps
+                ))
+            }
+            
+            let durationMinutes = totalDuration / 60
+            let targetMin = Int(Double(targetDurationMinutes) * 0.80)
+            let targetMax = targetDurationMinutes
+            
+            print("🌐 Google Directions: Route found - \(durationMinutes)min, \(totalDistance)m")
+            
+            // Check if Google route is within 80-100% tolerance
+            if durationMinutes >= targetMin && durationMinutes <= targetMax {
+                print("🌐 ✓ Google route within tolerance (80-100%): \(durationMinutes)min")
+            } else {
+                print("🌐 ⚠️ Google route outside tolerance: \(durationMinutes)min (target: \(targetMin)-\(targetMax)min)")
+            }
+            
+            // Get optimized waypoint order from Google
+            var orderedPlaces = waypoints
+            if let waypointOrder = firstRoute["waypoint_order"] as? [Int] {
+                orderedPlaces = waypointOrder.map { waypoints[$0] }
+                print("🌐 Google optimized waypoint order: \(waypointOrder)")
+            }
+            
+            return GeneratedRoute(
+                places: orderedPlaces,
+                polyline: polylinePoints,
+                distanceMeters: totalDistance,
+                durationSeconds: totalDuration,
+                legs: directionsLegs
+            )
+            
+        } catch {
+            print("🌐 Google Directions: Error - \(error.localizedDescription)")
+            return nil
+        }
+    }
 }
 
 // MARK: - Error Types
@@ -1407,6 +3597,7 @@ enum GoogleMapsError: LocalizedError {
     case apiError(String)
     case noRouteFound
     case noPlacesFound
+    case rateLimited(timeUntilReset: Int)  // MapKit rate limit hit
     
     var errorDescription: String? {
         switch self {
@@ -1422,6 +3613,8 @@ enum GoogleMapsError: LocalizedError {
             return "No walking route found"
         case .noPlacesFound:
             return "No nearby places found"
+        case .rateLimited(let seconds):
+            return "Rate limited, please wait \(seconds) seconds"
         }
     }
 }

@@ -154,20 +154,6 @@ class POICacheService {
         }
     }
     
-    /// Get POI names for a specific cached location (for detail view)
-    func getPOIsForLocation(at coordinate: CLLocationCoordinate2D) -> [CachedPOI] {
-        let cached = loadCache()
-        
-        for entry in cached {
-            let distance = distanceBetween(entry.coordinate, coordinate)
-            if distance <= matchRadiusMeters {
-                return entry.pois
-            }
-        }
-        
-        return []
-    }
-    
     /// Reverse geocode a coordinate to get a human-readable place name
     /// Prioritizes specific areas (neighborhood/street) over general city names
     func getLocationName(for coordinate: CLLocationCoordinate2D, completion: @escaping (String) -> Void) {
