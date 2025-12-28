@@ -31,7 +31,214 @@ class GeminiService {
     }
     
     /// Generate both a creative route name and personalized description using AI
+    /// Falls back to privacy-safe templates if API fails or quota exceeded
     func generateRouteContent(
+        waypoints: [WaypointInfo],
+        durationMinutes: Int,
+        distanceMeters: Int,
+        difficulty: RouteDifficulty?,
+        originCoordinate: (lat: Double, lon: Double)? = nil  // For privacy filtering
+    ) async -> RouteContent? {
+        // Try Gemini first if API key available
+        if !apiKey.isEmpty {
+            if let geminiContent = await tryGeminiGeneration(
+                waypoints: waypoints,
+                durationMinutes: durationMinutes,
+                distanceMeters: distanceMeters,
+                difficulty: difficulty
+            ) {
+                return geminiContent
+            }
+        }
+        
+        // Fallback to privacy-safe templates
+        print("🏷️ Using template-based route names (Gemini unavailable)")
+        return generateTemplateContent(
+            waypoints: waypoints,
+            durationMinutes: durationMinutes,
+            distanceMeters: distanceMeters,
+            originCoordinate: originCoordinate
+        )
+    }
+    
+    /// Privacy-safe template-based name and description generation
+    /// Only references POIs far from start location to protect user's home area
+    func generateTemplateContent(
+        waypoints: [WaypointInfo],
+        durationMinutes: Int,
+        distanceMeters: Int,
+        originCoordinate: (lat: Double, lon: Double)? = nil
+    ) -> RouteContent {
+        // Filter to POIs that are safe to mention (not near home)
+        // For privacy, we prefer POIs in the middle/far end of the route
+        // Since waypoints are ordered along the route, prefer middle/later ones
+        let safeWaypoints: [WaypointInfo]
+        if waypoints.count >= 3 {
+            // Skip first waypoint (too close to start), use middle/far ones
+            safeWaypoints = Array(waypoints.dropFirst())
+        } else if waypoints.count == 2 {
+            // Use the second (farther) waypoint
+            safeWaypoints = [waypoints[1]]
+        } else {
+            safeWaypoints = waypoints
+        }
+        
+        // Get the best POI to feature (prefer named landmarks over generic places)
+        let featurePOI = selectBestPOI(from: safeWaypoints)
+        
+        // Generate name
+        let name = generateTemplateName(
+            featurePOI: featurePOI,
+            durationMinutes: durationMinutes,
+            waypointCount: waypoints.count
+        )
+        
+        // Generate description
+        let description = generateTemplateDescription(
+            featurePOI: featurePOI,
+            safeWaypoints: safeWaypoints,
+            durationMinutes: durationMinutes,
+            distanceMeters: distanceMeters,
+            totalWaypoints: waypoints.count
+        )
+        
+        print("🏷️ Template name: \(name)")
+        print("🏷️ Template description: \(description)")
+        
+        return RouteContent(name: name, description: description)
+    }
+    
+    /// Select the best POI to feature in the route name
+    private func selectBestPOI(from waypoints: [WaypointInfo]) -> WaypointInfo? {
+        guard !waypoints.isEmpty else { return nil }
+        
+        // Prefer POIs with interesting types (pubs, churches, parks, etc.)
+        let interestingTypes = Set(["bar", "pub", "restaurant", "cafe", "church", "park", 
+                                     "museum", "library", "school", "bakery", "post_office"])
+        
+        // Score each POI
+        let scored = waypoints.map { poi -> (poi: WaypointInfo, score: Int) in
+            var score = 0
+            
+            // Bonus for interesting types
+            if poi.types.contains(where: { interestingTypes.contains($0) }) {
+                score += 10
+            }
+            
+            // Bonus for having a proper name (not just "Point of Interest")
+            if !poi.name.lowercased().contains("point of interest") && 
+               !poi.name.lowercased().contains("unnamed") {
+                score += 5
+            }
+            
+            // Bonus for shorter names (easier to display)
+            if poi.name.count <= 20 {
+                score += 3
+            }
+            
+            return (poi, score)
+        }
+        
+        return scored.max(by: { $0.score < $1.score })?.poi
+    }
+    
+    /// Generate a template-based route name
+    private func generateTemplateName(
+        featurePOI: WaypointInfo?,
+        durationMinutes: Int,
+        waypointCount: Int
+    ) -> String {
+        // If we have a good POI, use it
+        if let poi = featurePOI {
+            let shortName = shortenPOIName(poi.name)
+            
+            // Different templates based on POI type
+            let poiType = poi.types.first ?? ""
+            
+            switch poiType {
+            case "bar", "pub", "restaurant":
+                return "Loop via \(shortName)"
+            case "church", "place_of_worship":
+                return "\(shortName) Walk"
+            case "park", "natural_feature":
+                return "\(shortName) Stroll"
+            case "school", "university":
+                return "Walk past \(shortName)"
+            default:
+                return "Via \(shortName)"
+            }
+        }
+        
+        // Fallback to duration-based names
+        switch durationMinutes {
+        case 1...10:
+            return "Quick Loop"
+        case 11...20:
+            return "Discovery Walk"
+        case 21...35:
+            return "Local Circular"
+        case 36...50:
+            return "Extended Stroll"
+        default:
+            return "Long Walk"
+        }
+    }
+    
+    /// Shorten a POI name to fit in route title
+    private func shortenPOIName(_ name: String) -> String {
+        // Remove common prefixes
+        var shortened = name
+        let prefixesToRemove = ["The ", "St ", "St. "]
+        for prefix in prefixesToRemove {
+            if shortened.hasPrefix(prefix) && shortened.count > 15 {
+                shortened = String(shortened.dropFirst(prefix.count))
+                break
+            }
+        }
+        
+        // Truncate if still too long
+        if shortened.count > 18 {
+            let words = shortened.components(separatedBy: " ")
+            if words.count > 2 {
+                // Use first two words
+                shortened = words.prefix(2).joined(separator: " ")
+            } else {
+                shortened = String(shortened.prefix(18))
+            }
+        }
+        
+        return shortened
+    }
+    
+    /// Generate a template-based description
+    private func generateTemplateDescription(
+        featurePOI: WaypointInfo?,
+        safeWaypoints: [WaypointInfo],
+        durationMinutes: Int,
+        distanceMeters: Int,
+        totalWaypoints: Int
+    ) -> String {
+        let distanceKm = String(format: "%.1f", Double(distanceMeters) / 1000.0)
+        
+        if let poi = featurePOI {
+            let poiType = formatPlaceTypes(poi.types)
+            
+            // Get a second POI if available
+            let secondPOI = safeWaypoints.first(where: { $0.name != poi.name })
+            
+            if let second = secondPOI {
+                return "A \(durationMinutes) minute circular walk passing \(poi.name) and \(second.name). Distance: \(distanceKm)km."
+            } else {
+                return "A \(durationMinutes) minute loop featuring \(poi.name) (\(poiType)). Approximately \(distanceKm)km with \(totalWaypoints) points of interest."
+            }
+        }
+        
+        // Generic fallback
+        return "A \(durationMinutes) minute circular walk covering \(distanceKm)km with \(totalWaypoints) discovery spots along the way."
+    }
+    
+    /// Try to generate content using Gemini API
+    private func tryGeminiGeneration(
         waypoints: [WaypointInfo],
         durationMinutes: Int,
         distanceMeters: Int,
