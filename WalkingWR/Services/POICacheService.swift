@@ -94,9 +94,23 @@ class POICacheService {
     func cachePOIs(_ pois: [PlaceResult], for location: CLLocationCoordinate2D) {
         var cached = loadCache()
         
-        // Remove any existing cache for nearby location (within 500m)
+        // Remove any existing cache for nearby location (within matchRadiusMeters)
+        // This prevents duplicates like "Kirkhamgate" appearing 3 times
+        let removedCount = cached.count
         cached.removeAll { entry in
-            distanceBetween(entry.coordinate, location) < 500
+            distanceBetween(entry.coordinate, location) < matchRadiusMeters
+        }
+        let duplicatesRemoved = removedCount - cached.count
+        if duplicatesRemoved > 0 {
+            print("📦 POI Cache: Removed \(duplicatesRemoved) duplicate location(s) within \(Int(matchRadiusMeters))m")
+        }
+        
+        // Check free tier limit BEFORE adding (only if this is a genuinely new location)
+        if cached.count >= POICacheService.freeTierLocationLimit {
+            print("📦 POI Cache: Free tier limit reached (\(POICacheService.freeTierLocationLimit) locations)")
+            // Remove oldest entry to make room
+            cached.removeLast()
+            print("📦 POI Cache: Removed oldest entry to stay within limit")
         }
         
         // Create new cache entry
@@ -110,7 +124,7 @@ class POICacheService {
         // Add to front of list
         cached.insert(newEntry, at: 0)
         
-        // Keep only the most recent locations
+        // Keep only the most recent locations (hard cap)
         if cached.count > maxCachedLocations {
             cached = Array(cached.prefix(maxCachedLocations))
         }
@@ -151,6 +165,20 @@ class POICacheService {
                 locationName: "Loading..."
             )
         }
+    }
+    
+    /// Get POIs for a specific cached location (for detail view)
+    func getPOIsForLocation(at coordinate: CLLocationCoordinate2D) -> [CachedPOI] {
+        let cached = loadCache()
+        
+        for entry in cached {
+            let distance = distanceBetween(entry.coordinate, coordinate)
+            if distance <= matchRadiusMeters {
+                return entry.pois
+            }
+        }
+        
+        return []
     }
     
     /// Reverse geocode a coordinate to get a human-readable place name
@@ -222,7 +250,39 @@ class POICacheService {
         }
         
         do {
-            return try JSONDecoder().decode([CachedPOILocation].self, from: data)
+            let cached = try JSONDecoder().decode([CachedPOILocation].self, from: data)
+            
+            // Deduplicate on load: remove entries that are within matchRadiusMeters of each other
+            // Keep the entry with the most POIs
+            var deduplicated: [CachedPOILocation] = []
+            for entry in cached {
+                let isDuplicate = deduplicated.contains { existing in
+                    distanceBetween(existing.coordinate, entry.coordinate) < matchRadiusMeters
+                }
+                
+                if !isDuplicate {
+                    deduplicated.append(entry)
+                } else {
+                    // It's a duplicate - check if this one has more POIs
+                    if let existingIndex = deduplicated.firstIndex(where: { 
+                        distanceBetween($0.coordinate, entry.coordinate) < matchRadiusMeters 
+                    }) {
+                        if entry.pois.count > deduplicated[existingIndex].pois.count {
+                            // Replace with the one that has more POIs
+                            print("📦 POI Cache: Dedup - keeping entry with \(entry.pois.count) POIs over \(deduplicated[existingIndex].pois.count)")
+                            deduplicated[existingIndex] = entry
+                        }
+                    }
+                }
+            }
+            
+            // If we deduplicated anything, save the cleaned cache
+            if deduplicated.count < cached.count {
+                print("📦 POI Cache: Deduplicated \(cached.count) → \(deduplicated.count) entries")
+                saveCache(deduplicated)
+            }
+            
+            return deduplicated
         } catch {
             print("📦 Error loading POI cache: \(error)")
             return []
