@@ -909,6 +909,10 @@ struct LocalRoutePickerSheet: View {
     @State private var isPrefetchingPOIs = false
     @State private var prefetchedForLocation: CLLocationCoordinate2D?
     
+    // Track where routes were pre-generated (for movement detection)
+    @State private var preGeneratedAtLocation: CLLocationCoordinate2D?
+    private let movementThresholdMeters: Double = 50  // Invalidate cache if moved >50m
+    
     let durationOptions = [10, 15, 20, 25, 30]
     let maxRoutesToGenerate = 10  // Back to 10 - directions now use free Apple MapKit!
     
@@ -1002,20 +1006,38 @@ struct LocalRoutePickerSheet: View {
                         onShuffle: {
                             shuffleToNextRoute()
                         },
-                        onChangeOptions: {
-                            // Go back to options screen - clear all tracking since options changing
-                            generatedRoute = nil
-                            generatedRouteData = nil
-                            lastValidRoute = nil
-                            lastValidRouteData = nil
-                            shownPlaceIdSets = []  // Reset shown routes tracking
-                            allRoutes = []
-                            currentRouteIndex = 0
-                            preGenerationComplete = false
-                            viewedRouteIndices = []  // Reset viewed tracking
-                            showPremiumUpsell = false  // Reset premium upsell
-                            showMapPreview = false
-                            errorMessage = nil
+                        onDelete: {
+                            // Delete the current route from the array
+                            guard !allRoutes.isEmpty else { return }
+                            
+                            // Remove the current route
+                            allRoutes.remove(at: currentRouteIndex)
+                            
+                            if allRoutes.isEmpty {
+                                // No routes left - go back to options
+                                generatedRoute = nil
+                                generatedRouteData = nil
+                                lastValidRoute = nil
+                                lastValidRouteData = nil
+                                shownPlaceIdSets = []
+                                allRoutes = []
+                                currentRouteIndex = 0
+                                preGenerationComplete = false
+                                viewedRouteIndices = []
+                                showPremiumUpsell = false
+                                showMapPreview = false
+                                errorMessage = nil
+                                print("🗑️ Deleted last route - returning to options")
+                            } else {
+                                // Show next available route (or previous if at end)
+                                if currentRouteIndex >= allRoutes.count {
+                                    currentRouteIndex = allRoutes.count - 1
+                                }
+                                let nextRoute = allRoutes[currentRouteIndex]
+                                generatedRoute = nextRoute.route
+                                generatedRouteData = nextRoute.data
+                                print("🗑️ Deleted route - now showing \(currentRouteIndex + 1) of \(allRoutes.count)")
+                            }
                         }
                     )
                     .background(Color(.systemBackground))
@@ -1422,6 +1444,67 @@ struct LocalRoutePickerSheet: View {
         if mapsService.hasAPIKey {
             // Use Google APIs for smart routing
             Task {
+                // CHECK CACHE FIRST (with movement detection)
+                let shouldUseCache: Bool
+                if let preGenLocation = preGeneratedAtLocation {
+                    let distanceMoved = distanceBetweenCoordinates(userLocation.coordinate, preGenLocation)
+                    shouldUseCache = distanceMoved <= movementThresholdMeters
+                    if !shouldUseCache {
+                        print("📍 User moved \(Int(distanceMoved))m (>\(Int(movementThresholdMeters))m) - skipping cache, regenerating fresh")
+                    }
+                } else {
+                    shouldUseCache = true  // No pre-gen location yet, check cache anyway
+                }
+                
+                if shouldUseCache, let cachedRoutes = RouteCacheService.shared.getCachedRoutes(near: userLocation.coordinate, durationMinutes: selectedDuration), !cachedRoutes.isEmpty {
+                    print("📦 Using cached route for \(selectedDuration)min (user hasn't moved significantly)")
+                    let cached = cachedRoutes[0]
+                    
+                    // Create route from cached data
+                    let markers = await MainActor.run {
+                        createMarkersFromPlaces(cached.route.places, origin: userLocation.coordinate)
+                    }
+                    let directions = await MainActor.run {
+                        extractWalkingDirections(from: cached.route.legs)
+                    }
+                    let routeDifficulty: RouteDifficulty = cached.route.durationMinutes <= 10 ? .easy : (cached.route.durationMinutes <= 20 ? .moderate : .challenging)
+                    
+                    let localRoute = WalkingRoute(
+                        name: cached.name ?? "Local Discovery",
+                        description: cached.description ?? "A \(cached.route.formattedDuration) walk passing \(cached.route.places.count) local points of interest.",
+                        durationMinutes: max(1, cached.route.durationMinutes),
+                        distanceMeters: cached.route.distanceMeters,
+                        difficulty: routeDifficulty,
+                        isIndoor: false,
+                        isAccessible: true,
+                        landmarks: ["Start"] + cached.route.places.map { $0.name } + ["Return"],
+                        icon: "location.fill",
+                        color: .tealAccent,
+                        qrMarkers: markers,
+                        routeType: .local,
+                        encodedPolyline: cached.route.polyline,
+                        walkingDirections: directions
+                    )
+                    
+                    await MainActor.run {
+                        isGenerating = false
+                        generatedRoute = localRoute
+                        generatedRouteData = cached.route
+                        lastValidRoute = localRoute
+                        lastValidRouteData = cached.route
+                        allRoutes = [(route: localRoute, data: cached.route)]
+                        currentRouteIndex = 0
+                        isRecycledRoute = false
+                        viewedRouteIndices = [0]
+                        shownPlaceIdSets = [Set(cached.route.places.map { $0.placeId })]
+                        showMapPreview = true
+                        
+                        // Still pre-generate more routes for this duration
+                        preGenerateRemainingRoutes()
+                    }
+                    return
+                }
+                
                 do {
                     // Use pre-fetched POIs if available (faster!)
                     let poisToUse = prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
@@ -1876,9 +1959,61 @@ struct LocalRoutePickerSheet: View {
             await MainActor.run {
                 isPreGeneratingRoutes = false
                 preGenerationComplete = true
-                print("🏁 Pre-generation complete! Total routes: \(allRoutes.count)")
+                print("🏁 Pre-generation complete for \(selectedDuration)min! Total routes: \(allRoutes.count)")
+            }
+            
+            // AFTER completing current duration, pre-generate for OTHER durations
+            await preGenerateOtherDurations(from: userLocation.coordinate, currentDuration: selectedDuration, pois: poisToUse)
+        }
+    }
+    
+    /// Pre-generate ONE route for each standard duration (except current) for instant switching
+    func preGenerateOtherDurations(from location: CLLocationCoordinate2D, currentDuration: Int, pois: [PlaceResult]?) async {
+        let standardDurations = [5, 10, 15, 20, 25, 30, 45, 60]
+        let durationsToGenerate = standardDurations.filter { $0 != currentDuration }
+        
+        // Store where we pre-generated (for movement detection)
+        await MainActor.run {
+            preGeneratedAtLocation = location
+        }
+        
+        print("🔮 Starting pre-generation for other durations: \(durationsToGenerate.map { "\($0)min" }.joined(separator: ", "))")
+        
+        for duration in durationsToGenerate {
+            // Check if already cached
+            if RouteCacheService.shared.getCachedRoutes(near: location, durationMinutes: duration) != nil {
+                print("📦 \(duration)min already cached, skipping")
+                continue
+            }
+            
+            do {
+                let result = try await mapsService.generateLocalRoute(
+                    from: location,
+                    targetDurationMinutes: duration,
+                    difficulty: nil,
+                    excludePlaceIds: [],
+                    prefetchedPOIs: pois
+                )
+                
+                // Validate and cache
+                guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
+                    print("⚠️ \(duration)min generation failed validation")
+                    continue
+                }
+                
+                // Cache this route for future use
+                RouteCacheService.shared.cacheRoutes([result], at: location, durationMinutes: duration)
+                print("✅ Pre-generated and cached \(duration)min route (\(result.durationSeconds/60)min actual)")
+                
+                // Small delay to avoid rate limiting
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second between durations
+                
+            } catch {
+                print("⚠️ \(duration)min pre-generation error: \(error.localizedDescription)")
             }
         }
+        
+        print("🏁 Other durations pre-generation complete!")
     }
     
     func generateBasicRoute(from coordinate: CLLocationCoordinate2D) {
@@ -1918,6 +2053,13 @@ struct LocalRoutePickerSheet: View {
             generatedRouteData = nil
             showMapPreview = true
         }
+    }
+    
+    /// Calculate distance between two coordinates in meters
+    func distanceBetweenCoordinates(_ c1: CLLocationCoordinate2D, _ c2: CLLocationCoordinate2D) -> Double {
+        let loc1 = CLLocation(latitude: c1.latitude, longitude: c1.longitude)
+        let loc2 = CLLocation(latitude: c2.latitude, longitude: c2.longitude)
+        return loc1.distance(from: loc2)
     }
     
     func createMarkersFromPlaces(_ places: [PlaceResult], origin: CLLocationCoordinate2D) -> [QRMarker] {
@@ -2077,7 +2219,7 @@ struct LocalRouteMapPreview: View {
     let onRequestHealthKit: () -> Void   // Request HealthKit permission
     let onStartWalk: () -> Void          // Start the walk (permissions granted)
     let onShuffle: () -> Void            // Quick regenerate with same settings
-    let onChangeOptions: () -> Void      // Go back to options screen
+    let onDelete: () -> Void             // Delete current route from cache
     
     /// What the primary button should do
     enum PrimaryAction {
@@ -2466,22 +2608,6 @@ struct LocalRouteMapPreview: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 
-                // Premium upsell message
-                if showPremiumUpsell {
-                    HStack(spacing: 8) {
-                        Image(systemName: "sparkles")
-                            .foregroundColor(.orange)
-                        Text("More routes? Premium coming soon!")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.orange.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                
                 // Action buttons
                 HStack(spacing: 10) {
                     // Shuffle - quick regenerate with same settings
@@ -2504,14 +2630,14 @@ struct LocalRouteMapPreview: View {
                     }
                     .buttonStyle(.plain)
                     
-                    // Change options - go back to picker
-                    Button(action: onChangeOptions) {
-                        Image(systemName: "slider.horizontal.3")
+                    // Delete - remove current route (replaces settings button)
+                    Button(action: onDelete) {
+                        Image(systemName: "xmark")
                             .font(.title3)
-                            .fontWeight(.medium)
-                            .foregroundColor(.secondary)
+                            .fontWeight(.bold)
+                            .foregroundColor(.red)
                             .frame(width: 48, height: 48)
-                            .background(Color.secondary.opacity(0.1))
+                            .background(Color.red.opacity(0.15))
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     .buttonStyle(.plain)
