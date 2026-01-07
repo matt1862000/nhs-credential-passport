@@ -1530,6 +1530,9 @@ struct LocalRoutePickerSheet: View {
                         let placeIds = Set(result.places.map { $0.placeId })
                         shownPlaceIdSets = [placeIds]
                         showMapPreview = true
+                        
+                        // Start pre-generating more routes in background
+                        preGenerateRemainingRoutes()
                     }
                 } catch {
                     await MainActor.run {

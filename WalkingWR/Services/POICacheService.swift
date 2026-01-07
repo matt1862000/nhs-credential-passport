@@ -65,7 +65,6 @@ class POICacheService {
         let longitude: Double
         let types: [String]
         let vicinity: String?
-        let rating: Double?
         
         var coordinate: CLLocationCoordinate2D {
             CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -256,7 +255,6 @@ extension POICacheService.CachedPOI {
         self.longitude = place.geometry.location.lng
         self.types = place.types ?? []
         self.vicinity = place.vicinity
-        self.rating = place.rating
     }
     
     func toPlaceResult() -> PlaceResult {
@@ -267,9 +265,7 @@ extension POICacheService.CachedPOI {
             geometry: PlaceGeometry(
                 location: PlaceLocation(lat: latitude, lng: longitude)
             ),
-            rating: rating,
-            types: types,
-            businessStatus: nil
+            types: types
         )
     }
 }

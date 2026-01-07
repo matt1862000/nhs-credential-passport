@@ -285,9 +285,7 @@ class RouteCacheService {
                             lng: place.longitude
                         )
                     ),
-                    rating: nil,
-                    types: place.types,
-                    businessStatus: nil
+                    types: place.types
                 )
             }
             

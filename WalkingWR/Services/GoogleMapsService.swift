@@ -257,24 +257,17 @@ class GoogleMapsService: ObservableObject {
         var allResults: [PlaceResult] = []
         var seenPlaceIds = Set<String>()
         
-        // 🎯 PRIORITY 1: Check cached Google data (refreshed daily)
-        let cacheResult = POICacheService.shared.getCachedPOIsWithFreshness(near: location, searchRadius: Double(radiusMeters))
-        
-        if let cached = cacheResult, !cached.isStale {
-            // Fresh cache - use it as base, skip Google API call
-            print("💰 Using FRESH cached data (\(cached.ageHours)h old) - skipping Google API!")
-            allResults = cached.pois
+        // 🎯 PRIORITY 1: Check cached POI data
+        if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: location) {
+            print("💰 Using cached POI data - \(cachedPOIs.count) POIs")
+            allResults = cachedPOIs
             for poi in allResults {
                 seenPlaceIds.insert(poi.placeId)
             }
         } else {
-            // No cache or stale (> 24h) - call Google API to refresh
-            let needsRefresh = cacheResult?.isStale ?? true
-            if needsRefresh {
-                print("🔄 Cache is stale or missing - fetching fresh data from Google API...")
-            }
+            // No cache - call Google API if we have a valid key
+            print("🔄 No cached POIs - fetching from Google API...")
             
-            // Call Google API if we have a valid key
             if !apiKey.isEmpty {
                 let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
                 for poi in googlePOIs {
@@ -285,7 +278,7 @@ class GoogleMapsService: ObservableObject {
                 }
                 print("🗺️ Google API: Found \(googlePOIs.count) POIs")
             } else {
-                print("⚠️ No Google API key - using Apple + OSM only")
+                print("⚠️ No Google API key - using Apple Maps only")
             }
         }
         
@@ -426,35 +419,75 @@ class GoogleMapsService: ObservableObject {
         return allResults
     }
     
-    /// Search for a single place type
+    /// Search for a single place type using New Places API (Essentials tier - much cheaper!)
+    /// Cost: ~$5/1k requests vs $32/1k with Legacy API
     private func searchSingleType(
         location: CLLocationCoordinate2D,
         radiusMeters: Int,
         type: String
     ) async throws -> [PlaceResult] {
-        var urlString = "https://maps.googleapis.com/maps/api/place/nearbysearch/json?"
-        urlString += "location=\(location.latitude),\(location.longitude)"
-        urlString += "&radius=\(radiusMeters)"
-        urlString += "&type=\(type)"
-        urlString += "&key=\(apiKey)"
-        
-        guard let url = URL(string: urlString) else {
+        // New Places API endpoint
+        guard let url = URL(string: "https://places.googleapis.com/v1/places:searchNearby") else {
             throw GoogleMapsError.invalidURL
         }
         
-        let (data, response) = try await session.data(from: url)
+        // Build request body
+        let requestBody: [String: Any] = [
+            "includedTypes": [type],
+            "maxResultCount": 20,
+            "locationRestriction": [
+                "circle": [
+                    "center": [
+                        "latitude": location.latitude,
+                        "longitude": location.longitude
+                    ],
+                    "radius": Double(radiusMeters)
+                ]
+            ]
+        ]
         
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "X-Goog-Api-Key")
+        // Request only Basic Data fields (FREE tier!) - no rating, no contact info
+        request.setValue("places.id,places.displayName,places.location,places.formattedAddress,places.types", forHTTPHeaderField: "X-Goog-FieldMask")
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        
+        let (data, response) = try await session.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
             throw GoogleMapsError.serverError
         }
         
-        let placesResponse = try JSONDecoder().decode(PlacesResponse.self, from: data)
-        
-        if placesResponse.status != "OK" && placesResponse.status != "ZERO_RESULTS" {
-            throw GoogleMapsError.apiError(placesResponse.status)
+        if httpResponse.statusCode != 200 {
+            // Try to parse error message
+            if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let error = errorJson["error"] as? [String: Any],
+               let message = error["message"] as? String {
+                print("🗺️ New Places API error: \(message)")
+            }
+            throw GoogleMapsError.serverError
         }
         
-        return placesResponse.results
+        // Parse new API response format
+        let newPlacesResponse = try JSONDecoder().decode(NewPlacesResponse.self, from: data)
+        
+        // Convert to PlaceResult format
+        return newPlacesResponse.places?.map { place in
+            PlaceResult(
+                placeId: place.id ?? "unknown",
+                name: place.displayName?.text ?? "Unknown",
+                vicinity: place.formattedAddress,
+                geometry: PlaceGeometry(
+                    location: PlaceLocation(
+                        lat: place.location?.latitude ?? 0,
+                        lng: place.location?.longitude ?? 0
+                    )
+                ),
+                types: place.types
+            )
+        } ?? []
     }
     
     // MARK: - Apple Maps POI Search (FREE - No Limits!)
@@ -568,9 +601,7 @@ class GoogleMapsService: ObservableObject {
                                 lng: item.placemark.coordinate.longitude
                             )
                         ),
-                        rating: nil,
-                        types: [query],
-                        businessStatus: nil
+                        types: [query]
                     )
                     allResults.append(placeResult)
                 }
@@ -669,9 +700,7 @@ class GoogleMapsService: ObservableObject {
                         geometry: PlaceGeometry(
                             location: PlaceLocation(lat: finalLat, lng: finalLon)
                         ),
-                        rating: nil,
-                        types: [poiType],
-                        businessStatus: nil
+                        types: [poiType]
                     )
                     allResults.append(placeResult)
                 }
@@ -3621,9 +3650,33 @@ enum GoogleMapsError: LocalizedError {
 
 // MARK: - API Response Models
 
+// Legacy Places API Response (kept for backwards compatibility)
 struct PlacesResponse: Codable {
     let status: String
     let results: [PlaceResult]
+}
+
+// New Places API Response (Essentials tier - much cheaper!)
+struct NewPlacesResponse: Codable {
+    let places: [NewPlace]?
+}
+
+struct NewPlace: Codable {
+    let id: String?
+    let displayName: DisplayName?
+    let location: NewPlaceLocation?
+    let formattedAddress: String?
+    let types: [String]?
+}
+
+struct DisplayName: Codable {
+    let text: String?
+    let languageCode: String?
+}
+
+struct NewPlaceLocation: Codable {
+    let latitude: Double?
+    let longitude: Double?
 }
 
 struct PlaceResult: Codable, Identifiable {
@@ -3631,9 +3684,7 @@ struct PlaceResult: Codable, Identifiable {
     let name: String
     let vicinity: String?
     let geometry: PlaceGeometry
-    let rating: Double?
     let types: [String]?
-    let businessStatus: String?
     
     var id: String { placeId }
     
@@ -3646,8 +3697,7 @@ struct PlaceResult: Codable, Identifiable {
     
     enum CodingKeys: String, CodingKey {
         case placeId = "place_id"
-        case name, vicinity, geometry, rating, types
-        case businessStatus = "business_status"
+        case name, vicinity, geometry, types
     }
 }
 
