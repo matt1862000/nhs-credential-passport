@@ -2089,23 +2089,39 @@ class GoogleMapsService: ObservableObject {
         // Waypoints spaced ~5 mins apart: N waypoints = N+1 segments
         // Example: 20min = 4 segments of 5min → 3 waypoints between them
         // Tier caps ensure routes don't get too complex
+        // MINIMUM waypoints enforced to avoid reusing shorter routes
+        var minWaypointsForTier: Int
         switch targetDurationMinutes {
-        case 5...15:
-            routeMethod = .endpointOnly  // Very short: simple out-and-back or small loop
-            dynamicMaxWaypoints = 2  // 5-15min → 1-2 waypoints (segments of 5-7.5min)
-            print("🗺️ 📋 Method: ENDPOINT-ONLY (5-15min tier), max \(dynamicMaxWaypoints) waypoints")
+        case 5...10:
+            routeMethod = .endpointOnly  // Very short: simple out-and-back
+            dynamicMaxWaypoints = 2  // 5-10min → 1-2 waypoints
+            minWaypointsForTier = 1
+            print("🗺️ 📋 Method: ENDPOINT-ONLY (5-10min tier), max \(dynamicMaxWaypoints) waypoints")
+        case 11...15:
+            routeMethod = .endpointOnly  // Short but needs distinct route from 10min
+            dynamicMaxWaypoints = 3  // 11-15min → 2-3 waypoints (MUST be 2+ to differ from 10min)
+            minWaypointsForTier = 2  // Force 2+ waypoints
+            print("🗺️ 📋 Method: ENDPOINT-ONLY (11-15min tier), min 2, max \(dynamicMaxWaypoints) waypoints")
         case 16...25:
             routeMethod = .endpointOnly  // Short: endpoint-first is more reliable
             dynamicMaxWaypoints = 4  // 16-25min → 2-4 waypoints (segments of 4-6min)
+            minWaypointsForTier = 2
             print("🗺️ 📋 Method: ENDPOINT-ONLY (16-25min tier), max \(dynamicMaxWaypoints) waypoints")
         case 26...45:
             routeMethod = .endpointWithEnhancement  // Medium: endpoint + add waypoints if under target
-            dynamicMaxWaypoints = 7  // 26-45min → 4-8 waypoints (segments of 4-6min)
+            dynamicMaxWaypoints = 8  // 26-45min → 5-8 waypoints (segments of 4-5min)
+            minWaypointsForTier = 4
             print("🗺️ 📋 Method: ENDPOINT+ENHANCE (26-45min tier), max \(dynamicMaxWaypoints) waypoints")
-        default:  // 50-60 min
+        case 46...55:
+            routeMethod = .endpointWithEnhancement  // Medium-long
+            dynamicMaxWaypoints = 10  // 46-55min → 8-10 waypoints
+            minWaypointsForTier = 7
+            print("🗺️ 📋 Method: ENDPOINT+ENHANCE (46-55min tier), max \(dynamicMaxWaypoints) waypoints")
+        default:  // 56-60+ min
             routeMethod = .loopFallback  // Long: can fall back to loop-based with angular diversity
-            dynamicMaxWaypoints = 10  // 50-60min → 9-11 waypoints (segments of 5-6min)
-            print("🗺️ 📋 Method: LOOP-FALLBACK (50+min tier), max \(dynamicMaxWaypoints) waypoints")
+            dynamicMaxWaypoints = 12  // 56-60min → 10-12 waypoints (segments of 5min)
+            minWaypointsForTier = 10  // Force many waypoints to avoid single long legs
+            print("🗺️ 📋 Method: LOOP-FALLBACK (56+min tier), min 10, max \(dynamicMaxWaypoints) waypoints")
         }
         
         // Step 1: Find nearby POIs - use pre-fetched if available (faster!)
@@ -2619,8 +2635,10 @@ class GoogleMapsService: ObservableObject {
         let fallbackMaxWaypoints = max(1, (targetDurationMinutes / 4) - 1)
         let extendedMaxWaypoints = min(max(standardMaxWaypoints, fallbackMaxWaypoints), places.count)
         
-        // For quick mode, start much lower to find valid routes faster
-        let minWaypoints = quickMode ? max(1, idealWaypoints / 2) : max(1, idealWaypoints - 2)
+        // ENFORCE MINIMUM WAYPOINTS per tier to ensure distinct routes
+        // This prevents 15min routes from using the same 1-waypoint as 10min
+        let minWaypoints = max(minWaypointsForTier, quickMode ? max(1, idealWaypoints / 2) : max(1, idealWaypoints - 2))
+        print("🗺️ Waypoint range: \(minWaypoints) to \(standardMaxWaypoints) (extended: \(extendedMaxWaypoints))")
         
         // QUICK MODE: Try ASCENDING order (fewest waypoints first) for faster matching
         // This gets a valid route quickly, even if it has fewer POIs

@@ -1302,24 +1302,41 @@ struct LocalRoutePickerSheet: View {
                             if locationService.isAuthorized {
                                 let locationReady = locationService.currentLocation != nil
                                 
-                                Button(action: generateRoute) {
-                                    HStack {
-                                        if isGenerating {
-                                            ProgressView()
-                                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                            Text("Finding places...")
-                                        } else if !locationReady {
-                                            ProgressView()
-                                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                            Text("Finding Location...")
-                                        } else {
-                                            Image(systemName: "sparkles")
-                                            Text("Generate Route")
+                                HStack(spacing: 12) {
+                                    Button(action: generateRoute) {
+                                        HStack {
+                                            if isGenerating {
+                                                ProgressView()
+                                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                                Text("Finding places...")
+                                            } else if !locationReady {
+                                                ProgressView()
+                                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                                Text("Finding Location...")
+                                            } else {
+                                                Image(systemName: "sparkles")
+                                                Text("Generate Route")
+                                            }
                                         }
                                     }
+                                    .buttonStyle(PrimaryButtonStyle(color: locationReady && !isGenerating ? .tealAccent : .gray))
+                                    .disabled(!locationReady || isGenerating)
+                                    
+                                    // Debug test button (temporary)
+                                    Button(action: runRouteGenerationTest) {
+                                        if isRunningRouteTest {
+                                            ProgressView()
+                                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        } else {
+                                            Image(systemName: "testtube.2")
+                                        }
+                                    }
+                                    .frame(width: 50, height: 50)
+                                    .background(Color.purple.opacity(0.8))
+                                    .foregroundColor(.white)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .disabled(!locationReady || isRunningRouteTest)
                                 }
-                                .buttonStyle(PrimaryButtonStyle(color: locationReady && !isGenerating ? .tealAccent : .gray))
-                                .disabled(!locationReady || isGenerating)
                             }
                             
                             Spacer(minLength: 40)
@@ -1364,6 +1381,33 @@ struct LocalRoutePickerSheet: View {
             } message: {
                 let stats = POICacheService.shared.getCacheStats()
                 Text("You've saved routes in \(stats.locations) different locations. Upgrade to WaitWell+ for unlimited locations and more features!")
+            }
+            // Debug route test results sheet
+            .sheet(isPresented: $showRouteTestResults) {
+                NavigationStack {
+                    ScrollView {
+                        Text(routeTestResults)
+                            .font(.system(.caption, design: .monospaced))
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .navigationTitle("Route Generation Test")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") {
+                                showRouteTestResults = false
+                            }
+                        }
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button {
+                                UIPasteboard.general.string = routeTestResults
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2060,6 +2104,233 @@ struct LocalRoutePickerSheet: View {
         let loc1 = CLLocation(latitude: c1.latitude, longitude: c1.longitude)
         let loc2 = CLLocation(latitude: c2.latitude, longitude: c2.longitude)
         return loc1.distance(from: loc2)
+    }
+    
+    // MARK: - Debug Route Generation Test
+    @State private var isRunningRouteTest = false
+    @State private var routeTestResults: String = ""
+    @State private var showRouteTestResults = false
+    
+    /// Test route generation for all durations (5-60min) and report results
+    func runRouteGenerationTest() {
+        guard let userLocation = locationService.currentLocation else {
+            routeTestResults = "❌ No location available"
+            showRouteTestResults = true
+            return
+        }
+        
+        isRunningRouteTest = true
+        routeTestResults = "🧪 FULL ROUTE GENERATION TEST\n"
+        routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        
+        Task {
+            let durations = stride(from: 5, through: 60, by: 5).map { $0 }
+            let maxRoutesPerDuration = 5  // Try to generate up to 5 routes per duration
+            var allResults: [(duration: Int, routeNum: Int, actual: Int, time: Double, accuracy: Double, status: String, waypoints: Int, distance: Int, routeKey: String, waypointNames: [String])] = []
+            var seenRouteKeys = Set<String>()  // Track unique routes globally
+            var totalRoutesGenerated = 0
+            
+            // Get POIs once for all tests
+            let pois = prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
+            
+            await MainActor.run {
+                routeTestResults += "📍 Location: (\(String(format: "%.4f", userLocation.coordinate.latitude)), \(String(format: "%.4f", userLocation.coordinate.longitude)))\n"
+                routeTestResults += "📦 POIs available: \(pois?.count ?? 0)\n"
+                routeTestResults += "🎯 Max routes per duration: \(maxRoutesPerDuration)\n"
+                routeTestResults += "🕐 Test started: \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium))\n"
+                routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            }
+            
+            for duration in durations {
+                var excludedPlaceIds = Set<String>()  // Reset for each duration
+                var routesForThisDuration: [(routeNum: Int, actual: Int, time: Double, accuracy: Double, status: String, waypoints: Int, distance: Int, routeKey: String, waypointNames: [String])] = []
+                var consecutiveFailures = 0
+                
+                await MainActor.run {
+                    routeTestResults += "\n📌 \(duration) MINUTES\n"
+                    routeTestResults += "───────────────────────────────────────\n"
+                }
+                
+                for routeNum in 1...maxRoutesPerDuration {
+                    guard consecutiveFailures < 3 else { break }  // Stop after 3 failures
+                    
+                    let startTime = Date()
+                    var actualMin = 0
+                    var accuracy: Double = 0
+                    var status = ""
+                    var waypoints = 0
+                    var distance = 0
+                    var routeKey = ""
+                    var waypointNames: [String] = []
+                    
+                    do {
+                        // Try to generate a route, excluding previously used POIs
+                        let result = try await mapsService.generateLocalRoute(
+                            from: userLocation.coordinate,
+                            targetDurationMinutes: duration,
+                            difficulty: nil,
+                            excludePlaceIds: excludedPlaceIds,
+                            prefetchedPOIs: pois
+                        )
+                        
+                        if !result.places.isEmpty && result.durationSeconds > 0 {
+                            actualMin = result.durationSeconds / 60
+                            waypoints = result.places.count
+                            distance = result.distanceMeters
+                            waypointNames = result.places.map { $0.name }
+                            
+                            // Add these POIs to exclusion list for next iteration
+                            for place in result.places {
+                                excludedPlaceIds.insert(place.placeId)
+                            }
+                            
+                            // Create a unique key for this route
+                            let firstPOI = result.places.first?.name.prefix(10) ?? "?"
+                            routeKey = "\(distance)m_\(waypoints)wp_\(firstPOI)"
+                            
+                            // Calculate accuracy as percentage of target
+                            accuracy = Double(actualMin) / Double(duration) * 100
+                            
+                            let isDuplicate = seenRouteKeys.contains(routeKey)
+                            if accuracy >= 80 && accuracy <= 120 {
+                                status = isDuplicate ? "🔁" : "✅"
+                            } else if accuracy >= 70 && accuracy <= 130 {
+                                status = isDuplicate ? "🔁" : "⚠️"
+                            } else if accuracy < 70 {
+                                status = "📉"
+                            } else {
+                                status = "📈"
+                            }
+                            
+                            seenRouteKeys.insert(routeKey)
+                            consecutiveFailures = 0
+                            totalRoutesGenerated += 1
+                        } else {
+                            status = "❌"
+                            consecutiveFailures += 1
+                        }
+                    } catch {
+                        consecutiveFailures += 1
+                        let errorMsg = error.localizedDescription
+                        if errorMsg.contains("rate") || errorMsg.contains("Rate") {
+                            status = "🚫"
+                        } else if errorMsg.contains("No route") || errorMsg.contains("no route") {
+                            status = "🔚"  // No more routes possible
+                            break
+                        } else {
+                            status = "💥"
+                        }
+                    }
+                    
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    
+                    if !waypointNames.isEmpty {
+                        routesForThisDuration.append((routeNum: routeNum, actual: actualMin, time: elapsed, accuracy: accuracy, status: status, waypoints: waypoints, distance: distance, routeKey: routeKey, waypointNames: waypointNames))
+                        allResults.append((duration: duration, routeNum: routeNum, actual: actualMin, time: elapsed, accuracy: accuracy, status: status, waypoints: waypoints, distance: distance, routeKey: routeKey, waypointNames: waypointNames))
+                        
+                        // Update UI in real-time
+                        await MainActor.run {
+                            let timeStr = elapsed < 1 ? String(format: "%dms", Int(elapsed * 1000)) : String(format: "%.1fs", elapsed)
+                            let accStr = String(format: "%.0f%%", accuracy)
+                            let namesShort = waypointNames.prefix(3).map { String($0.prefix(15)) }.joined(separator: " → ")
+                            let moreIndicator = waypointNames.count > 3 ? " +\(waypointNames.count - 3)" : ""
+                            
+                            routeTestResults += "  \(status) Route \(routeNum): \(actualMin)min (\(accStr)) \(timeStr)\n"
+                            routeTestResults += "     📍 \(namesShort)\(moreIndicator)\n"
+                        }
+                    }
+                    
+                    // Small delay between routes
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                
+                // Summary for this duration
+                await MainActor.run {
+                    let validRoutes = routesForThisDuration.filter { $0.status == "✅" || $0.status == "⚠️" }.count
+                    routeTestResults += "  📊 \(validRoutes)/\(routesForThisDuration.count) valid routes\n"
+                }
+            }
+            
+            // Keep existing summary generation but update counts
+            let results = allResults  // For compatibility with existing summary code
+            
+            // Generate detailed summary
+            await MainActor.run {
+                routeTestResults += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                routeTestResults += "📊 SUMMARY\n"
+                routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                
+                let successful = results.filter { $0.status == "✅" }.count
+                let marginal = results.filter { $0.status == "⚠️" }.count
+                let tooShort = results.filter { $0.status == "📉" }.count
+                let tooLong = results.filter { $0.status == "📈" }.count
+                let duplicates = results.filter { $0.status == "🔁" }.count
+                let failed = results.filter { $0.status == "❌" || $0.status == "💥" || $0.status == "🚫" }.count
+                let uniqueRoutes = seenRouteKeys.count
+                
+                let validResults = results.filter { $0.accuracy > 0 }
+                let avgAccuracy = validResults.isEmpty ? 0 : validResults.map { $0.accuracy }.reduce(0, +) / Double(validResults.count)
+                let avgTime = results.map { $0.time }.reduce(0, +) / Double(results.count)
+                
+                routeTestResults += "\n📊 TOTAL ROUTES GENERATED: \(totalRoutesGenerated)\n"
+                routeTestResults += "🎯 UNIQUE ROUTES: \(uniqueRoutes)\n"
+                routeTestResults += "🔁 Duplicates:    \(duplicates)\n\n"
+                routeTestResults += "BY ACCURACY:\n"
+                routeTestResults += "✅ On-target (80-120%): \(successful)\n"
+                routeTestResults += "⚠️ Marginal (70-130%):  \(marginal)\n"
+                routeTestResults += "📉 Too short (<70%):    \(tooShort)\n"
+                routeTestResults += "📈 Too long (>130%):    \(tooLong)\n"
+                routeTestResults += "❌ Failed/Error:        \(failed)\n"
+                
+                routeTestResults += "\n📈 ACCURACY STATS:\n"
+                routeTestResults += "   Average: \(String(format: "%.0f", avgAccuracy))% of target\n"
+                
+                if !validResults.isEmpty {
+                    let minAcc = validResults.map { $0.accuracy }.min() ?? 0
+                    let maxAcc = validResults.map { $0.accuracy }.max() ?? 0
+                    routeTestResults += "   Range: \(String(format: "%.0f", minAcc))% - \(String(format: "%.0f", maxAcc))%\n"
+                }
+                
+                routeTestResults += "\n⏱️ SPEED STATS:\n"
+                routeTestResults += "   Average: \(String(format: "%.1f", avgTime))s per route\n"
+                
+                let slowRoutes = results.filter { $0.time > 5 }
+                if !slowRoutes.isEmpty {
+                    routeTestResults += "   Slow (>5s): \(slowRoutes.map { "\($0.duration)min" }.joined(separator: ", "))\n"
+                }
+                
+                let fastRoutes = results.filter { $0.time < 1 }
+                if !fastRoutes.isEmpty {
+                    routeTestResults += "   Fast (<1s): \(fastRoutes.map { "\($0.duration)min" }.joined(separator: ", "))\n"
+                }
+                
+                // Show duplicates (routes reusing same path)
+                let duplicateResults = results.filter { $0.status == "🔁" }
+                if !duplicateResults.isEmpty {
+                    routeTestResults += "\n🔁 DUPLICATE ROUTES (same path reused):\n"
+                    for r in duplicateResults {
+                        routeTestResults += "   \(r.duration)min is same as another route (\(r.distance)m, \(r.waypoints)wp)\n"
+                    }
+                }
+                
+                // Detailed breakdown for problematic routes
+                let problematic = results.filter { ($0.status != "✅" && $0.status != "🔁") && $0.accuracy > 0 }
+                if !problematic.isEmpty {
+                    routeTestResults += "\n⚠️ ROUTES NEEDING ATTENTION:\n"
+                    for r in problematic {
+                        let diff = r.actual - r.duration
+                        let diffStr = diff >= 0 ? "+\(diff)" : "\(diff)"
+                        routeTestResults += "   \(r.duration)min → \(r.actual)min (\(diffStr)min, \(String(format: "%.0f", r.accuracy))%)\n"
+                    }
+                }
+                
+                routeTestResults += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                routeTestResults += "🕐 Test completed: \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium))\n"
+                
+                isRunningRouteTest = false
+                showRouteTestResults = true
+            }
+        }
     }
     
     func createMarkersFromPlaces(_ places: [PlaceResult], origin: CLLocationCoordinate2D) -> [QRMarker] {

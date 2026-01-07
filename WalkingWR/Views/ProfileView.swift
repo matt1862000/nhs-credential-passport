@@ -2035,7 +2035,7 @@ struct SettingsView: View {
                 
                 // Care Opinion Feedback Section
                 Section {
-                    Link(destination: URL(string: "https://www.careopinion.org.uk")!) {
+                    Link(destination: URL(string: "https://www.careopinion.org.uk/opinions?nacs=TAH")!) {
                         VStack(spacing: 12) {
                             HStack {
                                 ZStack {
