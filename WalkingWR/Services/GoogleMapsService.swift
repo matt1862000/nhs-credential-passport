@@ -1809,9 +1809,10 @@ class GoogleMapsService: ObservableObject {
         // Sort by distance from route (closest first - these add least time)
         poisNearRoute.sort { $0.distanceFromRoute < $1.distanceFromRoute }
         
-        // MINIMUM DISTANCE: Waypoints should be spaced ~5 min of walking apart
-        // At ~80m/min walking speed, 5 min = 400m minimum spacing
-        let minWaypointDistance: Double = 350  // Slightly less than 5 min to allow flexibility
+        // MINIMUM DISTANCE: Waypoints should be spaced ~3-4 min of walking apart
+        // At ~80m/min walking speed, 3 min = 240m minimum spacing
+        // Lowered from 350m to allow more POI options
+        let minWaypointDistance: Double = 200  // ~2.5 min walking, more flexible
         
         // Start with the existing route and add waypoints ONE AT A TIME
         var currentRoute = existingRoute
@@ -2010,20 +2011,21 @@ class GoogleMapsService: ObservableObject {
         let maxPercent: Double
         
         if isQuickMode {
-            // QUICK mode: use proper tolerance range (not just up to 100%)
+            // QUICK mode: 70-130% to catch more routes on first try
+            // Better to show a slightly off route than keep searching
             if isEdgeCase {
-                minPercent = 0.75  // Edge cases: 75-125%
-                maxPercent = 1.25
+                minPercent = 0.65  // Edge cases: more flexible (65-140%)
+                maxPercent = 1.40
             } else {
-                minPercent = 0.80  // Standard: 80-120%
-                maxPercent = 1.20
+                minPercent = 0.70  // Standard: 70-130%
+                maxPercent = 1.30
             }
         } else if expandedSearch {
             minPercent = 0.40  // Very flexible during retry
-            maxPercent = 1.50
+            maxPercent = 1.60  // Allow longer routes
         } else {
             minPercent = 0.50  // Systematic retry
-            maxPercent = 1.30
+            maxPercent = 1.40
         }
         
         let minAcceptableMinutes = max(1, Int(Double(targetDurationMinutes) * minPercent))
@@ -2086,42 +2088,36 @@ class GoogleMapsService: ObservableObject {
         let routeMethod: RouteMethod
         var dynamicMaxWaypoints: Int  // var: can be increased as fallback for short routes
         
-        // Waypoints spaced ~5 mins apart: N waypoints = N+1 segments
-        // Example: 20min = 4 segments of 5min → 3 waypoints between them
-        // Tier caps ensure routes don't get too complex
-        // MINIMUM waypoints enforced to avoid reusing shorter routes
+        // FLEXIBLE WAYPOINT TIERS: Allow fewer waypoints, ensure routes are achievable
+        // The algorithm tries more waypoints first, falls back to fewer if needed
         var minWaypointsForTier: Int
+        
         switch targetDurationMinutes {
         case 5...10:
-            routeMethod = .endpointOnly  // Very short: simple out-and-back
-            dynamicMaxWaypoints = 2  // 5-10min → 1-2 waypoints
+            routeMethod = .endpointOnly
+            dynamicMaxWaypoints = 2
             minWaypointsForTier = 1
-            print("🗺️ 📋 Method: ENDPOINT-ONLY (5-10min tier), max \(dynamicMaxWaypoints) waypoints")
-        case 11...15:
-            routeMethod = .endpointOnly  // Short but needs distinct route from 10min
-            dynamicMaxWaypoints = 3  // 11-15min → 2-3 waypoints (MUST be 2+ to differ from 10min)
-            minWaypointsForTier = 2  // Force 2+ waypoints
-            print("🗺️ 📋 Method: ENDPOINT-ONLY (11-15min tier), min 2, max \(dynamicMaxWaypoints) waypoints")
-        case 16...25:
-            routeMethod = .endpointOnly  // Short: endpoint-first is more reliable
-            dynamicMaxWaypoints = 4  // 16-25min → 2-4 waypoints (segments of 4-6min)
+            print("🗺️ 📋 Tier 5-10min: 1-\(dynamicMaxWaypoints) waypoints")
+        case 11...20:
+            routeMethod = .endpointOnly
+            dynamicMaxWaypoints = 3
+            minWaypointsForTier = 1  // Lowered: allow 1 waypoint if needed
+            print("🗺️ 📋 Tier 11-20min: 1-\(dynamicMaxWaypoints) waypoints")
+        case 21...30:
+            routeMethod = .endpointOnly
+            dynamicMaxWaypoints = 4
             minWaypointsForTier = 2
-            print("🗺️ 📋 Method: ENDPOINT-ONLY (16-25min tier), max \(dynamicMaxWaypoints) waypoints")
-        case 26...45:
-            routeMethod = .endpointWithEnhancement  // Medium: endpoint + add waypoints if under target
-            dynamicMaxWaypoints = 8  // 26-45min → 5-8 waypoints (segments of 4-5min)
-            minWaypointsForTier = 4
-            print("🗺️ 📋 Method: ENDPOINT+ENHANCE (26-45min tier), max \(dynamicMaxWaypoints) waypoints")
-        case 46...55:
-            routeMethod = .endpointWithEnhancement  // Medium-long
-            dynamicMaxWaypoints = 10  // 46-55min → 8-10 waypoints
-            minWaypointsForTier = 7
-            print("🗺️ 📋 Method: ENDPOINT+ENHANCE (46-55min tier), max \(dynamicMaxWaypoints) waypoints")
-        default:  // 56-60+ min
-            routeMethod = .loopFallback  // Long: can fall back to loop-based with angular diversity
-            dynamicMaxWaypoints = 12  // 56-60min → 10-12 waypoints (segments of 5min)
-            minWaypointsForTier = 10  // Force many waypoints to avoid single long legs
-            print("🗺️ 📋 Method: LOOP-FALLBACK (56+min tier), min 10, max \(dynamicMaxWaypoints) waypoints")
+            print("🗺️ 📋 Tier 21-30min: 2-\(dynamicMaxWaypoints) waypoints")
+        case 31...45:
+            routeMethod = .endpointWithEnhancement
+            dynamicMaxWaypoints = 6
+            minWaypointsForTier = 2  // Lowered from 4
+            print("🗺️ 📋 Tier 31-45min: 2-\(dynamicMaxWaypoints) waypoints")
+        default:  // 46-60+ min
+            routeMethod = .endpointWithEnhancement
+            dynamicMaxWaypoints = 8
+            minWaypointsForTier = 3  // Lowered from 7-10
+            print("🗺️ 📋 Tier 46+min: 3-\(dynamicMaxWaypoints) waypoints")
         }
         
         // Step 1: Find nearby POIs - use pre-fetched if available (faster!)
@@ -2938,7 +2934,126 @@ class GoogleMapsService: ObservableObject {
             return best
         }
         
+        // GUARANTEED FALLBACK: Create a simple out-and-back route if all else fails
+        // This ensures we ALWAYS return something rather than leaving the user waiting
+        print("🗺️ 🆘 Creating guaranteed fallback route...")
+        if let guaranteedRoute = try? await createGuaranteedFallbackRoute(
+            from: location,
+            targetDurationMinutes: targetDurationMinutes,
+            availablePOIs: places
+        ) {
+            let mins = guaranteedRoute.durationSeconds / 60
+            print("🗺️ ✓ Guaranteed fallback created: \(mins)min (target: \(targetDurationMinutes)min)")
+            return guaranteedRoute
+        }
+        
         throw GoogleMapsError.noRouteFound
+    }
+    
+    /// Creates a guaranteed simple route when complex generation fails
+    /// Uses the closest POI at roughly half the target walking distance
+    private func createGuaranteedFallbackRoute(
+        from origin: CLLocationCoordinate2D,
+        targetDurationMinutes: Int,
+        availablePOIs: [PlaceResult]
+    ) async throws -> GeneratedRoute? {
+        guard !availablePOIs.isEmpty else {
+            print("🗺️ 🆘 No POIs available for fallback")
+            return nil
+        }
+        
+        // Target distance: half the walking distance (out and back)
+        // Walking ~80m/min, so 20min = 1600m total = 800m out
+        let targetOutDistance = Double(targetDurationMinutes) * 80.0 / 2.0
+        
+        print("🗺️ 🆘 Looking for POI ~\(Int(targetOutDistance))m away for out-and-back")
+        
+        // Find POI closest to target distance
+        let poisWithDistance = availablePOIs.map { poi -> (poi: PlaceResult, distance: Double, diff: Double) in
+            let dist = distanceBetween(origin, poi.coordinate)
+            let diff = abs(dist - targetOutDistance)
+            return (poi, dist, diff)
+        }
+        
+        let sorted = poisWithDistance.sorted { $0.diff < $1.diff }
+        
+        // Try POIs in order of how close they are to ideal distance
+        for candidate in sorted.prefix(5) {
+            let poi = candidate.poi
+            let poiDist = candidate.distance
+            
+            // Skip if too close (need some walking distance)
+            if poiDist < 50 {
+                continue
+            }
+            
+            print("🗺️ 🆘 Trying \(poi.name) at \(Int(poiDist))m...")
+            
+            do {
+                // Get actual route directions (simple out-and-back: origin → POI → origin)
+                let directions = try await getWalkingDirections(
+                    origin: origin,
+                    destination: origin,
+                    waypoints: [poi.coordinate]
+                )
+                
+                // Calculate total duration from legs
+                let totalDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                let durationMinutes = totalDuration / 60
+                
+                // Accept if within 40-160% of target (very flexible for fallback)
+                let minAccept = max(2, targetDurationMinutes * 4 / 10)  // 40%
+                let maxAccept = targetDurationMinutes * 16 / 10  // 160%
+                
+                if durationMinutes >= minAccept && durationMinutes <= maxAccept {
+                    print("🗺️ 🆘 ✓ Found viable out-and-back: \(durationMinutes)min")
+                    
+                    return GeneratedRoute(
+                        places: [poi],
+                        polyline: directions.overviewPolyline.points,
+                        distanceMeters: totalDistance,
+                        durationSeconds: totalDuration,
+                        legs: directions.legs
+                    )
+                } else {
+                    print("🗺️ 🆘 ✗ \(poi.name): \(durationMinutes)min not in \(minAccept)-\(maxAccept)min range")
+                }
+            } catch {
+                print("🗺️ 🆘 ✗ Route to \(poi.name) failed: \(error.localizedDescription)")
+                continue
+            }
+        }
+        
+        // Absolute last resort: return the first reachable POI regardless of time
+        for candidate in sorted.prefix(10) {
+            let poi = candidate.poi
+            print("🗺️ 🆘 Last resort: trying \(poi.name)")
+            
+            do {
+                let directions = try await getWalkingDirections(
+                    origin: origin,
+                    destination: origin,
+                    waypoints: [poi.coordinate]
+                )
+                
+                let totalDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                print("🗺️ 🆘 ✓ Last resort route: \(totalDuration/60)min")
+                
+                return GeneratedRoute(
+                    places: [poi],
+                    polyline: directions.overviewPolyline.points,
+                    distanceMeters: totalDistance,
+                    durationSeconds: totalDuration,
+                    legs: directions.legs
+                )
+            } catch {
+                continue  // Try next POI
+            }
+        }
+        
+        return nil
     }
     
     /// Calculate how much a route backtracks on itself (0.0 = perfect loop, 1.0 = complete out-and-back)
