@@ -148,6 +148,158 @@ class GoogleMapsService: ObservableObject {
         }
     }
     
+    // MARK: - Recently Used POI Tracking
+    // Tracks POIs used in recent routes to encourage variety
+    // Key: POI place ID → Value: timestamp when last used
+    private var recentlyUsedPOIs: [String: Date] = [:]
+    private let recentPOIPenaltyWindow: TimeInterval = 300  // 5 minutes
+    
+    /// Record a POI as recently used
+    func markPOIAsUsed(_ placeId: String) {
+        recentlyUsedPOIs[placeId] = Date()
+        
+        // Clean up old entries
+        let cutoff = Date().addingTimeInterval(-recentPOIPenaltyWindow * 2)
+        recentlyUsedPOIs = recentlyUsedPOIs.filter { $0.value > cutoff }
+    }
+    
+    /// Get penalty for recently used POI (0.0 = no penalty, 1.0 = max penalty)
+    private func recentUsePenalty(for placeId: String) -> Double {
+        guard let lastUsed = recentlyUsedPOIs[placeId] else { return 0 }
+        let secondsAgo = Date().timeIntervalSince(lastUsed)
+        
+        if secondsAgo < 60 { return 0.9 }       // Used <1 min ago: heavy penalty
+        if secondsAgo < 180 { return 0.6 }      // Used <3 min ago: medium penalty
+        if secondsAgo < recentPOIPenaltyWindow { return 0.3 }  // Used <5 min ago: light penalty
+        return 0  // Old enough, no penalty
+    }
+    
+    // MARK: - POI Walkability Score
+    // Scores POIs by how pleasant they are as walking waypoints
+    // Higher score = better for walking routes
+    
+    /// Calculate walkability score for a POI based on its type
+    /// Returns score from -2 (avoid) to +2 (prefer)
+    private func walkabilityScore(for poi: PlaceResult) -> Double {
+        let types = Set(poi.types ?? [])
+        
+        // Excellent walking destinations (+2)
+        let excellent = Set(["park", "playground", "nature_reserve", "garden", "trail",
+                            "hiking_area", "botanical_garden", "national_park"])
+        if !types.isDisjoint(with: excellent) { return 2.0 }
+        
+        // Good walking destinations (+1)
+        let good = Set(["cafe", "restaurant", "bakery", "landmark", "museum",
+                       "art_gallery", "church", "historic_site", "monument",
+                       "library", "community_center", "sports_club", "pub"])
+        if !types.isDisjoint(with: good) { return 1.0 }
+        
+        // Avoid for walking (-1)
+        let avoid = Set(["gas_station", "car_wash", "car_repair", "car_dealer",
+                        "parking", "atm", "bank", "insurance_agency"])
+        if !types.isDisjoint(with: avoid) { return -1.0 }
+        
+        // Strongly avoid (-2)
+        let stronglyAvoid = Set(["industrial", "warehouse", "storage", "factory",
+                                "transit_station", "bus_station", "train_station"])
+        if !types.isDisjoint(with: stronglyAvoid) { return -2.0 }
+        
+        // Neutral (0)
+        return 0.0
+    }
+    
+    // MARK: - Pre-Filter POIs by Estimated Duration
+    // Estimates round-trip time BEFORE expensive routing API calls
+    // Rejects POIs that would create routes way outside target duration
+    
+    /// Estimate round-trip walking time to a POI (in minutes)
+    /// Uses straight-line distance × road factor × 2 (round trip)
+    private func estimateRoundTripMinutes(from origin: CLLocationCoordinate2D, to poi: PlaceResult) -> Int {
+        let straightLineDistance = distanceBetween(origin, poi.coordinate)
+        
+        // Road factor: actual walking distance is typically 1.3-1.5x straight-line
+        // Use 1.4 as conservative estimate
+        let roadFactor = 1.4
+        let estimatedWalkingDistance = straightLineDistance * roadFactor * 2  // Round trip
+        
+        // Walking speed (use adaptive if available)
+        let walkingSpeed = Double(adaptiveWalkingSpeed)  // m/min
+        
+        let estimatedMinutes = Int(estimatedWalkingDistance / walkingSpeed)
+        return estimatedMinutes
+    }
+    
+    /// Pre-filter POIs to only include those within reasonable duration range
+    /// This prevents "Springwood Cott" (30min round-trip) from being considered for 5min routes
+    func preFilterPOIsByDuration(
+        _ pois: [PlaceResult],
+        origin: CLLocationCoordinate2D,
+        targetDurationMinutes: Int
+    ) -> [PlaceResult] {
+        // Accept POIs where estimated round-trip is 30-180% of target
+        // This is wide because we filter more precisely later
+        let minDuration = max(2, targetDurationMinutes * 30 / 100)  // 30% of target
+        let maxDuration = targetDurationMinutes * 180 / 100  // 180% of target
+        
+        var accepted: [PlaceResult] = []
+        var rejected: [(name: String, estimated: Int, reason: String)] = []
+        
+        for poi in pois {
+            let estimated = estimateRoundTripMinutes(from: origin, to: poi)
+            
+            if estimated < minDuration {
+                rejected.append((poi.name, estimated, "too short"))
+            } else if estimated > maxDuration {
+                rejected.append((poi.name, estimated, "too long"))
+            } else {
+                accepted.append(poi)
+            }
+        }
+        
+        if !rejected.isEmpty {
+            let tooShort = rejected.filter { $0.reason == "too short" }.count
+            let tooLong = rejected.filter { $0.reason == "too long" }.count
+            print("🎯 ⏱️ PRE-FILTER: Kept \(accepted.count)/\(pois.count) POIs for \(targetDurationMinutes)min target")
+            if tooShort > 0 {
+                print("   ❌ Too short (<\(minDuration)min): \(tooShort) POIs")
+            }
+            if tooLong > 0 {
+                let examples = rejected.filter { $0.reason == "too long" }.prefix(3)
+                    .map { "\($0.name) (~\($0.estimated)min)" }.joined(separator: ", ")
+                print("   ❌ Too long (>\(maxDuration)min): \(tooLong) POIs (e.g., \(examples))")
+            }
+        }
+        
+        return accepted
+    }
+    
+    /// Calculate combined POI score for ranking
+    /// Higher score = better candidate for route
+    func calculatePOIScore(
+        poi: PlaceResult,
+        origin: CLLocationCoordinate2D,
+        idealDistance: Double,
+        targetDurationMinutes: Int
+    ) -> Double {
+        let distance = distanceBetween(origin, poi.coordinate)
+        
+        // Base score: how close to ideal distance (0-1, 1 = perfect)
+        let distanceDeviation = abs(distance - idealDistance) / idealDistance
+        let distanceScore = max(0, 1.0 - distanceDeviation * 0.5)
+        
+        // Walkability bonus (-2 to +2)
+        let walkability = walkabilityScore(for: poi)
+        let walkabilityBonus = walkability * 0.15  // ±0.3 max impact
+        
+        // Recently used penalty (0 to 0.9)
+        let recentPenalty = recentUsePenalty(for: poi.placeId)
+        
+        // Combined score
+        let finalScore = distanceScore + walkabilityBonus - recentPenalty
+        
+        return finalScore
+    }
+    
     // MARK: - Adaptive Walking Speed
     // Learns user's actual walking pace from completed walks
     // Uses moving average, clamped to 65-90 m/min
@@ -2146,6 +2298,11 @@ class GoogleMapsService: ObservableObject {
             print("🗺️ Excluded \(beforeCount - places.count) previously shown POIs, \(places.count) remaining")
         }
         
+        // 🎯 PRE-FILTER: Remove POIs that would create routes WAY outside target duration
+        // This prevents "Springwood Cott" (30min round-trip) from being tried for 5min routes
+        let preFilteredPlaces = preFilterPOIsByDuration(places, origin: location, targetDurationMinutes: targetDurationMinutes)
+        places = preFilteredPlaces
+        
         // For longer routes OR short routes with few POIs, do additional searches at different points
         // Short routes in dense areas need POIs at BETTER distances, not just more nearby ones
         let needsMorePOIs = places.count < desiredSpots * 2 || 
@@ -2714,7 +2871,8 @@ class GoogleMapsService: ObservableObject {
                 from: places,
                 origin: location,
                 idealWaypointDistance: idealSegmentDistance,
-                difficulty: difficulty
+                difficulty: difficulty,
+                targetDurationMinutes: targetDurationMinutes
             )
             
             // TIME-BASED PRE-FILTER: Remove candidates whose one-way time exceeds half target + 1 min
@@ -2906,6 +3064,11 @@ class GoogleMapsService: ObservableObject {
             let finalMins = selected.durationSeconds / 60
             print("🗺️ ✓ SUCCESS! Selected: \(finalMins)min, \(selected.places.count) POIs (target: \(targetDurationMinutes)min)")
             
+            // Mark POIs as recently used for variety in future routes
+            for place in selected.places {
+                markPOIAsUsed(place.placeId)
+            }
+            
             return selected
         }
         
@@ -2929,6 +3092,11 @@ class GoogleMapsService: ObservableObject {
                 print("🗺️ ⚠️ Returning longer route: \(mins)min (target: \(targetDurationMinutes)min)")
             }
             
+            // Mark POIs as recently used for variety
+            for place in best.places {
+                markPOIAsUsed(place.placeId)
+            }
+            
             // Note: Google fallback is handled separately in generateLocalRouteWithGoogleFallback
             // This function just returns the best MapKit route
             return best
@@ -2944,6 +3112,12 @@ class GoogleMapsService: ObservableObject {
         ) {
             let mins = guaranteedRoute.durationSeconds / 60
             print("🗺️ ✓ Guaranteed fallback created: \(mins)min (target: \(targetDurationMinutes)min)")
+            
+            // Mark POIs as recently used for variety
+            for place in guaranteedRoute.places {
+                markPOIAsUsed(place.placeId)
+            }
+            
             return guaranteedRoute
         }
         
@@ -3268,7 +3442,8 @@ class GoogleMapsService: ObservableObject {
     /// Select candidate waypoints sorted by preference
     /// Difficulty affects order: easy prefers closer, hard prefers further (within reasonable range)
     /// Uses ELASTIC windows: expands range if not enough candidates found
-    private func selectCandidateWaypoints(from places: [PlaceResult], origin: CLLocationCoordinate2D, idealWaypointDistance: Int, difficulty: RouteDifficulty?, minRequired: Int = 3) -> [PlaceResult] {
+    /// Now includes walkability scoring and recent-use penalty
+    private func selectCandidateWaypoints(from places: [PlaceResult], origin: CLLocationCoordinate2D, idealWaypointDistance: Int, difficulty: RouteDifficulty?, targetDurationMinutes: Int = 20, minRequired: Int = 3) -> [PlaceResult] {
         let idealDistance = Double(idealWaypointDistance)
         
         // Excluded types
@@ -3368,34 +3543,47 @@ class GoogleMapsService: ObservableObject {
             print("🗺️ Sorting: HARD - preferring further POIs")
             
         case .moderate, .none:
-            // Moderate/None: Select POIs that are well-distributed angularly for better loops
-            // Group POIs by direction (8 sectors of 45 degrees each)
-            var sectors: [[PlaceResult]] = Array(repeating: [], count: 8)
-            for item in placesWithAngles {
-                let sectorIndex = Int((item.angle + 180) / 45) % 8
-                sectors[sectorIndex].append(item.place)
+            // Moderate/None: Use combined scoring with walkability + angular diversity
+            // Score each POI: distance fit + walkability bonus - recent use penalty
+            let scoredPOIs = placesWithAngles.map { item -> (place: PlaceResult, score: Double, angle: Double) in
+                let combinedScore = calculatePOIScore(
+                    poi: item.place,
+                    origin: origin,
+                    idealDistance: idealDistance,
+                    targetDurationMinutes: targetDurationMinutes
+                )
+                return (item.place, combinedScore, item.angle)
             }
             
-            // Pick best POI from each sector (closest to ideal distance)
+            // Group by 8 sectors for angular diversity
+            var sectors: [[(place: PlaceResult, score: Double)]] = Array(repeating: [], count: 8)
+            for item in scoredPOIs {
+                let sectorIndex = Int((item.angle + 180) / 45) % 8
+                sectors[sectorIndex].append((item.place, item.score))
+            }
+            
+            // Pick BEST SCORED POI from each sector (not just closest)
             var diverseSelection: [PlaceResult] = []
             for sector in sectors {
-                if let best = sector.min(by: { p1, p2 in
-                    abs(distanceBetween(origin, p1.coordinate) - idealDistance) <
-                    abs(distanceBetween(origin, p2.coordinate) - idealDistance)
-                }) {
-                    diverseSelection.append(best)
+                if let best = sector.max(by: { $0.score < $1.score }) {
+                    diverseSelection.append(best.place)
                 }
             }
             
-            // Then add remaining POIs sorted by ideal distance
+            // Then add remaining POIs sorted by score
             let diverseIds = Set(diverseSelection.map { $0.placeId })
-            let remaining = placesWithAngles
+            let remaining = scoredPOIs
                 .filter { !diverseIds.contains($0.place.placeId) }
-                .sorted { abs($0.distance - idealDistance) < abs($1.distance - idealDistance) }
+                .sorted { $0.score > $1.score }
                 .map { $0.place }
             
             sorted = diverseSelection + remaining
-            print("🗺️ Sorting: MODERATE - preferring angular diversity for better loops (\(diverseSelection.count) sectors covered)")
+            
+            // Log top picks with their scores
+            let topPicks = scoredPOIs.sorted { $0.score > $1.score }.prefix(3)
+            let pickLog = topPicks.map { "\($0.place.name) (\(String(format: "%.2f", $0.score)))" }.joined(separator: ", ")
+            print("🗺️ Sorting: SMART - walkability + variety scoring (\(diverseSelection.count) sectors)")
+            print("🗺️ Top picks: \(pickLog)")
         }
         
         print("🗺️ Candidate waypoints: \(sorted.count) (ideal: \(Int(idealDistance))m, range: \(Int(minDistance))-\(Int(maxDistance))m)")
