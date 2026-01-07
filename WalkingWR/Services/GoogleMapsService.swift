@@ -257,18 +257,24 @@ class GoogleMapsService: ObservableObject {
         var allResults: [PlaceResult] = []
         var seenPlaceIds = Set<String>()
         
+        print("═══════════════════════════════════════════════════════════")
+        print("🔍 POI FETCH START - Location: (\(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude)))")
+        print("🔍 Search radius: \(radiusMeters)m")
+        print("═══════════════════════════════════════════════════════════")
+        
         // 🎯 PRIORITY 1: Check cached POI data
         if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: location) {
-            print("💰 Using cached POI data - \(cachedPOIs.count) POIs")
+            print("💰 CACHE HIT! Using \(cachedPOIs.count) cached POIs")
             allResults = cachedPOIs
             for poi in allResults {
                 seenPlaceIds.insert(poi.placeId)
             }
         } else {
-            // No cache - call Google API if we have a valid key
-            print("🔄 No cached POIs - fetching from Google API...")
+            print("📭 CACHE MISS - No cached POIs within 1km")
             
+            // No cache - call Google API if we have a valid key
             if !apiKey.isEmpty {
+                print("🌐 GOOGLE PLACES API (New) - API key present, calling...")
                 let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
                 for poi in googlePOIs {
                     if !seenPlaceIds.contains(poi.placeId) {
@@ -276,15 +282,19 @@ class GoogleMapsService: ObservableObject {
                         allResults.append(poi)
                     }
                 }
-                print("🗺️ Google API: Found \(googlePOIs.count) POIs")
+                print("🌐 GOOGLE RESULT: \(googlePOIs.count) POIs found")
+                if googlePOIs.isEmpty {
+                    print("⚠️ Google returned 0 POIs - check API console for errors")
+                }
             } else {
-                print("⚠️ No Google API key - using Apple Maps only")
+                print("⚠️ GOOGLE SKIPPED - No API key configured")
             }
         }
         
         // 🍎 PRIORITY 2: Always supplement with Apple Maps (FREE!)
-        print("🍎 Supplementing with Apple Maps (FREE!)...")
+        print("🍎 APPLE MAPS - Searching (FREE, no limits)...")
         let applePOIs = await searchAppleMapsForPOIs(location: location, radiusMeters: radiusMeters)
+        print("🍎 APPLE MAPS - Found \(applePOIs.count) POIs")
         var appleAdded = 0
         for poi in applePOIs {
             let isDuplicate = allResults.contains { existing in
@@ -296,9 +306,7 @@ class GoogleMapsService: ObservableObject {
                 appleAdded += 1
             }
         }
-        if appleAdded > 0 {
-            print("🍎 Added \(appleAdded) unique Apple Maps POIs (total: \(allResults.count))")
-        }
+        print("🍎 APPLE MAPS - Added \(appleAdded) unique POIs (after dedup)")
         
         // Note: OpenStreetMap POIs not used - Google cached daily + Apple Maps is sufficient
         // OSRM still used for routing when MapKit is rate-limited
@@ -306,8 +314,14 @@ class GoogleMapsService: ObservableObject {
         // 💾 Cache combined results for next time
         if !allResults.isEmpty {
             POICacheService.shared.cachePOIs(allResults, for: location)
-            print("💾 Cached \(allResults.count) POIs (Google + Apple + OSM) - valid for 24 hours")
         }
+        
+        print("═══════════════════════════════════════════════════════════")
+        print("📊 POI FETCH COMPLETE - Total: \(allResults.count) POIs")
+        print("   📍 Google: \(allResults.filter { !$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") }.count)")
+        print("   🍎 Apple:  \(allResults.filter { $0.placeId.hasPrefix("apple_") }.count)")
+        print("   🗺️ OSM:    \(allResults.filter { $0.placeId.hasPrefix("osm_") }.count)")
+        print("═══════════════════════════════════════════════════════════")
         
         return allResults
     }
@@ -387,6 +401,11 @@ class GoogleMapsService: ObservableObject {
         var allResults: [PlaceResult] = []
         var seenPlaceIds = Set<String>()
         
+        print("🌐 GOOGLE NEW PLACES API - Searching \(placeTypesToSearch.count) categories...")
+        print("🌐 Categories: \(placeTypesToSearch.joined(separator: ", "))")
+        print("🌐 Endpoint: places.googleapis.com/v1/places:searchNearby")
+        print("🌐 Field Mask: places.id, displayName, location, formattedAddress, types (Basic only)")
+        
         // Search each type in parallel using TaskGroup
         await withTaskGroup(of: [PlaceResult].self) { group in
             for placeType in placeTypesToSearch {
@@ -398,7 +417,7 @@ class GoogleMapsService: ObservableObject {
                             type: placeType
                         )
                     } catch {
-                        print("🗺️ Search failed for type '\(placeType)': \(error)")
+                        // Error already logged in searchSingleType
                         return []
                     }
                 }
@@ -415,7 +434,7 @@ class GoogleMapsService: ObservableObject {
             }
         }
         
-        print("🗺️ Google API: Found \(allResults.count) unique POIs from \(placeTypesToSearch.count) categories")
+        print("🌐 GOOGLE COMPLETE: \(allResults.count) unique POIs from \(placeTypesToSearch.count) categories")
         return allResults
     }
     
@@ -457,6 +476,7 @@ class GoogleMapsService: ObservableObject {
         let (data, response) = try await session.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
+            print("   ❌ [\(type)] No HTTP response")
             throw GoogleMapsError.serverError
         }
         
@@ -464,14 +484,22 @@ class GoogleMapsService: ObservableObject {
             // Try to parse error message
             if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let error = errorJson["error"] as? [String: Any],
-               let message = error["message"] as? String {
-                print("🗺️ New Places API error: \(message)")
+               let message = error["message"] as? String,
+               let code = error["code"] as? Int {
+                print("   ❌ [\(type)] HTTP \(httpResponse.statusCode) - Code \(code): \(message)")
+            } else {
+                print("   ❌ [\(type)] HTTP \(httpResponse.statusCode) - Unknown error")
             }
             throw GoogleMapsError.serverError
         }
         
         // Parse new API response format
         let newPlacesResponse = try JSONDecoder().decode(NewPlacesResponse.self, from: data)
+        let count = newPlacesResponse.places?.count ?? 0
+        
+        if count > 0 {
+            print("   ✓ [\(type)] → \(count) POIs")
+        }
         
         // Convert to PlaceResult format
         return newPlacesResponse.places?.map { place in
@@ -565,8 +593,10 @@ class GoogleMapsService: ObservableObject {
             "bed and breakfast"       // B&Bs, guest houses
         ]
         
-        print("🍎 Searching Apple Maps for \(searchQueries.count) categories (limit: 50/min)...")
+        print("🍎 APPLE MAPS - Starting search for \(searchQueries.count) categories")
+        print("🍎 Categories: \(searchQueries.prefix(10).joined(separator: ", "))... +\(max(0, searchQueries.count - 10)) more")
         
+        var queriesWithResults = 0
         for query in searchQueries {
             do {
                 let request = MKLocalSearch.Request()
@@ -605,12 +635,15 @@ class GoogleMapsService: ObservableObject {
                     )
                     allResults.append(placeResult)
                 }
+                if response.mapItems.count > 0 {
+                    queriesWithResults += 1
+                }
             } catch {
                 // Silently continue - some queries may fail
             }
         }
         
-        print("🍎 Apple Maps found \(allResults.count) POIs (FREE!)")
+        print("🍎 APPLE MAPS COMPLETE: \(allResults.count) POIs from \(queriesWithResults)/\(searchQueries.count) queries")
         return allResults
     }
     
@@ -651,8 +684,8 @@ class GoogleMapsService: ObservableObject {
         
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
-            
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 print("🗺️ OSM: Bad response")
                 return []
             }
@@ -1461,7 +1494,17 @@ class GoogleMapsService: ObservableObject {
         prefetchedPOIs: [PlaceResult]? = nil
     ) async throws -> GeneratedRoute {
         
+        print("╔══════════════════════════════════════════════════════════════╗")
+        print("║              🚶 ROUTE GENERATION STARTED                     ║")
+        print("╠══════════════════════════════════════════════════════════════╣")
+        print("║ Target Duration: \(targetDurationMinutes) minutes")
+        print("║ Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))")
+        print("║ Excluded POIs: \(excludePlaceIds.count)")
+        print("║ Prefetched POIs: \(prefetchedPOIs?.count ?? 0)")
+        print("╚══════════════════════════════════════════════════════════════╝")
+        
         // Stage 1: Random selection (current behavior)
+        print("\n📍 STAGE 1: Random Selection")
         do {
             let route = try await generateLocalRoute(
                 from: location,
@@ -1472,6 +1515,7 @@ class GoogleMapsService: ObservableObject {
                 useSystematicSelection: false
             )
             await MainActor.run { retryStatus = nil }
+            print("✅ STAGE 1 SUCCESS: \(route.durationSeconds / 60) min route with \(route.places.count) waypoints")
             return route
         } catch GoogleMapsError.rateLimited(let waitTime) {
             // Rate limited - wait and retry once
@@ -1484,6 +1528,7 @@ class GoogleMapsService: ObservableObject {
         }
         
         // Stage 2: Systematic selection with expanded search
+        print("\n📍 STAGE 2: Systematic Selection + Expanded Search")
         await MainActor.run { retryStatus = "Retrying with expanded search..." }
         do {
             let route = try await generateLocalRoute(
@@ -1496,6 +1541,7 @@ class GoogleMapsService: ObservableObject {
                 expandedSearch: true
             )
             await MainActor.run { retryStatus = nil }
+            print("✅ STAGE 2 SUCCESS: \(route.durationSeconds / 60) min route with \(route.places.count) waypoints")
             return route
         } catch GoogleMapsError.rateLimited(let waitTime) {
             // Rate limited - wait and continue
@@ -1507,6 +1553,7 @@ class GoogleMapsService: ObservableObject {
         }
         
         // Stage 3: Try shorter durations (drop 5 min at a time, but not below 5 min)
+        print("\n📍 STAGE 3: Fallback to Shorter Durations")
         for reducedDuration in stride(from: targetDurationMinutes - 5, through: 5, by: -5) {
             let currentDuration = reducedDuration  // Capture for concurrent access
             await MainActor.run { retryStatus = "Trying \(currentDuration) min route..." }
