@@ -732,11 +732,12 @@ struct GratitudeSection: View {
                 TextEditor(text: $gratitudeText)
                     .focused($isTextEditorFocused)
                     .frame(height: 100)
+                    .scrollContentBackground(.hidden)
+                    .foregroundColor(.primary)
                     .padding(12)
-                    .background(Color.softGray)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .scrollContentBackground(.hidden)  // iOS 16+ - hide default background
-                    .tint(.coralPink)  // Cursor color
+                    .background(Color(.tertiarySystemBackground))
+                    .cornerRadius(12)
+                    .tint(.coralPink)
                 
                 Button("Save Entry") {
                     if !gratitudeText.isEmpty {
