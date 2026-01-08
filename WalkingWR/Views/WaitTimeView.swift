@@ -577,7 +577,7 @@ struct ActiveWalkCard: View {
                     
                     RoundedRectangle(cornerRadius: 4)
                         .fill(Color.white)
-                        .frame(width: geometry.size.width * viewModel.walkSession.progress, height: 8)
+                        .frame(width: max(0, geometry.size.width * min(1, max(0, viewModel.walkSession.progress))), height: 8)
                 }
             }
             .frame(height: 8)

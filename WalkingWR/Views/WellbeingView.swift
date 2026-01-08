@@ -728,9 +728,12 @@ struct GratitudeSection: View {
                     .font(.bodyLarge)
                     .foregroundColor(.primary)
                 
-                // Ultra-minimal text input
+                // Text input with proper styling
                 TextField("Write your thoughts here...", text: $gratitudeText, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(3...6)
+                    .padding(12)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
                 
                 Button("Save Entry") {
                     if !gratitudeText.isEmpty {
