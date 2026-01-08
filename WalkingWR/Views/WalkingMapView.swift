@@ -472,38 +472,6 @@ struct EmbeddedWalkMapView: View {
                 )
             }
             
-            // v1.6.28: Motion permission explainer (v1.6.29b: Fixed dismissal)
-            if showMotionExplainer {
-                MotionPermissionExplainer(
-                    onEnable: {
-                        print("🔵 Enable tapped - dismissing explainer")
-                        showMotionExplainer = false
-                        print("🔵 showMotionExplainer = \(showMotionExplainer)")
-                        
-                        // Request Motion permission
-                        viewModel.healthKitService.requestMotionAuthorization { granted in
-                            print("🔵 Motion permission callback - granted: \(granted)")
-                            DispatchQueue.main.async {
-                                if granted {
-                                    print("🔵 Setting isStepTrackingEnabled = true")
-                                    isStepTrackingEnabled = true
-                                    viewModel.stepTrackingWasEnabled = true
-                                    UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
-                                    if let startTime = viewModel.walkSession.startTime {
-                                        viewModel.healthKitService.startObservingSteps(from: startTime)
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    onCancel: {
-                        print("🔵 Cancel tapped - dismissing explainer")
-                        showMotionExplainer = false
-                        print("🔵 showMotionExplainer = \(showMotionExplainer)")
-                    }
-                )
-                .zIndex(999) // Ensure it's on top
-            }
             
             // Intro overlay during camera animation
             if showingIntroOverlay {
@@ -542,6 +510,37 @@ struct EmbeddedWalkMapView: View {
             if shouldAutoEnableSteps {
                 isStepTrackingEnabled = true
             }
+        }
+        // v1.6.29c: Motion permission explainer as fullScreenCover for reliable dismissal
+        .fullScreenCover(isPresented: $showMotionExplainer) {
+            MotionPermissionExplainerSheet(
+                onEnable: {
+                    print("🔵 Enable tapped")
+                    showMotionExplainer = false
+                    
+                    // Request Motion permission after sheet dismisses
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        viewModel.healthKitService.requestMotionAuthorization { granted in
+                            print("🔵 Motion permission callback - granted: \(granted)")
+                            DispatchQueue.main.async {
+                                if granted {
+                                    print("🔵 Setting isStepTrackingEnabled = true")
+                                    isStepTrackingEnabled = true
+                                    viewModel.stepTrackingWasEnabled = true
+                                    UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
+                                    if let startTime = viewModel.walkSession.startTime {
+                                        viewModel.healthKitService.startObservingSteps(from: startTime)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                onCancel: {
+                    print("🔵 Cancel tapped")
+                    showMotionExplainer = false
+                }
+            )
         }
     }
     
@@ -1596,6 +1595,86 @@ struct MotionPermissionExplainer: View {
                     .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
             )
             .padding(.horizontal, 32)
+        }
+    }
+}
+
+// MARK: - Motion Permission Explainer Sheet (v1.6.29c)
+/// Sheet version of the Motion permission explainer for reliable presentation/dismissal
+struct MotionPermissionExplainerSheet: View {
+    let onEnable: () -> Void
+    let onCancel: () -> Void
+    
+    var body: some View {
+        ZStack {
+            // Background
+            Color(UIColor.systemBackground)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 24) {
+                Spacer()
+                
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(Color.tealAccent.opacity(0.15))
+                        .frame(width: 100, height: 100)
+                    
+                    Image(systemName: "figure.walk.motion")
+                        .font(.system(size: 44, weight: .semibold))
+                        .foregroundColor(.tealAccent)
+                }
+                
+                // Title
+                Text("Track Your Steps")
+                    .font(.title)
+                    .fontWeight(.bold)
+                
+                // Description
+                Text("We use Motion & Fitness to count steps during your walk. This data stays on your device.")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                
+                // Privacy note
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.fill")
+                        .font(.subheadline)
+                        .foregroundColor(.tealAccent)
+                    
+                    Text("Step data is processed locally")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.tealAccent.opacity(0.1))
+                .clipShape(Capsule())
+                
+                Spacer()
+                
+                // Buttons
+                VStack(spacing: 16) {
+                    Button(action: onEnable) {
+                        Text("Enable Step Tracking")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(Color.tealAccent)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    
+                    Button(action: onCancel) {
+                        Text("Not now")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 32)
+                .padding(.bottom, 40)
+            }
         }
     }
 }
