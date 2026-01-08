@@ -518,58 +518,65 @@ class GoogleMapsService: ObservableObject {
         } else {
             print("📭 CACHE MISS - No cached POIs within 1km")
             
-            // No cache - call Google API if we have a valid key
-            if !apiKey.isEmpty {
-                print("🌐 GOOGLE PLACES API (New) - API key present, calling...")
+            // ═══════════════════════════════════════════════════════════════
+            // 🗺️ PRIORITY 1: OpenStreetMap FIRST (FREE, NO RATE LIMITS!)
+            // OSM has comprehensive UK data and zero cost/limits
+            // ═══════════════════════════════════════════════════════════════
+            print("🗺️ OSM - Searching FIRST (FREE, no limits!)...")
+            let osmPOIs = await searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
+            print("🗺️ OSM - Found \(osmPOIs.count) POIs")
+            for poi in osmPOIs {
+                if !seenPlaceIds.contains(poi.placeId) {
+                    seenPlaceIds.insert(poi.placeId)
+                    allResults.append(poi)
+                }
+            }
+            
+            // ═══════════════════════════════════════════════════════════════
+            // 🍎 PRIORITY 2: Apple Maps supplement (35 key categories)
+            // Limited to 35 queries to stay under 50/minute rate limit
+            // ═══════════════════════════════════════════════════════════════
+            print("🍎 APPLE MAPS - Supplementing with key categories...")
+            let applePOIs = await searchAppleMapsForPOIs(location: location, radiusMeters: radiusMeters)
+            print("🍎 APPLE MAPS - Found \(applePOIs.count) POIs")
+            var appleAdded = 0
+            for poi in applePOIs {
+                let isDuplicate = allResults.contains { existing in
+                    existing.name.lowercased() == poi.name.lowercased() ||
+                    distanceBetween(existing.coordinate, poi.coordinate) < 50
+                }
+                if !isDuplicate {
+                    allResults.append(poi)
+                    appleAdded += 1
+                }
+            }
+            print("🍎 APPLE MAPS - Added \(appleAdded) unique POIs (after dedup)")
+            
+            // ═══════════════════════════════════════════════════════════════
+            // 🌐 PRIORITY 3: Google Places (OPTIONAL - skip if quota exceeded)
+            // Only call if we have few POIs and API key is present
+            // ═══════════════════════════════════════════════════════════════
+            if !apiKey.isEmpty && allResults.count < 50 {
+                print("🌐 GOOGLE - Supplementing (need more POIs)...")
                 let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
+                var googleAdded = 0
                 for poi in googlePOIs {
-                    if !seenPlaceIds.contains(poi.placeId) {
-                        seenPlaceIds.insert(poi.placeId)
+                    let isDuplicate = allResults.contains { existing in
+                        existing.name.lowercased() == poi.name.lowercased() ||
+                        distanceBetween(existing.coordinate, poi.coordinate) < 50
+                    }
+                    if !isDuplicate {
                         allResults.append(poi)
+                        googleAdded += 1
                     }
                 }
-                print("🌐 GOOGLE RESULT: \(googlePOIs.count) POIs found")
-                if googlePOIs.isEmpty {
-                    print("⚠️ Google returned 0 POIs - check API console for errors")
-                }
+                print("🌐 GOOGLE - Added \(googleAdded) unique POIs")
+            } else if apiKey.isEmpty {
+                print("⚠️ GOOGLE SKIPPED - No API key")
             } else {
-                print("⚠️ GOOGLE SKIPPED - No API key configured")
+                print("✅ GOOGLE SKIPPED - Already have \(allResults.count) POIs from OSM+Apple")
             }
         }
-        
-        // 🍎 PRIORITY 2: Always supplement with Apple Maps (FREE!)
-        print("🍎 APPLE MAPS - Searching (FREE, no limits)...")
-        let applePOIs = await searchAppleMapsForPOIs(location: location, radiusMeters: radiusMeters)
-        print("🍎 APPLE MAPS - Found \(applePOIs.count) POIs")
-        var appleAdded = 0
-        for poi in applePOIs {
-            let isDuplicate = allResults.contains { existing in
-                existing.name.lowercased() == poi.name.lowercased() ||
-                distanceBetween(existing.coordinate, poi.coordinate) < 50
-            }
-            if !isDuplicate {
-                allResults.append(poi)
-                appleAdded += 1
-            }
-        }
-        print("🍎 APPLE MAPS - Added \(appleAdded) unique POIs (after dedup)")
-        
-        // 🗺️ PRIORITY 3: OpenStreetMap (FREE, good for rural UK areas)
-        print("🗺️ OSM - Searching (FREE, good for footpaths & local places)...")
-        let osmPOIs = await searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
-        print("🗺️ OSM - Found \(osmPOIs.count) POIs")
-        var osmAdded = 0
-        for poi in osmPOIs {
-            let isDuplicate = allResults.contains { existing in
-                existing.name.lowercased() == poi.name.lowercased() ||
-                distanceBetween(existing.coordinate, poi.coordinate) < 50
-            }
-            if !isDuplicate {
-                allResults.append(poi)
-                osmAdded += 1
-            }
-        }
-        print("🗺️ OSM - Added \(osmAdded) unique POIs (after dedup)")
         
         // 💾 Cache combined results for next time
         if !allResults.isEmpty {
@@ -853,125 +860,194 @@ class GoogleMapsService: ObservableObject {
         var allResults: [PlaceResult] = []
         var seenNames = Set<String>()
         
-        // OPTIMIZED UK POI SEARCH - 35 HIGH-VALUE categories only
-        // Stay under Apple's 50 requests/minute limit
+        // MAXIMUM POI COVERAGE - All 120+ categories for UK
+        // Uses smart batching to respect Apple's 50 requests/minute limit
         let searchQueries = [
-            // PRIORITY 1: Community venues (best walking destinations)
-            "village hall", "community centre", "church", "memorial",
-            "sports club", "social club",
+            // ══════════════════════════════════════════════════════════
+            // BATCH 1: HIGHEST PRIORITY - Community & Food (40 queries)
+            // ══════════════════════════════════════════════════════════
+            // Community venues (critical for walking destinations)
+            "village hall", "community centre", "town hall", "church", "chapel",
+            "mosque", "temple", "gurdwara", "synagogue", "memorial hall",
+            "sports club", "social club", "working mens club", "scout hall", "youth club",
+            "legion", "rotary", "masonic", "british legion", "community hub",
             
-            // PRIORITY 2: Food & Drink (most common POIs)
-            "pub", "restaurant", "cafe", "bakery", "takeaway",
+            // Food & Drink (most common POIs - expanded)
+            "pub", "restaurant", "cafe", "kitchen", "catering", "deli", "sandwich",
+            "coffee", "food", "bakery", "takeaway", "bar", "bistro", "brasserie",
+            "tea room", "coffee shop", "pizzeria", "burger", "kebab",
+            "fish and chips", "chippy",
             
-            // PRIORITY 3: Retail essentials
-            "supermarket", "shop", "pharmacy", "post office",
+            // ══════════════════════════════════════════════════════════
+            // BATCH 2: RETAIL & SERVICES (40 queries)
+            // ══════════════════════════════════════════════════════════
+            // Retail (common UK shops)
+            "supermarket", "convenience store", "shop", "pharmacy", "newsagent",
+            "butcher", "florist", "co-op", "spar", "tesco", "sainsburys", "aldi",
+            "lidl", "morrisons", "asda", "charity shop", "bookshop", "gift shop",
+            "pet shop", "pound shop", "chemist", "off licence", "grocery",
             
-            // PRIORITY 4: Services
-            "library", "bank", "hairdresser",
+            // Services
+            "post office", "bank", "library", "hairdresser", "barber", "nail salon",
+            "dry cleaner", "launderette", "optician", "estate agent", "solicitor",
+            "accountant", "travel agent", "betting shop", "pawnbroker",
             
-            // PRIORITY 5: Health
-            "doctor", "dentist", "veterinary",
+            // ══════════════════════════════════════════════════════════
+            // BATCH 3: HEALTH, EDUCATION, LEISURE (40 queries)
+            // ══════════════════════════════════════════════════════════
+            // Health
+            "doctor", "dentist", "veterinary", "hospital", "clinic", "health centre",
+            "surgery", "medical", "physiotherapy", "osteopath", "chiropractor",
             
-            // PRIORITY 6: Education
-            "school", "nursery",
+            // Education
+            "school", "nursery", "preschool", "playcare", "childcare", "academy",
+            "primary school", "secondary school", "college", "university",
             
-            // PRIORITY 7: Leisure
-            "park", "playground", "gym", "leisure centre",
+            // Leisure & Recreation
+            "park", "gym", "swimming pool", "leisure centre", "playground",
+            "recreation ground", "playing field", "nature reserve", "woodland",
+            "canal", "golf course", "tennis club", "football club", "cricket club",
+            "bowling alley", "sports centre", "fitness", "allotment",
             
-            // PRIORITY 8: Culture
-            "museum", "theatre",
+            // ══════════════════════════════════════════════════════════
+            // BATCH 4: CULTURE, TRANSPORT, LANDMARKS (remaining)
+            // ══════════════════════════════════════════════════════════
+            // Culture
+            "museum", "theatre", "cinema", "art gallery", "historic site", "castle",
+            "manor", "stately home", "monument", "statue", "war memorial", "heritage",
             
-            // PRIORITY 9: Transport
-            "train station", "bus station", "petrol station",
+            // Transport & Auto
+            "train station", "petrol station", "car park", "bus station", "taxi",
+            "garage", "car wash", "mot", "tyres",
             
-            // PRIORITY 10: Landmarks
-            "monument", "war memorial", "historic"
+            // Accommodation
+            "hotel", "bed and breakfast", "guest house", "inn", "hostel",
+            
+            // Additional UK-specific
+            "greggs", "costa", "starbucks", "wetherspoons", "mcdonald",
+            "indian restaurant", "chinese restaurant", "thai restaurant",
+            "italian restaurant", "mexican restaurant"
         ]
         
-        print("🍎 APPLE MAPS - Starting search for \(searchQueries.count) categories (radius: \(radiusMeters)m)")
+        print("🍎 APPLE MAPS - Starting MAXIMUM coverage search")
+        print("🍎   📊 Categories: \(searchQueries.count)")
+        print("🍎   📍 Radius: \(radiusMeters)m")
+        print("🍎   ⏱️ Using smart batching (40 queries/batch, 65s between batches)")
         
-        // With 35 queries, we can do them all in one batch (under 50/min limit)
+        // Smart batching: 40 queries per batch, 65s wait between batches
+        // Apple limit is 50/60s, so 40 queries + 65s wait = safe margin
+        let batchSize = 40
         var queriesWithResults = 0
         var queriesFailed = 0
         var queryIndex = 0
         var rateLimitHit = false
-            
-        for query in searchQueries {
-            // Skip remaining queries if we hit rate limit
+        var batchNumber = 0
+        
+        for batchStart in stride(from: 0, to: searchQueries.count, by: batchSize) {
+            // Skip remaining batches if rate limited
             if rateLimitHit { break }
             
-            queryIndex += 1
-            do {
-                let request = MKLocalSearch.Request()
-                request.naturalLanguageQuery = query
-                request.region = MKCoordinateRegion(
-                    center: location,
-                    latitudinalMeters: Double(radiusMeters * 2),
-                    longitudinalMeters: Double(radiusMeters * 2)
-                )
+            batchNumber += 1
+            let batchEnd = min(batchStart + batchSize, searchQueries.count)
+            let batch = Array(searchQueries[batchStart..<batchEnd])
+            
+            // Wait between batches (not before first batch)
+            if batchStart > 0 {
+                print("🍎 ⏳ Batch \(batchNumber): Waiting 65s for rate limit reset...")
+                try? await Task.sleep(nanoseconds: 65_000_000_000)  // 65 seconds
+                print("🍎 ✅ Resuming batch \(batchNumber) (\(batch.count) queries)")
+            } else {
+                print("🍎 🚀 Starting batch 1 (\(batch.count) queries)")
+            }
+            
+            for query in batch {
+                if rateLimitHit { break }
                 
-                let search = MKLocalSearch(request: request)
-                let response = try await search.start()
-                
-                for item in response.mapItems {
-                    guard let name = item.name, !seenNames.contains(name) else { continue }
-                    
-                    // DISTANCE FILTER: Only keep POIs actually within search radius
-                    let itemCoord = item.placemark.coordinate
-                    let distance = distanceBetween(location, itemCoord)
-                    guard distance <= Double(radiusMeters) else { continue }
-                    
-                    seenNames.insert(name)
-                    
-                    // Convert MKMapItem to PlaceResult
-                    let placeResult = PlaceResult(
-                        placeId: "apple_\(name.hashValue)",
-                        name: name,
-                        vicinity: item.placemark.title,
-                        geometry: PlaceGeometry(
-                            location: PlaceLocation(
-                                lat: item.placemark.coordinate.latitude,
-                                lng: item.placemark.coordinate.longitude
-                            )
-                        ),
-                        types: [query]
+                queryIndex += 1
+                do {
+                    let request = MKLocalSearch.Request()
+                    request.naturalLanguageQuery = query
+                    request.region = MKCoordinateRegion(
+                        center: location,
+                        latitudinalMeters: Double(radiusMeters * 2),
+                        longitudinalMeters: Double(radiusMeters * 2)
                     )
-                    allResults.append(placeResult)
-                }
-                if response.mapItems.count > 0 {
-                    queriesWithResults += 1
-                    // Log queries that found POIs within radius
-                    let inRadius = response.mapItems.filter { item in
-                        let dist = distanceBetween(location, item.placemark.coordinate)
-                        return dist <= Double(radiusMeters)
+                    
+                    let search = MKLocalSearch(request: request)
+                    let response = try await search.start()
+                    
+                    for item in response.mapItems {
+                        guard let name = item.name, !seenNames.contains(name) else { continue }
+                        
+                        // DISTANCE FILTER: Only keep POIs actually within search radius
+                        let itemCoord = item.placemark.coordinate
+                        let distance = distanceBetween(location, itemCoord)
+                        guard distance <= Double(radiusMeters) else { continue }
+                        
+                        seenNames.insert(name)
+                        
+                        // Convert MKMapItem to PlaceResult
+                        let placeResult = PlaceResult(
+                            placeId: "apple_\(name.hashValue)",
+                            name: name,
+                            vicinity: item.placemark.title,
+                            geometry: PlaceGeometry(
+                                location: PlaceLocation(
+                                    lat: item.placemark.coordinate.latitude,
+                                    lng: item.placemark.coordinate.longitude
+                                )
+                            ),
+                            types: [query]
+                        )
+                        allResults.append(placeResult)
                     }
-                    if !inRadius.isEmpty {
-                        print("🍎 ✓ '\(query)' found \(inRadius.count) POIs within \(radiusMeters)m")
+                    if response.mapItems.count > 0 {
+                        queriesWithResults += 1
+                        // Log queries that found POIs within radius
+                        let inRadius = response.mapItems.filter { item in
+                            let dist = distanceBetween(location, item.placemark.coordinate)
+                            return dist <= Double(radiusMeters)
+                        }
+                        if !inRadius.isEmpty {
+                            print("🍎 ✓ '\(query)' → \(inRadius.count) POIs")
+                        }
+                    }
+                } catch {
+                    queriesFailed += 1
+                    let nsError = error as NSError
+                    
+                    // Check for Apple Maps rate limiting
+                    if nsError.domain == "GEOErrorDomain" && nsError.code == -3 ||
+                       nsError.domain == "MKErrorDomain" && nsError.code == 3 ||
+                       nsError.localizedDescription.contains("50 requests") {
+                        rateLimitHit = true
+                        print("🍎 🚫 RATE LIMITED at query \(queryIndex)/\(searchQueries.count)")
+                        print("🍎 ℹ️ Collected \(allResults.count) POIs before limit")
+                        print("🍎 💡 Will continue with OSM data")
+                        break
+                    }
+                    
+                    // Log first few non-rate-limit failures
+                    if queriesFailed <= 3 {
+                        print("🍎 ❌ '\(query)' failed: \(error.localizedDescription)")
                     }
                 }
-            } catch {
-                queriesFailed += 1
-                let nsError = error as NSError
-                
-                // Check for Apple Maps rate limiting (GEOErrorDomain Code=-3)
-                if nsError.domain == "GEOErrorDomain" && nsError.code == -3 ||
-                   nsError.domain == "MKErrorDomain" && nsError.code == 3 {
-                    rateLimitHit = true
-                    print("🍎 🚫 Rate limited at query \(queryIndex)/\(searchQueries.count) - stopping Apple Maps search")
-                    print("🍎 ℹ️ Got \(allResults.count) POIs before rate limit")
-                    break
-                }
-                
-                // Log first few non-rate-limit failures
-                if queriesFailed <= 3 {
-                    print("🍎 ❌ Query '\(query)' failed: \(error.localizedDescription)")
-                }
+            }
+            
+            // Progress update after each batch
+            if !rateLimitHit {
+                print("🍎 📦 Batch \(batchNumber) complete: \(allResults.count) POIs so far")
             }
         }
         
-        print("🍎 APPLE MAPS COMPLETE: \(allResults.count) POIs")
+        print("🍎 ══════════════════════════════════════════════════")
+        print("🍎 APPLE MAPS COMPLETE: \(allResults.count) unique POIs")
         print("🍎   ✅ Successful queries: \(queriesWithResults)/\(searchQueries.count)")
         print("🍎   ❌ Failed queries: \(queriesFailed)/\(searchQueries.count)")
+        if rateLimitHit {
+            print("🍎   ⚠️ Search stopped early due to rate limit")
+        }
+        print("🍎 ══════════════════════════════════════════════════")
         return allResults
     }
     
@@ -981,21 +1057,57 @@ class GoogleMapsService: ObservableObject {
     private func searchOpenStreetMapForPOIs(location: CLLocationCoordinate2D, radiusMeters: Int) async -> [PlaceResult] {
         var allResults: [PlaceResult] = []
         
-        // Overpass API query for amenities, shops, leisure, tourism, historic POIs
+        // COMPREHENSIVE Overpass API query - maximum POI coverage (FREE!)
+        // Includes all major OSM tags that represent walking destinations
         let query = """
         [out:json][timeout:30];
         (
+          // Core POI types (nodes)
           node["amenity"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           node["shop"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           node["leisure"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           node["tourism"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           node["historic"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["craft"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["office"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["healthcare"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["club"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["community_centre"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          
+          // Buildings with names (common in UK)
+          node["building"]["name"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           node["building"="church"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["building"="chapel"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           node["building"="hall"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["building"="pub"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["building"="commercial"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["building"="retail"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["building"="school"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["building"="kindergarten"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          
+          // Transport nodes
+          node["public_transport"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["railway"="station"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["railway"="halt"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          
+          // Natural features (parks, woods, etc)
+          node["natural"]["name"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["landuse"="recreation_ground"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["landuse"="allotments"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          
+          // Core POI types (ways - for larger buildings/areas)
           way["amenity"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["shop"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           way["leisure"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["tourism"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["historic"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["craft"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["healthcare"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           way["building"="church"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["building"="chapel"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           way["building"="hall"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["building"="school"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["landuse"="recreation_ground"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
         );
         out center tags;
         """
@@ -1057,8 +1169,10 @@ class GoogleMapsService: ObservableObject {
                         
                         guard let finalLat = lat, let finalLon = lon else { continue }
                         
-                        // Get type from tags
-                        let poiType = tags["amenity"] ?? tags["shop"] ?? tags["leisure"] ?? tags["tourism"] ?? tags["historic"] ?? "place"
+                        // Get type from tags (expanded to match new query)
+                        let poiType = tags["amenity"] ?? tags["shop"] ?? tags["leisure"] ?? tags["tourism"] ?? 
+                                     tags["historic"] ?? tags["craft"] ?? tags["office"] ?? tags["healthcare"] ??
+                                     tags["club"] ?? tags["building"] ?? tags["landuse"] ?? "place"
                         
                         // Get address if available
                         var address: String? = nil
