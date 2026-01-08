@@ -290,9 +290,8 @@ struct EmbeddedWalkMapView: View {
     @State private var isStepTrackingEnabled: Bool = false
     @State private var showMotionExplainer: Bool = false
     
-    /// Check if user previously opted into step tracking
-    /// We trust the UserDefaults flag - if permission was revoked, we'll handle it when pedometer fails
     private var shouldAutoEnableSteps: Bool {
+        viewModel.healthKitService.isMotionAuthorized && 
         UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled")
     }
     
@@ -394,53 +393,13 @@ struct EmbeddedWalkMapView: View {
                 // Empty - we'll add custom controls in the overlay
             }
             
-            // v1.6.30: Alternating pill showing walk time left / track steps
-            VStack {
-                HStack(alignment: .top) {
-                    // Alternating pill (walk time / steps prompt)
-                    CompactStatusRing(
-                        delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
-                        walkStartTime: viewModel.walkSession.startTime,
-                        walkDurationMinutes: viewModel.walkSession.currentRoute?.durationMinutes ?? 15,
-                        healthKitService: viewModel.healthKitService,
-                        isStepTrackingEnabled: $isStepTrackingEnabled,
-                        showMotionExplainer: $showMotionExplainer
-                    )
-                    
-                    Spacer()
-                    
-                    // Location button (top-right)
-                    Button(action: {
-                        withAnimation {
-                            cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
-                        }
-                    }) {
-                        Image(systemName: "location.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.tealAccent)
-                            .frame(width: 44, height: 44)
-                            .background(Color.darkCardBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                
-                Spacer()
-            }
-            
-            /* ROLLBACK: Uncomment this to restore the banner layout
-            // v1.6.30: Combined status banner (delay + steps) to save vertical space
+            // v1.6.20: Delay banner + compass in same row to save vertical space
             VStack(spacing: 8) {
                 HStack(alignment: .top) {
-                    // Combined delay + steps banner on the left
-                    CombinedStatusBanner(
+                    // Delay banner on the left (doesn't fill entire width)
+                    DelayBanner(
                         delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
-                        walkStartTime: viewModel.walkSession.startTime,
-                        healthKitService: viewModel.healthKitService,
-                        isStepTrackingEnabled: $isStepTrackingEnabled,
-                        showMotionExplainer: $showMotionExplainer
+                        walkStartTime: viewModel.walkSession.startTime
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     
@@ -465,9 +424,17 @@ struct EmbeddedWalkMapView: View {
                 .padding(.trailing, 12)
                 .padding(.top, 8)
                 
+                // v1.6.28: Opt-in Steps Card
+                StepsCard(
+                    healthKitService: viewModel.healthKitService,
+                    isStepTrackingEnabled: $isStepTrackingEnabled,
+                    showMotionExplainer: $showMotionExplainer,
+                    walkStartTime: viewModel.walkSession.startTime
+                )
+                .padding(.horizontal, 12)
+                
                 Spacer()
             }
-            */
             
             // Next waypoint info overlay - tappable and swipeable
             VStack {
@@ -544,25 +511,30 @@ struct EmbeddedWalkMapView: View {
                 isStepTrackingEnabled = true
             }
         }
-        // v1.6.30: Motion permission explainer as fullScreenCover for reliable dismissal
+        // v1.6.29c: Motion permission explainer as fullScreenCover for reliable dismissal
         .fullScreenCover(isPresented: $showMotionExplainer) {
             MotionPermissionExplainerSheet(
                 onEnable: {
-                    print("🔵 Enable tapped - setting all step tracking flags immediately")
+                    print("🔵 Enable tapped")
+                    showMotionExplainer = false
                     
-                    // Set ALL flags immediately for instant UI feedback
-                    // The iOS permission dialog can interrupt callbacks, so we trust user intent
+                    // Request Motion permission after sheet dismisses
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        viewModel.healthKitService.requestMotionAuthorization { granted in
+                            print("🔵 Motion permission callback - granted: \(granted)")
+                            DispatchQueue.main.async {
+                                if granted {
+                                    print("🔵 Setting isStepTrackingEnabled = true")
                                     isStepTrackingEnabled = true
                                     viewModel.stepTrackingWasEnabled = true
                                     UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
-                    showMotionExplainer = false
-                    
-                    // Start observing steps immediately (this will trigger permission if needed)
                                     if let startTime = viewModel.walkSession.startTime {
                                         viewModel.healthKitService.startObservingSteps(from: startTime)
                                     }
-                    
-                    print("🔵 All flags set: isStepTrackingEnabled=true, stepTrackingWasEnabled=true, UserDefaults saved")
+                                }
+                            }
+                        }
+                    }
                 },
                 onCancel: {
                     print("🔵 Cancel tapped")
@@ -1081,348 +1053,7 @@ struct WaypointMarkerView: View {
 }
 
 // MARK: - Preview
-// MARK: - Combined Status Banner (v1.6.30)
-/// Combined delay + steps banner that saves vertical space
-/// - When steps NOT enabled: alternates between delay info and "Tap to enable steps"
-/// - When steps enabled: only shows delay info
-struct CombinedStatusBanner: View {
-    let delayMinutes: Int
-    let walkStartTime: Date?
-    @ObservedObject var healthKitService: HealthKitService
-    @Binding var isStepTrackingEnabled: Bool
-    @Binding var showMotionExplainer: Bool
-    
-    @Environment(\.colorScheme) var colorScheme
-    
-    /// Whether we should show alternating content (steps not yet enabled)
-    /// Only depends on isStepTrackingEnabled (a @Binding) for reliable SwiftUI updates
-    private var shouldAlternate: Bool {
-        !isStepTrackingEnabled && healthKitService.isPedometerAvailable && !healthKitService.isMotionDenied
-    }
-    
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0)) { context in
-            CombinedStatusBannerContent(
-                delayMinutes: delayMinutes,
-                walkStartTime: walkStartTime,
-                currentDate: context.date,
-                colorScheme: colorScheme,
-                shouldAlternate: shouldAlternate,
-                onTapSteps: {
-                    showMotionExplainer = true
-                }
-            )
-        }
-    }
-}
-
-/// Inner content view for CombinedStatusBanner
-private struct CombinedStatusBannerContent: View {
-    let delayMinutes: Int
-    let walkStartTime: Date?
-    let currentDate: Date
-    let colorScheme: ColorScheme
-    let shouldAlternate: Bool
-    let onTapSteps: () -> Void
-    
-    /// Toggle between delay and steps display (changes every 3 seconds)
-    private var showingStepsPrompt: Bool {
-        guard shouldAlternate else { return false }
-        // Use the current second to determine which view to show
-        // Show steps prompt for 3 seconds, then delay for 3 seconds
-        let seconds = Int(currentDate.timeIntervalSince1970)
-        return (seconds / 3) % 2 == 1
-    }
-    
-    /// Time remaining until delay expires (in minutes)
-    var timeRemaining: Int {
-        guard let start = walkStartTime else { return delayMinutes }
-        let elapsedSeconds = currentDate.timeIntervalSince(start)
-        let elapsedMinutes = Int(elapsedSeconds / 60)
-        return max(0, delayMinutes - elapsedMinutes)
-    }
-    
-    /// Progress showing TIME REMAINING (1.0 = full time left, 0.0 = time's up)
-    var progress: Double {
-        guard delayMinutes > 0, let start = walkStartTime else { return 1.0 }
-        let totalSeconds = Double(delayMinutes * 60)
-        let elapsedSeconds = currentDate.timeIntervalSince(start)
-        return max(0, 1.0 - (elapsedSeconds / totalSeconds))
-    }
-    
-    /// Urgency level based on time remaining
-    enum Urgency {
-        case relaxed      // > 20 min
-        case gentle       // 10-20 min
-        case warning      // 5-10 min
-        case urgent       // < 5 min
-    }
-    
-    var urgency: Urgency {
-        switch timeRemaining {
-        case 21...: return .relaxed
-        case 10...20: return .gentle
-        case 5...9: return .warning
-        default: return .urgent
-        }
-    }
-    
-    var urgencyColor: Color {
-        switch urgency {
-        case .relaxed: return .green
-        case .gentle: return .softAmber
-        case .warning: return .orange
-        case .urgent: return .red
-        }
-    }
-    
-    var urgencyIcon: String {
-        switch urgency {
-        case .relaxed: return "clock.fill"
-        case .gentle: return "clock.fill"
-        case .warning: return "exclamationmark.triangle.fill"
-        case .urgent: return "bell.badge.fill"
-        }
-    }
-    
-    var body: some View {
-        ZStack {
-            // Delay info view
-            delayView
-                .opacity(showingStepsPrompt ? 0 : 1)
-            
-            // Steps prompt view (only when alternating)
-            if shouldAlternate {
-                stepsPromptView
-                    .opacity(showingStepsPrompt ? 1 : 0)
-            }
-        }
-        .animation(.easeInOut(duration: 0.3), value: showingStepsPrompt)
-    }
-    
-    private var delayView: some View {
-        HStack(spacing: 12) {
-            // Urgency icon with pulse animation for urgent
-            Image(systemName: urgencyIcon)
-                .font(.title3)
-                .foregroundColor(urgencyColor)
-                .symbolEffect(.pulse, isActive: urgency == .urgent)
-            
-            // Time remaining
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("\(timeRemaining)")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(urgencyColor)
-                Text("min remaining")
-                    .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.7))
-            }
-            
-            Spacer()
-            
-            // Compact progress bar
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    // Background track
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.white.opacity(0.2))
-                        .frame(height: 6)
-                    
-                    // Progress fill
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(urgencyColor)
-                        .frame(width: geo.size.width * progress, height: 6)
-                }
-            }
-            .frame(width: 80, height: 6)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.darkCardBackground)
-                .shadow(color: Color.black.opacity(0.3), radius: 8, y: 4)
-        )
-    }
-    
-    private var stepsPromptView: some View {
-        Button(action: onTapSteps) {
-            HStack(spacing: 12) {
-                // Walking icon
-                ZStack {
-                    Circle()
-                        .fill(Color.tealAccent.opacity(0.3))
-                        .frame(width: 36, height: 36)
-                    
-                    Image(systemName: "figure.walk")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.tealAccent)
-                }
-                
-                // Text
-                Text("Tap to enable step tracking")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.white)
-                
-                Spacer()
-                
-                // Chevron to indicate tappable
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.white.opacity(0.5))
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.darkCardBackground)
-                    .shadow(color: Color.black.opacity(0.3), radius: 8, y: 4)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Compact Status Ring (v1.6.31)
-/// Compact pill showing clinic delay + walk time remaining
-/// Alternates with steps prompt when steps not enabled
-struct CompactStatusRing: View {
-    let delayMinutes: Int
-    let walkStartTime: Date?
-    let walkDurationMinutes: Int  // Total planned walk duration
-    @ObservedObject var healthKitService: HealthKitService
-    @Binding var isStepTrackingEnabled: Bool
-    @Binding var showMotionExplainer: Bool
-    
-    /// Whether we should show alternating content (steps not yet enabled)
-    private var shouldAlternate: Bool {
-        !isStepTrackingEnabled && healthKitService.isPedometerAvailable && !healthKitService.isMotionDenied
-    }
-    
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0)) { context in
-            CompactStatusPillContent(
-                delayMinutes: delayMinutes,
-                walkStartTime: walkStartTime,
-                walkDurationMinutes: walkDurationMinutes,
-                currentDate: context.date,
-                shouldAlternate: shouldAlternate,
-                onTapSteps: {
-                    showMotionExplainer = true
-                }
-            )
-        }
-    }
-}
-
-/// Inner content for CompactStatusRing - shows walk time left / steps prompt
-/// Delay is shown in the top banner (static, admin-controlled)
-private struct CompactStatusPillContent: View {
-    let delayMinutes: Int  // Kept for reference but not displayed here
-    let walkStartTime: Date?
-    let walkDurationMinutes: Int
-    let currentDate: Date
-    let shouldAlternate: Bool
-    let onTapSteps: () -> Void
-    
-    /// Toggle between walk time and steps display (changes every 5 seconds)
-    private var showingStepsPrompt: Bool {
-        guard shouldAlternate else { return false }
-        let seconds = Int(currentDate.timeIntervalSince1970)
-        return (seconds / 5) % 2 == 1
-    }
-    
-    /// Walk time remaining (in minutes) - counts down
-    var walkRemaining: Int {
-        guard let start = walkStartTime else { return walkDurationMinutes }
-        let elapsedSeconds = currentDate.timeIntervalSince(start)
-        let elapsedMinutes = Int(elapsedSeconds / 60)
-        return max(0, walkDurationMinutes - elapsedMinutes)
-    }
-    
-    /// Urgency color based on walk time remaining
-    var urgencyColor: Color {
-        switch walkRemaining {
-        case 11...: return .tealAccent
-        case 6...10: return .softAmber
-        case 3...5: return .orange
-        default: return .red
-        }
-    }
-    
-    var body: some View {
-        ZStack {
-            // Walk time remaining pill
-            walkTimePillView
-                .opacity(showingStepsPrompt ? 0 : 1)
-                .scaleEffect(showingStepsPrompt ? 0.95 : 1.0)
-            
-            // Steps prompt pill (only when alternating)
-            if shouldAlternate {
-                stepsPillView
-                    .opacity(showingStepsPrompt ? 1 : 0)
-                    .scaleEffect(showingStepsPrompt ? 1.0 : 0.95)
-            }
-        }
-        .animation(.easeInOut(duration: 0.6), value: showingStepsPrompt)
-    }
-    
-    /// Pill showing walk time remaining (countdown)
-    private var walkTimePillView: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "figure.walk")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(urgencyColor)
-            
-            Text("\(walkRemaining)")
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundColor(urgencyColor)
-                .monospacedDigit()
-            
-            Text("mins left")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white.opacity(0.7))
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            Capsule()
-                .fill(Color.darkCardBackground)
-                .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
-        )
-    }
-    
-    /// Steps prompt pill
-    private var stepsPillView: some View {
-        Button(action: onTapSteps) {
-            HStack(spacing: 8) {
-                Image(systemName: "figure.walk")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.tealAccent)
-                
-                Text("Track steps?")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.tealAccent)
-                
-                Image(systemName: "hand.tap.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(.tealAccent.opacity(0.7))
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(
-                Capsule()
-                    .fill(Color.darkCardBackground)
-                    .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Delay Banner (v1.6.10) - Legacy, kept for reference
+// MARK: - Delay Banner (v1.6.10)
 /// Prominent delay display with color-coded urgency and progress bar
 /// Uses TimelineView to guarantee updates every second
 struct DelayBanner: View {
@@ -2057,54 +1688,64 @@ struct HealthKitSyncOfferSheet: View {
     @State private var isLoading = false
     
     var body: some View {
-        VStack(spacing: 16) {
-            // Icon with title inline
-            HStack(spacing: 12) {
+        VStack(spacing: 24) {
+            // Handle bar
+            Capsule()
+                .fill(Color.gray.opacity(0.3))
+                .frame(width: 40, height: 5)
+                .padding(.top, 12)
+            
+            Spacer()
+            
+            // Icon
             ZStack {
                 Circle()
-                        .fill(Color.red.opacity(0.15))
-                        .frame(width: 50, height: 50)
+                    .fill(Color.red.opacity(0.1))
+                    .frame(width: 100, height: 100)
                 
                 Image(systemName: "heart.fill")
-                        .font(.system(size: 24))
+                    .font(.system(size: 44))
                     .foregroundColor(.red)
             }
             
+            // Title
             Text("Sync with Apple Health?")
-                    .font(.title3)
+                .font(.title2)
                 .fontWeight(.bold)
             
-                Spacer()
-            }
-            .padding(.top, 20)
-            
-            // Description - compact
-            Text("Sync your steps for more accurate walk tracking.")
-                .font(.subheadline)
+            // Description
+            VStack(spacing: 12) {
+                Text("This lets us save your steps and read your step history so your walks are more accurate and consistent across sessions.")
+                    .font(.body)
                     .foregroundColor(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                    .multilineTextAlignment(.center)
+                
+                Text("You can change this anytime in Settings.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal)
             
-            // Benefits - compact
-            VStack(alignment: .leading, spacing: 8) {
+            // Benefits
+            VStack(alignment: .leading, spacing: 12) {
                 benefitRow(icon: "arrow.up.arrow.down", text: "Sync steps with Apple Health")
                 benefitRow(icon: "clock.arrow.circlepath", text: "Track your step history")
                 benefitRow(icon: "chart.line.uptrend.xyaxis", text: "Improve walk accuracy")
             }
-            .padding(12)
+            .padding()
             .background(Color.secondary.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             
             Spacer()
             
             // Buttons
-            VStack(spacing: 10) {
+            VStack(spacing: 12) {
                 Button(action: syncWithHealthKit) {
                     if isLoading {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
+                            .padding(.vertical, 16)
                     } else {
                         HStack {
                             Image(systemName: "heart.fill")
@@ -2113,7 +1754,7 @@ struct HealthKitSyncOfferSheet: View {
                         .font(.headline)
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
+                        .padding(.vertical, 16)
                     }
                 }
                 .background(Color.red)
@@ -2124,13 +1765,14 @@ struct HealthKitSyncOfferSheet: View {
                     Text("Not now")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                        .padding(.vertical, 8)
                 }
             }
-            .padding(.bottom, 16)
+            .padding(.bottom, 24)
         }
-        .padding(.horizontal, 20)
-        .presentationDetents([.height(340)])
-        .presentationDragIndicator(.visible)
+        .padding(.horizontal, 24)
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.hidden)
     }
     
     private func declineOffer() {

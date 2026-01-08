@@ -193,19 +193,10 @@ struct RouteSelectionView: View {
                 // - HealthKit is not already authorized
                 // - User hasn't previously declined the offer
                 let hasDeclinedOffer = UserDefaults.standard.bool(forKey: "healthKitSyncOfferDeclined")
-                print("🏥 Post-walk wellbeing dismissed - checking HealthKit offer conditions:")
-                print("🏥   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
-                print("🏥   isAuthorized: \(viewModel.healthKitService.isAuthorized)")
-                print("🏥   hasDeclinedOffer: \(hasDeclinedOffer)")
-                print("🏥   stepTrackingAutoEnabled (UserDefaults): \(UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled"))")
-                
                 if viewModel.stepTrackingWasEnabled && !viewModel.healthKitService.isAuthorized && !hasDeclinedOffer {
-                    print("🏥   ✅ All conditions met - showing HealthKit offer")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         viewModel.showHealthKitSyncOffer = true
                     }
-                } else {
-                    print("🏥   ❌ Conditions not met - NOT showing HealthKit offer")
                 }
             }) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPostWalkWellbeing, isPostWalk: true, isWalkActivity: true)
@@ -4353,22 +4344,20 @@ struct ActiveWalkView: View {
                         
                         Spacer()
                         
-                        // Static clinic delay only (admin-controlled)
-                        HStack(spacing: 4) {
-                            Text("\(viewModel.waitTimeInfo.estimatedMinutes)")
+                        // Timer
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(formatSeconds(viewModel.walkSession.elapsedSeconds))
                                 .font(.title2)
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
                                 .monospacedDigit()
-                            Text("mins delay")
-                                .font(.subheadline)
-                                .foregroundColor(.white.opacity(0.8))
-                        }
-                        
-                        if viewModel.walkSession.halfwayAlertSent {
-                            Text("↩︎")
-                                .font(.title2)
-                                .foregroundColor(.softAmber)
+                            
+                            if viewModel.walkSession.halfwayAlertSent {
+                                Text("Head back!")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.softAmber)
+                            }
                         }
                     }
                     .padding(.horizontal, 20)
@@ -4386,7 +4375,7 @@ struct ActiveWalkView: View {
                             set: { viewModel.locationService.currentDirectionIndex = $0 }
                         ),
                         showAllDirections: $showAllDirections,
-                        delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
+                        elapsedTime: formatSeconds(viewModel.walkSession.elapsedSeconds),
                         distanceWalked: Int(viewModel.locationService.distanceWalked),
                         halfwayAlert: viewModel.walkSession.halfwayAlertSent
                     )
@@ -4415,7 +4404,7 @@ struct ActiveWalkView: View {
             
             // Bottom section with stats and end button
             VStack(spacing: 12) {
-                // Compact stats row
+                // Compact stats row (v1.6.13: removed delay badge - now shown in top banner)
                 HStack(spacing: 8) {
                     CompactStatPill(icon: "figure.walk", value: "\(viewModel.walkSession.stepsThisSession)", label: "steps")
                     CompactStatPill(icon: "star.fill", value: "\(viewModel.userProgress.totalPoints)", label: "pts")
@@ -4464,7 +4453,7 @@ struct WalkingDirectionsBanner: View {
     let directions: [WalkingDirection]
     @Binding var currentIndex: Int
     @Binding var showAllDirections: Bool
-    var delayMinutes: Int = 0  // Static clinic delay (admin-controlled)
+    var elapsedTime: String = ""
     var distanceWalked: Int = 0
     var halfwayAlert: Bool = false
     
@@ -4526,16 +4515,20 @@ struct WalkingDirectionsBanner: View {
                         }
                     }
                     
-                    // Static clinic delay (admin-controlled)
-                    HStack(spacing: 4) {
-                        Text("\(delayMinutes)")
+                    Spacer()
+                    
+                    // Timer on right
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(elapsedTime)
                             .font(.title3)
                             .fontWeight(.bold)
                             .foregroundColor(.white)
                             .monospacedDigit()
-                        Text("mins delay")
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.8))
+                        
+                        // Step counter
+                        Text("\(currentIndex + 1)/\(directions.count)")
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.7))
                     }
                     
                     // Expand button
