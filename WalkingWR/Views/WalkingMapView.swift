@@ -982,17 +982,24 @@ struct DelayBanner: View {
     let walkStartTime: Date?
     @Environment(\.colorScheme) var colorScheme
     
-    /// Time remaining until delay expires
+    // v1.6.13: Timer to refresh the view every second for smooth progress
+    @State private var currentTime = Date()
+    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    
+    /// Time remaining until delay expires (in minutes, for display)
     var timeRemaining: Int {
         guard let start = walkStartTime else { return delayMinutes }
-        let elapsed = Int(Date().timeIntervalSince(start) / 60)
-        return max(0, delayMinutes - elapsed)
+        let elapsedSeconds = currentTime.timeIntervalSince(start)
+        let elapsedMinutes = Int(elapsedSeconds / 60)
+        return max(0, delayMinutes - elapsedMinutes)
     }
     
-    /// Progress through the delay (0.0 to 1.0)
+    /// Progress through the delay (0.0 to 1.0) - uses seconds for smooth animation
     var progress: Double {
-        guard delayMinutes > 0 else { return 0 }
-        return min(1.0, Double(delayMinutes - timeRemaining) / Double(delayMinutes))
+        guard delayMinutes > 0, let start = walkStartTime else { return 0 }
+        let totalSeconds = Double(delayMinutes * 60)
+        let elapsedSeconds = currentTime.timeIntervalSince(start)
+        return min(1.0, elapsedSeconds / totalSeconds)
     }
     
     /// Urgency level based on time remaining
@@ -1076,6 +1083,9 @@ struct DelayBanner: View {
                 .fill(Color.darkCardBackground)  // Solid dark background matching carousel
                 .shadow(color: Color.black.opacity(0.3), radius: 8, y: 4)
         )
+        .onReceive(timer) { time in
+            currentTime = time  // Refresh every second for smooth progress
+        }
     }
 }
 

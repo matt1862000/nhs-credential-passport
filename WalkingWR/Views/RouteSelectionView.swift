@@ -4111,25 +4111,11 @@ struct ActiveWalkView: View {
             
             // Bottom section with stats and end button
             VStack(spacing: 12) {
-                // Compact stats row
+                // Compact stats row (v1.6.13: removed delay badge - now shown in top banner)
                 HStack(spacing: 8) {
                     CompactStatPill(icon: "figure.walk", value: "\(viewModel.walkSession.stepsThisSession)", label: "steps")
                     CompactStatPill(icon: "star.fill", value: "\(viewModel.userProgress.totalPoints)", label: "pts")
                     CompactStatPill(icon: "mappin", value: "\(viewModel.walkSession.markersScanned.count)", label: "spots")
-                    
-                    // Delay badge - more compact inline format
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock.fill")
-                            .font(.caption2)
-                        Text("\(viewModel.waitTimeInfo.estimatedMinutes)m")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                    }
-                    .foregroundColor(.orange)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(Color.orange.opacity(0.15))
-                    .cornerRadius(12)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 10)
