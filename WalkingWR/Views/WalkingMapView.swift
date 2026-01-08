@@ -472,30 +472,40 @@ struct EmbeddedWalkMapView: View {
                 )
             }
             
-            // v1.6.28: Motion permission explainer
+            // v1.6.28: Motion permission explainer (v1.6.29: Fixed dismissal)
             if showMotionExplainer {
                 MotionPermissionExplainer(
                     onEnable: {
-                        showMotionExplainer = false
-                        // Request Motion permission
-                        viewModel.healthKitService.requestMotionAuthorization { granted in
-                            if granted {
-                                isStepTrackingEnabled = true
-                                // Mark that step tracking was enabled for post-walk HealthKit offer
-                                viewModel.stepTrackingWasEnabled = true
-                                // Remember preference for future walks
-                                UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
-                                // Start step tracking
-                                if let startTime = viewModel.walkSession.startTime {
-                                    viewModel.healthKitService.startObservingSteps(from: startTime)
+                        // v1.6.29: Dismiss first, then request permission
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            showMotionExplainer = false
+                        }
+                        // Request Motion permission after a brief delay for smooth UX
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            viewModel.healthKitService.requestMotionAuthorization { granted in
+                                DispatchQueue.main.async {
+                                    if granted {
+                                        isStepTrackingEnabled = true
+                                        // Mark that step tracking was enabled for post-walk HealthKit offer
+                                        viewModel.stepTrackingWasEnabled = true
+                                        // Remember preference for future walks
+                                        UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
+                                        // Start step tracking
+                                        if let startTime = viewModel.walkSession.startTime {
+                                            viewModel.healthKitService.startObservingSteps(from: startTime)
+                                        }
+                                    }
                                 }
                             }
                         }
                     },
                     onCancel: {
-                        showMotionExplainer = false
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            showMotionExplainer = false
+                        }
                     }
                 )
+                .transition(.opacity)
             }
             
             // Intro overlay during camera animation
