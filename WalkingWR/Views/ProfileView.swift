@@ -1522,7 +1522,7 @@ struct BadgeView: View {
                         .frame(width: 60, height: 60)
                     
                     Circle()
-                        .trim(from: 0, to: progressPercent)
+                        .trim(from: 0, to: min(1, max(0, progressPercent.isNaN ? 0 : progressPercent)))
                         .stroke(badge.color.opacity(0.5), style: StrokeStyle(lineWidth: 3, lineCap: .round))
                         .frame(width: 60, height: 60)
                         .rotationEffect(.degrees(-90))
@@ -2680,7 +2680,7 @@ struct CachedLocationsSection: View {
                         .frame(width: 36, height: 36)
                     
                     Circle()
-                        .trim(from: 0, to: CGFloat(cachedLocations.count) / CGFloat(POICacheService.freeTierLocationLimit))
+                        .trim(from: 0, to: min(1, max(0, CGFloat(cachedLocations.count) / CGFloat(max(1, POICacheService.freeTierLocationLimit)))))
                         .stroke(
                             cachedLocations.count >= POICacheService.freeTierLocationLimit ? Color.softAmber : Color.tealAccent,
                             style: StrokeStyle(lineWidth: 4, lineCap: .round)

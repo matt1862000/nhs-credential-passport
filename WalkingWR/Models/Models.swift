@@ -400,12 +400,21 @@ struct WalkingRoute: Identifiable, Hashable {
     
     /// Decoded route path coordinates for map display
     /// Uses Google's encoded polyline if available, otherwise falls back to marker coordinates
+    /// Filters out any invalid (NaN) coordinates to prevent CoreGraphics errors
     var routePath: [CLLocationCoordinate2D] {
+        let rawPath: [CLLocationCoordinate2D]
         if let polyline = encodedPolyline, !polyline.isEmpty {
-            return PolylineDecoder.decode(polyline)
+            rawPath = PolylineDecoder.decode(polyline)
+        } else {
+            // Fallback to marker coordinates if no polyline
+            rawPath = qrMarkers.map { $0.coordinate }
         }
-        // Fallback to marker coordinates if no polyline
-        return qrMarkers.map { $0.coordinate }
+        // Filter out any invalid coordinates
+        return rawPath.filter { coord in
+            !coord.latitude.isNaN && !coord.longitude.isNaN &&
+            !coord.latitude.isInfinite && !coord.longitude.isInfinite &&
+            CLLocationCoordinate2DIsValid(coord)
+        }
     }
     
     /// Simple waypoints for basic display (start, markers, end)
