@@ -274,20 +274,30 @@ class GoogleMapsService: ObservableObject {
         // Previously 7min cap was too tight, leaving only 1 POI in many areas
         if targetDurationMinutes == 5 {
             var accepted: [PlaceResult] = []
-            var rejected = 0
+            var rejected: [(name: String, estimated: Int)] = []
             
             for poi in pois {
                 let estimated = estimateRoundTripMinutes(from: origin, to: poi)
                 if estimated <= 10 {  // Allow up to 10min estimated (score-based selection will prefer shorter)
                     accepted.append(poi)
                 } else {
-                    rejected += 1
+                    rejected.append((poi.name, estimated))
                 }
             }
             
-            print("🎯 ⏱️ 5-MIN HARD CUTOFF: Kept \(accepted.count)/\(pois.count) POIs (max 7min round-trip)")
-            if rejected > 0 {
-                print("   ❌ Rejected \(rejected) POIs with >7min estimated round-trip")
+            // Debug: Show accepted candidates for 5-min routes
+            print("🎯 5-MIN CANDIDATES: \(accepted.count) POIs with ≤10min estimated:")
+            for poi in accepted.prefix(10) {
+                let est = estimateRoundTripMinutes(from: origin, to: poi)
+                print("   ✅ \(poi.name): ~\(est)min")
+            }
+            if accepted.count > 10 {
+                print("   ... and \(accepted.count - 10) more")
+            }
+            
+            print("🎯 ⏱️ 5-MIN HARD CUTOFF: Kept \(accepted.count)/\(pois.count) POIs (max 10min round-trip)")
+            if !rejected.isEmpty {
+                print("   ❌ Rejected \(rejected.count) POIs with >10min estimated")
             }
             return accepted
         }
@@ -2805,8 +2815,14 @@ class GoogleMapsService: ObservableObject {
                 topCandidates.shuffle()
                 endpointCandidates = topCandidates + Array(endpointCandidates.dropFirst(topCount))
                 print("🎯 Found \(endpointCandidates.count) endpoint candidates (SHUFFLED top \(topCount) for variety)")
+                // Debug: Show first 5 candidates after shuffle
+                print("🎯 📋 Top 5 after shuffle: \(endpointCandidates.prefix(5).map { "\($0.poi.name) (\(Int($0.distance))m)" }.joined(separator: ", "))")
             } else if useClosestFirst {
                 print("🎯 Found \(endpointCandidates.count) endpoint candidates (closest-first, not enough to shuffle)")
+                // Debug: Show what few candidates we have
+                if !endpointCandidates.isEmpty {
+                    print("🎯 📋 Candidates: \(endpointCandidates.map { "\($0.poi.name) (\(Int($0.distance))m)" }.joined(separator: ", "))")
+                }
             } else {
                 print("🎯 Found \(endpointCandidates.count) endpoint candidates (score-sorted)")
             }
@@ -4594,4 +4610,5 @@ struct GeneratedRoute {
         }
     }
 }
+
 
