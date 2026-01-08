@@ -472,40 +472,37 @@ struct EmbeddedWalkMapView: View {
                 )
             }
             
-            // v1.6.28: Motion permission explainer (v1.6.29: Fixed dismissal)
+            // v1.6.28: Motion permission explainer (v1.6.29b: Fixed dismissal)
             if showMotionExplainer {
                 MotionPermissionExplainer(
                     onEnable: {
-                        // v1.6.29: Dismiss first, then request permission
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            showMotionExplainer = false
-                        }
-                        // Request Motion permission after a brief delay for smooth UX
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            viewModel.healthKitService.requestMotionAuthorization { granted in
-                                DispatchQueue.main.async {
-                                    if granted {
-                                        isStepTrackingEnabled = true
-                                        // Mark that step tracking was enabled for post-walk HealthKit offer
-                                        viewModel.stepTrackingWasEnabled = true
-                                        // Remember preference for future walks
-                                        UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
-                                        // Start step tracking
-                                        if let startTime = viewModel.walkSession.startTime {
-                                            viewModel.healthKitService.startObservingSteps(from: startTime)
-                                        }
+                        print("🔵 Enable tapped - dismissing explainer")
+                        showMotionExplainer = false
+                        print("🔵 showMotionExplainer = \(showMotionExplainer)")
+                        
+                        // Request Motion permission
+                        viewModel.healthKitService.requestMotionAuthorization { granted in
+                            print("🔵 Motion permission callback - granted: \(granted)")
+                            DispatchQueue.main.async {
+                                if granted {
+                                    print("🔵 Setting isStepTrackingEnabled = true")
+                                    isStepTrackingEnabled = true
+                                    viewModel.stepTrackingWasEnabled = true
+                                    UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
+                                    if let startTime = viewModel.walkSession.startTime {
+                                        viewModel.healthKitService.startObservingSteps(from: startTime)
                                     }
                                 }
                             }
                         }
                     },
                     onCancel: {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            showMotionExplainer = false
-                        }
+                        print("🔵 Cancel tapped - dismissing explainer")
+                        showMotionExplainer = false
+                        print("🔵 showMotionExplainer = \(showMotionExplainer)")
                     }
                 )
-                .transition(.opacity)
+                .zIndex(999) // Ensure it's on top
             }
             
             // Intro overlay during camera animation
@@ -1346,15 +1343,18 @@ struct StepsCard: View {
     
     /// Current state of step tracking
     private var stepTrackingState: StepTrackingState {
+        let state: StepTrackingState
         if !healthKitService.isPedometerAvailable {
-            return .unavailable
+            state = .unavailable
         } else if healthKitService.isMotionDenied {
-            return .denied
+            state = .denied
         } else if isStepTrackingEnabled && healthKitService.isMotionAuthorized {
-            return .tracking
+            state = .tracking
         } else {
-            return .disabled
+            state = .disabled
         }
+        print("🟢 StepsCard state: \(state), isStepTrackingEnabled=\(isStepTrackingEnabled), isMotionAuthorized=\(healthKitService.isMotionAuthorized), isPedometerAvailable=\(healthKitService.isPedometerAvailable)")
+        return state
     }
     
     enum StepTrackingState {
