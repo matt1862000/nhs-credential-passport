@@ -383,14 +383,14 @@ struct EmbeddedWalkMapView: View {
                 MapUserLocationButton()
             }
             
-            // v1.6.11: Sticky delay banner at top
+            // v1.6.11: Sticky delay banner at top (below compass/map controls)
             VStack {
                 DelayBanner(
                     delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
                     walkStartTime: viewModel.walkSession.startTime
                 )
                 .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .padding(.top, 50)  // Push below compass/map controls
                 
                 Spacer()
             }
@@ -995,14 +995,15 @@ struct DelayBanner: View {
         return max(0, delayMinutes - elapsedMinutes)
     }
     
-    /// Progress through the delay (0.0 to 1.0) - uses seconds for smooth animation
+    /// Progress showing TIME REMAINING (1.0 = full time left, 0.0 = time's up)
     /// Uses timerTick to force recalculation on each tick
     var progress: Double {
         _ = timerTick  // Force dependency on timer tick
-        guard delayMinutes > 0, let start = walkStartTime else { return 0 }
+        guard delayMinutes > 0, let start = walkStartTime else { return 1.0 }
         let totalSeconds = Double(delayMinutes * 60)
         let elapsedSeconds = Date().timeIntervalSince(start)
-        return min(1.0, elapsedSeconds / totalSeconds)
+        let remaining = max(0, 1.0 - (elapsedSeconds / totalSeconds))
+        return remaining  // Bar drains from full to empty as time runs out
     }
     
     // Timer that fires every second
@@ -1091,6 +1092,11 @@ struct DelayBanner: View {
         )
         .onReceive(timer) { _ in
             timerTick += 1  // Increment to force view refresh every second
+            // Debug: uncomment to verify timer is firing
+            // print("⏱️ DelayBanner tick \(timerTick): \(timeRemaining)min remaining, progress: \(String(format: "%.2f", progress))")
+        }
+        .onAppear {
+            print("⏱️ DelayBanner appeared: \(delayMinutes)min delay, start: \(walkStartTime?.description ?? "nil")")
         }
     }
 }
