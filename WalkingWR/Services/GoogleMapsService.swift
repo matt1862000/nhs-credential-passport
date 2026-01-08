@@ -326,24 +326,45 @@ class GoogleMapsService: ObservableObject {
         
         // Standard percentage-based filter for other durations
         // v1.6.21: Revert to v1.6.12 tighter ranges - looser ranges = worse accuracy
-        let (minPercent, maxPercent): (Int, Int)
+        let minPercent: Int
+        var baseMaxPercent: Int
         switch targetDurationMinutes {
         case 6...10:
-            minPercent = 40; maxPercent = 95   // Tight for short routes
+            minPercent = 40; baseMaxPercent = 95   // Tight for short routes
         case 11...15:
-            minPercent = 45; maxPercent = 100  // Tight for 15min
+            minPercent = 45; baseMaxPercent = 100  // Tight for 15min
         case 16...25:
-            minPercent = 50; maxPercent = 105  // Moderate
+            minPercent = 50; baseMaxPercent = 105  // Moderate
         case 26...40:
-            minPercent = 55; maxPercent = 110  // Moderate
+            minPercent = 55; baseMaxPercent = 110  // Moderate
         case 41...50:
-            minPercent = 55; maxPercent = 105  // Tighter for long
+            minPercent = 55; baseMaxPercent = 105  // Tighter for long
         default:  // 51+ min
-            minPercent = 60; maxPercent = 100  // Very tight for very long
+            minPercent = 60; baseMaxPercent = 100  // Very tight for very long
+        }
+        
+        // v1.6.27: DENSITY-AWARE TIGHTENING
+        // In dense areas (lots of POIs), tighten maxPercent to prevent overshoot
+        // This preserves all duration-specific tuning while adapting to POI availability
+        let densityTightening: Double
+        if pois.count > 300 {
+            densityTightening = 0.75   // Very dense (Firth Park, 350 POIs) - 25% tighter
+        } else if pois.count > 200 {
+            densityTightening = 0.85   // Dense - 15% tighter
+        } else if pois.count > 100 {
+            densityTightening = 0.95   // Medium - 5% tighter
+        } else {
+            densityTightening = 1.0    // Sparse (Outwood, 115 POIs) - no change
+        }
+        
+        let effectiveMaxPercent = Int(Double(baseMaxPercent) * densityTightening)
+        
+        if densityTightening < 1.0 {
+            print("🎯 DENSITY TIGHTENING: \(pois.count) POIs → maxPercent \(baseMaxPercent)% → \(effectiveMaxPercent)%")
         }
         
         let minDuration = max(2, targetDurationMinutes * minPercent / 100)
-        let maxDuration = targetDurationMinutes * maxPercent / 100
+        let maxDuration = targetDurationMinutes * effectiveMaxPercent / 100
         
         var accepted: [PlaceResult] = []
         var rejected: [(name: String, estimated: Int, reason: String)] = []
@@ -363,7 +384,7 @@ class GoogleMapsService: ObservableObject {
         if !rejected.isEmpty {
             let tooShort = rejected.filter { $0.reason == "too short" }.count
             let tooLong = rejected.filter { $0.reason == "too long" }.count
-            print("🎯 ⏱️ PRE-FILTER: Kept \(accepted.count)/\(pois.count) POIs for \(targetDurationMinutes)min target (\(minPercent)-\(maxPercent)% range)")
+            print("🎯 ⏱️ PRE-FILTER: Kept \(accepted.count)/\(pois.count) POIs for \(targetDurationMinutes)min target (\(minPercent)-\(effectiveMaxPercent)% range)")
             if tooShort > 0 {
                 print("   ❌ Too short (<\(minDuration)min): \(tooShort) POIs")
             }
