@@ -1327,8 +1327,17 @@ struct LocalRoutePickerSheet: View {
                                         Button("📍 Current Location") {
                                             runRouteGenerationTest(at: nil)
                                         }
-                                        Button("🏙️ Sheffield S5 7AU") {
+                                        Button("🏙️ Sheffield S5 7AU (Firth Park)") {
                                             runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4577))
+                                        }
+                                        Button("🏘️ Sheffield S11 9BF (Ecclesall)") {
+                                            runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.3631, longitude: -1.4989))
+                                        }
+                                        Button("🏠 Sheffield S12 4QN (Hackenthorpe)") {
+                                            runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.3447, longitude: -1.3633))
+                                        }
+                                        Button("🌳 Sheffield S35 0JW (Chapeltown)") {
+                                            runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.4633, longitude: -1.4667))
                                         }
                                     } label: {
                                         if isRunningRouteTest {
@@ -2126,9 +2135,15 @@ struct LocalRoutePickerSheet: View {
         
         if let provided = testLocation {
             testCoordinate = provided
-            // Check if it's Sheffield S5 7AU
+            // Identify test location by coordinates
             if abs(provided.latitude - 53.4115) < 0.01 && abs(provided.longitude - (-1.4577)) < 0.01 {
-                locationName = "Sheffield S5 7AU"
+                locationName = "S5 7AU (Firth Park)"
+            } else if abs(provided.latitude - 53.3631) < 0.01 && abs(provided.longitude - (-1.4989)) < 0.01 {
+                locationName = "S11 9BF (Ecclesall)"
+            } else if abs(provided.latitude - 53.3447) < 0.01 && abs(provided.longitude - (-1.3633)) < 0.01 {
+                locationName = "S12 4QN (Hackenthorpe)"
+            } else if abs(provided.latitude - 53.4633) < 0.01 && abs(provided.longitude - (-1.4667)) < 0.01 {
+                locationName = "S35 0JW (Chapeltown)"
             } else {
                 locationName = "Test Location"
             }
