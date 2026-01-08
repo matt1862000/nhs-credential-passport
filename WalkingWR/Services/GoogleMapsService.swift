@@ -2333,22 +2333,34 @@ class GoogleMapsService: ObservableObject {
         // Use ADAPTIVE walking speed (learned from user's completed walks)
         // Defaults to 80m/min, adjusts to 65-90m/min based on actual pace
         let walkingSpeedMeterPerMin = adaptiveWalkingSpeed
-        let routeMultiplier: Double
-        // v1.6.9: CORRECTED DISTANCE MODEL
-        // Batch test showed routes running 25% too long on average
-        // Reduce multipliers by ~15-20% to target shorter distances
-        // Short routes (5-10min) were running 180% → need aggressive reduction
+        
+        // v1.6.9b: DUAL-MULTIPLIER APPROACH (safer than global reduction)
+        // - estimationMultiplier: Aggressive - used for POI selection, aims shorter
+        // - validationMultiplier: Original - used for accepting routes, realistic
+        // This fixes overshoot without causing undershoot in well-gridded areas
+        let estimationMultiplier: Double
+        let validationMultiplier: Double
+        
         if targetDurationMinutes <= 10 {
-            routeMultiplier = 0.65  // Very short: aggressive reduction (were 180%)
+            estimationMultiplier = 0.65  // Aim very short (were 180%)
+            validationMultiplier = 0.85  // Accept realistic routes
+        } else if targetDurationMinutes <= 15 {
+            estimationMultiplier = 0.70  // Aim shorter
+            validationMultiplier = 0.85
         } else if targetDurationMinutes <= 20 {
-            routeMultiplier = 0.72  // Medium-short (were ~130%)
+            estimationMultiplier = 0.75
+            validationMultiplier = 0.88
         } else if targetDurationMinutes <= 35 {
-            routeMultiplier = 0.78  // Medium (were ~120-130%)
+            estimationMultiplier = 0.82
+            validationMultiplier = 0.90
         } else {
-            routeMultiplier = 0.82  // Long routes (were ~120-150%)
+            estimationMultiplier = 0.85
+            validationMultiplier = 0.92
         }
-        let totalDistanceTarget = Int(Double(targetDurationMinutes * walkingSpeedMeterPerMin) * routeMultiplier)
-        print("🗺️ Distance target: \(totalDistanceTarget)m (10min=\(10*walkingSpeedMeterPerMin)m baseline, multiplier: \(routeMultiplier))")
+        
+        // Use estimation multiplier for distance targeting (aims shorter)
+        let totalDistanceTarget = Int(Double(targetDurationMinutes * walkingSpeedMeterPerMin) * estimationMultiplier)
+        print("🗺️ Distance target: \(totalDistanceTarget)m (estimation: \(estimationMultiplier), validation: \(validationMultiplier))")
         
         // Search radius - LARGER for short routes to find POIs at better distances
         // In dense areas, nearby POIs are too close for a proper loop
