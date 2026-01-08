@@ -1302,9 +1302,9 @@ class GoogleMapsService: ObservableObject {
                         guard let finalLat = lat, let finalLon = lon else { continue }
                         
                         // Get type from tags (expanded to match new query)
-                        let poiType = tags["amenity"] ?? tags["shop"] ?? tags["leisure"] ?? tags["tourism"] ?? 
-                                     tags["historic"] ?? tags["craft"] ?? tags["office"] ?? tags["healthcare"] ??
-                                     tags["club"] ?? tags["building"] ?? tags["landuse"] ?? "place"
+                        // Use array lookup to avoid Swift compiler complexity issue
+                        let typeKeys = ["amenity", "shop", "leisure", "tourism", "historic", "craft", "office", "healthcare", "club", "building", "landuse"]
+                        let poiType = typeKeys.compactMap { tags[$0] }.first ?? "place"
                         
                         // Get address if available
                         var address: String? = nil
