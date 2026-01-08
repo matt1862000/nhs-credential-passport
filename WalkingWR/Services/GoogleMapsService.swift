@@ -2591,8 +2591,12 @@ class GoogleMapsService: ObservableObject {
         // Filter out previously shown places to ensure variety
         if !excludePlaceIds.isEmpty {
             let beforeCount = places.count
+            let excludedPOIs = places.filter { excludePlaceIds.contains($0.placeId) }
             places = places.filter { !excludePlaceIds.contains($0.placeId) }
             print("🗺️ Excluded \(beforeCount - places.count) previously shown POIs, \(places.count) remaining")
+            if !excludedPOIs.isEmpty {
+                print("🚫 Excluded POIs: \(excludedPOIs.map { $0.name }.joined(separator: ", "))")
+            }
         }
         let afterExclusionCount = places.count
         
@@ -3511,6 +3515,10 @@ class GoogleMapsService: ObservableObject {
         // GUARANTEED FALLBACK: Create a simple out-and-back route if all else fails
         // This ensures we ALWAYS return something rather than leaving the user waiting
         print("🗺️ 🆘 Creating guaranteed fallback route...")
+        print("🗺️ 🆘 Available POIs for fallback: \(places.count)")
+        if places.count < 5 {
+            print("🗺️ 🆘 Available POI names: \(places.prefix(5).map { $0.name }.joined(separator: ", "))")
+        }
         if let guaranteedRoute = try? await createGuaranteedFallbackRoute(
             from: location,
             targetDurationMinutes: targetDurationMinutes,
