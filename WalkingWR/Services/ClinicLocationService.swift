@@ -25,6 +25,24 @@ class ClinicLocationService: ObservableObject {
     
     /// All known clinic locations in Sheffield
     let knownLocations: [ClinicLocation] = [
+        // Northlands - Community Mental Health Centre
+        ClinicLocation(
+            name: "Northlands",
+            alternativeNames: ["Northlands Centre", "Northlands CMHT"],
+            address: "Southey Hill, Sheffield",
+            postcode: "S5 8BE",
+            coordinate: CLLocationCoordinate2D(latitude: 53.4219, longitude: -1.4742)
+        ),
+        
+        // Eastglade - Community Mental Health Centre
+        ClinicLocation(
+            name: "Eastglade",
+            alternativeNames: ["Eastglade Centre", "Eastglade CMHT"],
+            address: "Eastglade Road, Sheffield",
+            postcode: "S12 4QN",
+            coordinate: CLLocationCoordinate2D(latitude: 53.3503, longitude: -1.3984)
+        ),
+        
         // Longley Centre - Main mental health hub (Decisions Unit, Crisis Team, etc.)
         ClinicLocation(
             name: "Longley Centre",
@@ -214,7 +232,9 @@ class ClinicLocationService: ObservableObject {
     /// Sort clinicians by their distance from the user
     /// Clinicians with unknown locations go to the end
     func sortByProximity(clinicians: [Clinician], userLocation: CLLocation) -> [Clinician] {
-        return clinicians.sorted { c1, c2 in
+        print("📍 Sorting \(clinicians.count) clinicians by proximity to \(userLocation.coordinate)")
+        
+        let sorted = clinicians.sorted { c1, c2 in
             let dist1 = distance(from: userLocation, to: c1.location)
             let dist2 = distance(from: userLocation, to: c2.location)
             
@@ -234,6 +254,15 @@ class ClinicLocationService: ObservableObject {
             // Both unknown - sort by name
             return c1.name < c2.name
         }
+        
+        // Debug log the result
+        for (index, clinician) in sorted.enumerated() {
+            let dist = distance(from: userLocation, to: clinician.location)
+            let distStr = dist.map { String(format: "%.0fm", $0) } ?? "unknown"
+            print("📍 [\(index + 1)] \(clinician.name) @ \(clinician.location) → \(distStr)")
+        }
+        
+        return sorted
     }
     
     /// Format distance for display (e.g., "1.2 km away")

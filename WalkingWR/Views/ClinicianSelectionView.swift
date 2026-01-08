@@ -490,6 +490,9 @@ class ClinicianLocationHelper: NSObject, ObservableObject, CLLocationManagerDele
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         DispatchQueue.main.async {
             self.currentLocation = locations.last
+            if let loc = locations.last {
+                print("📍 ClinicianLocationHelper got location: \(loc.coordinate.latitude), \(loc.coordinate.longitude)")
+            }
         }
     }
     
