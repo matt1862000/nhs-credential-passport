@@ -61,6 +61,11 @@ class GoogleMapsService: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     
+    // v1.6.10: Low POI warning for sparse areas
+    @Published var hasLimitedPOIs = false
+    @Published var lastPOICount = 0
+    static let limitedPOIThreshold = 50  // Below this, show warning
+    
     
     private let session = URLSession.shared
     
@@ -2542,6 +2547,16 @@ class GoogleMapsService: ObservableObject {
             throw GoogleMapsError.noPlacesFound
         }
         
+        // v1.6.10: Track POI count for low-POI warning
+        let finalPOICount = places.count
+        await MainActor.run {
+            lastPOICount = finalPOICount
+            hasLimitedPOIs = finalPOICount < GoogleMapsService.limitedPOIThreshold
+            if hasLimitedPOIs {
+                print("⚠️ LIMITED POIs: Only \(finalPOICount) POIs available (threshold: \(GoogleMapsService.limitedPOIThreshold))")
+            }
+        }
+        
         print("🗺️ Have \(places.count) POIs to select from")
         
         // 🔍 DIAGNOSTIC: Show all available POIs with distances, directions, and source
@@ -4381,6 +4396,18 @@ struct GeneratedRoute {
     let distanceMeters: Int
     let durationSeconds: Int
     let legs: [DirectionsLeg]
+    
+    // v1.6.10: Low POI warning - shown when route options are limited
+    var hasLimitedPOIs: Bool = false
+    var poiCount: Int = 0
+    
+    // Threshold for "limited" POIs (below this, variety is reduced)
+    static let limitedPOIThreshold = 50
+    
+    var limitedPOIWarning: String? {
+        guard hasLimitedPOIs else { return nil }
+        return "Limited route options in this area. Try again later for more variety."
+    }
     
     var durationMinutes: Int {
         durationSeconds / 60

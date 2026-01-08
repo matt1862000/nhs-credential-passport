@@ -981,6 +981,7 @@ struct LocalRoutePickerSheet: View {
                         totalRoutes: allRoutes.count,
                         isLoadingMoreRoutes: isPreGeneratingRoutes,
                         showPremiumUpsell: showPremiumUpsell,
+                        hasLimitedPOIs: mapsService.hasLimitedPOIs,  // v1.6.10
                         healthKitService: viewModel.healthKitService,
                         onRequestMotion: {
                             // Request motion permission only
@@ -2759,6 +2760,7 @@ struct LocalRouteMapPreview: View {
     var totalRoutes: Int = 1
     var isLoadingMoreRoutes: Bool = false  // True when pre-generating in background
     var showPremiumUpsell: Bool = false  // True when all routes have been viewed
+    var hasLimitedPOIs: Bool = false  // v1.6.10: True when POI count is below threshold
     @ObservedObject var healthKitService: HealthKitService  // For permission state
     let onRequestMotion: () -> Void      // Request motion permission
     let onRequestHealthKit: () -> Void   // Request HealthKit permission
@@ -3040,6 +3042,17 @@ struct LocalRouteMapPreview: View {
                                 .font(.caption)
                         }
                         .foregroundColor(.tealAccent)
+                        
+                        // v1.6.10: Low POI warning
+                        if hasLimitedPOIs {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.caption2)
+                                Text("Limited options in this area")
+                                    .font(.caption)
+                            }
+                            .foregroundColor(.orange)
+                        }
                     }
                     
                     Spacer()
