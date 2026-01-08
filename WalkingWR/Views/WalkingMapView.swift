@@ -522,28 +522,21 @@ struct EmbeddedWalkMapView: View {
             introPhase = .showingFullRoute
             
             // Calculate bounds for full route
-            let allPoints = currentRoute.routePath.filter { !$0.latitude.isNaN && !$0.longitude.isNaN }
-            if allPoints.count >= 2,
-               let minLat = allPoints.map({ $0.latitude }).min(),
-               let maxLat = allPoints.map({ $0.latitude }).max(),
-               let minLng = allPoints.map({ $0.longitude }).min(),
-               let maxLng = allPoints.map({ $0.longitude }).max(),
-               !minLat.isNaN, !maxLat.isNaN, !minLng.isNaN, !maxLng.isNaN {
-                let centerLat = (minLat + maxLat) / 2
-                let centerLng = (minLng + maxLng) / 2
-                guard !centerLat.isNaN, !centerLng.isNaN else { return }
-                
-                let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLng)
-                let latSpan = (maxLat - minLat) * 1.5
-                let lngSpan = (maxLng - minLng) * 1.5
+            let allPoints = currentRoute.routePath
+            if allPoints.count >= 2 {
+                let lats = allPoints.map { $0.latitude }
+                let lngs = allPoints.map { $0.longitude }
+                let center = CLLocationCoordinate2D(
+                    latitude: (lats.min()! + lats.max()!) / 2,
+                    longitude: (lngs.min()! + lngs.max()!) / 2
+                )
+                let latSpan = (lats.max()! - lats.min()!) * 1.5
+                let lngSpan = (lngs.max()! - lngs.min()!) * 1.5
                 
                 withAnimation(verySlowAnimation) {
                     cameraPosition = .region(MKCoordinateRegion(
                         center: center,
-                        span: MKCoordinateSpan(
-                            latitudeDelta: max(0.01, latSpan.isNaN ? 0.01 : latSpan),
-                            longitudeDelta: max(0.01, lngSpan.isNaN ? 0.01 : lngSpan)
-                        )
+                        span: MKCoordinateSpan(latitudeDelta: max(0.01, latSpan), longitudeDelta: max(0.01, lngSpan))
                     ))
                 }
             }
@@ -1044,27 +1037,11 @@ private struct DelayBannerContent: View {
     }
     
     /// Progress showing TIME REMAINING (1.0 = full time left, 0.0 = time's up)
-    /// Includes NaN/infinity guards to prevent CoreGraphics errors
     var progress: Double {
         guard delayMinutes > 0, let start = walkStartTime else { return 1.0 }
         let totalSeconds = Double(delayMinutes * 60)
-        guard totalSeconds > 0 else { return 1.0 }
         let elapsedSeconds = currentDate.timeIntervalSince(start)
-        let calculated = 1.0 - (elapsedSeconds / totalSeconds)
-        // Guard against NaN/infinity
-        if calculated.isNaN || calculated.isInfinite {
-            return 1.0
-        }
-        return min(1.0, max(0, calculated))
-    }
-    
-    /// Safe progress value for frame width calculation
-    var safeProgressWidth: CGFloat {
-        let p = progress
-        if p.isNaN || p.isInfinite || p < 0 || p > 1 {
-            return 1.0
-        }
-        return CGFloat(p)
+        return max(0, 1.0 - (elapsedSeconds / totalSeconds))
     }
     
     /// Urgency level based on time remaining
@@ -1131,10 +1108,10 @@ private struct DelayBannerContent: View {
                         .fill(Color.white.opacity(0.2))
                         .frame(height: 6)
                     
-                    // Progress fill (using safe width to prevent NaN)
+                    // Progress fill
                     RoundedRectangle(cornerRadius: 3)
                         .fill(urgencyColor)
-                        .frame(width: geo.size.width * safeProgressWidth, height: 6)
+                        .frame(width: geo.size.width * progress, height: 6)
                 }
             }
             .frame(width: 80, height: 6)

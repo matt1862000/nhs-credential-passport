@@ -163,15 +163,7 @@ struct QRScannerView: View {
 struct ScannerFrame: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
-        
-        // Guard against invalid rect dimensions (prevents NaN errors)
-        guard rect.width > 0, rect.height > 0,
-              !rect.width.isNaN, !rect.height.isNaN,
-              !rect.width.isInfinite, !rect.height.isInfinite else {
-            return path
-        }
-        
-        let cornerLength: CGFloat = min(30, min(rect.width, rect.height) / 2)
+        let cornerLength: CGFloat = 30
         
         // Top left
         path.move(to: CGPoint(x: 0, y: cornerLength))
@@ -203,10 +195,6 @@ struct ScanningLine: View {
     
     var body: some View {
         GeometryReader { geometry in
-            // Guard against invalid geometry (prevents NaN errors)
-            let safeHeight = geometry.size.height.isNaN || geometry.size.height.isInfinite || geometry.size.height <= 0 
-                ? 100 : geometry.size.height
-            
             Rectangle()
                 .fill(
                     LinearGradient(
@@ -219,7 +207,7 @@ struct ScanningLine: View {
                 .offset(y: offset)
                 .onAppear {
                     withAnimation(.easeInOut(duration: 2).repeatForever(autoreverses: true)) {
-                        offset = safeHeight
+                        offset = geometry.size.height
                     }
                 }
         }

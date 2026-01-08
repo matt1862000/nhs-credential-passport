@@ -400,21 +400,12 @@ struct WalkingRoute: Identifiable, Hashable {
     
     /// Decoded route path coordinates for map display
     /// Uses Google's encoded polyline if available, otherwise falls back to marker coordinates
-    /// Filters out any invalid (NaN) coordinates to prevent CoreGraphics errors
     var routePath: [CLLocationCoordinate2D] {
-        let rawPath: [CLLocationCoordinate2D]
         if let polyline = encodedPolyline, !polyline.isEmpty {
-            rawPath = PolylineDecoder.decode(polyline)
-        } else {
-            // Fallback to marker coordinates if no polyline
-            rawPath = qrMarkers.map { $0.coordinate }
+            return PolylineDecoder.decode(polyline)
         }
-        // Filter out any invalid coordinates
-        return rawPath.filter { coord in
-            !coord.latitude.isNaN && !coord.longitude.isNaN &&
-            !coord.latitude.isInfinite && !coord.longitude.isInfinite &&
-            CLLocationCoordinate2DIsValid(coord)
-        }
+        // Fallback to marker coordinates if no polyline
+        return qrMarkers.map { $0.coordinate }
     }
     
     /// Simple waypoints for basic display (start, markers, end)
@@ -926,10 +917,7 @@ class WalkSession: ObservableObject {
     var progress: Double {
         guard let route = currentRoute else { return 0 }
         let totalSeconds = Double(route.durationMinutes * 60)
-        guard totalSeconds > 0 else { return 0 }
-        let calculated = elapsedTime / totalSeconds
-        // Guard against NaN/infinity for CoreGraphics
-        return calculated.isNaN || calculated.isInfinite ? 0 : min(1.0, max(0, calculated))
+        return min(elapsedTime / totalSeconds, 1.0)
     }
     
     func updateElapsedTime() {

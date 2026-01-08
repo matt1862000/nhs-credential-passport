@@ -204,9 +204,7 @@ struct StatsSummaryCard: View {
     
     var levelProgress: Double {
         let pointsInCurrentLevel = progress.totalPoints % 100
-        let calculated = Double(pointsInCurrentLevel) / 100.0
-        // Guard against NaN/infinity for CoreGraphics
-        return calculated.isNaN || calculated.isInfinite ? 0 : min(1.0, max(0, calculated))
+        return Double(pointsInCurrentLevel) / 100.0
     }
 }
 
@@ -1507,9 +1505,7 @@ struct BadgeView: View {
     var requiredAmount: Int = 1
     
     var progressPercent: Double {
-        guard requiredAmount > 0 else { return 0 }
-        let calculated = Double(currentProgress) / Double(requiredAmount)
-        return calculated.isNaN || calculated.isInfinite ? 0 : min(1.0, max(0, calculated))
+        min(Double(currentProgress) / Double(requiredAmount), 1.0)
     }
     
     var body: some View {
@@ -1522,7 +1518,7 @@ struct BadgeView: View {
                         .frame(width: 60, height: 60)
                     
                     Circle()
-                        .trim(from: 0, to: min(1, max(0, progressPercent.isNaN ? 0 : progressPercent)))
+                        .trim(from: 0, to: progressPercent)
                         .stroke(badge.color.opacity(0.5), style: StrokeStyle(lineWidth: 3, lineCap: .round))
                         .frame(width: 60, height: 60)
                         .rotationEffect(.degrees(-90))
@@ -1566,9 +1562,7 @@ struct BadgeDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     
     var progressPercent: Double {
-        guard requiredAmount > 0 else { return 0 }
-        let calculated = Double(currentProgress) / Double(requiredAmount)
-        return calculated.isNaN || calculated.isInfinite ? 0 : min(1.0, max(0, calculated))
+        min(Double(currentProgress) / Double(requiredAmount), 1.0)
     }
     
     var body: some View {
@@ -1738,9 +1732,7 @@ struct DigitalLiteracyProgressCard: View {
     }
     
     var progress: Double {
-        guard totalSkills > 0 else { return 0 }
-        let calculated = Double(scans) / Double(totalSkills)
-        return calculated.isNaN || calculated.isInfinite ? 0 : min(1.0, max(0, calculated))
+        min(Double(scans) / Double(totalSkills), 1.0)
     }
 }
 
@@ -2680,7 +2672,7 @@ struct CachedLocationsSection: View {
                         .frame(width: 36, height: 36)
                     
                     Circle()
-                        .trim(from: 0, to: min(1, max(0, CGFloat(cachedLocations.count) / CGFloat(max(1, POICacheService.freeTierLocationLimit)))))
+                        .trim(from: 0, to: CGFloat(cachedLocations.count) / CGFloat(POICacheService.freeTierLocationLimit))
                         .stroke(
                             cachedLocations.count >= POICacheService.freeTierLocationLimit ? Color.softAmber : Color.tealAccent,
                             style: StrokeStyle(lineWidth: 4, lineCap: .round)
