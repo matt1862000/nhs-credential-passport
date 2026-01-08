@@ -810,16 +810,24 @@ struct NatureSection: View {
     @State private var showBirdChecklist = false
     @State private var currentNatureFact: String = NatureSection.natureFacts.randomElement() ?? "Trees release chemicals called phytoncides that boost our immune system."
     
-    // Nature facts for the "Discover" card
+    // Nature facts related to mental health and wellbeing
     static let natureFacts = [
-        "Trees release chemicals called phytoncides that boost our immune system.",
-        "Spending 20 minutes in nature can significantly lower stress hormones.",
-        "The colour green has been shown to enhance creative thinking.",
-        "Bird songs can reduce feelings of anxiety and paranoia.",
-        "Walking in nature improves short-term memory by 20%.",
-        "Natural sounds help lower blood pressure and heart rate.",
-        "Sunlight exposure helps regulate your sleep-wake cycle.",
-        "Being near water (rivers, ponds) has extra calming benefits."
+        "Spending just 20 minutes in nature can significantly lower cortisol (stress hormone) levels.",
+        "Walking in green spaces has been shown to reduce symptoms of depression by up to 71%.",
+        "Bird songs activate the brain's attention restoration system, reducing mental fatigue.",
+        "The colour green is processed by the brain without strain, creating a calming effect.",
+        "Nature exposure increases activity in the prefrontal cortex, improving focus and decision-making.",
+        "Being near water (rivers, ponds, fountains) has been proven to reduce anxiety and boost mood.",
+        "Sunlight triggers serotonin production, the 'feel-good' hormone that regulates mood.",
+        "Walking among trees lowers blood pressure within 15 minutes of starting.",
+        "Natural environments help reduce rumination - the repetitive negative thoughts linked to depression.",
+        "Spending time outdoors improves sleep quality by helping reset your circadian rhythm.",
+        "Looking at fractal patterns in nature (trees, clouds, waves) naturally calms the nervous system.",
+        "Green exercise (physical activity in nature) is twice as effective at improving mood as indoor exercise.",
+        "Nature sounds can reduce the body's fight-or-flight response by up to 60%.",
+        "Regular nature exposure has been linked to increased creativity and problem-solving ability.",
+        "Walking in nature for 90 minutes reduces activity in the brain region linked to mental illness.",
+        "Touching natural materials like wood and leaves activates the parasympathetic nervous system."
     ]
     
     var body: some View {
@@ -851,9 +859,9 @@ struct NatureSection: View {
                         Text("Capture something beautiful around you")
                             .font(.caption)
                             .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    
-                    Spacer()
                     
                     Image(systemName: "chevron.right")
                         .foregroundColor(.secondary)
@@ -884,9 +892,9 @@ struct NatureSection: View {
                         Text("Track the birds you see on your walk")
                             .font(.caption)
                             .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    
-                    Spacer()
                     
                     Image(systemName: "chevron.right")
                         .foregroundColor(.secondary)
@@ -1079,24 +1087,125 @@ struct NatureCameraView: View {
     }
 }
 
+// MARK: - Bird Data
+struct BirdInfo: Identifiable {
+    let id = UUID()
+    let name: String
+    let scientificName: String
+    let description: String
+    let habitat: String
+    let imageURL: String // Wikipedia image URL
+    let seasonalNote: String // When they're commonly seen
+    let isYearRound: Bool
+    let summerOnly: Bool
+    let winterOnly: Bool
+}
+
 // MARK: - Bird Spotting View
 struct BirdSpottingView: View {
     @Environment(\.dismiss) var dismiss
     @AppStorage("spottedBirds") private var spottedBirdsData: Data = Data()
+    @State private var expandedBird: String? = nil
     
-    // Common UK birds
-    let birds = [
-        ("Robin", "🐦", "Red breast, friendly, often seen in gardens"),
-        ("Blackbird", "🐦‍⬛", "Male is all black with orange beak"),
-        ("Blue Tit", "🐦", "Blue and yellow, small and acrobatic"),
-        ("Great Tit", "🐦", "Yellow belly with black stripe"),
-        ("House Sparrow", "🐦", "Brown and grey, common in towns"),
-        ("Magpie", "🐦‍⬛", "Black and white with long tail"),
-        ("Wood Pigeon", "🕊️", "Grey with white neck patch"),
-        ("Crow", "🐦‍⬛", "All black, intelligent"),
-        ("Starling", "🐦", "Shiny dark feathers with spots"),
-        ("Goldfinch", "🐦", "Red face, gold wing bars")
+    // Get current month to show appropriate birds
+    var currentMonth: Int {
+        Calendar.current.component(.month, from: Date())
+    }
+    
+    // Common UK birds with seasonal availability
+    let allBirds: [BirdInfo] = [
+        // Year-round residents (always show)
+        BirdInfo(name: "Robin", scientificName: "Erithacus rubecula", 
+                 description: "Britain's favourite bird with its distinctive red breast. Very territorial and often seen in gardens.",
+                 habitat: "Gardens, parks, woodlands",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f3/Erithacus_rubecula_with_cocked_head.jpg/220px-Erithacus_rubecula_with_cocked_head.jpg",
+                 seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
+        BirdInfo(name: "Blackbird", scientificName: "Turdus merula",
+                 description: "Males are jet black with orange-yellow beak. Females are brown. Often seen hopping on lawns.",
+                 habitat: "Gardens, parks, hedgerows",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Common_Blackbird.jpg/220px-Common_Blackbird.jpg",
+                 seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
+        BirdInfo(name: "Blue Tit", scientificName: "Cyanistes caeruleus",
+                 description: "Small, colourful bird with blue cap, yellow belly. Very acrobatic on feeders.",
+                 habitat: "Gardens, woodlands, hedgerows",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/Eurasian_blue_tit_Lancashire.jpg/220px-Eurasian_blue_tit_Lancashire.jpg",
+                 seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
+        BirdInfo(name: "Great Tit", scientificName: "Parus major",
+                 description: "Largest UK tit with yellow belly and distinctive black stripe. Bold and curious.",
+                 habitat: "Gardens, woodlands, parks",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/Parus_major_m.jpg/220px-Parus_major_m.jpg",
+                 seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
+        BirdInfo(name: "House Sparrow", scientificName: "Passer domesticus",
+                 description: "Chunky brown and grey bird. Males have grey cap and black bib. Very social.",
+                 habitat: "Towns, villages, near buildings",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6e/Passer_domesticus_male_%2815%29.jpg/220px-Passer_domesticus_male_%2815%29.jpg",
+                 seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
+        BirdInfo(name: "Magpie", scientificName: "Pica pica",
+                 description: "Striking black and white bird with long tail. Iridescent blue-green on wings.",
+                 habitat: "Gardens, parks, farmland",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9e/Pica_pica_-_Compans_Caffarelli_-_2012-03-16.jpg/220px-Pica_pica_-_Compans_Caffarelli_-_2012-03-16.jpg",
+                 seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
+        BirdInfo(name: "Wood Pigeon", scientificName: "Columba palumbus",
+                 description: "Large grey pigeon with white neck patch and pink breast. Distinctive cooing call.",
+                 habitat: "Gardens, parks, woodlands",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Wood_pigeon_%28Columba_palumbus%29.jpg/220px-Wood_pigeon_%28Columba_palumbus%29.jpg",
+                 seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
+        BirdInfo(name: "Carrion Crow", scientificName: "Corvus corone",
+                 description: "All-black, intelligent bird. Often seen in pairs or small groups.",
+                 habitat: "Almost anywhere - very adaptable",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Corvus_corone_-near_Canford_Cliffs%2C_Poole%2C_England-8.jpg/220px-Corvus_corone_-near_Canford_Cliffs%2C_Poole%2C_England-8.jpg",
+                 seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
+        BirdInfo(name: "Wren", scientificName: "Troglodytes troglodytes",
+                 description: "Tiny brown bird with upturned tail. Incredibly loud song for its size.",
+                 habitat: "Gardens, hedgerows, undergrowth",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/Troglodytes_troglodytes.jpg/220px-Troglodytes_troglodytes.jpg",
+                 seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
+        BirdInfo(name: "Goldfinch", scientificName: "Carduelis carduelis",
+                 description: "Colourful finch with red face and gold wing bars. Loves thistle seeds.",
+                 habitat: "Gardens, orchards, woodland edges",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7a/Carduelis_carduelis_close_up.jpg/220px-Carduelis_carduelis_close_up.jpg",
+                 seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
+        // Summer visitors (April-September)
+        BirdInfo(name: "Swallow", scientificName: "Hirundo rustica",
+                 description: "Elegant bird with long forked tail. Catches insects on the wing.",
+                 habitat: "Open countryside, near water, farms",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Barn_swallow_%28Hirundo_rustica_rustica%29.jpg/220px-Barn_swallow_%28Hirundo_rustica_rustica%29.jpg",
+                 seasonalNote: "Summer visitor (Apr-Oct)", isYearRound: false, summerOnly: true, winterOnly: false),
+        BirdInfo(name: "House Martin", scientificName: "Delichon urbicum",
+                 description: "Blue-black above, white below with distinctive white rump. Builds mud nests under eaves.",
+                 habitat: "Towns, villages, near buildings",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Common_house_martin_%28Delichon_urbicum%29.jpg/220px-Common_house_martin_%28Delichon_urbicum%29.jpg",
+                 seasonalNote: "Summer visitor (Apr-Oct)", isYearRound: false, summerOnly: true, winterOnly: false),
+        BirdInfo(name: "Swift", scientificName: "Apus apus",
+                 description: "Dark, scythe-winged bird that screams through the sky. Rarely lands except to nest.",
+                 habitat: "Towns, villages - high in the sky",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e6/Apus_apus_-Barcelona%2C_Spain-8_%281%29.jpg/220px-Apus_apus_-Barcelona%2C_Spain-8_%281%29.jpg",
+                 seasonalNote: "Summer visitor (May-Aug)", isYearRound: false, summerOnly: true, winterOnly: false),
+        // Winter visitors (October-March)
+        BirdInfo(name: "Fieldfare", scientificName: "Turdus pilaris",
+                 description: "Large thrush with grey head, chestnut back. Arrives from Scandinavia in flocks.",
+                 habitat: "Fields, hedgerows, orchards",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Fieldfare.jpg/220px-Fieldfare.jpg",
+                 seasonalNote: "Winter visitor (Oct-Mar)", isYearRound: false, summerOnly: false, winterOnly: true),
+        BirdInfo(name: "Redwing", scientificName: "Turdus iliacus",
+                 description: "Small thrush with cream eyestripe and red underwing. Often heard migrating at night.",
+                 habitat: "Fields, hedgerows, gardens in cold snaps",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9b/Redwing_Turdus_iliacus.jpg/220px-Redwing_Turdus_iliacus.jpg",
+                 seasonalNote: "Winter visitor (Oct-Mar)", isYearRound: false, summerOnly: false, winterOnly: true)
     ]
+    
+    // Filter birds based on current season
+    var seasonalBirds: [BirdInfo] {
+        let isSummer = currentMonth >= 4 && currentMonth <= 9  // April to September
+        let isWinter = currentMonth <= 3 || currentMonth >= 10 // October to March
+        
+        return allBirds.filter { bird in
+            if bird.isYearRound { return true }
+            if bird.summerOnly && isSummer { return true }
+            if bird.winterOnly && isWinter { return true }
+            return false
+        }
+    }
     
     var spottedBirds: Set<String> {
         get {
@@ -1109,64 +1218,78 @@ struct BirdSpottingView: View {
     
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    HStack {
-                        Image(systemName: "bird.fill")
-                            .foregroundColor(.orange)
-                        Text("Spotted: \(spottedBirds.count)/\(birds.count)")
-                            .fontWeight(.semibold)
-                        Spacer()
-                        if spottedBirds.count == birds.count {
-                            Text("🎉 All found!")
-                                .font(.caption)
+            ScrollView {
+                VStack(spacing: 16) {
+                    // Header card
+                    VStack(spacing: 8) {
+                        HStack {
+                            Image(systemName: "bird.fill")
+                                .font(.title)
+                                .foregroundColor(.orange)
+                            Text("Birds Spotted")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                            Spacer()
+                            Text("\(spottedBirds.count)/\(seasonalBirds.count)")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(.orange)
                         }
+                        
+                        if spottedBirds.count == seasonalBirds.count && !seasonalBirds.isEmpty {
+                            Text("🎉 Amazing! You've spotted all the birds!")
+                                .font(.callout)
+                                .foregroundColor(.green)
+                        }
+                        
+                        Text("Tap a bird to learn more, then mark it as spotted")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                }
-                
-                Section("Tap birds you've spotted today") {
-                    ForEach(birds, id: \.0) { bird in
+                    .padding()
+                    .background(Color(.secondarySystemBackground))
+                    .cornerRadius(16)
+                    
+                    // Bird cards
+                    ForEach(seasonalBirds) { bird in
+                        BirdCard(
+                            bird: bird,
+                            isExpanded: expandedBird == bird.name,
+                            isSpotted: spottedBirds.contains(bird.name),
+                            onTap: {
+                                withAnimation(.spring(response: 0.3)) {
+                                    if expandedBird == bird.name {
+                                        expandedBird = nil
+                                    } else {
+                                        expandedBird = bird.name
+                                    }
+                                }
+                            },
+                            onSpotted: {
+                                var spotted = spottedBirds
+                                if spotted.contains(bird.name) {
+                                    spotted.remove(bird.name)
+                                } else {
+                                    spotted.insert(bird.name)
+                                }
+                                spottedBirdsData = (try? JSONEncoder().encode(spotted)) ?? Data()
+                            }
+                        )
+                    }
+                    
+                    // Reset button
+                    if !spottedBirds.isEmpty {
                         Button {
-                            var spotted = spottedBirds
-                            if spotted.contains(bird.0) {
-                                spotted.remove(bird.0)
-                            } else {
-                                spotted.insert(bird.0)
-                            }
-                            spottedBirdsData = (try? JSONEncoder().encode(spotted)) ?? Data()
+                            spottedBirdsData = Data()
                         } label: {
-                            HStack {
-                                Text(bird.1)
-                                    .font(.title2)
-                                
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(bird.0)
-                                        .font(.body)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(.primary)
-                                    Text(bird.2)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                
-                                Spacer()
-                                
-                                if spottedBirds.contains(bird.0) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(.green)
-                                        .font(.title2)
-                                }
-                            }
+                            Text("Reset All Sightings")
+                                .font(.callout)
+                                .foregroundColor(.red)
                         }
+                        .padding(.top, 8)
                     }
                 }
-                
-                Section {
-                    Button("Reset All") {
-                        spottedBirdsData = Data()
-                    }
-                    .foregroundColor(.red)
-                }
+                .padding()
             }
             .navigationTitle("Bird Spotting")
             .navigationBarTitleDisplayMode(.inline)
@@ -1176,6 +1299,140 @@ struct BirdSpottingView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Bird Card
+struct BirdCard: View {
+    let bird: BirdInfo
+    let isExpanded: Bool
+    let isSpotted: Bool
+    let onTap: () -> Void
+    let onSpotted: () -> Void
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header (always visible)
+            Button(action: onTap) {
+                HStack(spacing: 12) {
+                    // Bird emoji/icon
+                    ZStack {
+                        Circle()
+                            .fill(isSpotted ? Color.green.opacity(0.15) : Color.orange.opacity(0.15))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "bird.fill")
+                            .font(.title3)
+                            .foregroundColor(isSpotted ? .green : .orange)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(bird.name)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Text(bird.seasonalNote)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    if isSpotted {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.green)
+                    }
+                    
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
+            }
+            .padding()
+            
+            // Expanded content
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 12) {
+                    Divider()
+                    
+                    // Image
+                    AsyncImage(url: URL(string: bird.imageURL)) { phase in
+                        switch phase {
+                        case .empty:
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                Spacer()
+                            }
+                            .frame(height: 150)
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(height: 150)
+                                .clipped()
+                                .cornerRadius(12)
+                        case .failure:
+                            HStack {
+                                Spacer()
+                                VStack {
+                                    Image(systemName: "bird.fill")
+                                        .font(.system(size: 40))
+                                        .foregroundColor(.orange)
+                                    Text(bird.name)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                            }
+                            .frame(height: 150)
+                            .background(Color.orange.opacity(0.1))
+                            .cornerRadius(12)
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                    
+                    // Scientific name
+                    Text(bird.scientificName)
+                        .font(.caption)
+                        .italic()
+                        .foregroundColor(.secondary)
+                    
+                    // Description
+                    Text(bird.description)
+                        .font(.body)
+                        .foregroundColor(.primary)
+                    
+                    // Habitat
+                    HStack {
+                        Image(systemName: "mappin.circle.fill")
+                            .foregroundColor(.tealAccent)
+                        Text(bird.habitat)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    // Spotted button
+                    Button(action: onSpotted) {
+                        HStack {
+                            Image(systemName: isSpotted ? "checkmark.circle.fill" : "circle")
+                            Text(isSpotted ? "Spotted! ✓" : "Mark as Spotted")
+                        }
+                        .font(.callout)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(isSpotted ? Color.green : Color.orange)
+                        .cornerRadius(10)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom)
+            }
+        }
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(16)
     }
 }
 
