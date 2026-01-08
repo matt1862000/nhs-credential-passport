@@ -2573,17 +2573,32 @@ class GoogleMapsService: ObservableObject {
             print("🗺️ Found \(places.count) POIs (need \(desiredSpots) for route)")
         }
         
+        // ════════════════════════════════════════════════════════════════
+        // 📊 POI FUNNEL TELEMETRY - Track filtering stages for debugging
+        // ════════════════════════════════════════════════════════════════
+        let fetchedPOICount = places.count
+        
         // Filter out previously shown places to ensure variety
         if !excludePlaceIds.isEmpty {
             let beforeCount = places.count
             places = places.filter { !excludePlaceIds.contains($0.placeId) }
             print("🗺️ Excluded \(beforeCount - places.count) previously shown POIs, \(places.count) remaining")
         }
+        let afterExclusionCount = places.count
         
         // 🎯 PRE-FILTER: Remove POIs that would create routes WAY outside target duration
         // This prevents "Springwood Cott" (30min round-trip) from being tried for 5min routes
         let preFilteredPlaces = preFilterPOIsByDuration(places, origin: location, targetDurationMinutes: targetDurationMinutes)
         places = preFilteredPlaces
+        let prefilterPassedCount = places.count
+        
+        // ⚠️ WARNING: Pre-filter too aggressive?
+        let prefilterPassRate = fetchedPOICount > 0 ? Double(prefilterPassedCount) / Double(fetchedPOICount) * 100 : 0
+        if prefilterPassRate < 5.0 && fetchedPOICount > 50 {
+            print("⚠️ 🚨 POI FUNNEL WARNING: Pre-filter too aggressive!")
+            print("   📊 Fetched: \(fetchedPOICount) → Pre-filter passed: \(prefilterPassedCount) (\(String(format: "%.1f", prefilterPassRate))%)")
+            print("   💡 Consider widening filter range for \(targetDurationMinutes)min routes")
+        }
         
         // 📊 DYNAMIC POI CAP (v1.6.12): More aggressive density-adaptive cap
         // Batch test showed: more POIs ≠ better accuracy
@@ -2599,6 +2614,7 @@ class GoogleMapsService: ObservableObject {
             maxPOIs = 150   // Normal / suburban / rural (working well)
         }
         
+        var cappedPOICount = places.count
         if places.count > maxPOIs {
             print("📊 POI CAP: \(rawPOICount) raw → \(maxPOIs) (density tier: \(rawPOICount > 500 ? "ultra-dense" : rawPOICount > 200 ? "dense" : "normal"))")
             
@@ -2612,8 +2628,18 @@ class GoogleMapsService: ObservableObject {
             }.sorted { $0.score > $1.score }
             
             places = Array(scoredPlaces.prefix(maxPOIs).map { $0.poi })
+            cappedPOICount = places.count
             print("📊 Kept top \(places.count) POIs by score")
         }
+        
+        // 📊 FINAL FUNNEL SUMMARY
+        print("📊 ═══════════════════════════════════════════════════")
+        print("📊 POI FUNNEL for \(targetDurationMinutes)min route:")
+        print("📊   Fetched:        \(fetchedPOICount)")
+        print("📊   After exclusion: \(afterExclusionCount)")
+        print("📊   Pre-filter pass: \(prefilterPassedCount) (\(String(format: "%.0f", prefilterPassRate))%)")
+        print("📊   After cap:       \(cappedPOICount)")
+        print("📊 ═══════════════════════════════════════════════════")
         
         // For longer routes OR short routes with few POIs, do additional searches at different points
         // Short routes in dense areas need POIs at BETTER distances, not just more nearby ones
