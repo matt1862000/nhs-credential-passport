@@ -3199,7 +3199,12 @@ class GoogleMapsService: ObservableObject {
             }
         }
         
-        // Absolute last resort: return the first reachable POI regardless of time
+        // Last resort: return a reachable POI but cap at 150% of target
+        // This prevents returning a 90min route for a 60min target
+        let absoluteMaxDuration = targetDurationMinutes * 150 / 100  // 150% cap
+        var bestLastResort: GeneratedRoute? = nil
+        var bestLastResortDiff = Int.max
+        
         for candidate in sorted.prefix(10) {
             let poi = candidate.poi
             print("🗺️ 🆘 Last resort: trying \(poi.name)")
@@ -3213,18 +3218,36 @@ class GoogleMapsService: ObservableObject {
                 
                 let totalDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
                 let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
-                print("🗺️ 🆘 ✓ Last resort route: \(totalDuration/60)min")
+                let durationMinutes = totalDuration / 60
                 
-                return GeneratedRoute(
-                    places: [poi],
-                    polyline: directions.overviewPolyline.points,
-                    distanceMeters: totalDistance,
-                    durationSeconds: totalDuration,
-                    legs: directions.legs
-                )
+                // Skip if over 150% of target - never return absurdly long routes
+                if durationMinutes > absoluteMaxDuration {
+                    print("🗺️ 🆘 ✗ \(poi.name): \(durationMinutes)min exceeds \(absoluteMaxDuration)min cap")
+                    continue
+                }
+                
+                let diff = abs(durationMinutes - targetDurationMinutes)
+                print("🗺️ 🆘 ✓ \(poi.name): \(durationMinutes)min (diff: \(diff)min)")
+                
+                // Keep the one closest to target
+                if diff < bestLastResortDiff {
+                    bestLastResortDiff = diff
+                    bestLastResort = GeneratedRoute(
+                        places: [poi],
+                        polyline: directions.overviewPolyline.points,
+                        distanceMeters: totalDistance,
+                        durationSeconds: totalDuration,
+                        legs: directions.legs
+                    )
+                }
             } catch {
                 continue  // Try next POI
             }
+        }
+        
+        if let route = bestLastResort {
+            print("🗺️ 🆘 ✓ Best last resort: \(route.durationSeconds/60)min")
+            return route
         }
         
         return nil
