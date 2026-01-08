@@ -703,7 +703,6 @@ struct GratitudeSection: View {
     @State private var gratitudeText = ""
     @Binding var savedEntries: [String]
     @State private var currentPrompt: String = WellbeingContent.gratitudePrompts.randomElement()?.description ?? "What made you smile today?"
-    @FocusState private var isTextEditorFocused: Bool  // Focus management for reliable keyboard
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -729,10 +728,9 @@ struct GratitudeSection: View {
                     .font(.bodyLarge)
                     .foregroundColor(.primary)
                 
-                // Minimal text input - avoid complex modifiers
+                // Ultra-minimal text input
                 TextField("Write your thoughts here...", text: $gratitudeText, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
-                    .lineLimit(3...6)
                 
                 Button("Save Entry") {
                     if !gratitudeText.isEmpty {
