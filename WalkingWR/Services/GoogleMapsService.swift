@@ -261,21 +261,23 @@ class GoogleMapsService: ObservableObject {
         targetDurationMinutes: Int
     ) -> [PlaceResult] {
         // DURATION-AWARE PRE-FILTER: 
-        // - Short routes: Wider range to find enough candidates
-        // - Medium routes: Moderate (working well)
-        // - Long routes: TIGHTER to prevent 150-200% overshoots
+        // v1.6.9: TIGHTER pre-filter based on batch test results showing 125% avg accuracy
+        // - Short routes were 180% too long → much tighter filter
+        // - Long routes also consistently over → tighter across the board
         let (minPercent, maxPercent): (Int, Int)
         switch targetDurationMinutes {
-        case 0...15:
-            minPercent = 50; maxPercent = 130  // Wider for very short (few nearby POIs)
+        case 0...10:
+            minPercent = 40; maxPercent = 95   // Very tight for 5-10min (were running 180%)
+        case 11...15:
+            minPercent = 45; maxPercent = 100  // Tight for 15min
         case 16...25:
-            minPercent = 55; maxPercent = 120  // Moderate-wide
+            minPercent = 50; maxPercent = 105  // Moderate
         case 26...40:
-            minPercent = 55; maxPercent = 115  // Moderate (sweet spot)
+            minPercent = 55; maxPercent = 110  // Moderate (was working OK)
         case 41...50:
-            minPercent = 55; maxPercent = 110  // Tighter for long
+            minPercent = 55; maxPercent = 105  // Tighter for long
         default:  // 51+ min
-            minPercent = 60; maxPercent = 105  // Very tight for very long
+            minPercent = 60; maxPercent = 100  // Very tight for very long (were 130-150%)
         }
         
         let minDuration = max(2, targetDurationMinutes * minPercent / 100)
@@ -2332,18 +2334,18 @@ class GoogleMapsService: ObservableObject {
         // Defaults to 80m/min, adjusts to 65-90m/min based on actual pace
         let walkingSpeedMeterPerMin = adaptiveWalkingSpeed
         let routeMultiplier: Double
-        // REALISTIC DISTANCE MODEL
-        // Walking speed ~80m/min, so 10min walk = 800m total loop
-        // Use 0.85-0.95 multiplier to account for route overhead (not 0.30!)
-        // Road layout typically adds 10-20% vs straight line, not 200-300%
+        // v1.6.9: CORRECTED DISTANCE MODEL
+        // Batch test showed routes running 25% too long on average
+        // Reduce multipliers by ~15-20% to target shorter distances
+        // Short routes (5-10min) were running 180% → need aggressive reduction
         if targetDurationMinutes <= 10 {
-            routeMultiplier = 0.85  // Short: slight buffer for route overhead
+            routeMultiplier = 0.65  // Very short: aggressive reduction (were 180%)
         } else if targetDurationMinutes <= 20 {
-            routeMultiplier = 0.88  // Medium-short
+            routeMultiplier = 0.72  // Medium-short (were ~130%)
         } else if targetDurationMinutes <= 35 {
-            routeMultiplier = 0.90  // Medium
+            routeMultiplier = 0.78  // Medium (were ~120-130%)
         } else {
-            routeMultiplier = 0.92  // Long routes: even less overhead
+            routeMultiplier = 0.82  // Long routes (were ~120-150%)
         }
         let totalDistanceTarget = Int(Double(targetDurationMinutes * walkingSpeedMeterPerMin) * routeMultiplier)
         print("🗺️ Distance target: \(totalDistanceTarget)m (10min=\(10*walkingSpeedMeterPerMin)m baseline, multiplier: \(routeMultiplier))")
@@ -2442,9 +2444,10 @@ class GoogleMapsService: ObservableObject {
         let preFilteredPlaces = preFilterPOIsByDuration(places, origin: location, targetDurationMinutes: targetDurationMinutes)
         places = preFilteredPlaces
         
-        // 📊 POI CAP: Limit to 300 best POIs to prevent "too many choices" problem
-        // High POI counts (600+) lead to worse accuracy as distant POIs get selected
-        let maxPOIs = 300
+        // 📊 POI CAP: Limit to 150 best POIs (v1.6.9: reduced from 300)
+        // Batch test showed 644 POIs → 40% valid vs 127 POIs → 63% valid
+        // Fewer, better-scored POIs produce more accurate routes
+        let maxPOIs = 150
         if places.count > maxPOIs {
             print("📊 POI CAP: \(places.count) POIs exceeds limit, keeping best \(maxPOIs)")
             
