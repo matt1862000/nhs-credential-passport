@@ -238,18 +238,18 @@ struct CategorySelector: View {
                             category: category,
                             isSelected: selectedCategory == category
                         ) {
-                            withAnimation(.spring(response: 0.3)) {
-                                selectedCategory = category
-                            }
-                            // Auto-scroll to center the selected category
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                proxy.scrollTo(category, anchor: .center)
-                            }
+                            selectedCategory = category
                         }
                         .id(category)  // ID for ScrollViewReader
                     }
                 }
                 .padding(.horizontal, 4)  // Small padding so edge items can center
+            }
+            .onChange(of: selectedCategory) { _, newCategory in
+                // Auto-scroll to center the selected category after state updates
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    proxy.scrollTo(newCategory, anchor: .center)
+                }
             }
         }
     }
