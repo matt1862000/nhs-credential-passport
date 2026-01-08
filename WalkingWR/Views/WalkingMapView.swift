@@ -1024,93 +1024,57 @@ struct DelayBanner: View {
     var urgencyIcon: String {
         switch urgency {
         case .relaxed: return "clock.fill"
-        case .gentle: return "clock.badge.exclamationmark.fill"
+        case .gentle: return "clock.fill"
         case .warning: return "exclamationmark.triangle.fill"
         case .urgent: return "bell.badge.fill"
         }
     }
     
-    var urgencyMessage: String {
-        switch urgency {
-        case .relaxed: return "Plenty of time"
-        case .gentle: return "Keep an eye on time"
-        case .warning: return "Start heading back"
-        case .urgent: return "Head back now!"
-        }
-    }
-    
+    // v1.6.13: Option A - Compact single-line solid banner
     var body: some View {
-        VStack(spacing: 8) {
-            // Main delay display
-            HStack(spacing: 12) {
-                // Urgency icon with pulse animation for urgent
-                Image(systemName: urgencyIcon)
+        HStack(spacing: 12) {
+            // Urgency icon with pulse animation for urgent
+            Image(systemName: urgencyIcon)
+                .font(.title3)
+                .foregroundColor(urgencyColor)
+                .symbolEffect(.pulse, isActive: urgency == .urgent)
+            
+            // Time remaining
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("\(timeRemaining)")
                     .font(.title2)
+                    .fontWeight(.bold)
                     .foregroundColor(urgencyColor)
-                    .symbolEffect(.pulse, isActive: urgency == .urgent)
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("CLINIC DELAY")
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.secondary)
-                        .tracking(1)
-                    
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text("\(timeRemaining)")
-                            .font(.title)
-                            .fontWeight(.bold)
-                            .foregroundColor(urgencyColor)
-                        Text("min remaining")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                
-                Spacer()
-                
-                // Urgency badge
-                Text(urgencyMessage)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(urgencyColor)
-                    .clipShape(Capsule())
+                Text("min remaining")
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.7))
             }
             
-            // Progress bar
+            Spacer()
+            
+            // Compact progress bar
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     // Background track
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.gray.opacity(0.2))
-                        .frame(height: 8)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.white.opacity(0.2))
+                        .frame(height: 6)
                     
                     // Progress fill
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(
-                            LinearGradient(
-                                colors: [urgencyColor.opacity(0.7), urgencyColor],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: geo.size.width * progress, height: 8)
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(urgencyColor)
+                        .frame(width: geo.size.width * progress, height: 6)
                         .animation(.easeInOut(duration: 0.5), value: progress)
                 }
             }
-            .frame(height: 8)
+            .frame(width: 80, height: 6)
         }
-        .padding(12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(colorScheme == .dark ? Color.black.opacity(0.3) : urgencyColor.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(urgencyColor.opacity(0.3), lineWidth: 1)
-                )
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.darkCardBackground)  // Solid dark background matching carousel
+                .shadow(color: Color.black.opacity(0.3), radius: 8, y: 4)
         )
     }
 }
