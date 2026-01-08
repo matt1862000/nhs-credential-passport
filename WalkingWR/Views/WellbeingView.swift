@@ -806,6 +806,21 @@ struct NatureSection: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @StateObject private var photoStorage = PhotoStorageService.shared
     @State private var selectedPhoto: CapturedPhoto?
+    @State private var showCamera = false
+    @State private var showBirdChecklist = false
+    @State private var currentNatureFact: String = NatureSection.natureFacts.randomElement() ?? "Trees release chemicals called phytoncides that boost our immune system."
+    
+    // Nature facts for the "Discover" card
+    static let natureFacts = [
+        "Trees release chemicals called phytoncides that boost our immune system.",
+        "Spending 20 minutes in nature can significantly lower stress hormones.",
+        "The colour green has been shown to enhance creative thinking.",
+        "Bird songs can reduce feelings of anxiety and paranoia.",
+        "Walking in nature improves short-term memory by 20%.",
+        "Natural sounds help lower blood pressure and heart rate.",
+        "Sunlight exposure helps regulate your sleep-wake cycle.",
+        "Being near water (rivers, ponds) has extra calming benefits."
+    ]
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -814,8 +829,109 @@ struct NatureSection: View {
                 .fontWeight(.semibold)
                 .foregroundColor(.primary)
             
-            ForEach(WellbeingContent.natureFacts) { fact in
-                NatureFactCard(fact: fact)
+            // 1. Take a Nature Photo - opens camera directly
+            Button {
+                showCamera = true
+            } label: {
+                HStack(spacing: 16) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.mintGreen.opacity(0.15))
+                            .frame(width: 50, height: 50)
+                        Image(systemName: "camera.fill")
+                            .font(.title3)
+                            .foregroundColor(.mintGreen)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Take a Nature Photo")
+                            .font(.bodyMedium)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        Text("Capture something beautiful around you")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.secondary)
+                }
+                .padding(16)
+                .cardStyle()
+            }
+            
+            // 2. Bird Spotting Checklist
+            Button {
+                showBirdChecklist = true
+            } label: {
+                HStack(spacing: 16) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.orange.opacity(0.15))
+                            .frame(width: 50, height: 50)
+                        Image(systemName: "bird.fill")
+                            .font(.title3)
+                            .foregroundColor(.orange)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Bird Spotting")
+                            .font(.bodyMedium)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        Text("Track the birds you see on your walk")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.secondary)
+                }
+                .padding(16)
+                .cardStyle()
+            }
+            
+            // 3. Discover Nature Fact - tappable to get a new fact
+            Button {
+                withAnimation {
+                    currentNatureFact = NatureSection.natureFacts.randomElement() ?? currentNatureFact
+                }
+            } label: {
+                HStack(spacing: 16) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.tealAccent.opacity(0.15))
+                            .frame(width: 50, height: 50)
+                        Image(systemName: "leaf.circle.fill")
+                            .font(.title3)
+                            .foregroundColor(.tealAccent)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Nature Fact")
+                                .font(.bodyMedium)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                            
+                            Spacer()
+                            
+                            Text("Tap for another")
+                                .font(.caption2)
+                                .foregroundColor(.tealAccent)
+                        }
+                        Text(currentNatureFact)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+                .padding(16)
+                .cardStyle()
             }
             
             // Photo Gallery (if photos exist)
@@ -831,9 +947,14 @@ struct NatureSection: View {
                         
                         Spacer()
                         
-                        Text("\(photoStorage.capturedPhotos.count) photo\(photoStorage.capturedPhotos.count == 1 ? "" : "s")")
+                        Text("\(photoStorage.capturedPhotos.count)")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.mintGreen)
+                            .clipShape(Capsule())
                     }
                     
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -849,38 +970,6 @@ struct NatureSection: View {
                 }
                 .padding(16)
                 .cardStyle()
-            } else {
-                // Photo prompt card - only show if no photos
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        ZStack {
-                            Circle()
-                                .fill(Color.mintGreen.opacity(0.15))
-                                .frame(width: 50, height: 50)
-                            
-                            Image(systemName: "camera.fill")
-                                .font(.title3)
-                                .foregroundColor(.mintGreen)
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Capture Nature")
-                                .font(.bodyLarge)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.primary)
-                            
-                            Text("Take photos during your walk using the Digital Skills tab")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    Text("Look for: 🌳 Trees • 🌸 Flowers • 🐦 Birds • ☁️ Clouds • 🍂 Leaves")
-                        .font(.caption)
-                        .foregroundColor(.primary)
-                }
-                .padding(16)
-                .cardStyle()
             }
             
             // Sheffield Health Walks
@@ -888,6 +977,204 @@ struct NatureSection: View {
         }
         .sheet(item: $selectedPhoto) { photo in
             PhotoDetailView(photo: photo, photoStorage: photoStorage)
+        }
+        .sheet(isPresented: $showCamera) {
+            NatureCameraView(photoStorage: photoStorage)
+        }
+        .sheet(isPresented: $showBirdChecklist) {
+            BirdSpottingView()
+        }
+    }
+}
+
+// MARK: - Nature Camera View
+struct NatureCameraView: View {
+    @ObservedObject var photoStorage: PhotoStorageService
+    @Environment(\.dismiss) var dismiss
+    @State private var showImagePicker = false
+    @State private var capturedImage: UIImage?
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                if let image = capturedImage {
+                    // Show captured image
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 400)
+                        .cornerRadius(16)
+                    
+                    HStack(spacing: 20) {
+                        Button("Retake") {
+                            capturedImage = nil
+                            showImagePicker = true
+                        }
+                        .foregroundColor(.secondary)
+                        
+                        Button {
+                            // Save the photo
+                            photoStorage.savePhoto(image)
+                            dismiss()
+                        } label: {
+                            Text("Save Photo")
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 32)
+                                .padding(.vertical, 12)
+                                .background(Color.mintGreen)
+                                .cornerRadius(12)
+                        }
+                    }
+                } else {
+                    // Prompt to take photo
+                    VStack(spacing: 16) {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 60))
+                            .foregroundColor(.mintGreen)
+                        
+                        Text("Capture Nature")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                        
+                        Text("Take a photo of something beautiful in nature")
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        
+                        Text("🌳 Trees • 🌸 Flowers • 🐦 Birds • ☁️ Sky")
+                            .font(.caption)
+                            .foregroundColor(.primary)
+                    }
+                    .padding()
+                    
+                    Button {
+                        showImagePicker = true
+                    } label: {
+                        Text("Open Camera")
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(Color.mintGreen)
+                            .cornerRadius(12)
+                    }
+                    .padding(.horizontal, 40)
+                }
+                
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Nature Photo")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .sheet(isPresented: $showImagePicker) {
+            ImagePicker(image: $capturedImage)
+        }
+    }
+}
+
+// MARK: - Bird Spotting View
+struct BirdSpottingView: View {
+    @Environment(\.dismiss) var dismiss
+    @AppStorage("spottedBirds") private var spottedBirdsData: Data = Data()
+    
+    // Common UK birds
+    let birds = [
+        ("Robin", "🐦", "Red breast, friendly, often seen in gardens"),
+        ("Blackbird", "🐦‍⬛", "Male is all black with orange beak"),
+        ("Blue Tit", "🐦", "Blue and yellow, small and acrobatic"),
+        ("Great Tit", "🐦", "Yellow belly with black stripe"),
+        ("House Sparrow", "🐦", "Brown and grey, common in towns"),
+        ("Magpie", "🐦‍⬛", "Black and white with long tail"),
+        ("Wood Pigeon", "🕊️", "Grey with white neck patch"),
+        ("Crow", "🐦‍⬛", "All black, intelligent"),
+        ("Starling", "🐦", "Shiny dark feathers with spots"),
+        ("Goldfinch", "🐦", "Red face, gold wing bars")
+    ]
+    
+    var spottedBirds: Set<String> {
+        get {
+            (try? JSONDecoder().decode(Set<String>.self, from: spottedBirdsData)) ?? []
+        }
+        set {
+            spottedBirdsData = (try? JSONEncoder().encode(newValue)) ?? Data()
+        }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack {
+                        Image(systemName: "bird.fill")
+                            .foregroundColor(.orange)
+                        Text("Spotted: \(spottedBirds.count)/\(birds.count)")
+                            .fontWeight(.semibold)
+                        Spacer()
+                        if spottedBirds.count == birds.count {
+                            Text("🎉 All found!")
+                                .font(.caption)
+                        }
+                    }
+                }
+                
+                Section("Tap birds you've spotted today") {
+                    ForEach(birds, id: \.0) { bird in
+                        Button {
+                            var spotted = spottedBirds
+                            if spotted.contains(bird.0) {
+                                spotted.remove(bird.0)
+                            } else {
+                                spotted.insert(bird.0)
+                            }
+                            spottedBirdsData = (try? JSONEncoder().encode(spotted)) ?? Data()
+                        } label: {
+                            HStack {
+                                Text(bird.1)
+                                    .font(.title2)
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(bird.0)
+                                        .font(.body)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(.primary)
+                                    Text(bird.2)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Spacer()
+                                
+                                if spottedBirds.contains(bird.0) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
+                                        .font(.title2)
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Section {
+                    Button("Reset All") {
+                        spottedBirdsData = Data()
+                    }
+                    .foregroundColor(.red)
+                }
+            }
+            .navigationTitle("Bird Spotting")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
     }
 }
@@ -1026,39 +1313,6 @@ struct PhotoDetailView: View {
                 Text("This photo will be permanently deleted.")
             }
         }
-    }
-}
-
-struct NatureFactCard: View {
-    let fact: WellbeingContent
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(Color.mintGreen.opacity(0.15))
-                    .frame(width: 50, height: 50)
-                
-                Image(systemName: fact.icon)
-                    .font(.title3)
-                    .foregroundColor(.mintGreen)
-            }
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(fact.title)
-                    .font(.bodyMedium)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.primary)
-                
-                Text(fact.description)
-                    .font(.caption)
-                    .foregroundColor(.primary)
-            }
-            
-            Spacer()
-        }
-        .padding(16)
-        .cardStyle()
     }
 }
 
@@ -1290,5 +1544,6 @@ struct ImagePicker: UIViewControllerRepresentable {
 #Preview {
     WellbeingView(viewModel: WaitingRoomViewModel())
 }
+
 
 
