@@ -533,12 +533,12 @@ class GoogleMapsService: ObservableObject {
             }
             
             // ═══════════════════════════════════════════════════════════════
-            // 🍎 PRIORITY 2: Apple Maps supplement (35 key categories)
-            // Limited to 35 queries to stay under 50/minute rate limit
+            // 🍎 PRIORITY 2: Apple Maps FAST MODE (first batch only)
+            // Get 40 high-priority queries instantly, background scan continues
             // ═══════════════════════════════════════════════════════════════
-            print("🍎 APPLE MAPS - Supplementing with key categories...")
-            let applePOIs = await searchAppleMapsForPOIs(location: location, radiusMeters: radiusMeters)
-            print("🍎 APPLE MAPS - Found \(applePOIs.count) POIs")
+            print("🍎 APPLE MAPS - FAST MODE (first 40 queries only)...")
+            let applePOIs = await searchAppleMapsForPOIsFast(location: location, radiusMeters: radiusMeters)
+            print("🍎 APPLE MAPS - Found \(applePOIs.count) POIs (fast mode)")
             var appleAdded = 0
             for poi in applePOIs {
                 let isDuplicate = allResults.contains { existing in
@@ -551,6 +551,36 @@ class GoogleMapsService: ObservableObject {
                 }
             }
             print("🍎 APPLE MAPS - Added \(appleAdded) unique POIs (after dedup)")
+            
+            // 🔄 START BACKGROUND SCAN for complete coverage
+            // This will update the cache with more POIs for future routes
+            let currentPOIs = allResults
+            Task.detached { [weak self] in
+                guard let self = self else { return }
+                print("🍎 📡 BACKGROUND: Starting full Apple Maps scan...")
+                let fullApplePOIs = await self.searchAppleMapsForPOIsComplete(location: location, radiusMeters: radiusMeters)
+                
+                // Merge with current POIs and update cache
+                var mergedPOIs = currentPOIs
+                var addedInBackground = 0
+                for poi in fullApplePOIs {
+                    let isDuplicate = mergedPOIs.contains { existing in
+                        existing.name.lowercased() == poi.name.lowercased() ||
+                        self.distanceBetween(existing.coordinate, poi.coordinate) < 50
+                    }
+                    if !isDuplicate {
+                        mergedPOIs.append(poi)
+                        addedInBackground += 1
+                    }
+                }
+                
+                if addedInBackground > 0 {
+                    POICacheService.shared.cachePOIs(mergedPOIs, for: location)
+                    print("🍎 📡 BACKGROUND COMPLETE: Added \(addedInBackground) more POIs (total: \(mergedPOIs.count))")
+                } else {
+                    print("🍎 📡 BACKGROUND COMPLETE: No new POIs found")
+                }
+            }
             
             // ═══════════════════════════════════════════════════════════════
             // 🌐 PRIORITY 3: Google Places (OPTIONAL - skip if quota exceeded)
@@ -851,18 +881,10 @@ class GoogleMapsService: ObservableObject {
     }
     
     // MARK: - Apple Maps POI Search (FREE - No Limits!)
-    /// Search for POIs using Apple MapKit - completely FREE with no rate limits!
-    /// Finds local venues that Google often misses (village halls, community centres, etc.)
-    func searchAppleMapsForPOIs(
-        location: CLLocationCoordinate2D,
-        radiusMeters: Int = 500
-    ) async -> [PlaceResult] {
-        var allResults: [PlaceResult] = []
-        var seenNames = Set<String>()
-        
-        // MAXIMUM POI COVERAGE - All 120+ categories for UK
-        // Uses smart batching to respect Apple's 50 requests/minute limit
-        let searchQueries = [
+    
+    /// All Apple Maps search categories for UK POIs
+    private var allAppleMapsCategories: [String] {
+        [
             // ══════════════════════════════════════════════════════════
             // BATCH 1: HIGHEST PRIORITY - Community & Food (40 queries)
             // ══════════════════════════════════════════════════════════
@@ -928,14 +950,97 @@ class GoogleMapsService: ObservableObject {
             "indian restaurant", "chinese restaurant", "thai restaurant",
             "italian restaurant", "mexican restaurant"
         ]
+    }
+    
+    /// FAST MODE: Only first 40 high-priority categories (instant, for first route)
+    /// Returns POIs in ~5-10 seconds for immediate route generation
+    func searchAppleMapsForPOIsFast(
+        location: CLLocationCoordinate2D,
+        radiusMeters: Int = 500
+    ) async -> [PlaceResult] {
+        var allResults: [PlaceResult] = []
+        var seenNames = Set<String>()
         
-        print("🍎 APPLE MAPS - Starting MAXIMUM coverage search")
-        print("🍎   📊 Categories: \(searchQueries.count)")
-        print("🍎   📍 Radius: \(radiusMeters)m")
-        print("🍎   ⏱️ Using smart batching (40 queries/batch, 65s between batches)")
+        // Only use first 40 categories (highest priority: community + food)
+        let fastQueries = Array(allAppleMapsCategories.prefix(40))
+        
+        print("🍎 APPLE MAPS FAST MODE - \(fastQueries.count) priority categories")
+        
+        var queriesWithResults = 0
+        var queriesFailed = 0
+        
+        for query in fastQueries {
+            do {
+                let request = MKLocalSearch.Request()
+                request.naturalLanguageQuery = query
+                request.region = MKCoordinateRegion(
+                    center: location,
+                    latitudinalMeters: Double(radiusMeters * 2),
+                    longitudinalMeters: Double(radiusMeters * 2)
+                )
+                
+                let search = MKLocalSearch(request: request)
+                let response = try await search.start()
+                
+                for item in response.mapItems {
+                    guard let name = item.name, !seenNames.contains(name) else { continue }
+                    
+                    let itemCoord = item.placemark.coordinate
+                    let distance = distanceBetween(location, itemCoord)
+                    guard distance <= Double(radiusMeters) else { continue }
+                    
+                    seenNames.insert(name)
+                    
+                    let placeResult = PlaceResult(
+                        placeId: "apple_\(name.hashValue)",
+                        name: name,
+                        vicinity: item.placemark.title,
+                        geometry: PlaceGeometry(
+                            location: PlaceLocation(
+                                lat: item.placemark.coordinate.latitude,
+                                lng: item.placemark.coordinate.longitude
+                            )
+                        ),
+                        types: [query]
+                    )
+                    allResults.append(placeResult)
+                }
+                if response.mapItems.count > 0 {
+                    queriesWithResults += 1
+                }
+            } catch {
+                queriesFailed += 1
+                let nsError = error as NSError
+                
+                // If rate limited, stop immediately
+                if nsError.domain == "GEOErrorDomain" && nsError.code == -3 ||
+                   nsError.domain == "MKErrorDomain" && nsError.code == 3 {
+                    print("🍎 ⚠️ Rate limited during fast mode - returning \(allResults.count) POIs")
+                    break
+                }
+            }
+        }
+        
+        print("🍎 FAST MODE COMPLETE: \(allResults.count) POIs (\(queriesWithResults) queries succeeded)")
+        return allResults
+    }
+    
+    /// COMPLETE MODE: All 120+ categories with smart batching (for background scan)
+    /// Takes 2-3 minutes but gets maximum POI coverage
+    func searchAppleMapsForPOIsComplete(
+        location: CLLocationCoordinate2D,
+        radiusMeters: Int = 500
+    ) async -> [PlaceResult] {
+        var allResults: [PlaceResult] = []
+        var seenNames = Set<String>()
+        
+        let searchQueries = allAppleMapsCategories
+        
+        print("🍎 📡 BACKGROUND: Starting COMPLETE Apple Maps scan")
+        print("🍎 📡   📊 Categories: \(searchQueries.count)")
+        print("🍎 📡   📍 Radius: \(radiusMeters)m")
         
         // Smart batching: 40 queries per batch, 65s wait between batches
-        // Apple limit is 50/60s, so 40 queries + 65s wait = safe margin
         let batchSize = 40
         var queriesWithResults = 0
         var queriesFailed = 0
@@ -944,7 +1049,6 @@ class GoogleMapsService: ObservableObject {
         var batchNumber = 0
         
         for batchStart in stride(from: 0, to: searchQueries.count, by: batchSize) {
-            // Skip remaining batches if rate limited
             if rateLimitHit { break }
             
             batchNumber += 1
@@ -953,11 +1057,8 @@ class GoogleMapsService: ObservableObject {
             
             // Wait between batches (not before first batch)
             if batchStart > 0 {
-                print("🍎 ⏳ Batch \(batchNumber): Waiting 65s for rate limit reset...")
+                print("🍎 📡 Batch \(batchNumber): Waiting 65s for rate limit reset...")
                 try? await Task.sleep(nanoseconds: 65_000_000_000)  // 65 seconds
-                print("🍎 ✅ Resuming batch \(batchNumber) (\(batch.count) queries)")
-            } else {
-                print("🍎 🚀 Starting batch 1 (\(batch.count) queries)")
             }
             
             for query in batch {
@@ -979,14 +1080,12 @@ class GoogleMapsService: ObservableObject {
                     for item in response.mapItems {
                         guard let name = item.name, !seenNames.contains(name) else { continue }
                         
-                        // DISTANCE FILTER: Only keep POIs actually within search radius
                         let itemCoord = item.placemark.coordinate
                         let distance = distanceBetween(location, itemCoord)
                         guard distance <= Double(radiusMeters) else { continue }
                         
                         seenNames.insert(name)
                         
-                        // Convert MKMapItem to PlaceResult
                         let placeResult = PlaceResult(
                             placeId: "apple_\(name.hashValue)",
                             name: name,
@@ -1003,52 +1102,36 @@ class GoogleMapsService: ObservableObject {
                     }
                     if response.mapItems.count > 0 {
                         queriesWithResults += 1
-                        // Log queries that found POIs within radius
-                        let inRadius = response.mapItems.filter { item in
-                            let dist = distanceBetween(location, item.placemark.coordinate)
-                            return dist <= Double(radiusMeters)
-                        }
-                        if !inRadius.isEmpty {
-                            print("🍎 ✓ '\(query)' → \(inRadius.count) POIs")
-                        }
                     }
                 } catch {
                     queriesFailed += 1
                     let nsError = error as NSError
                     
-                    // Check for Apple Maps rate limiting
                     if nsError.domain == "GEOErrorDomain" && nsError.code == -3 ||
                        nsError.domain == "MKErrorDomain" && nsError.code == 3 ||
                        nsError.localizedDescription.contains("50 requests") {
                         rateLimitHit = true
-                        print("🍎 🚫 RATE LIMITED at query \(queryIndex)/\(searchQueries.count)")
-                        print("🍎 ℹ️ Collected \(allResults.count) POIs before limit")
-                        print("🍎 💡 Will continue with OSM data")
+                        print("🍎 📡 RATE LIMITED at batch \(batchNumber) - stopping")
                         break
-                    }
-                    
-                    // Log first few non-rate-limit failures
-                    if queriesFailed <= 3 {
-                        print("🍎 ❌ '\(query)' failed: \(error.localizedDescription)")
                     }
                 }
             }
             
-            // Progress update after each batch
             if !rateLimitHit {
-                print("🍎 📦 Batch \(batchNumber) complete: \(allResults.count) POIs so far")
+                print("🍎 📡 Batch \(batchNumber) complete: \(allResults.count) POIs")
             }
         }
         
-        print("🍎 ══════════════════════════════════════════════════")
-        print("🍎 APPLE MAPS COMPLETE: \(allResults.count) unique POIs")
-        print("🍎   ✅ Successful queries: \(queriesWithResults)/\(searchQueries.count)")
-        print("🍎   ❌ Failed queries: \(queriesFailed)/\(searchQueries.count)")
-        if rateLimitHit {
-            print("🍎   ⚠️ Search stopped early due to rate limit")
-        }
-        print("🍎 ══════════════════════════════════════════════════")
+        print("🍎 📡 BACKGROUND COMPLETE: \(allResults.count) unique POIs")
         return allResults
+    }
+    
+    /// Legacy method - redirects to fast mode for backward compatibility
+    func searchAppleMapsForPOIs(
+        location: CLLocationCoordinate2D,
+        radiusMeters: Int = 500
+    ) async -> [PlaceResult] {
+        return await searchAppleMapsForPOIsFast(location: location, radiusMeters: radiusMeters)
     }
     
     // MARK: - Search OpenStreetMap for POIs (Overpass API - FREE!)
