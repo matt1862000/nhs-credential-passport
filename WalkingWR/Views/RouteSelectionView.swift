@@ -4332,15 +4332,6 @@ struct ActiveWalkView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @State private var showAllDirections: Bool = false
     @State private var showEndConfirmation: Bool = false
-    @State private var showMotionExplainer: Bool = false
-    @State private var isStepTrackingEnabled: Bool = false
-    
-    /// Check if step tracking should be prompted
-    private var shouldPromptSteps: Bool {
-        !isStepTrackingEnabled && 
-        viewModel.healthKitService.isPedometerAvailable && 
-        !viewModel.healthKitService.isMotionDenied
-    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -4424,50 +4415,6 @@ struct ActiveWalkView: View {
             
             // Bottom section with stats and end button
             VStack(spacing: 12) {
-                // Walk time remaining + Step tracking prompt row
-                HStack(spacing: 12) {
-                    // Walk time remaining (countdown)
-                    if let route = viewModel.walkSession.currentRoute {
-                        let walkRemaining = max(0, route.durationMinutes - Int(viewModel.walkSession.elapsedTime / 60))
-                        HStack(spacing: 6) {
-                            Image(systemName: "figure.walk")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(walkRemaining <= 5 ? .orange : .tealAccent)
-                            
-                            Text("\(walkRemaining)")
-                                .font(.system(size: 16, weight: .bold, design: .rounded))
-                                .foregroundColor(walkRemaining <= 5 ? .orange : .tealAccent)
-                            
-                            Text("mins left")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.white.opacity(0.7))
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color.darkCardBackground)
-                        .clipShape(Capsule())
-                    }
-                    
-                    // Step tracking prompt (if not enabled)
-                    if shouldPromptSteps {
-                        Button(action: { showMotionExplainer = true }) {
-                            HStack(spacing: 6) {
-                                Text("Track steps")
-                                    .font(.system(size: 13, weight: .semibold))
-                                Image(systemName: "hand.tap.fill")
-                                    .font(.system(size: 11))
-                            }
-                            .foregroundColor(.tealAccent)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Color.tealAccent.opacity(0.15))
-                            .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.top, 8)
-                
                 // Compact stats row
                 HStack(spacing: 8) {
                     CompactStatPill(icon: "figure.walk", value: "\(viewModel.walkSession.stepsThisSession)", label: "steps")
@@ -4475,7 +4422,7 @@ struct ActiveWalkView: View {
                     CompactStatPill(icon: "mappin", value: "\(viewModel.walkSession.markersScanned.count)", label: "spots")
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 4)
+                .padding(.top, 10)
                 
                 // End walk button
                 Button(action: { showEndConfirmation = true }) {
@@ -4496,31 +4443,6 @@ struct ActiveWalkView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("Your steps and progress will be saved.")
-        }
-        .sheet(isPresented: $showMotionExplainer) {
-            MotionPermissionExplainerSheet(
-                onEnable: {
-                    // Set flags immediately for instant UI feedback
-                    isStepTrackingEnabled = true
-                    viewModel.stepTrackingWasEnabled = true
-                    UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
-                    showMotionExplainer = false
-                    
-                    // Start observing steps
-                    if let startTime = viewModel.walkSession.startTime {
-                        viewModel.healthKitService.startObservingSteps(from: startTime)
-                    }
-                },
-                onCancel: {
-                    showMotionExplainer = false
-                }
-            )
-        }
-        .onAppear {
-            // Auto-enable if previously enabled
-            if UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled") {
-                isStepTrackingEnabled = true
-            }
         }
     }
     

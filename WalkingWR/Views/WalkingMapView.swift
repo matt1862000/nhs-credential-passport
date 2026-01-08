@@ -394,14 +394,22 @@ struct EmbeddedWalkMapView: View {
                 // Empty - we'll add custom controls in the overlay
             }
             
-            // v1.6.32: Removed CompactStatusRing - delay shown in directions banner, 
-            // walk time/steps shown in ActiveWalkView bottom section
-            // Only keep the location button
+            // v1.6.30: Alternating pill showing walk time left / track steps
             VStack {
-                HStack {
+                HStack(alignment: .top) {
+                    // Alternating pill (walk time / steps prompt)
+                    CompactStatusRing(
+                        delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
+                        walkStartTime: viewModel.walkSession.startTime,
+                        walkDurationMinutes: viewModel.walkSession.currentRoute?.durationMinutes ?? 15,
+                        healthKitService: viewModel.healthKitService,
+                        isStepTrackingEnabled: $isStepTrackingEnabled,
+                        showMotionExplainer: $showMotionExplainer
+                    )
+                    
                     Spacer()
                     
-                    // Location button (top-right only)
+                    // Location button (top-right)
                     Button(action: {
                         withAnimation {
                             cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
