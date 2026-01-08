@@ -700,23 +700,24 @@ struct BreathingExerciseSheet: View {
 
 // MARK: - Gratitude Section
 struct GratitudeSection: View {
-    @State private var gratitudeText = ""
+    @State private var text: String = ""
     @Binding var savedEntries: [String]
-    @State private var currentPrompt: String = WellbeingContent.gratitudePrompts.randomElement()?.description ?? "What made you smile today?"
+    @State private var prompt: String = "What made you smile today?"
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // Title
             Text("Gratitude Journal")
                 .font(.titleMedium)
                 .fontWeight(.semibold)
                 .foregroundColor(.primary)
             
-            // Prompt card
+            // Main card
             VStack(alignment: .leading, spacing: 12) {
+                // Header
                 HStack {
                     Image(systemName: "sparkles")
                         .foregroundColor(.coralPink)
-                    
                     Text("Today's prompt")
                         .font(.caption)
                         .fontWeight(.semibold)
@@ -724,32 +725,40 @@ struct GratitudeSection: View {
                         .textCase(.uppercase)
                 }
                 
-                Text(currentPrompt)
+                // Prompt text
+                Text(prompt)
                     .font(.bodyLarge)
                     .foregroundColor(.primary)
                 
-                // Text input - using simple style to avoid NaN issues
-                TextField("Write your thoughts here...", text: $gratitudeText)
-                    .textFieldStyle(.plain)
-                    .padding()
-                    .background(Color(.secondarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                // Input area - simple TextEditor
+                TextEditor(text: $text)
+                    .frame(minHeight: 80, maxHeight: 120)
+                    .scrollContentBackground(.hidden)
+                    .padding(10)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(10)
                 
-                Button("Save Entry") {
-                    if !gratitudeText.isEmpty {
-                        savedEntries.append(gratitudeText)
-                        gratitudeText = ""
-                        // Only change prompt after saving
-                        currentPrompt = WellbeingContent.gratitudePrompts.randomElement()?.description ?? "What made you smile today?"
-                    }
+                // Save button
+                Button {
+                    guard !text.isEmpty else { return }
+                    savedEntries.append(text)
+                    text = ""
+                    prompt = WellbeingContent.gratitudePrompts.randomElement()?.description ?? "What made you smile today?"
+                } label: {
+                    Text("Save Entry")
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(text.isEmpty ? Color.gray : Color.coralPink)
+                        .cornerRadius(12)
                 }
-                .buttonStyle(PrimaryButtonStyle(color: .coralPink))
-                .disabled(gratitudeText.isEmpty)
+                .disabled(text.isEmpty)
             }
             .padding(20)
             .cardStyle()
             
-            // Previous entries
+            // Saved entries list
             if !savedEntries.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -757,43 +766,38 @@ struct GratitudeSection: View {
                             .font(.caption)
                             .foregroundColor(.primary)
                             .textCase(.uppercase)
-                        
                         Spacer()
-                        
                         Text("\(savedEntries.count) entries")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     
-                    ForEach(savedEntries.indices, id: \.self) { index in
+                    ForEach(Array(savedEntries.enumerated()), id: \.offset) { idx, entry in
                         HStack(alignment: .top, spacing: 12) {
                             Image(systemName: "heart.fill")
                                 .font(.caption)
                                 .foregroundColor(.coralPink)
-                            
-                            Text(savedEntries[index])
+                            Text(entry)
                                 .font(.bodyMedium)
                                 .foregroundColor(.primary)
-                            
                             Spacer()
-                            
-                            Button(action: {
-                                withAnimation {
-                                    _ = savedEntries.remove(at: index)
-                                }
-                            }) {
+                            Button {
+                                withAnimation { _ = savedEntries.remove(at: idx) }
+                            } label: {
                                 Image(systemName: "xmark.circle.fill")
-                                    .font(.body)
                                     .foregroundColor(Color.coralPink.opacity(0.5))
                             }
                         }
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.coralPink.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .cornerRadius(10)
                     }
                 }
             }
+        }
+        .onAppear {
+            prompt = WellbeingContent.gratitudePrompts.randomElement()?.description ?? "What made you smile today?"
         }
     }
 }
