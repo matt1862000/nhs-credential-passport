@@ -532,6 +532,48 @@ class GoogleMapsService: ObservableObject {
         return allResults
     }
     
+    /// Same as findNearbyPlaces but does NOT cache results - used for testing to bypass location limits
+    func findNearbyPlacesWithoutCaching(
+        location: CLLocationCoordinate2D,
+        radiusMeters: Int = 2500
+    ) async throws -> [PlaceResult] {
+        var allResults: [PlaceResult] = []
+        
+        print("🧪 [TEST MODE] Fetching POIs WITHOUT caching (bypass limit)")
+        
+        // 1. Check if we already have cached data for this area
+        if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: location), !cachedPOIs.isEmpty {
+            print("🧪 Found \(cachedPOIs.count) cached POIs - using those")
+            return cachedPOIs
+        }
+        
+        // 2. Fetch from Apple Maps (FREE, no limits)
+        print("🍎 APPLE MAPS (test mode)...")
+        let applePOIs = await searchAppleMapsForPOIs(location: location, radiusMeters: radiusMeters)
+        allResults.append(contentsOf: applePOIs)
+        print("🍎 Got \(applePOIs.count) from Apple")
+        
+        // 3. Fetch from OpenStreetMap (FREE, no limits)
+        print("🗺️ OSM (test mode)...")
+        let osmPOIs = await searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
+        for poi in osmPOIs {
+            let isDuplicate = allResults.contains { existing in
+                existing.name.lowercased() == poi.name.lowercased() ||
+                distanceBetween(existing.coordinate, poi.coordinate) < 50
+            }
+            if !isDuplicate {
+                allResults.append(poi)
+            }
+        }
+        print("🗺️ Got \(osmPOIs.count) from OSM")
+        
+        // NOTE: We intentionally skip Google API for test mode to avoid charges
+        // and do NOT cache results to avoid exceeding the free tier limit
+        
+        print("🧪 [TEST MODE] Total POIs: \(allResults.count) (not cached)")
+        return allResults
+    }
+    
     /// Fetch POIs from Google Places API (called at most once per 24 hours)
     private func fetchGooglePOIs(
         location: CLLocationCoordinate2D,

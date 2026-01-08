@@ -2232,14 +2232,15 @@ struct LocalRoutePickerSheet: View {
         var allResults: [(accuracy: Double, time: Double, isValid: Bool)] = []
         var poiCount = 0
         
-        // Get POIs
+        // Get POIs - for testing, use cache if available, otherwise fetch WITHOUT caching
         var pois: [PlaceResult]? = nil
         if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: coordinate), !cachedPOIs.isEmpty {
             pois = cachedPOIs
             print("🧪 [\(name)] Using \(cachedPOIs.count) CACHED POIs")
         } else {
-            print("🧪 [\(name)] Fetching fresh POIs...")
-            pois = try? await mapsService.findNearbyPlaces(location: coordinate, radiusMeters: 2500)
+            // For testing: fetch POIs but don't cache (bypass limit)
+            print("🧪 [\(name)] Fetching fresh POIs (test mode - no cache)...")
+            pois = try? await mapsService.findNearbyPlacesWithoutCaching(location: coordinate, radiusMeters: 2500)
         }
         
         poiCount = pois?.count ?? 0
