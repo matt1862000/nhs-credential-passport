@@ -2134,17 +2134,26 @@ struct LocalRoutePickerSheet: View {
     @State private var routeTestResults: String = ""
     @State private var showRouteTestResults = false
     
-    /// All test locations for batch testing
-    private let allTestLocations: [(name: String, coordinate: CLLocationCoordinate2D)] = [
+    /// Fixed test locations for batch testing
+    private let fixedTestLocations: [(name: String, coordinate: CLLocationCoordinate2D)] = [
         ("S5 7AU (Firth Park)", CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4577)),
         ("S11 9BF (Ecclesall)", CLLocationCoordinate2D(latitude: 53.3631, longitude: -1.4989)),
         ("S12 4QN (Hackenthorpe)", CLLocationCoordinate2D(latitude: 53.3447, longitude: -1.3633)),
         ("S35 0JW (Chapeltown)", CLLocationCoordinate2D(latitude: 53.4633, longitude: -1.4667))
     ]
     
-    /// Run tests for ALL locations sequentially
+    /// Run tests for ALL locations sequentially (includes current location + fixed locations)
     func runAllLocationTests() {
         isRunningRouteTest = true
+        
+        // Build test locations list - current location first if available
+        var allTestLocations: [(name: String, coordinate: CLLocationCoordinate2D)] = []
+        
+        if let userLocation = locationService.currentLocation {
+            allTestLocations.append(("📍 Current Location", userLocation.coordinate))
+        }
+        allTestLocations.append(contentsOf: fixedTestLocations)
+        
         routeTestResults = "🧪🧪🧪 BATCH TEST - ALL LOCATIONS 🧪🧪🧪\n"
         routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         routeTestResults += "Testing \(allTestLocations.count) locations...\n\n"
