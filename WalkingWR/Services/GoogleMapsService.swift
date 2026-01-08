@@ -66,6 +66,10 @@ class GoogleMapsService: ObservableObject {
     @Published var lastPOICount = 0
     static let limitedPOIThreshold = 50  // Below this, show warning
     
+    // v1.6.21: Short route viability gate
+    @Published var shortRouteNotViable = false  // True if 5-7min routes can't work here
+    @Published var minimumViableMinutes = 5     // Suggested minimum duration for this area
+    
     
     private let session = URLSession.shared
     
@@ -2997,6 +3001,31 @@ class GoogleMapsService: ObservableObject {
         
         guard !places.isEmpty else {
             throw GoogleMapsError.noPlacesFound
+        }
+        
+        // ════════════════════════════════════════════════════════════════
+        // 🚦 v1.6.21: VIABILITY GATE FOR SHORT ROUTES
+        // Prevents forced bad routes in sparse areas
+        // ════════════════════════════════════════════════════════════════
+        let nearestPOIDistance = places.map { distanceBetween(location, $0.coordinate) }.min() ?? 9999
+        
+        // For 5-7 min routes: nearest POI must be within ~300m (3.75 min one-way @ 80m/min)
+        // If nearest is >300m, a 5-min round trip is physically impossible
+        if targetDurationMinutes <= 7 && nearestPOIDistance > 300 {
+            print("🚦 VIABILITY GATE: 5-7min route not possible")
+            print("   📏 Nearest POI: \(Int(nearestPOIDistance))m (need ≤300m for round-trip)")
+            print("   💡 Recommending 10-min minimum for this location")
+            
+            // Set flag so UI can show appropriate message
+            await MainActor.run {
+                shortRouteNotViable = true
+                minimumViableMinutes = 10
+            }
+        } else {
+            await MainActor.run {
+                shortRouteNotViable = false
+                minimumViableMinutes = 5
+            }
         }
         
         // v1.6.10: Track POI count for low-POI warning
