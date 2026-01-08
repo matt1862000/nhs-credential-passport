@@ -565,8 +565,9 @@ class WaitingRoomViewModel: ObservableObject {
     func startWalk() {
         guard let route = selectedRoute else { return }
         
-        // Request permissions just-in-time when starting a walk
-        requestWalkPermissions()
+        // v1.6.29: Removed requestWalkPermissions() - no longer request HealthKit here
+        // Step tracking is now fully opt-in via the Steps card during the walk
+        // HealthKit sync offer is shown AFTER the post-walk check (if Motion was granted)
         
         walkSession.isActive = true
         walkSession.startTime = Date()

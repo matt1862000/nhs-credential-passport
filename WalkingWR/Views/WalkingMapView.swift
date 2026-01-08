@@ -1320,8 +1320,9 @@ struct DelayChangeOverlay: View {
     }
 }
 
-// MARK: - Steps Card (v1.6.28)
+// MARK: - Steps Card (v1.6.28, updated v1.6.29)
 /// Opt-in step tracking card - disabled by default, requests Motion permission when tapped
+/// v1.6.29: Added pulsing animation to draw attention when disabled
 struct StepsCard: View {
     @ObservedObject var healthKitService: HealthKitService
     @Binding var isStepTrackingEnabled: Bool
@@ -1329,6 +1330,9 @@ struct StepsCard: View {
     let walkStartTime: Date?
     
     @Environment(\.colorScheme) var colorScheme
+    
+    // v1.6.29: Pulsing animation for disabled state
+    @State private var isPulsing: Bool = false
     
     /// Current state of step tracking
     private var stepTrackingState: StepTrackingState {
@@ -1386,18 +1390,42 @@ struct StepsCard: View {
                         .foregroundColor(.tealAccent)
                         .monospacedDigit()
                 } else if stepTrackingState == .disabled {
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    // v1.6.29: "Tap" badge to draw attention
+                    Text("Tap")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.tealAccent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.tealAccent.opacity(0.15))
+                        .clipShape(Capsule())
                 }
             }
             .padding(12)
             .background(cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .shadow(color: Color.black.opacity(0.1), radius: 4, y: 2)
+            // v1.6.29: Pulsing opacity effect when disabled to draw attention
+            .opacity(stepTrackingState == .disabled ? (isPulsing ? 0.7 : 1.0) : 1.0)
+            .animation(
+                stepTrackingState == .disabled
+                    ? .easeInOut(duration: 1.5).repeatForever(autoreverses: true)
+                    : .default,
+                value: isPulsing
+            )
         }
         .buttonStyle(.plain)
         .disabled(stepTrackingState == .unavailable)
+        .onAppear {
+            // Start pulsing animation if disabled
+            if stepTrackingState == .disabled {
+                isPulsing = true
+            }
+        }
+        .onChange(of: stepTrackingState) { newState in
+            // Stop pulsing when state changes from disabled
+            isPulsing = newState == .disabled
+        }
     }
     
     private func handleTap() {
@@ -1458,7 +1486,7 @@ struct StepsCard: View {
     
     private var subtitleText: String {
         switch stepTrackingState {
-        case .disabled: return "Track steps for this walk (optional)"
+        case .disabled: return "Tap to enable steps"
         case .tracking: return "Tracking your walk"
         case .denied: return "Enable Motion in Settings"
         case .unavailable: return "Device doesn't support step tracking"
