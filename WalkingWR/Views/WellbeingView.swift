@@ -226,18 +226,26 @@ struct CategorySelector: View {
     @Binding var selectedCategory: WellbeingCategory
     
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(WellbeingCategory.allCases, id: \.self) { category in
-                    CategoryTab(
-                        category: category,
-                        isSelected: selectedCategory == category
-                    ) {
-                        withAnimation(.spring(response: 0.3)) {
-                            selectedCategory = category
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(WellbeingCategory.allCases, id: \.self) { category in
+                        CategoryTab(
+                            category: category,
+                            isSelected: selectedCategory == category
+                        ) {
+                            withAnimation(.spring(response: 0.3)) {
+                                selectedCategory = category
+                            }
+                            // Auto-scroll to center the selected category
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo(category, anchor: .center)
+                            }
                         }
+                        .id(category)  // ID for ScrollViewReader
                     }
                 }
+                .padding(.horizontal, 4)  // Small padding so edge items can center
             }
         }
     }
