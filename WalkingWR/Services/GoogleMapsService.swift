@@ -853,160 +853,118 @@ class GoogleMapsService: ObservableObject {
         var allResults: [PlaceResult] = []
         var seenNames = Set<String>()
         
-        // COMPREHENSIVE UK POI SEARCH - 80+ categories for maximum coverage
-        // Apple Maps handles rate limiting internally, and we cache results
+        // OPTIMIZED UK POI SEARCH - 35 HIGH-VALUE categories only
+        // Stay under Apple's 50 requests/minute limit
         let searchQueries = [
-            // PRIORITY: Community venues
-            "village hall", "community centre", "town hall", "church", "chapel",
-            "memorial hall", "sports club", "social club", "working mens club",
-            "scout hall", "youth club", "mosque", "temple", "gurdwara",
+            // PRIORITY 1: Community venues (best walking destinations)
+            "village hall", "community centre", "church", "memorial",
+            "sports club", "social club",
             
-            // Food & Drink - General
-            "pub", "restaurant", "cafe", "coffee shop", "tea room",
-            "bar", "inn", "tavern", "bistro", "brasserie",
+            // PRIORITY 2: Food & Drink (most common POIs)
+            "pub", "restaurant", "cafe", "bakery", "takeaway",
             
-            // Food & Drink - Takeaways
-            "takeaway", "fish and chips", "chippy", "kebab", "pizza",
-            "indian restaurant", "chinese restaurant", "thai restaurant",
-            "italian restaurant", "mexican restaurant",
+            // PRIORITY 3: Retail essentials
+            "supermarket", "shop", "pharmacy", "post office",
             
-            // Food & Drink - Quick Service
-            "bakery", "sandwich shop", "deli", "catering", "kitchen",
-            "greggs", "costa", "starbucks", "mcdonalds", "subway",
-            "ice cream", "dessert", "patisserie",
+            // PRIORITY 4: Services
+            "library", "bank", "hairdresser",
             
-            // Retail - Groceries
-            "supermarket", "convenience store", "corner shop", "co-op", "spar",
-            "tesco", "sainsburys", "aldi", "lidl", "morrisons", "asda",
-            "off licence", "farm shop", "greengrocer", "butcher",
+            // PRIORITY 5: Health
+            "doctor", "dentist", "veterinary",
             
-            // Retail - Other
-            "shop", "pharmacy", "chemist", "newsagent", "florist",
-            "charity shop", "bookshop", "gift shop", "pet shop",
-            "hardware store", "garden centre", "pound shop",
+            // PRIORITY 6: Education
+            "school", "nursery",
             
-            // Services
-            "post office", "bank", "library", "hairdresser", "barber",
-            "beauty salon", "nail salon", "dry cleaner", "launderette",
-            "optician", "estate agent", "solicitor",
+            // PRIORITY 7: Leisure
+            "park", "playground", "gym", "leisure centre",
             
-            // Health
-            "doctor", "gp surgery", "dentist", "veterinary", "vet",
-            "clinic", "hospital", "physiotherapy", "osteopath",
+            // PRIORITY 8: Culture
+            "museum", "theatre",
             
-            // Education
-            "school", "primary school", "nursery", "preschool", "college",
-            "university", "academy", "playcare", "childcare",
+            // PRIORITY 9: Transport
+            "train station", "bus station", "petrol station",
             
-            // Leisure - Outdoor
-            "park", "playground", "recreation ground", "playing field",
-            "nature reserve", "woodland", "garden", "allotment",
-            "canal", "river walk", "lake", "pond",
-            
-            // Leisure - Sports
-            "gym", "fitness", "swimming pool", "leisure centre", "sports centre",
-            "golf", "tennis", "football", "cricket", "bowling",
-            
-            // Culture & Entertainment
-            "museum", "gallery", "theatre", "cinema", "concert",
-            "nightclub", "arcade", "bingo",
-            
-            // Transport
-            "train station", "bus station", "bus stop", "taxi rank",
-            "petrol station", "car park", "garage", "car wash",
-            
-            // Accommodation
-            "hotel", "bed and breakfast", "guest house", "hostel",
-            
-            // Landmarks & Points of Interest
-            "monument", "statue", "war memorial", "historic site",
-            "castle", "manor", "stately home", "landmark"
+            // PRIORITY 10: Landmarks
+            "monument", "war memorial", "historic"
         ]
         
         print("🍎 APPLE MAPS - Starting search for \(searchQueries.count) categories (radius: \(radiusMeters)m)")
         
-        // Process in batches of 40 to stay under 50 requests/minute limit
-        let batchSize = 40
+        // With 35 queries, we can do them all in one batch (under 50/min limit)
         var queriesWithResults = 0
         var queriesFailed = 0
         var queryIndex = 0
-        
-        for batchStart in stride(from: 0, to: searchQueries.count, by: batchSize) {
-            let batchEnd = min(batchStart + batchSize, searchQueries.count)
-            let batch = Array(searchQueries[batchStart..<batchEnd])
+        var rateLimitHit = false
             
-            if batchStart > 0 {
-                // Wait between batches to respect rate limits
-                print("🍎 Waiting 3s before next batch...")
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-            }
+        for query in searchQueries {
+            // Skip remaining queries if we hit rate limit
+            if rateLimitHit { break }
             
-            print("🍎 Processing batch \(batchStart/batchSize + 1)/\((searchQueries.count + batchSize - 1)/batchSize) (\(batch.count) queries)")
-            
-            for query in batch {
-                queryIndex += 1
-                do {
-                    let request = MKLocalSearch.Request()
-                    request.naturalLanguageQuery = query
-                    request.region = MKCoordinateRegion(
-                        center: location,
-                        latitudinalMeters: Double(radiusMeters * 2),
-                        longitudinalMeters: Double(radiusMeters * 2)
+            queryIndex += 1
+            do {
+                let request = MKLocalSearch.Request()
+                request.naturalLanguageQuery = query
+                request.region = MKCoordinateRegion(
+                    center: location,
+                    latitudinalMeters: Double(radiusMeters * 2),
+                    longitudinalMeters: Double(radiusMeters * 2)
+                )
+                
+                let search = MKLocalSearch(request: request)
+                let response = try await search.start()
+                
+                for item in response.mapItems {
+                    guard let name = item.name, !seenNames.contains(name) else { continue }
+                    
+                    // DISTANCE FILTER: Only keep POIs actually within search radius
+                    let itemCoord = item.placemark.coordinate
+                    let distance = distanceBetween(location, itemCoord)
+                    guard distance <= Double(radiusMeters) else { continue }
+                    
+                    seenNames.insert(name)
+                    
+                    // Convert MKMapItem to PlaceResult
+                    let placeResult = PlaceResult(
+                        placeId: "apple_\(name.hashValue)",
+                        name: name,
+                        vicinity: item.placemark.title,
+                        geometry: PlaceGeometry(
+                            location: PlaceLocation(
+                                lat: item.placemark.coordinate.latitude,
+                                lng: item.placemark.coordinate.longitude
+                            )
+                        ),
+                        types: [query]
                     )
-                    
-                    let search = MKLocalSearch(request: request)
-                    let response = try await search.start()
-                    
-                    for item in response.mapItems {
-                        guard let name = item.name, !seenNames.contains(name) else { continue }
-                        
-                        // DISTANCE FILTER: Only keep POIs actually within search radius
-                        let itemCoord = item.placemark.coordinate
-                        let distance = distanceBetween(location, itemCoord)
-                        guard distance <= Double(radiusMeters) else { continue }
-                        
-                        seenNames.insert(name)
-                        
-                        // Convert MKMapItem to PlaceResult
-                        let placeResult = PlaceResult(
-                            placeId: "apple_\(name.hashValue)",
-                            name: name,
-                            vicinity: item.placemark.title,
-                            geometry: PlaceGeometry(
-                                location: PlaceLocation(
-                                    lat: item.placemark.coordinate.latitude,
-                                    lng: item.placemark.coordinate.longitude
-                                )
-                            ),
-                            types: [query]
-                        )
-                        allResults.append(placeResult)
+                    allResults.append(placeResult)
+                }
+                if response.mapItems.count > 0 {
+                    queriesWithResults += 1
+                    // Log queries that found POIs within radius
+                    let inRadius = response.mapItems.filter { item in
+                        let dist = distanceBetween(location, item.placemark.coordinate)
+                        return dist <= Double(radiusMeters)
                     }
-                    if response.mapItems.count > 0 {
-                        queriesWithResults += 1
-                        // Log queries that found POIs within radius
-                        let inRadius = response.mapItems.filter { item in
-                            let dist = distanceBetween(location, item.placemark.coordinate)
-                            return dist <= Double(radiusMeters)
-                        }
-                        if !inRadius.isEmpty {
-                            print("🍎 ✓ '\(query)' found \(inRadius.count) POIs within \(radiusMeters)m")
-                        }
+                    if !inRadius.isEmpty {
+                        print("🍎 ✓ '\(query)' found \(inRadius.count) POIs within \(radiusMeters)m")
                     }
-                } catch {
-                    queriesFailed += 1
-                    let errorDesc = error.localizedDescription
-                    
-                    // Log first few failures to diagnose
-                    if queriesFailed <= 5 {
-                        print("🍎 ❌ Query '\(query)' failed: \(errorDesc)")
-                    }
-                    
-                    // Check if rate limited
-                    if errorDesc.contains("rate") || errorDesc.contains("429") || errorDesc.contains("throttle") {
-                        print("🍎 🚫 Rate limited at query \(queryIndex) ('\(query)'), waiting 30s...")
-                        try? await Task.sleep(nanoseconds: 30_000_000_000)
-                    }
+                }
+            } catch {
+                queriesFailed += 1
+                let nsError = error as NSError
+                
+                // Check for Apple Maps rate limiting (GEOErrorDomain Code=-3)
+                if nsError.domain == "GEOErrorDomain" && nsError.code == -3 ||
+                   nsError.domain == "MKErrorDomain" && nsError.code == 3 {
+                    rateLimitHit = true
+                    print("🍎 🚫 Rate limited at query \(queryIndex)/\(searchQueries.count) - stopping Apple Maps search")
+                    print("🍎 ℹ️ Got \(allResults.count) POIs before rate limit")
+                    break
+                }
+                
+                // Log first few non-rate-limit failures
+                if queriesFailed <= 3 {
+                    print("🍎 ❌ Query '\(query)' failed: \(error.localizedDescription)")
                 }
             }
         }
