@@ -51,14 +51,25 @@ class HealthKitService: ObservableObject {
     /// Request Core Motion authorization by triggering pedometer updates
     /// This uses the same approach as startObservingSteps which successfully shows the prompt
     func requestMotionAuthorization(completion: ((Bool) -> Void)? = nil) {
+        print("📱 requestMotionAuthorization called")
+        print("📱 Current auth status: \(CMPedometer.authorizationStatus().rawValue) (0=notDetermined, 1=restricted, 2=denied, 3=authorized)")
+        print("📱 isPedometerAvailable: \(isPedometerAvailable)")
+        
         guard isPedometerAvailable else {
+            print("📱 Pedometer not available, returning false")
             completion?(false)
             return
         }
         
+        print("📱 Starting pedometer updates to trigger permission prompt...")
+        
         // Use the exact same approach as startObservingSteps - this triggers the permission prompt
         pedometer.startUpdates(from: Date()) { [weak self] data, error in
-            guard let self = self else { return }
+            print("📱 Pedometer callback received! data: \(data != nil), error: \(error?.localizedDescription ?? "none")")
+            guard let self = self else {
+                print("📱 Self was nil in callback")
+                return
+            }
             
             // We got a response (or error) - check authorization status
             DispatchQueue.main.async {
@@ -71,6 +82,7 @@ class HealthKitService: ObservableObject {
                 completion?(granted)
             }
         }
+        print("📱 pedometer.startUpdates called, waiting for callback...")
     }
     
     var isHealthKitAvailable: Bool {
