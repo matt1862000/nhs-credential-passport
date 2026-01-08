@@ -1471,9 +1471,9 @@ struct LocalRoutePickerSheet: View {
         
         // Would need a new cache slot - check if allowed
         if !cacheService.canAddLocation(at: userLocation.coordinate) {
-            // Show subscription prompt
-            showLocationLimitAlert = true
-            print("🔒 Location limit reached (\(POICacheService.freeTierLocationLimit) locations) - showing upgrade prompt")
+            // Silently skip prefetch - don't show alert during background prefetch
+            // Alert will show when user actively taps "Generate Route"
+            print("📦 Location limit reached - skipping background prefetch (alert on Generate)")
             return
         }
         
@@ -1504,6 +1504,17 @@ struct LocalRoutePickerSheet: View {
     
     func generateRoute() {
         guard let userLocation = locationService.currentLocation else { return }
+        
+        // Check location limit before generating (only if not already cached)
+        let cacheService = POICacheService.shared
+        if cacheService.getCachedPOIs(near: userLocation.coordinate) == nil {
+            // No cached POIs - would need a new slot
+            if !cacheService.canAddLocation(at: userLocation.coordinate) {
+                showLocationLimitAlert = true
+                print("🔒 Location limit reached - showing upgrade prompt")
+                return
+            }
+        }
         
         isGenerating = true
         errorMessage = nil
@@ -2390,10 +2401,10 @@ struct LocalRoutePickerSheet: View {
                 pois = prefetchedPOIs
                 print("🧪 Using \(prefetchedPOIs.count) prefetched POIs")
             }
-            // 3. Fetch fresh POIs only if cache is empty (will cache for future)
+            // 3. Fetch fresh POIs without caching (bypass location limit for testing)
             else {
-                print("🧪 ⚠️ Cache empty - fetching fresh POIs (1 API call)")
-                pois = try? await mapsService.findNearbyPlaces(location: testCoordinate, radiusMeters: 2500)
+                print("🧪 ⚠️ Cache empty - fetching POIs WITHOUT caching (test mode)")
+                pois = try? await mapsService.findNearbyPlacesWithoutCaching(location: testCoordinate, radiusMeters: 2500)
             }
             
             await MainActor.run {

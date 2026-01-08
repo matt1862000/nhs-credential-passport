@@ -954,8 +954,8 @@ class GoogleMapsService: ObservableObject {
         
         for (index, baseUrl) in mirrors.enumerated() {
             let urlString = "\(baseUrl)?data=\(encodedQuery)"
-            
-            guard let url = URL(string: urlString) else {
+        
+        guard let url = URL(string: urlString) else {
                 print("🗺️ OSM: Invalid URL for mirror \(index + 1)")
                 continue
             }
@@ -968,10 +968,10 @@ class GoogleMapsService: ObservableObject {
                 config.timeoutIntervalForRequest = 15
                 config.timeoutIntervalForResource = 30
                 let session = URLSession(configuration: config)
-                
-                let (data, response) = try await session.data(from: url)
-                
-                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+        
+        let (data, response) = try await session.data(from: url)
+        
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                     print("🗺️ OSM: Bad response from mirror \(index + 1), trying next...")
                     continue
                 }
@@ -1235,8 +1235,8 @@ class GoogleMapsService: ObservableObject {
         UserDefaults.standard.set(clampedAverage, forKey: osrmCalibrationKey)
         
         print("🔧 OSRM calibration: \(String(format: "%.2f", clampedAverage)) (from \(samples.count) samples, MapKit:\(mapKitDuration/60)min vs OSRM:\(osrmDuration/60)min)")
-    }
-    
+        }
+        
     /// Apply calibration factor to OSRM duration
     func calibrateOSRMDuration(_ osrmDuration: Int) -> Int {
         let factor = osrmCalibrationFactor
