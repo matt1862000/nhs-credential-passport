@@ -1324,20 +1324,27 @@ struct LocalRoutePickerSheet: View {
                                     
                                     // Debug test button with location picker
                                     Menu {
-                                        Button("📍 Current Location") {
-                                            runRouteGenerationTest(at: nil)
+                                        Section("Individual Tests") {
+                                            Button("📍 Current Location") {
+                                                runRouteGenerationTest(at: nil)
+                                            }
+                                            Button("🏙️ S5 7AU (Firth Park)") {
+                                                runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4577))
+                                            }
+                                            Button("🏘️ S11 9BF (Ecclesall)") {
+                                                runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.3631, longitude: -1.4989))
+                                            }
+                                            Button("🏠 S12 4QN (Hackenthorpe)") {
+                                                runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.3447, longitude: -1.3633))
+                                            }
+                                            Button("🌳 S35 0JW (Chapeltown)") {
+                                                runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.4633, longitude: -1.4667))
+                                            }
                                         }
-                                        Button("🏙️ Sheffield S5 7AU (Firth Park)") {
-                                            runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4577))
-                                        }
-                                        Button("🏘️ Sheffield S11 9BF (Ecclesall)") {
-                                            runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.3631, longitude: -1.4989))
-                                        }
-                                        Button("🏠 Sheffield S12 4QN (Hackenthorpe)") {
-                                            runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.3447, longitude: -1.3633))
-                                        }
-                                        Button("🌳 Sheffield S35 0JW (Chapeltown)") {
-                                            runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.4633, longitude: -1.4667))
+                                        Section("Batch Test") {
+                                            Button("🧪 TEST ALL LOCATIONS") {
+                                                runAllLocationTests()
+                                            }
                                         }
                                     } label: {
                                         if isRunningRouteTest {
@@ -2126,6 +2133,166 @@ struct LocalRoutePickerSheet: View {
     @State private var isRunningRouteTest = false
     @State private var routeTestResults: String = ""
     @State private var showRouteTestResults = false
+    
+    /// All test locations for batch testing
+    private let allTestLocations: [(name: String, coordinate: CLLocationCoordinate2D)] = [
+        ("S5 7AU (Firth Park)", CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4577)),
+        ("S11 9BF (Ecclesall)", CLLocationCoordinate2D(latitude: 53.3631, longitude: -1.4989)),
+        ("S12 4QN (Hackenthorpe)", CLLocationCoordinate2D(latitude: 53.3447, longitude: -1.3633)),
+        ("S35 0JW (Chapeltown)", CLLocationCoordinate2D(latitude: 53.4633, longitude: -1.4667))
+    ]
+    
+    /// Run tests for ALL locations sequentially
+    func runAllLocationTests() {
+        isRunningRouteTest = true
+        routeTestResults = "🧪🧪🧪 BATCH TEST - ALL LOCATIONS 🧪🧪🧪\n"
+        routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        routeTestResults += "Testing \(allTestLocations.count) locations...\n\n"
+        
+        Task {
+            var allLocationSummaries: [(name: String, avgAccuracy: Double, validRate: Double, avgSpeed: Double, poiCount: Int)] = []
+            
+            for (index, location) in allTestLocations.enumerated() {
+                await MainActor.run {
+                    routeTestResults += "\n\n"
+                    routeTestResults += "╔══════════════════════════════════════════════════════════════╗\n"
+                    routeTestResults += "║ 📍 LOCATION \(index + 1)/\(allTestLocations.count): \(location.name)\n"
+                    routeTestResults += "╚══════════════════════════════════════════════════════════════╝\n"
+                }
+                
+                // Run test for this location and collect summary
+                let summary = await runSingleLocationTest(
+                    coordinate: location.coordinate,
+                    name: location.name
+                )
+                allLocationSummaries.append((
+                    name: location.name,
+                    avgAccuracy: summary.avgAccuracy,
+                    validRate: summary.validRate,
+                    avgSpeed: summary.avgSpeed,
+                    poiCount: summary.poiCount
+                ))
+                
+                // Small delay between locations to avoid rate limiting
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+            }
+            
+            // Final comparison summary
+            await MainActor.run {
+                routeTestResults += "\n\n"
+                routeTestResults += "╔══════════════════════════════════════════════════════════════╗\n"
+                routeTestResults += "║ 📊 FINAL COMPARISON - ALL LOCATIONS                          ║\n"
+                routeTestResults += "╚══════════════════════════════════════════════════════════════╝\n"
+                routeTestResults += "┌────────────────────────┬────────┬─────────┬────────┬──────┐\n"
+                routeTestResults += "│ Location               │ Avg Acc│ Valid % │ Speed  │ POIs │\n"
+                routeTestResults += "├────────────────────────┼────────┼─────────┼────────┼──────┤\n"
+                
+                for summary in allLocationSummaries {
+                    let shortName = String(summary.name.prefix(22)).padding(toLength: 22, withPad: " ", startingAt: 0)
+                    let acc = String(format: "%3.0f%%", summary.avgAccuracy).padding(toLength: 6, withPad: " ", startingAt: 0)
+                    let valid = String(format: "%3.0f%%", summary.validRate).padding(toLength: 7, withPad: " ", startingAt: 0)
+                    let speed = String(format: "%.1fs", summary.avgSpeed).padding(toLength: 6, withPad: " ", startingAt: 0)
+                    let pois = String(summary.poiCount).padding(toLength: 4, withPad: " ", startingAt: 0)
+                    routeTestResults += "│ \(shortName) │ \(acc) │ \(valid) │ \(speed) │ \(pois) │\n"
+                }
+                
+                routeTestResults += "└────────────────────────┴────────┴─────────┴────────┴──────┘\n"
+                
+                // Overall averages
+                let overallAvgAccuracy = allLocationSummaries.map { $0.avgAccuracy }.reduce(0, +) / Double(allLocationSummaries.count)
+                let overallValidRate = allLocationSummaries.map { $0.validRate }.reduce(0, +) / Double(allLocationSummaries.count)
+                let overallAvgSpeed = allLocationSummaries.map { $0.avgSpeed }.reduce(0, +) / Double(allLocationSummaries.count)
+                
+                routeTestResults += "\n📈 OVERALL AVERAGES:\n"
+                routeTestResults += "   Accuracy: \(String(format: "%.0f%%", overallAvgAccuracy))\n"
+                routeTestResults += "   Valid rate: \(String(format: "%.0f%%", overallValidRate))\n"
+                routeTestResults += "   Speed: \(String(format: "%.1fs", overallAvgSpeed)) per route\n"
+                
+                routeTestResults += "\n🏁 Batch test complete!\n"
+                
+                isRunningRouteTest = false
+                showRouteTestResults = true
+            }
+        }
+    }
+    
+    /// Run test for a single location and return summary stats
+    func runSingleLocationTest(coordinate: CLLocationCoordinate2D, name: String) async -> (avgAccuracy: Double, validRate: Double, avgSpeed: Double, poiCount: Int) {
+        let durations = stride(from: 5, through: 60, by: 5).map { $0 }
+        let maxRoutesPerDuration = 5
+        var allResults: [(accuracy: Double, time: Double, isValid: Bool)] = []
+        var poiCount = 0
+        
+        // Get POIs
+        var pois: [PlaceResult]? = nil
+        if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: coordinate), !cachedPOIs.isEmpty {
+            pois = cachedPOIs
+            print("🧪 [\(name)] Using \(cachedPOIs.count) CACHED POIs")
+        } else {
+            print("🧪 [\(name)] Fetching fresh POIs...")
+            pois = try? await mapsService.findNearbyPlaces(location: coordinate, radiusMeters: 1500)
+        }
+        
+        poiCount = pois?.count ?? 0
+        
+        await MainActor.run {
+            routeTestResults += "📦 POIs: \(poiCount)\n"
+            routeTestResults += "───────────────────────────────────────\n"
+        }
+        
+        for duration in durations {
+            var excludedPlaceIds = Set<String>()
+            var consecutiveFailures = 0
+            
+            for _ in 1...maxRoutesPerDuration {
+                guard consecutiveFailures < 3 else { break }
+                
+                let startTime = Date()
+                
+                do {
+                    if let route = try await mapsService.generateLocalRoute(
+                        from: coordinate,
+                        targetDurationMinutes: duration,
+                        excludePlaceIds: excludedPlaceIds,
+                        prefetchedPOIs: pois
+                    ) {
+                        let elapsed = Date().timeIntervalSince(startTime)
+                        let actualMin = route.durationSeconds / 60
+                        let accuracy = Double(actualMin) / Double(duration) * 100
+                        let isValid = accuracy >= 80 && accuracy <= 120
+                        
+                        allResults.append((accuracy: accuracy, time: elapsed, isValid: isValid))
+                        
+                        // Add POIs to excluded list
+                        for place in route.places {
+                            excludedPlaceIds.insert(place.placeId)
+                        }
+                        consecutiveFailures = 0
+                    } else {
+                        consecutiveFailures += 1
+                    }
+                } catch {
+                    consecutiveFailures += 1
+                }
+            }
+        }
+        
+        // Calculate summary stats
+        let avgAccuracy = allResults.isEmpty ? 0 : allResults.map { $0.accuracy }.reduce(0, +) / Double(allResults.count)
+        let validCount = allResults.filter { $0.isValid }.count
+        let validRate = allResults.isEmpty ? 0 : Double(validCount) / Double(allResults.count) * 100
+        let avgSpeed = allResults.isEmpty ? 0 : allResults.map { $0.time }.reduce(0, +) / Double(allResults.count)
+        
+        await MainActor.run {
+            routeTestResults += "📊 \(name) Summary:\n"
+            routeTestResults += "   Routes generated: \(allResults.count)\n"
+            routeTestResults += "   Avg accuracy: \(String(format: "%.0f%%", avgAccuracy))\n"
+            routeTestResults += "   Valid (80-120%): \(validCount)/\(allResults.count) (\(String(format: "%.0f%%", validRate)))\n"
+            routeTestResults += "   Avg speed: \(String(format: "%.1fs", avgSpeed))\n"
+        }
+        
+        return (avgAccuracy: avgAccuracy, validRate: validRate, avgSpeed: avgSpeed, poiCount: poiCount)
+    }
     
     /// Test route generation for all durations (5-60min) and report results
     func runRouteGenerationTest(at testLocation: CLLocationCoordinate2D? = nil) {
