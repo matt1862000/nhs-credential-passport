@@ -1349,6 +1349,38 @@ class GoogleMapsService: ObservableObject {
           node["landuse"="recreation_ground"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           node["landuse"="allotments"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           
+          // v1.6.26: GREEN SPACE / LOW-COMMITMENT POIS - Perfect for short walks
+          // Parks and recreation
+          node["leisure"="park"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["leisure"="playground"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["leisure"="garden"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["leisure"="nature_reserve"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["leisure"="dog_park"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["leisure"="pitch"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["leisure"="common"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          
+          // Street furniture - great for short walks
+          node["amenity"="bench"]["name"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["tourism"="viewpoint"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["tourism"="picnic_site"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["amenity"="fountain"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["historic"="memorial"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["historic"="monument"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["historic"="wayside_cross"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          
+          // Community spaces
+          node["amenity"="community_centre"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["amenity"="social_facility"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["amenity"="village_hall"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          
+          // Religious buildings (often open for walks/reflection)
+          node["amenity"="place_of_worship"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          
+          // Sports facilities
+          node["leisure"="sports_centre"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["leisure"="swimming_pool"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          node["leisure"="fitness_centre"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          
           // Core POI types (ways - for larger buildings/areas)
           way["amenity"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           way["shop"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
@@ -1362,6 +1394,17 @@ class GoogleMapsService: ObservableObject {
           way["building"="hall"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           way["building"="school"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           way["landuse"="recreation_ground"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          
+          // v1.6.26: GREEN SPACE WAYS (larger areas)
+          way["leisure"="park"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["leisure"="playground"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["leisure"="garden"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["leisure"="nature_reserve"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["leisure"="common"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["landuse"="grass"]["name"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["landuse"="meadow"]["name"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["landuse"="village_green"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["natural"="wood"]["name"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
         );
         out center tags;
         """

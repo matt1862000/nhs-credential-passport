@@ -1489,6 +1489,65 @@ struct LocalRoutePickerSheet: View {
         varietyExhausted = false
     }
     
+    // MARK: - Waypoint Permutation (v1.6.26)
+    
+    /// Check if a route can benefit from waypoint permutation
+    /// Only allows permutation if:
+    /// 1. Has 2+ waypoints
+    /// 2. Reversed order would create a meaningfully different signature
+    func canPermuteRoute(_ places: [PlaceResult], distanceMeters: Int) -> Bool {
+        guard places.count >= 2 else { return false }
+        
+        // Check if reversed order creates a new signature
+        let reversedPlaces = Array(places.reversed())
+        let reversedSignature = generateRouteSignature(places: reversedPlaces, distanceMeters: distanceMeters)
+        
+        // Only allow if the reversed signature is truly unique
+        return !routeSignatures.contains(reversedSignature)
+    }
+    
+    /// Generate a permuted (reversed waypoint order) version of a route
+    /// Returns nil if permutation wouldn't create a unique route
+    func createPermutedRoute(from route: WalkingRoute, data: GeneratedRoute) -> (route: WalkingRoute, data: GeneratedRoute)? {
+        guard data.places.count >= 2 else { return nil }
+        guard canPermuteRoute(data.places, distanceMeters: data.distanceMeters) else { return nil }
+        
+        // Reverse waypoint order
+        let reversedPlaces = Array(data.places.reversed())
+        let reversedMarkers = Array(route.qrMarkers.reversed())
+        
+        // Create new route with reversed waypoints
+        let permutedRoute = WalkingRoute(
+            name: route.name + " (alt)",  // Mark as alternative
+            description: route.description,
+            durationMinutes: route.durationMinutes,
+            distanceMeters: route.distanceMeters,
+            difficulty: route.difficulty,
+            isIndoor: route.isIndoor,
+            isAccessible: route.isAccessible,
+            landmarks: ["Start"] + reversedPlaces.map { $0.name } + ["Return"],
+            icon: route.icon,
+            color: route.color,
+            qrMarkers: reversedMarkers,
+            routeType: route.routeType,
+            encodedPolyline: nil,  // Will need new directions
+            walkingDirections: []  // Will need new directions
+        )
+        
+        // Create permuted data with reversed places
+        let permutedData = GeneratedRoute(
+            places: reversedPlaces,
+            polyline: "",  // Will need new directions
+            distanceMeters: data.distanceMeters,
+            durationSeconds: data.durationSeconds,
+            legs: [],  // Clear legs - need new routing
+            hasLimitedPOIs: data.hasLimitedPOIs,
+            poiCount: data.poiCount
+        )
+        
+        return (permutedRoute, permutedData)
+    }
+    
     /// Pre-fetch POIs in background while user selects duration
     func prefetchPOIsIfNeeded() {
         guard let userLocation = locationService.currentLocation else { return }
@@ -2114,6 +2173,16 @@ struct LocalRoutePickerSheet: View {
                         routesGenerated = allRoutes.count
                         consecutiveFailures = 0  // Reset on success
                         print("✅ Pre-generated route \(routesGenerated) (unique: \(routeSignatures.count))")
+                        
+                        // v1.6.26: Try waypoint permutation for 2+ waypoint routes
+                        if result.places.count >= 2 {
+                            if let permuted = createPermutedRoute(from: route, data: result) {
+                                allRoutes.append(permuted)
+                                registerRouteSignature(places: permuted.data.places, distanceMeters: permuted.data.distanceMeters)
+                                routesGenerated = allRoutes.count
+                                print("🔄 Added permuted route (reversed waypoints) - now \(routesGenerated) routes")
+                            }
+                        }
                     }
                     
                 } catch {
@@ -2248,6 +2317,15 @@ struct LocalRoutePickerSheet: View {
                                 googleRoutesGenerated += 1
                                 googleFailures = 0
                                 print("🌐 ✅ Generated route \(allRoutes.count) (unique: \(routeSignatures.count)) using Google POIs")
+                                
+                                // v1.6.26: Try waypoint permutation for 2+ waypoint routes
+                                if result.places.count >= 2 {
+                                    if let permuted = createPermutedRoute(from: route, data: result) {
+                                        allRoutes.append(permuted)
+                                        registerRouteSignature(places: permuted.data.places, distanceMeters: permuted.data.distanceMeters)
+                                        print("🔄 Added permuted Google route - now \(allRoutes.count) routes")
+                                    }
+                                }
                             }
                             
                         } catch {
