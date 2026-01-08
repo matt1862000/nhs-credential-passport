@@ -2250,12 +2250,15 @@ struct LocalRoutePickerSheet: View {
                 let startTime = Date()
                 
                 do {
-                    if let route = try await mapsService.generateLocalRoute(
+                    let route = try await mapsService.generateLocalRoute(
                         from: coordinate,
                         targetDurationMinutes: duration,
+                        difficulty: nil,
                         excludePlaceIds: excludedPlaceIds,
                         prefetchedPOIs: pois
-                    ) {
+                    )
+                    
+                    if !route.places.isEmpty && route.durationSeconds > 0 {
                         let elapsed = Date().timeIntervalSince(startTime)
                         let actualMin = route.durationSeconds / 60
                         let accuracy = Double(actualMin) / Double(duration) * 100
