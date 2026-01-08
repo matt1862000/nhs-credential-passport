@@ -181,6 +181,34 @@ class POICacheService {
         return []
     }
     
+    /// Delete a cached location by its coordinate
+    /// Used for swipe-to-delete in settings
+    func deleteLocation(at coordinate: CLLocationCoordinate2D) {
+        var cached = loadCache()
+        
+        // Remove entries within matchRadiusMeters of the given coordinate
+        let beforeCount = cached.count
+        cached.removeAll { entry in
+            distanceBetween(entry.coordinate, coordinate) <= matchRadiusMeters
+        }
+        
+        let removedCount = beforeCount - cached.count
+        if removedCount > 0 {
+            print("📦 POI Cache: Deleted \(removedCount) cached location(s)")
+            saveCache(cached)
+        }
+    }
+    
+    /// Delete a cached location by index (for SwiftUI onDelete)
+    func deleteLocation(at index: Int) {
+        var cached = loadCache()
+        guard index >= 0 && index < cached.count else { return }
+        
+        cached.remove(at: index)
+        print("📦 POI Cache: Deleted location at index \(index)")
+        saveCache(cached)
+    }
+    
     /// Reverse geocode a coordinate to get a human-readable place name
     /// Prioritizes specific areas (neighborhood/street) over general city names
     func getLocationName(for coordinate: CLLocationCoordinate2D, completion: @escaping (String) -> Void) {

@@ -2699,7 +2699,7 @@ struct CachedLocationsSection: View {
                 }
                 .padding(.vertical, 8)
             } else {
-                ForEach(cachedLocations) { location in
+                ForEach(Array(cachedLocations.enumerated()), id: \.element.id) { index, location in
                     NavigationLink {
                         CachedPOIsDetailView(
                             locationName: locationNames[location.id] ?? "Cached Location",
@@ -2737,6 +2737,15 @@ struct CachedLocationsSection: View {
                                     locationNames[location.id] = name
                                 }
                             }
+                        }
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            // Delete this cached location
+                            POICacheService.shared.deleteLocation(at: index)
+                            refreshCachedLocations()
+                        } label: {
+                            Label("Delete", systemImage: "trash")
                         }
                     }
                 }

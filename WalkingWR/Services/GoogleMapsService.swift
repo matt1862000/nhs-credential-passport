@@ -53,6 +53,7 @@ class GoogleMapsService: ObservableObject {
     
     // API Key - bundled with app in Info.plist
     // For production, consider using a backend proxy to hide the key
+    // For production, consider using a backend proxy to hide the key
     private var apiKey: String {
         return Bundle.main.object(forInfoDictionaryKey: "GOOGLE_MAPS_API_KEY") as? String ?? ""
     }
