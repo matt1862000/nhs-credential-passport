@@ -982,25 +982,31 @@ struct DelayBanner: View {
     let walkStartTime: Date?
     @Environment(\.colorScheme) var colorScheme
     
-    // v1.6.13: Timer to refresh the view every second for smooth progress
-    @State private var currentTime = Date()
-    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    // v1.6.14: Use @State for timer tick to force view updates
+    @State private var timerTick: Int = 0
     
     /// Time remaining until delay expires (in minutes, for display)
+    /// Uses timerTick to force recalculation on each tick
     var timeRemaining: Int {
+        _ = timerTick  // Force dependency on timer tick
         guard let start = walkStartTime else { return delayMinutes }
-        let elapsedSeconds = currentTime.timeIntervalSince(start)
+        let elapsedSeconds = Date().timeIntervalSince(start)
         let elapsedMinutes = Int(elapsedSeconds / 60)
         return max(0, delayMinutes - elapsedMinutes)
     }
     
     /// Progress through the delay (0.0 to 1.0) - uses seconds for smooth animation
+    /// Uses timerTick to force recalculation on each tick
     var progress: Double {
+        _ = timerTick  // Force dependency on timer tick
         guard delayMinutes > 0, let start = walkStartTime else { return 0 }
         let totalSeconds = Double(delayMinutes * 60)
-        let elapsedSeconds = currentTime.timeIntervalSince(start)
+        let elapsedSeconds = Date().timeIntervalSince(start)
         return min(1.0, elapsedSeconds / totalSeconds)
     }
+    
+    // Timer that fires every second
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
     /// Urgency level based on time remaining
     enum Urgency {
@@ -1083,8 +1089,8 @@ struct DelayBanner: View {
                 .fill(Color.darkCardBackground)  // Solid dark background matching carousel
                 .shadow(color: Color.black.opacity(0.3), radius: 8, y: 4)
         )
-        .onReceive(timer) { time in
-            currentTime = time  // Refresh every second for smooth progress
+        .onReceive(timer) { _ in
+            timerTick += 1  // Increment to force view refresh every second
         }
     }
 }
