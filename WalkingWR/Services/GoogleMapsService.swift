@@ -928,6 +928,7 @@ class GoogleMapsService: ObservableObject {
         // Process in batches of 40 to stay under 50 requests/minute limit
         let batchSize = 40
         var queriesWithResults = 0
+        var queriesFailed = 0
         var queryIndex = 0
         
         for batchStart in stride(from: 0, to: searchQueries.count, by: batchSize) {
@@ -983,20 +984,36 @@ class GoogleMapsService: ObservableObject {
                     }
                     if response.mapItems.count > 0 {
                         queriesWithResults += 1
+                        // Log queries that found POIs within radius
+                        let inRadius = response.mapItems.filter { item in
+                            let dist = distanceBetween(location, item.placemark.coordinate)
+                            return dist <= Double(radiusMeters)
+                        }
+                        if !inRadius.isEmpty {
+                            print("🍎 ✓ '\(query)' found \(inRadius.count) POIs within \(radiusMeters)m")
+                        }
                     }
                 } catch {
-                    // Check if rate limited
+                    queriesFailed += 1
                     let errorDesc = error.localizedDescription
-                    if errorDesc.contains("rate") || errorDesc.contains("429") {
-                        print("🍎 Rate limited at query \(queryIndex), waiting 30s...")
+                    
+                    // Log first few failures to diagnose
+                    if queriesFailed <= 5 {
+                        print("🍎 ❌ Query '\(query)' failed: \(errorDesc)")
+                    }
+                    
+                    // Check if rate limited
+                    if errorDesc.contains("rate") || errorDesc.contains("429") || errorDesc.contains("throttle") {
+                        print("🍎 🚫 Rate limited at query \(queryIndex) ('\(query)'), waiting 30s...")
                         try? await Task.sleep(nanoseconds: 30_000_000_000)
                     }
-                    // Silently continue - some queries may fail
                 }
             }
         }
         
-        print("🍎 APPLE MAPS COMPLETE: \(allResults.count) POIs from \(queriesWithResults)/\(searchQueries.count) queries")
+        print("🍎 APPLE MAPS COMPLETE: \(allResults.count) POIs")
+        print("🍎   ✅ Successful queries: \(queriesWithResults)/\(searchQueries.count)")
+        print("🍎   ❌ Failed queries: \(queriesFailed)/\(searchQueries.count)")
         return allResults
     }
     
