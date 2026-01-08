@@ -735,7 +735,11 @@ struct GratitudeSection: View {
                     .scrollContentBackground(.hidden)
                     .foregroundColor(.primary)
                     .padding(12)
-                    .background(Color(.tertiarySystemBackground))
+                    .background(Color(.systemBackground))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.coralPink.opacity(0.5), lineWidth: 1.5)
+                    )
                     .cornerRadius(12)
                     .tint(.coralPink)
                 
