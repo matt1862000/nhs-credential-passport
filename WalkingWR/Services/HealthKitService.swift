@@ -61,15 +61,21 @@ class HealthKitService: ObservableObject {
             return
         }
         
+        // Track if callback was already called (prevent double-calling)
+        var callbackFired = false
+        
         print("📱 Starting pedometer updates to trigger permission prompt...")
         
         // Use the exact same approach as startObservingSteps - this triggers the permission prompt
         pedometer.startUpdates(from: Date()) { [weak self] data, error in
             print("📱 Pedometer callback received! data: \(data != nil), error: \(error?.localizedDescription ?? "none")")
-            guard let self = self else {
-                print("📱 Self was nil in callback")
+            guard let self = self, !callbackFired else {
+                if callbackFired {
+                    print("📱 Callback already fired, ignoring duplicate")
+                }
                 return
             }
+            callbackFired = true
             
             // We got a response (or error) - check authorization status
             DispatchQueue.main.async {
@@ -83,6 +89,21 @@ class HealthKitService: ObservableObject {
             }
         }
         print("📱 pedometer.startUpdates called, waiting for callback...")
+        
+        // v1.6.29d: Fallback timeout - if callback doesn't fire in 5 seconds, check status manually
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            guard !callbackFired else { return }
+            print("📱 ⚠️ Timeout! Callback didn't fire in 5 seconds, checking status manually...")
+            
+            callbackFired = true
+            self?.pedometer.stopUpdates()
+            self?.objectWillChange.send()
+            
+            let status = CMPedometer.authorizationStatus()
+            let granted = status == .authorized
+            print("📱 Manual check - status: \(status.rawValue), granted: \(granted)")
+            completion?(granted)
+        }
     }
     
     var isHealthKitAvailable: Bool {
