@@ -977,37 +977,50 @@ struct WaypointMarkerView: View {
 // MARK: - Preview
 // MARK: - Delay Banner (v1.6.10)
 /// Prominent delay display with color-coded urgency and progress bar
+/// Uses TimelineView to guarantee updates every second
 struct DelayBanner: View {
     let delayMinutes: Int
     let walkStartTime: Date?
     @Environment(\.colorScheme) var colorScheme
     
-    // v1.6.14: Use @State for timer tick to force view updates
-    @State private var timerTick: Int = 0
+    var body: some View {
+        // TimelineView guarantees refresh every second
+        TimelineView(.periodic(from: .now, by: 1.0)) { context in
+            DelayBannerContent(
+                delayMinutes: delayMinutes,
+                walkStartTime: walkStartTime,
+                currentDate: context.date,
+                colorScheme: colorScheme
+            )
+        }
+        .onAppear {
+            print("⏱️ DelayBanner appeared: \(delayMinutes)min delay, start: \(walkStartTime?.description ?? "nil")")
+        }
+    }
+}
+
+/// Inner content view for DelayBanner - receives currentDate from TimelineView
+private struct DelayBannerContent: View {
+    let delayMinutes: Int
+    let walkStartTime: Date?
+    let currentDate: Date
+    let colorScheme: ColorScheme
     
-    /// Time remaining until delay expires (in minutes, for display)
-    /// Uses timerTick to force recalculation on each tick
+    /// Time remaining until delay expires (in minutes)
     var timeRemaining: Int {
-        _ = timerTick  // Force dependency on timer tick
         guard let start = walkStartTime else { return delayMinutes }
-        let elapsedSeconds = Date().timeIntervalSince(start)
+        let elapsedSeconds = currentDate.timeIntervalSince(start)
         let elapsedMinutes = Int(elapsedSeconds / 60)
         return max(0, delayMinutes - elapsedMinutes)
     }
     
     /// Progress showing TIME REMAINING (1.0 = full time left, 0.0 = time's up)
-    /// Uses timerTick to force recalculation on each tick
     var progress: Double {
-        _ = timerTick  // Force dependency on timer tick
         guard delayMinutes > 0, let start = walkStartTime else { return 1.0 }
         let totalSeconds = Double(delayMinutes * 60)
-        let elapsedSeconds = Date().timeIntervalSince(start)
-        let remaining = max(0, 1.0 - (elapsedSeconds / totalSeconds))
-        return remaining  // Bar drains from full to empty as time runs out
+        let elapsedSeconds = currentDate.timeIntervalSince(start)
+        return max(0, 1.0 - (elapsedSeconds / totalSeconds))
     }
-    
-    // Timer that fires every second
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
     /// Urgency level based on time remaining
     enum Urgency {
@@ -1044,7 +1057,6 @@ struct DelayBanner: View {
         }
     }
     
-    // v1.6.13: Option A - Compact single-line solid banner
     var body: some View {
         HStack(spacing: 12) {
             // Urgency icon with pulse animation for urgent
@@ -1078,7 +1090,6 @@ struct DelayBanner: View {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(urgencyColor)
                         .frame(width: geo.size.width * progress, height: 6)
-                        .animation(.easeInOut(duration: 0.5), value: progress)
                 }
             }
             .frame(width: 80, height: 6)
@@ -1087,17 +1098,9 @@ struct DelayBanner: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.darkCardBackground)  // Solid dark background matching carousel
+                .fill(Color.darkCardBackground)
                 .shadow(color: Color.black.opacity(0.3), radius: 8, y: 4)
         )
-        .onReceive(timer) { _ in
-            timerTick += 1  // Increment to force view refresh every second
-            // Debug: uncomment to verify timer is firing
-            // print("⏱️ DelayBanner tick \(timerTick): \(timeRemaining)min remaining, progress: \(String(format: "%.2f", progress))")
-        }
-        .onAppear {
-            print("⏱️ DelayBanner appeared: \(delayMinutes)min delay, start: \(walkStartTime?.description ?? "nil")")
-        }
     }
 }
 
