@@ -729,14 +729,20 @@ struct GratitudeSection: View {
                     .font(.bodyLarge)
                     .foregroundColor(.primary)
                 
-                TextEditor(text: $gratitudeText)
-                    .focused($isTextEditorFocused)
-                    .frame(height: 100)
-                    .padding(12)
-                    .background(Color.softGray)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .scrollContentBackground(.hidden)  // iOS 16+ - hide default background
-                    .tint(.coralPink)  // Cursor color
+                // Use ZStack approach to avoid gesture conflicts with TextEditor
+                ZStack(alignment: .topLeading) {
+                    // Background
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.softGray)
+                    
+                    // TextEditor
+                    TextEditor(text: $gratitudeText)
+                        .focused($isTextEditorFocused)
+                        .scrollContentBackground(.hidden)
+                        .tint(.coralPink)
+                        .padding(12)
+                }
+                .frame(height: 100)
                 
                 Button("Save Entry") {
                     if !gratitudeText.isEmpty {
