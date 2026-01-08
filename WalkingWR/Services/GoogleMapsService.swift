@@ -875,78 +875,98 @@ class GoogleMapsService: ObservableObject {
         """
         
         let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let urlString = "https://overpass-api.de/api/interpreter?data=\(encodedQuery)"
         
-        guard let url = URL(string: urlString) else {
-            print("🗺️ OSM: Invalid URL")
-            return []
-        }
+        // Try multiple Overpass API mirrors for reliability
+        let mirrors = [
+            "https://overpass.kumi.systems/api/interpreter",  // Often more reliable
+            "https://lz4.overpass-api.de/api/interpreter",    // Fast mirror
+            "https://overpass-api.de/api/interpreter"         // Main server
+        ]
         
-        print("🗺️ Searching OpenStreetMap (Overpass API - FREE!)...")
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-        
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                print("🗺️ OSM: Bad response")
-                return []
+        for (index, baseUrl) in mirrors.enumerated() {
+            let urlString = "\(baseUrl)?data=\(encodedQuery)"
+            
+            guard let url = URL(string: urlString) else {
+                print("🗺️ OSM: Invalid URL for mirror \(index + 1)")
+                continue
             }
             
-            // Parse Overpass JSON response
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let elements = json["elements"] as? [[String: Any]] {
+            print("🗺️ Searching OpenStreetMap (mirror \(index + 1)/\(mirrors.count))...")
+            
+            do {
+                // Use a custom URLSession with longer timeout
+                let config = URLSessionConfiguration.default
+                config.timeoutIntervalForRequest = 15
+                config.timeoutIntervalForResource = 30
+                let session = URLSession(configuration: config)
                 
-                for element in elements {
-                    guard let tags = element["tags"] as? [String: String] else { continue }
-                    
-                    // Get name - skip if no name
-                    guard let name = tags["name"] else { continue }
-                    
-                    // Get coordinates (handle both nodes and ways with center)
-                    var lat: Double?
-                    var lon: Double?
-                    
-                    if let nodeLat = element["lat"] as? Double, let nodeLon = element["lon"] as? Double {
-                        lat = nodeLat
-                        lon = nodeLon
-                    } else if let center = element["center"] as? [String: Double] {
-                        lat = center["lat"]
-                        lon = center["lon"]
-                    }
-                    
-                    guard let finalLat = lat, let finalLon = lon else { continue }
-                    
-                    // Get type from tags
-                    let poiType = tags["amenity"] ?? tags["shop"] ?? tags["leisure"] ?? tags["tourism"] ?? tags["historic"] ?? "place"
-                    
-                    // Get address if available
-                    var address: String? = nil
-                    if let street = tags["addr:street"] {
-                        let houseNumber = tags["addr:housenumber"] ?? ""
-                        address = "\(houseNumber) \(street)".trimmingCharacters(in: .whitespaces)
-                    }
-                    
-                    let osmId = element["id"] as? Int ?? name.hashValue
-                    
-                    let placeResult = PlaceResult(
-                        placeId: "osm_\(osmId)",
-                        name: name,
-                        vicinity: address,
-                        geometry: PlaceGeometry(
-                            location: PlaceLocation(lat: finalLat, lng: finalLon)
-                        ),
-                        types: [poiType]
-                    )
-                    allResults.append(placeResult)
+                let (data, response) = try await session.data(from: url)
+                
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    print("🗺️ OSM: Bad response from mirror \(index + 1), trying next...")
+                    continue
                 }
+                
+                // Parse Overpass JSON response
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let elements = json["elements"] as? [[String: Any]] {
+                    
+                    for element in elements {
+                        guard let tags = element["tags"] as? [String: String] else { continue }
+                        
+                        // Get name - skip if no name
+                        guard let name = tags["name"] else { continue }
+                        
+                        // Get coordinates (handle both nodes and ways with center)
+                        var lat: Double?
+                        var lon: Double?
+                        
+                        if let nodeLat = element["lat"] as? Double, let nodeLon = element["lon"] as? Double {
+                            lat = nodeLat
+                            lon = nodeLon
+                        } else if let center = element["center"] as? [String: Double] {
+                            lat = center["lat"]
+                            lon = center["lon"]
+                        }
+                        
+                        guard let finalLat = lat, let finalLon = lon else { continue }
+                        
+                        // Get type from tags
+                        let poiType = tags["amenity"] ?? tags["shop"] ?? tags["leisure"] ?? tags["tourism"] ?? tags["historic"] ?? "place"
+                        
+                        // Get address if available
+                        var address: String? = nil
+                        if let street = tags["addr:street"] {
+                            let houseNumber = tags["addr:housenumber"] ?? ""
+                            address = "\(houseNumber) \(street)".trimmingCharacters(in: .whitespaces)
+                        }
+                        
+                        let osmId = element["id"] as? Int ?? name.hashValue
+                        
+                        let placeResult = PlaceResult(
+                            placeId: "osm_\(osmId)",
+                            name: name,
+                            vicinity: address,
+                            geometry: PlaceGeometry(
+                                location: PlaceLocation(lat: finalLat, lng: finalLon)
+                            ),
+                            types: [poiType]
+                        )
+                        allResults.append(placeResult)
+                    }
+                }
+                
+                print("🗺️ ✓ OpenStreetMap found \(allResults.count) POIs (mirror \(index + 1) succeeded)")
+                return allResults  // Success! Return results
+                
+            } catch {
+                print("🗺️ OSM mirror \(index + 1) failed: \(error.localizedDescription)")
+                // Continue to next mirror
             }
-            
-            print("🗺️ OpenStreetMap found \(allResults.count) POIs (FREE!)")
-            
-        } catch {
-            print("🗺️ OSM search failed: \(error.localizedDescription)")
         }
         
+        // All mirrors failed
+        print("🗺️ ⚠️ All OSM mirrors failed")
         return allResults
     }
     
