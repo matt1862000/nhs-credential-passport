@@ -61,49 +61,37 @@ class HealthKitService: ObservableObject {
             return
         }
         
-        // Track if callback was already called (prevent double-calling)
-        var callbackFired = false
-        
         print("📱 Starting pedometer updates to trigger permission prompt...")
         
         // Use the exact same approach as startObservingSteps - this triggers the permission prompt
         pedometer.startUpdates(from: Date()) { [weak self] data, error in
             print("📱 Pedometer callback received! data: \(data != nil), error: \(error?.localizedDescription ?? "none")")
-            guard let self = self, !callbackFired else {
-                if callbackFired {
-                    print("📱 Callback already fired, ignoring duplicate")
-                }
+            guard let self = self else {
+                print("📱 Self was nil in callback")
                 return
             }
-            callbackFired = true
             
-            // We got a response (or error) - check authorization status
+            // We got a response (or error)
             DispatchQueue.main.async {
                 // Stop the updates since we just wanted to trigger the prompt
                 self.pedometer.stopUpdates()
                 self.objectWillChange.send()
                 
-                let granted = CMPedometer.authorizationStatus() == .authorized
-                print("📱 Motion authorization result: \(granted), status: \(CMPedometer.authorizationStatus().rawValue)")
+                // v1.6.30: Trust the callback result, not just authorizationStatus()
+                // If we got data without error, we're authorized
+                // authorizationStatus() can have timing issues
+                let statusGranted = CMPedometer.authorizationStatus() == .authorized
+                let dataGranted = data != nil && error == nil
+                let granted = statusGranted || dataGranted
+                
+                print("📱 Motion authorization result: \(granted)")
+                print("📱   - statusGranted (authorizationStatus): \(statusGranted)")
+                print("📱   - dataGranted (data != nil && error == nil): \(dataGranted)")
+                print("📱   - authorizationStatus.rawValue: \(CMPedometer.authorizationStatus().rawValue)")
                 completion?(granted)
             }
         }
         print("📱 pedometer.startUpdates called, waiting for callback...")
-        
-        // v1.6.29d: Fallback timeout - if callback doesn't fire in 5 seconds, check status manually
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-            guard !callbackFired else { return }
-            print("📱 ⚠️ Timeout! Callback didn't fire in 5 seconds, checking status manually...")
-            
-            callbackFired = true
-            self?.pedometer.stopUpdates()
-            self?.objectWillChange.send()
-            
-            let status = CMPedometer.authorizationStatus()
-            let granted = status == .authorized
-            print("📱 Manual check - status: \(status.rawValue), granted: \(granted)")
-            completion?(granted)
-        }
     }
     
     var isHealthKitAvailable: Bool {

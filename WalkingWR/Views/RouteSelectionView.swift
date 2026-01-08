@@ -193,10 +193,19 @@ struct RouteSelectionView: View {
                 // - HealthKit is not already authorized
                 // - User hasn't previously declined the offer
                 let hasDeclinedOffer = UserDefaults.standard.bool(forKey: "healthKitSyncOfferDeclined")
+                print("🏥 Post-walk wellbeing dismissed - checking HealthKit offer conditions:")
+                print("🏥   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
+                print("🏥   isAuthorized: \(viewModel.healthKitService.isAuthorized)")
+                print("🏥   hasDeclinedOffer: \(hasDeclinedOffer)")
+                print("🏥   stepTrackingAutoEnabled (UserDefaults): \(UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled"))")
+                
                 if viewModel.stepTrackingWasEnabled && !viewModel.healthKitService.isAuthorized && !hasDeclinedOffer {
+                    print("🏥   ✅ All conditions met - showing HealthKit offer")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         viewModel.showHealthKitSyncOffer = true
                     }
+                } else {
+                    print("🏥   ❌ Conditions not met - NOT showing HealthKit offer")
                 }
             }) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPostWalkWellbeing, isPostWalk: true, isWalkActivity: true)
@@ -4323,6 +4332,15 @@ struct ActiveWalkView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @State private var showAllDirections: Bool = false
     @State private var showEndConfirmation: Bool = false
+    @State private var showMotionExplainer: Bool = false
+    @State private var isStepTrackingEnabled: Bool = false
+    
+    /// Check if step tracking should be prompted
+    private var shouldPromptSteps: Bool {
+        !isStepTrackingEnabled && 
+        viewModel.healthKitService.isPedometerAvailable && 
+        !viewModel.healthKitService.isMotionDenied
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -4344,20 +4362,22 @@ struct ActiveWalkView: View {
                         
                         Spacer()
                         
-                        // Timer
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(formatSeconds(viewModel.walkSession.elapsedSeconds))
+                        // Static clinic delay only (admin-controlled)
+                        HStack(spacing: 4) {
+                            Text("\(viewModel.waitTimeInfo.estimatedMinutes)")
                                 .font(.title2)
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
                                 .monospacedDigit()
-                            
-                            if viewModel.walkSession.halfwayAlertSent {
-                                Text("Head back!")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.softAmber)
-                            }
+                            Text("mins delay")
+                                .font(.subheadline)
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+                        
+                        if viewModel.walkSession.halfwayAlertSent {
+                            Text("↩︎")
+                                .font(.title2)
+                                .foregroundColor(.softAmber)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -4375,7 +4395,7 @@ struct ActiveWalkView: View {
                             set: { viewModel.locationService.currentDirectionIndex = $0 }
                         ),
                         showAllDirections: $showAllDirections,
-                        elapsedTime: formatSeconds(viewModel.walkSession.elapsedSeconds),
+                        delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
                         distanceWalked: Int(viewModel.locationService.distanceWalked),
                         halfwayAlert: viewModel.walkSession.halfwayAlertSent
                     )
@@ -4404,14 +4424,58 @@ struct ActiveWalkView: View {
             
             // Bottom section with stats and end button
             VStack(spacing: 12) {
-                // Compact stats row (v1.6.13: removed delay badge - now shown in top banner)
+                // Walk time remaining + Step tracking prompt row
+                HStack(spacing: 12) {
+                    // Walk time remaining (countdown)
+                    if let route = viewModel.walkSession.currentRoute {
+                        let walkRemaining = max(0, route.durationMinutes - Int(viewModel.walkSession.elapsedTime / 60))
+                        HStack(spacing: 6) {
+                            Image(systemName: "figure.walk")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(walkRemaining <= 5 ? .orange : .tealAccent)
+                            
+                            Text("\(walkRemaining)")
+                                .font(.system(size: 16, weight: .bold, design: .rounded))
+                                .foregroundColor(walkRemaining <= 5 ? .orange : .tealAccent)
+                            
+                            Text("mins left")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.darkCardBackground)
+                        .clipShape(Capsule())
+                    }
+                    
+                    // Step tracking prompt (if not enabled)
+                    if shouldPromptSteps {
+                        Button(action: { showMotionExplainer = true }) {
+                            HStack(spacing: 6) {
+                                Text("Track steps")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Image(systemName: "hand.tap.fill")
+                                    .font(.system(size: 11))
+                            }
+                            .foregroundColor(.tealAccent)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.tealAccent.opacity(0.15))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.top, 8)
+                
+                // Compact stats row
                 HStack(spacing: 8) {
                     CompactStatPill(icon: "figure.walk", value: "\(viewModel.walkSession.stepsThisSession)", label: "steps")
                     CompactStatPill(icon: "star.fill", value: "\(viewModel.userProgress.totalPoints)", label: "pts")
                     CompactStatPill(icon: "mappin", value: "\(viewModel.walkSession.markersScanned.count)", label: "spots")
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 10)
+                .padding(.top, 4)
                 
                 // End walk button
                 Button(action: { showEndConfirmation = true }) {
@@ -4433,6 +4497,31 @@ struct ActiveWalkView: View {
         } message: {
             Text("Your steps and progress will be saved.")
         }
+        .sheet(isPresented: $showMotionExplainer) {
+            MotionPermissionExplainerSheet(
+                onEnable: {
+                    // Set flags immediately for instant UI feedback
+                    isStepTrackingEnabled = true
+                    viewModel.stepTrackingWasEnabled = true
+                    UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
+                    showMotionExplainer = false
+                    
+                    // Start observing steps
+                    if let startTime = viewModel.walkSession.startTime {
+                        viewModel.healthKitService.startObservingSteps(from: startTime)
+                    }
+                },
+                onCancel: {
+                    showMotionExplainer = false
+                }
+            )
+        }
+        .onAppear {
+            // Auto-enable if previously enabled
+            if UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled") {
+                isStepTrackingEnabled = true
+            }
+        }
     }
     
     func formatElapsedTime(_ interval: TimeInterval) -> String {
@@ -4453,7 +4542,7 @@ struct WalkingDirectionsBanner: View {
     let directions: [WalkingDirection]
     @Binding var currentIndex: Int
     @Binding var showAllDirections: Bool
-    var elapsedTime: String = ""
+    var delayMinutes: Int = 0  // Static clinic delay (admin-controlled)
     var distanceWalked: Int = 0
     var halfwayAlert: Bool = false
     
@@ -4515,20 +4604,16 @@ struct WalkingDirectionsBanner: View {
                         }
                     }
                     
-                    Spacer()
-                    
-                    // Timer on right
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(elapsedTime)
+                    // Static clinic delay (admin-controlled)
+                    HStack(spacing: 4) {
+                        Text("\(delayMinutes)")
                             .font(.title3)
                             .fontWeight(.bold)
                             .foregroundColor(.white)
                             .monospacedDigit()
-                        
-                        // Step counter
-                        Text("\(currentIndex + 1)/\(directions.count)")
-                            .font(.caption2)
-                            .foregroundColor(.white.opacity(0.7))
+                        Text("mins delay")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.8))
                     }
                     
                     // Expand button

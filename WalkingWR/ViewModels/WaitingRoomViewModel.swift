@@ -585,9 +585,12 @@ class WaitingRoomViewModel: ObservableObject {
         let halfwaySeconds = Double(route.durationMinutes * 60) / 2
         walkSession.estimatedReturnTime = Date().addingTimeInterval(halfwaySeconds)
         
-        // v1.6.28: Step tracking is now opt-in via the Steps card during walk
-        // Only auto-start if user has previously opted in AND Motion is already authorized
-        if healthKitService.isMotionAuthorized && UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled") {
+        // v1.6.30: Step tracking is now opt-in via the Steps card during walk
+        // Auto-start if user has previously opted in (trust UserDefaults flag)
+        let autoEnabled = UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled")
+        print("🚶 startWalk - stepTrackingAutoEnabled: \(autoEnabled)")
+        if autoEnabled {
+            print("🚶 Auto-starting step observation, setting stepTrackingWasEnabled = true")
             healthKitService.startObservingSteps(from: Date())
             stepTrackingWasEnabled = true
         }

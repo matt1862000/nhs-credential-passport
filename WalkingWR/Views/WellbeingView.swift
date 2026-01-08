@@ -1099,7 +1099,8 @@ struct BirdInfo: Identifiable {
     let scientificName: String
     let description: String
     let habitat: String
-    let imageURL: String // Wikipedia image URL
+    let imageURL: String // Wikipedia image URL (fallback)
+    let localAsset: String? // Bundled asset name (preferred)
     let seasonalNote: String // When they're commonly seen
     let isYearRound: Bool
     let summerOnly: Bool
@@ -1124,78 +1125,93 @@ struct BirdSpottingView: View {
                  description: "Britain's favourite bird with its distinctive red breast. Very territorial and often seen in gardens.",
                  habitat: "Gardens, parks, woodlands",
                  imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f3/Erithacus_rubecula_with_cocked_head.jpg/220px-Erithacus_rubecula_with_cocked_head.jpg",
+                 localAsset: "Robin",
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "Blackbird", scientificName: "Turdus merula",
                  description: "Males are jet black with orange-yellow beak. Females are brown. Often seen hopping on lawns.",
                  habitat: "Gardens, parks, hedgerows",
                  imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Common_Blackbird.jpg/220px-Common_Blackbird.jpg",
+                 localAsset: "Blackbird",
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "Blue Tit", scientificName: "Cyanistes caeruleus",
                  description: "Small, colourful bird with blue cap, yellow belly. Very acrobatic on feeders.",
                  habitat: "Gardens, woodlands, hedgerows",
                  imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/Eurasian_blue_tit_Lancashire.jpg/220px-Eurasian_blue_tit_Lancashire.jpg",
+                 localAsset: "BlueTit",
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "Great Tit", scientificName: "Parus major",
                  description: "Largest UK tit with yellow belly and distinctive black stripe. Bold and curious.",
                  habitat: "Gardens, woodlands, parks",
-                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/86/Parus_major_m.jpg/220px-Parus_major_m.jpg",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/49/Kohlmeise.jpg/220px-Kohlmeise.jpg",
+                 localAsset: "GreatTit",
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "House Sparrow", scientificName: "Passer domesticus",
                  description: "Chunky brown and grey bird. Males have grey cap and black bib. Very social.",
                  habitat: "Towns, villages, near buildings",
-                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6e/Passer_domesticus_male_%2815%29.jpg/220px-Passer_domesticus_male_%2815%29.jpg",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/House_Sparrow_mar08.jpg/220px-House_Sparrow_mar08.jpg",
+                 localAsset: "HouseSparrow",
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "Magpie", scientificName: "Pica pica",
                  description: "Striking black and white bird with long tail. Iridescent blue-green on wings.",
                  habitat: "Gardens, parks, farmland",
-                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9e/Pica_pica_-_Compans_Caffarelli_-_2012-03-16.jpg/220px-Pica_pica_-_Compans_Caffarelli_-_2012-03-16.jpg",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/Pica_pica_-_Compans_Caffarelli.jpg/220px-Pica_pica_-_Compans_Caffarelli.jpg",
+                 localAsset: nil,
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "Wood Pigeon", scientificName: "Columba palumbus",
                  description: "Large grey pigeon with white neck patch and pink breast. Distinctive cooing call.",
                  habitat: "Gardens, parks, woodlands",
                  imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/Wood_pigeon_%28Columba_palumbus%29.jpg/220px-Wood_pigeon_%28Columba_palumbus%29.jpg",
+                 localAsset: nil,
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "Carrion Crow", scientificName: "Corvus corone",
                  description: "All-black, intelligent bird. Often seen in pairs or small groups.",
                  habitat: "Almost anywhere - very adaptable",
-                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a9/Corvus_corone_-near_Canford_Cliffs%2C_Poole%2C_England-8.jpg/220px-Corvus_corone_-near_Canford_Cliffs%2C_Poole%2C_England-8.jpg",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/8/84/Corvus_corone_-_Hailsham%2C_Sussex%2C_England-8.jpg/220px-Corvus_corone_-_Hailsham%2C_Sussex%2C_England-8.jpg",
+                 localAsset: "CarrionCrow",
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "Wren", scientificName: "Troglodytes troglodytes",
                  description: "Tiny brown bird with upturned tail. Incredibly loud song for its size.",
                  habitat: "Gardens, hedgerows, undergrowth",
                  imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/Troglodytes_troglodytes.jpg/220px-Troglodytes_troglodytes.jpg",
+                 localAsset: nil,
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "Goldfinch", scientificName: "Carduelis carduelis",
                  description: "Colourful finch with red face and gold wing bars. Loves thistle seeds.",
                  habitat: "Gardens, orchards, woodland edges",
                  imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7a/Carduelis_carduelis_close_up.jpg/220px-Carduelis_carduelis_close_up.jpg",
+                 localAsset: nil,
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         // Summer visitors (April-September)
         BirdInfo(name: "Swallow", scientificName: "Hirundo rustica",
                  description: "Elegant bird with long forked tail. Catches insects on the wing.",
                  habitat: "Open countryside, near water, farms",
                  imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Barn_swallow_%28Hirundo_rustica_rustica%29.jpg/220px-Barn_swallow_%28Hirundo_rustica_rustica%29.jpg",
+                 localAsset: nil,
                  seasonalNote: "Summer visitor (Apr-Oct)", isYearRound: false, summerOnly: true, winterOnly: false),
         BirdInfo(name: "House Martin", scientificName: "Delichon urbicum",
                  description: "Blue-black above, white below with distinctive white rump. Builds mud nests under eaves.",
                  habitat: "Towns, villages, near buildings",
                  imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Common_house_martin_%28Delichon_urbicum%29.jpg/220px-Common_house_martin_%28Delichon_urbicum%29.jpg",
+                 localAsset: nil,
                  seasonalNote: "Summer visitor (Apr-Oct)", isYearRound: false, summerOnly: true, winterOnly: false),
         BirdInfo(name: "Swift", scientificName: "Apus apus",
                  description: "Dark, scythe-winged bird that screams through the sky. Rarely lands except to nest.",
                  habitat: "Towns, villages - high in the sky",
-                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e6/Apus_apus_-Barcelona%2C_Spain-8_%281%29.jpg/220px-Apus_apus_-Barcelona%2C_Spain-8_%281%29.jpg",
+                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/Apus_apus_01.jpg/220px-Apus_apus_01.jpg",
+                 localAsset: nil,
                  seasonalNote: "Summer visitor (May-Aug)", isYearRound: false, summerOnly: true, winterOnly: false),
         // Winter visitors (October-March)
         BirdInfo(name: "Fieldfare", scientificName: "Turdus pilaris",
                  description: "Large thrush with grey head, chestnut back. Arrives from Scandinavia in flocks.",
                  habitat: "Fields, hedgerows, orchards",
                  imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c3/Fieldfare.jpg/220px-Fieldfare.jpg",
+                 localAsset: nil,
                  seasonalNote: "Winter visitor (Oct-Mar)", isYearRound: false, summerOnly: false, winterOnly: true),
         BirdInfo(name: "Redwing", scientificName: "Turdus iliacus",
                  description: "Small thrush with cream eyestripe and red underwing. Often heard migrating at night.",
                  habitat: "Fields, hedgerows, gardens in cold snaps",
                  imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9b/Redwing_Turdus_iliacus.jpg/220px-Redwing_Turdus_iliacus.jpg",
+                 localAsset: nil,
                  seasonalNote: "Winter visitor (Oct-Mar)", isYearRound: false, summerOnly: false, winterOnly: true)
     ]
     
@@ -1359,41 +1375,52 @@ struct BirdCard: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Divider()
                     
-                    // Image
-                    AsyncImage(url: URL(string: bird.imageURL)) { phase in
-                        switch phase {
-                        case .empty:
-                            HStack {
-                                Spacer()
-                                ProgressView()
-                                Spacer()
-                            }
+                    // Image - prefer local asset, fall back to URL
+                    if let assetName = bird.localAsset, UIImage(named: assetName) != nil {
+                        // Use bundled image
+                        Image(assetName)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
                             .frame(height: 150)
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(height: 150)
-                                .clipped()
-                                .cornerRadius(12)
-                        case .failure:
-                            HStack {
-                                Spacer()
-                                VStack {
-                                    Image(systemName: "bird.fill")
-                                        .font(.system(size: 40))
-                                        .foregroundColor(.orange)
-                                    Text(bird.name)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                Spacer()
-                            }
-                            .frame(height: 150)
-                            .background(Color.orange.opacity(0.1))
+                            .clipped()
                             .cornerRadius(12)
-                        @unknown default:
-                            EmptyView()
+                    } else {
+                        // Fall back to URL
+                        AsyncImage(url: URL(string: bird.imageURL)) { phase in
+                            switch phase {
+                            case .empty:
+                                HStack {
+                                    Spacer()
+                                    ProgressView()
+                                    Spacer()
+                                }
+                                .frame(height: 150)
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(height: 150)
+                                    .clipped()
+                                    .cornerRadius(12)
+                            case .failure:
+                                HStack {
+                                    Spacer()
+                                    VStack {
+                                        Image(systemName: "bird.fill")
+                                            .font(.system(size: 40))
+                                            .foregroundColor(.orange)
+                                        Text(bird.name)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Spacer()
+                                }
+                                .frame(height: 150)
+                                .background(Color.orange.opacity(0.1))
+                                .cornerRadius(12)
+                            @unknown default:
+                                EmptyView()
+                            }
                         }
                     }
                     
