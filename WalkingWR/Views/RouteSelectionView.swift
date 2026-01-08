@@ -2237,14 +2237,18 @@ struct LocalRoutePickerSheet: View {
         
         await MainActor.run {
             routeTestResults += "📦 POIs: \(poiCount)\n"
-            routeTestResults += "───────────────────────────────────────\n"
         }
         
         for duration in durations {
             var excludedPlaceIds = Set<String>()
             var consecutiveFailures = 0
+            var routesForDuration: [(actual: Int, accuracy: Double, waypoints: String, distance: Int)] = []
             
-            for _ in 1...maxRoutesPerDuration {
+            await MainActor.run {
+                routeTestResults += "\n📌 \(duration) MIN:\n"
+            }
+            
+            for routeNum in 1...maxRoutesPerDuration {
                 guard consecutiveFailures < 3 else { break }
                 
                 let startTime = Date()
@@ -2266,6 +2270,26 @@ struct LocalRoutePickerSheet: View {
                         
                         allResults.append((accuracy: accuracy, time: elapsed, isValid: isValid))
                         
+                        // Build waypoint names string
+                        let waypointNames = route.places.prefix(3).map { 
+                            String($0.name.prefix(15)) 
+                        }.joined(separator: " → ")
+                        let moreCount = route.places.count > 3 ? " +\(route.places.count - 3)" : ""
+                        
+                        routesForDuration.append((
+                            actual: actualMin,
+                            accuracy: accuracy,
+                            waypoints: waypointNames + moreCount,
+                            distance: route.distanceMeters
+                        ))
+                        
+                        // Output route details
+                        let icon = isValid ? "✅" : (accuracy < 80 ? "📉" : "📈")
+                        await MainActor.run {
+                            routeTestResults += "  \(icon) R\(routeNum): \(actualMin)min (\(Int(accuracy))%) \(route.distanceMeters)m\n"
+                            routeTestResults += "     → \(waypointNames)\(moreCount)\n"
+                        }
+                        
                         // Add POIs to excluded list
                         for place in route.places {
                             excludedPlaceIds.insert(place.placeId)
@@ -2278,6 +2302,12 @@ struct LocalRoutePickerSheet: View {
                     consecutiveFailures += 1
                 }
             }
+            
+            // Duration summary
+            let validForDuration = routesForDuration.filter { $0.accuracy >= 80 && $0.accuracy <= 120 }.count
+            await MainActor.run {
+                routeTestResults += "  📊 \(validForDuration)/\(routesForDuration.count) valid\n"
+            }
         }
         
         // Calculate summary stats
@@ -2287,9 +2317,9 @@ struct LocalRoutePickerSheet: View {
         let avgSpeed = allResults.isEmpty ? 0 : allResults.map { $0.time }.reduce(0, +) / Double(allResults.count)
         
         await MainActor.run {
-            routeTestResults += "📊 \(name) Summary:\n"
-            routeTestResults += "   Routes generated: \(allResults.count)\n"
-            routeTestResults += "   Avg accuracy: \(String(format: "%.0f%%", avgAccuracy))\n"
+            routeTestResults += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            routeTestResults += "📊 \(name) SUMMARY:\n"
+            routeTestResults += "   Routes: \(allResults.count) | Avg accuracy: \(String(format: "%.0f%%", avgAccuracy))\n"
             routeTestResults += "   Valid (80-120%): \(validCount)/\(allResults.count) (\(String(format: "%.0f%%", validRate)))\n"
             routeTestResults += "   Avg speed: \(String(format: "%.1fs", avgSpeed))\n"
         }

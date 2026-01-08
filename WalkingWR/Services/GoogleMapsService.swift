@@ -260,17 +260,22 @@ class GoogleMapsService: ObservableObject {
         origin: CLLocationCoordinate2D,
         targetDurationMinutes: Int
     ) -> [PlaceResult] {
-        // DURATION-AWARE PRE-FILTER: Tighter for short routes, looser for long
-        // Short routes are more sensitive to overshoot (5min → 8min feels wrong)
-        // Long routes have more natural variation in path winding
+        // DURATION-AWARE PRE-FILTER: 
+        // - Short routes: Wider range to find enough candidates
+        // - Medium routes: Moderate (working well)
+        // - Long routes: TIGHTER to prevent 150-200% overshoots
         let (minPercent, maxPercent): (Int, Int)
         switch targetDurationMinutes {
-        case 0...20:
-            minPercent = 55; maxPercent = 110  // Very tight for short walks
-        case 21...40:
-            minPercent = 50; maxPercent = 115  // Moderate
-        default:  // 45+ min
-            minPercent = 45; maxPercent = 120  // Looser for long walks
+        case 0...15:
+            minPercent = 50; maxPercent = 130  // Wider for very short (few nearby POIs)
+        case 16...25:
+            minPercent = 55; maxPercent = 120  // Moderate-wide
+        case 26...40:
+            minPercent = 55; maxPercent = 115  // Moderate (sweet spot)
+        case 41...50:
+            minPercent = 55; maxPercent = 110  // Tighter for long
+        default:  // 51+ min
+            minPercent = 60; maxPercent = 105  // Very tight for very long
         }
         
         let minDuration = max(2, targetDurationMinutes * minPercent / 100)
@@ -2372,6 +2377,25 @@ class GoogleMapsService: ObservableObject {
         // This prevents "Springwood Cott" (30min round-trip) from being tried for 5min routes
         let preFilteredPlaces = preFilterPOIsByDuration(places, origin: location, targetDurationMinutes: targetDurationMinutes)
         places = preFilteredPlaces
+        
+        // 📊 POI CAP: Limit to 300 best POIs to prevent "too many choices" problem
+        // High POI counts (600+) lead to worse accuracy as distant POIs get selected
+        let maxPOIs = 300
+        if places.count > maxPOIs {
+            print("📊 POI CAP: \(places.count) POIs exceeds limit, keeping best \(maxPOIs)")
+            
+            // Score POIs by: walkability + distance fit to target
+            let targetDistance = Double(targetDurationMinutes) * 80 / 2  // Ideal one-way distance
+            let scoredPlaces = places.map { poi -> (poi: PlaceResult, score: Double) in
+                let distance = distanceBetween(location, poi.coordinate)
+                let distanceFit = 1.0 - min(1.0, abs(distance - targetDistance) / targetDistance)
+                let walkScore = walkabilityScore(for: poi)
+                return (poi, distanceFit * 10 + walkScore)
+            }.sorted { $0.score > $1.score }
+            
+            places = Array(scoredPlaces.prefix(maxPOIs).map { $0.poi })
+            print("📊 Kept top \(places.count) POIs by score")
+        }
         
         // For longer routes OR short routes with few POIs, do additional searches at different points
         // Short routes in dense areas need POIs at BETTER distances, not just more nearby ones
