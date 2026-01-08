@@ -270,14 +270,15 @@ class GoogleMapsService: ObservableObject {
         // The root cause is selection-dominated: we pick wrong POIs, not route wrong
         // For 5min routes: max 7min estimated round-trip (allows ~40% slack)
         
-        // v1.6.12 FIX #3: HARD 7-MINUTE CUTOFF FOR 5-MIN ROUTES
+        // v1.6.15: Wider 5-minute filter - 10min cap allows more candidates
+        // Previously 7min cap was too tight, leaving only 1 POI in many areas
         if targetDurationMinutes == 5 {
             var accepted: [PlaceResult] = []
             var rejected = 0
             
             for poi in pois {
                 let estimated = estimateRoundTripMinutes(from: origin, to: poi)
-                if estimated <= 7 {
+                if estimated <= 10 {  // Allow up to 10min estimated (score-based selection will prefer shorter)
                     accepted.append(poi)
                 } else {
                     rejected += 1
@@ -292,20 +293,21 @@ class GoogleMapsService: ObservableObject {
         }
         
         // Standard percentage-based filter for other durations
+        // v1.6.15: Widened filters for short routes - too aggressive = only 1 POI passes
         let (minPercent, maxPercent): (Int, Int)
         switch targetDurationMinutes {
         case 6...10:
-            minPercent = 40; maxPercent = 95   // Very tight for 6-10min
+            minPercent = 30; maxPercent = 130  // Wider range: 3-13min for 10min target
         case 11...15:
-            minPercent = 45; maxPercent = 100  // Tight for 15min
+            minPercent = 35; maxPercent = 120  // Wider: allows more candidates
         case 16...25:
-            minPercent = 50; maxPercent = 105  // Moderate
+            minPercent = 40; maxPercent = 115  // Moderate
         case 26...40:
-            minPercent = 55; maxPercent = 110  // Moderate (was working OK)
+            minPercent = 50; maxPercent = 115  // Moderate (was working OK)
         case 41...50:
-            minPercent = 55; maxPercent = 105  // Tighter for long
+            minPercent = 55; maxPercent = 110  // Tighter for long
         default:  // 51+ min
-            minPercent = 60; maxPercent = 100  // Very tight for very long (were 130-150%)
+            minPercent = 60; maxPercent = 105  // Tight for very long
         }
         
         let minDuration = max(2, targetDurationMinutes * minPercent / 100)
@@ -2738,16 +2740,15 @@ class GoogleMapsService: ObservableObject {
             
             print("🎯 Ideal endpoint: \(Int(idealEndpointDistance))m (range: \(Int(minEndpointDistance))-\(Int(maxEndpointDistance))m) [speed: \(walkingSpeedMeterPerMin)m/min]")
             
-            // v1.6.12 FIX #1: CLOSEST-FIRST FOR SHORT ROUTES (5-10 min)
-            // Root cause: short routes are SELECTION-dominated, not routing-dominated
-            // For 5-10min, the "good" POIs are almost always among the nearest 3-5
-            // Randomized/scored order is actively harmful for short routes
+            // v1.6.15: CLOSEST-FIRST with SHUFFLE for variety
+            // For short routes, prefer closer POIs but shuffle top candidates
+            // This ensures variety when generating multiple routes
             let useClosestFirst = targetDurationMinutes <= 10
             
             // Find POIs at the right distance, with CORRIDOR PENALTY scoring
             // Score = 0.7 * |distance - ideal| + 0.3 * (2×distance / targetTotal) * 100
             // This penalizes POIs that would create overly long out-and-backs
-            let endpointCandidates = places
+            var endpointCandidates = places
                 .filter { !excludePlaceIds.contains($0.placeId) }
                 .map { poi -> (poi: PlaceResult, distance: Double, score: Double) in
                     let dist = distanceBetween(location, poi.coordinate)
@@ -2762,8 +2763,7 @@ class GoogleMapsService: ObservableObject {
                 .filter { $0.distance >= minEndpointDistance && $0.distance <= maxEndpointDistance }
                 .sorted { 
                     if useClosestFirst {
-                        // v1.6.12: For short routes, sort by DISTANCE (closest first)
-                        // This ensures we try the nearest POIs first, which almost always work
+                        // For short routes, sort by DISTANCE (closest first)
                         return $0.distance < $1.distance
                     } else {
                         // For longer routes, use score-based sorting
@@ -2771,8 +2771,16 @@ class GoogleMapsService: ObservableObject {
                     }
                 }
             
-            if useClosestFirst {
-                print("🎯 Found \(endpointCandidates.count) endpoint candidates (CLOSEST-FIRST for \(targetDurationMinutes)min)")
+            // v1.6.15: SHUFFLE top candidates for variety when generating multiple routes
+            // Without this, we always pick the same "closest" POI
+            if useClosestFirst && endpointCandidates.count > 3 {
+                let topCount = min(8, endpointCandidates.count)  // Shuffle top 8
+                var topCandidates = Array(endpointCandidates.prefix(topCount))
+                topCandidates.shuffle()
+                endpointCandidates = topCandidates + Array(endpointCandidates.dropFirst(topCount))
+                print("🎯 Found \(endpointCandidates.count) endpoint candidates (SHUFFLED top \(topCount) for variety)")
+            } else if useClosestFirst {
+                print("🎯 Found \(endpointCandidates.count) endpoint candidates (closest-first, not enough to shuffle)")
             } else {
                 print("🎯 Found \(endpointCandidates.count) endpoint candidates (score-sorted)")
             }
