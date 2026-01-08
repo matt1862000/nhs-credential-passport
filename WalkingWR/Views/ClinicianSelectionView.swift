@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CoreLocation
 
 struct ClinicianSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
@@ -16,13 +17,29 @@ struct ClinicianSelectionView: View {
     @State private var searchText = ""
     @Environment(\.colorScheme) var colorScheme
     
+    // Location for sorting by proximity
+    @StateObject private var locationHelper = ClinicianLocationHelper()
+    
+    /// Clinicians sorted by proximity (if location available) then filtered by search
     var filteredClinicians: [Clinician] {
-        if searchText.isEmpty {
-            return viewModel.availableClinicians
+        // First sort by proximity if we have location
+        var clinicians = viewModel.availableClinicians
+        
+        if let userLocation = locationHelper.currentLocation {
+            clinicians = ClinicLocationService.shared.sortByProximity(
+                clinicians: clinicians,
+                userLocation: userLocation
+            )
         }
-        return viewModel.availableClinicians.filter { clinician in
+        
+        // Then filter by search
+        if searchText.isEmpty {
+            return clinicians
+        }
+        return clinicians.filter { clinician in
             clinician.name.localizedCaseInsensitiveContains(searchText) ||
-            clinician.specialty.localizedCaseInsensitiveContains(searchText)
+            clinician.specialty.localizedCaseInsensitiveContains(searchText) ||
+            clinician.location.localizedCaseInsensitiveContains(searchText)
         }
     }
     
@@ -161,6 +178,7 @@ struct ClinicianSelectionView: View {
                                     ClinicianCard(
                                         clinician: clinician,
                                         isSelected: viewModel.selectedClinician?.id == clinician.id,
+                                        userLocation: locationHelper.currentLocation,
                                         onSelect: {
                                             viewModel.selectClinician(clinician)
                                             
@@ -236,6 +254,9 @@ struct ClinicianSelectionView: View {
                 }
             }
             .onAppear {
+                // Request location permission to sort clinicians by proximity
+                locationHelper.requestLocationPermission()
+                
                 // Check for pending push notification (cold launch)
                 checkPendingNotification()
             }
@@ -274,8 +295,15 @@ struct ClinicianSelectionView: View {
 struct ClinicianCard: View {
     let clinician: Clinician
     let isSelected: Bool
+    let userLocation: CLLocation?  // For showing distance
     let onSelect: () -> Void
     @Environment(\.colorScheme) var colorScheme
+    
+    /// Formatted distance to this clinician's location
+    private var distanceText: String? {
+        guard let userLoc = userLocation else { return nil }
+        return ClinicLocationService.shared.formattedDistance(from: userLoc, to: clinician.location)
+    }
     
     var body: some View {
         Button(action: onSelect) {
@@ -306,7 +334,7 @@ struct ClinicianCard: View {
                         }
                     }
                     
-                    // Location badge
+                    // Location badge with distance
                     if !clinician.location.isEmpty {
                         HStack(spacing: 4) {
                             Image(systemName: "mappin.circle.fill")
@@ -316,6 +344,16 @@ struct ClinicianCard: View {
                                 .font(.caption)
                                 .foregroundColor(.coralPink)
                                 .fontWeight(.medium)
+                            
+                            // Show distance if available
+                            if let distance = distanceText {
+                                Text("•")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(distance)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                     
@@ -401,6 +439,54 @@ struct FeatureShortcutButton: View {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Location Helper for Clinician Proximity Sorting
+class ClinicianLocationHelper: NSObject, ObservableObject, CLLocationManagerDelegate {
+    private let locationManager = CLLocationManager()
+    
+    @Published var currentLocation: CLLocation?
+    @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
+    
+    override init() {
+        super.init()
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        authorizationStatus = locationManager.authorizationStatus
+    }
+    
+    func requestLocationPermission() {
+        switch locationManager.authorizationStatus {
+        case .notDetermined:
+            locationManager.requestWhenInUseAuthorization()
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationManager.requestLocation()
+        default:
+            break
+        }
+    }
+    
+    // MARK: - CLLocationManagerDelegate
+    
+    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        DispatchQueue.main.async {
+            self.authorizationStatus = status
+            
+            if status == .authorizedWhenInUse || status == .authorizedAlways {
+                manager.requestLocation()
+            }
+        }
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        DispatchQueue.main.async {
+            self.currentLocation = locations.last
+        }
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        print("📍 Location error: \(error.localizedDescription)")
     }
 }
 

@@ -171,14 +171,9 @@ class WaitingRoomViewModel: ObservableObject {
         // Listen to Firebase for real wait times
         setupFirebaseListener()
         
-        // Request notification permission AFTER splash screen loads (2.5 second delay)
-        // This provides a better user experience - user sees the app first
-        // Location and HealthKit permissions are requested when starting a walk
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            Task {
-                await self?.notificationService.requestAuthorization()
-            }
-        }
+        // Notification permission is now requested AFTER clinician selection
+        // This follows the new flow: Location → Clinician Selection → Notifications
+        // (See selectClinician method)
         
         // Listen for notifications disabled via push notification action
         NotificationCenter.default.addObserver(
@@ -878,6 +873,17 @@ class WaitingRoomViewModel: ObservableObject {
         // Save selection
         UserDefaults.standard.set(clinician.id.uuidString, forKey: "selectedClinicianId")
         UserDefaults.standard.set(clinician.fullTitle, forKey: "selectedClinicianName")
+        
+        // Request notification permission AFTER clinician is selected
+        // This follows the flow: Location → Clinician Selection → Notifications
+        // Only request if not already authorized and selecting a new clinician
+        if !isSameClinician && !notificationService.isAuthorized {
+            Task {
+                // Small delay to let the clinician selection UI dismiss first
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                _ = await notificationService.requestAuthorization()
+            }
+        }
     }
     
     // MARK: - Notification Management
