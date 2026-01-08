@@ -270,15 +270,16 @@ class GoogleMapsService: ObservableObject {
         // The root cause is selection-dominated: we pick wrong POIs, not route wrong
         // For 5min routes: max 7min estimated round-trip (allows ~40% slack)
         
-        // v1.6.15: Wider 5-minute filter - 10min cap allows more candidates
-        // Previously 7min cap was too tight, leaving only 1 POI in many areas
+        // v1.6.21: Revert to tighter 7-min cutoff for 5-min routes
+        // v1.6.15's 10min cap was too loose → 180% accuracy consistently
+        // 7min cap worked better in v1.6.12: allows 40% slack, rejects far POIs
         if targetDurationMinutes == 5 {
             var accepted: [PlaceResult] = []
             var rejected: [(name: String, estimated: Int)] = []
             
             for poi in pois {
                 let estimated = estimateRoundTripMinutes(from: origin, to: poi)
-                if estimated <= 10 {  // Allow up to 10min estimated (score-based selection will prefer shorter)
+                if estimated <= 7 {  // Tight cutoff: max 7min estimated (40% slack)
                     accepted.append(poi)
                 } else {
                     rejected.append((poi.name, estimated))
@@ -295,9 +296,9 @@ class GoogleMapsService: ObservableObject {
                 print("   ... and \(accepted.count - 10) more")
             }
             
-            print("🎯 ⏱️ 5-MIN HARD CUTOFF: Kept \(accepted.count)/\(pois.count) POIs (max 10min round-trip)")
+            print("🎯 ⏱️ 5-MIN HARD CUTOFF: Kept \(accepted.count)/\(pois.count) POIs (max 7min round-trip)")
             if !rejected.isEmpty {
-                print("   ❌ Rejected \(rejected.count) POIs with >10min estimated")
+                print("   ❌ Rejected \(rejected.count) POIs with >7min estimated")
             }
             
             // DEBUG: Check for specific nearby places
@@ -315,21 +316,21 @@ class GoogleMapsService: ObservableObject {
         }
         
         // Standard percentage-based filter for other durations
-        // v1.6.15: Widened filters for short routes - too aggressive = only 1 POI passes
+        // v1.6.21: Revert to v1.6.12 tighter ranges - looser ranges = worse accuracy
         let (minPercent, maxPercent): (Int, Int)
         switch targetDurationMinutes {
         case 6...10:
-            minPercent = 30; maxPercent = 130  // Wider range: 3-13min for 10min target
+            minPercent = 40; maxPercent = 95   // Tight for short routes
         case 11...15:
-            minPercent = 35; maxPercent = 120  // Wider: allows more candidates
+            minPercent = 45; maxPercent = 100  // Tight for 15min
         case 16...25:
-            minPercent = 40; maxPercent = 115  // Moderate
+            minPercent = 50; maxPercent = 105  // Moderate
         case 26...40:
-            minPercent = 50; maxPercent = 115  // Moderate (was working OK)
+            minPercent = 55; maxPercent = 110  // Moderate
         case 41...50:
-            minPercent = 55; maxPercent = 110  // Tighter for long
+            minPercent = 55; maxPercent = 105  // Tighter for long
         default:  // 51+ min
-            minPercent = 60; maxPercent = 105  // Tight for very long
+            minPercent = 60; maxPercent = 100  // Very tight for very long
         }
         
         let minDuration = max(2, targetDurationMinutes * minPercent / 100)
@@ -583,11 +584,44 @@ class GoogleMapsService: ObservableObject {
             }
             
             // ═══════════════════════════════════════════════════════════════
-            // 🌐 PRIORITY 3: Google Places (OPTIONAL - skip if quota exceeded)
-            // Only call if we have few POIs and API key is present
+            // 🌐 PRIORITY 3: Google Places - SMART DYNAMIC PRIORITIZATION
+            // Call Google when OSM+Apple coverage is insufficient:
+            // - Low POI count (<50)
+            // - No nearby POIs (closest >400m = poor for short routes)
+            // - Rural/sparse area detection
             // ═══════════════════════════════════════════════════════════════
-            if !apiKey.isEmpty && allResults.count < 50 {
-                print("🌐 GOOGLE - Supplementing (need more POIs)...")
+            
+            // Check if we need Google
+            var needsGoogle = false
+            var googleReason = ""
+            
+            // Reason 1: Low POI count
+            if allResults.count < 50 {
+                needsGoogle = true
+                googleReason = "low POI count (\(allResults.count) < 50)"
+            }
+            
+            // Reason 2: No nearby POIs (poor for short routes)
+            if !needsGoogle && !allResults.isEmpty {
+                let closestDistance = allResults.map { distanceBetween(location, $0.coordinate) }.min() ?? 9999
+                if closestDistance > 400 {  // Closest POI is >400m = 5min+ one-way walk
+                    needsGoogle = true
+                    googleReason = "no nearby POIs (closest: \(Int(closestDistance))m)"
+                }
+            }
+            
+            // Reason 3: Check 5-min viability - if no POI within 300m, short routes will fail
+            if !needsGoogle && !allResults.isEmpty {
+                let poisWithin300m = allResults.filter { distanceBetween(location, $0.coordinate) <= 300 }
+                if poisWithin300m.isEmpty {
+                    needsGoogle = true
+                    googleReason = "no POIs within 300m (5-min routes will fail)"
+                }
+            }
+            
+            if !apiKey.isEmpty && needsGoogle {
+                print("🌐 GOOGLE - DYNAMIC TRIGGER: \(googleReason)")
+                print("🌐 GOOGLE - Calling API to supplement...")
                 let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
                 var googleAdded = 0
                 for poi in googlePOIs {
@@ -600,11 +634,18 @@ class GoogleMapsService: ObservableObject {
                         googleAdded += 1
                     }
                 }
-                print("🌐 GOOGLE - Added \(googleAdded) unique POIs")
+                print("🌐 GOOGLE - Added \(googleAdded) unique POIs (total now: \(allResults.count))")
+                
+                // Log improvement
+                if !allResults.isEmpty {
+                    let newClosest = allResults.map { distanceBetween(location, $0.coordinate) }.min() ?? 9999
+                    let newWithin300m = allResults.filter { distanceBetween(location, $0.coordinate) <= 300 }.count
+                    print("🌐 GOOGLE - Improvement: closest=\(Int(newClosest))m, within 300m=\(newWithin300m)")
+                }
             } else if apiKey.isEmpty {
                 print("⚠️ GOOGLE SKIPPED - No API key")
             } else {
-                print("✅ GOOGLE SKIPPED - Already have \(allResults.count) POIs from OSM+Apple")
+                print("✅ GOOGLE SKIPPED - OSM+Apple sufficient (\(allResults.count) POIs, good coverage)")
             }
         }
         
