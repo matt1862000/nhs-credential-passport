@@ -27,6 +27,7 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var showWaitTimeIncreasedAlert: Bool = false
     @Published var showWaitTimeDecreasedAlert: Bool = false
     @Published var waitTimeChangeInfo: (oldMinutes: Int, newMinutes: Int, isIncrease: Bool)?
+    @Published var showDelayChangeOverlay: Bool = false  // v1.6.11: In-map overlay when walking
     @Published var showPreWalkWellbeing: Bool = false
     @Published var showPostWalkWellbeing: Bool = false
     
@@ -414,8 +415,15 @@ class WaitingRoomViewModel: ObservableObject {
                                     )
                                 }
                                 waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: true)
-                                showWaitTimeIncreasedAlert = true
-                                print("⚠️ SHOWING ALERT: Delay increased \(previousDelay) → \(newDelay) min")
+                                
+                                // v1.6.11: Show in-map overlay if walking, otherwise standard alert
+                                if isWalking {
+                                    showDelayChangeOverlay = true
+                                    print("🗺️ SHOWING MAP OVERLAY: Delay increased \(previousDelay) → \(newDelay) min (walking)")
+                                } else {
+                                    showWaitTimeIncreasedAlert = true
+                                    print("⚠️ SHOWING ALERT: Delay increased \(previousDelay) → \(newDelay) min")
+                                }
                             } else if newDelay < previousDelay {
                                 // Delay decreased (any amount)
                                 if isAppInForeground {
@@ -426,8 +434,15 @@ class WaitingRoomViewModel: ObservableObject {
                                     )
                                 }
                                 waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: false)
-                                showWaitTimeDecreasedAlert = true
-                                print("✅ SHOWING ALERT: Delay decreased \(previousDelay) → \(newDelay) min")
+                                
+                                // v1.6.11: Show in-map overlay if walking, otherwise standard alert
+                                if isWalking {
+                                    showDelayChangeOverlay = true
+                                    print("🗺️ SHOWING MAP OVERLAY: Delay decreased \(previousDelay) → \(newDelay) min (walking)")
+                                } else {
+                                    showWaitTimeDecreasedAlert = true
+                                    print("✅ SHOWING ALERT: Delay decreased \(previousDelay) → \(newDelay) min")
+                                }
                             }
                         }
                     }

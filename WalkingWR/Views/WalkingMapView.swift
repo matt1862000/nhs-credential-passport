@@ -258,16 +258,12 @@ struct WalkingInfoCard: View {
                 }
             }
             
-            // Wait time reminder
-            HStack {
-                Image(systemName: "clock.fill")
-                    .foregroundColor(.softAmber)
-                Text("Return in \(viewModel.waitTimeInfo.estimatedMinutes) min")
-                    .font(.caption)
-                    .foregroundColor(.primary)
-                Spacer()
-            }
-            .padding(.top, 4)
+            // v1.6.10: Prominent delay display with urgency colors
+            DelayBanner(
+                delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
+                walkStartTime: viewModel.walkSession.startTime
+            )
+            .padding(.top, 8)
         }
         .padding(20)
         .background(colorScheme == .dark ? Color.darkCardBackground : Color.white)
@@ -387,6 +383,18 @@ struct EmbeddedWalkMapView: View {
                 MapUserLocationButton()
             }
             
+            // v1.6.11: Sticky delay banner at top
+            VStack {
+                DelayBanner(
+                    delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
+                    walkStartTime: viewModel.walkSession.startTime
+                )
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                
+                Spacer()
+            }
+            
             // Next waypoint info overlay - tappable and swipeable
             VStack {
                 Spacer()
@@ -405,6 +413,22 @@ struct EmbeddedWalkMapView: View {
                         colorScheme: colorScheme
                     )
                 }
+            }
+            
+            // v1.6.11: Delay change overlay
+            if viewModel.showDelayChangeOverlay {
+                DelayChangeOverlay(
+                    oldMinutes: viewModel.waitTimeChangeInfo?.oldMinutes ?? 0,
+                    newMinutes: viewModel.waitTimeChangeInfo?.newMinutes ?? viewModel.waitTimeInfo.estimatedMinutes,
+                    isIncrease: viewModel.waitTimeChangeInfo?.isIncrease ?? false,
+                    onDismiss: {
+                        viewModel.showDelayChangeOverlay = false
+                    },
+                    onReturnNow: {
+                        viewModel.showDelayChangeOverlay = false
+                        calculateReturnRoute()
+                    }
+                )
             }
             
             // Intro overlay during camera animation
@@ -951,6 +975,290 @@ struct WaypointMarkerView: View {
 }
 
 // MARK: - Preview
+// MARK: - Delay Banner (v1.6.10)
+/// Prominent delay display with color-coded urgency and progress bar
+struct DelayBanner: View {
+    let delayMinutes: Int
+    let walkStartTime: Date?
+    @Environment(\.colorScheme) var colorScheme
+    
+    /// Time remaining until delay expires
+    var timeRemaining: Int {
+        guard let start = walkStartTime else { return delayMinutes }
+        let elapsed = Int(Date().timeIntervalSince(start) / 60)
+        return max(0, delayMinutes - elapsed)
+    }
+    
+    /// Progress through the delay (0.0 to 1.0)
+    var progress: Double {
+        guard delayMinutes > 0 else { return 0 }
+        return min(1.0, Double(delayMinutes - timeRemaining) / Double(delayMinutes))
+    }
+    
+    /// Urgency level based on time remaining
+    enum Urgency {
+        case relaxed      // > 20 min
+        case gentle       // 10-20 min
+        case warning      // 5-10 min
+        case urgent       // < 5 min
+    }
+    
+    var urgency: Urgency {
+        switch timeRemaining {
+        case 21...: return .relaxed
+        case 10...20: return .gentle
+        case 5...9: return .warning
+        default: return .urgent
+        }
+    }
+    
+    var urgencyColor: Color {
+        switch urgency {
+        case .relaxed: return .green
+        case .gentle: return .softAmber
+        case .warning: return .orange
+        case .urgent: return .red
+        }
+    }
+    
+    var urgencyIcon: String {
+        switch urgency {
+        case .relaxed: return "clock.fill"
+        case .gentle: return "clock.badge.exclamationmark.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .urgent: return "bell.badge.fill"
+        }
+    }
+    
+    var urgencyMessage: String {
+        switch urgency {
+        case .relaxed: return "Plenty of time"
+        case .gentle: return "Keep an eye on time"
+        case .warning: return "Start heading back"
+        case .urgent: return "Head back now!"
+        }
+    }
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            // Main delay display
+            HStack(spacing: 12) {
+                // Urgency icon with pulse animation for urgent
+                Image(systemName: urgencyIcon)
+                    .font(.title2)
+                    .foregroundColor(urgencyColor)
+                    .symbolEffect(.pulse, isActive: urgency == .urgent)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("CLINIC DELAY")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                        .tracking(1)
+                    
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text("\(timeRemaining)")
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .foregroundColor(urgencyColor)
+                        Text("min remaining")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                Spacer()
+                
+                // Urgency badge
+                Text(urgencyMessage)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(urgencyColor)
+                    .clipShape(Capsule())
+            }
+            
+            // Progress bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    // Background track
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(height: 8)
+                    
+                    // Progress fill
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(
+                            LinearGradient(
+                                colors: [urgencyColor.opacity(0.7), urgencyColor],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geo.size.width * progress, height: 8)
+                        .animation(.easeInOut(duration: 0.5), value: progress)
+                }
+            }
+            .frame(height: 8)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(colorScheme == .dark ? Color.black.opacity(0.3) : urgencyColor.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(urgencyColor.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+}
+
+// MARK: - Delay Change Overlay (v1.6.11)
+/// Full-screen overlay shown when delay changes mid-walk
+struct DelayChangeOverlay: View {
+    let oldMinutes: Int
+    let newMinutes: Int
+    let isIncrease: Bool
+    let onDismiss: () -> Void
+    let onReturnNow: () -> Void
+    
+    @State private var isAnimating = false
+    
+    var difference: Int {
+        abs(newMinutes - oldMinutes)
+    }
+    
+    var body: some View {
+        ZStack {
+            // Dimmed background
+            Color.black.opacity(0.6)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    onDismiss()
+                }
+            
+            // Content card
+            VStack(spacing: 24) {
+                // Icon with animation
+                ZStack {
+                    Circle()
+                        .fill(isIncrease ? Color.green.opacity(0.2) : Color.orange.opacity(0.2))
+                        .frame(width: 80, height: 80)
+                        .scaleEffect(isAnimating ? 1.2 : 1.0)
+                        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isAnimating)
+                    
+                    Image(systemName: isIncrease ? "clock.badge.checkmark.fill" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(isIncrease ? .green : .orange)
+                }
+                
+                // Title
+                Text(isIncrease ? "More Time!" : "Delay Shortened")
+                    .font(.title)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
+                
+                // Time change visualization
+                HStack(spacing: 16) {
+                    VStack {
+                        Text("\(oldMinutes)")
+                            .font(.system(size: 36, weight: .light))
+                            .foregroundColor(.secondary)
+                        Text("min")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Image(systemName: "arrow.right")
+                        .font(.title2)
+                        .foregroundColor(.secondary)
+                    
+                    VStack {
+                        Text("\(newMinutes)")
+                            .font(.system(size: 48, weight: .bold))
+                            .foregroundColor(isIncrease ? .green : .orange)
+                        Text("min")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                // Difference badge
+                HStack(spacing: 4) {
+                    Image(systemName: isIncrease ? "plus" : "minus")
+                    Text("\(difference) minutes")
+                }
+                .font(.headline)
+                .foregroundColor(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(isIncrease ? Color.green : Color.orange)
+                .clipShape(Capsule())
+                
+                // Message
+                Text(isIncrease 
+                     ? "You have more time to explore. Enjoy your walk!"
+                     : "The clinic is ready sooner. Consider heading back.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                
+                // Action buttons
+                VStack(spacing: 12) {
+                    if !isIncrease {
+                        // Show "Take Me Back" for decrease
+                        Button(action: onReturnNow) {
+                            HStack {
+                                Image(systemName: "arrow.uturn.backward")
+                                Text("Take Me Back")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.orange)
+                            .cornerRadius(12)
+                        }
+                    }
+                    
+                    Button(action: onDismiss) {
+                        Text(isIncrease ? "Got it!" : "Keep Walking")
+                            .font(.headline)
+                            .foregroundColor(isIncrease ? .white : .primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(isIncrease ? Color.green : Color.gray.opacity(0.2))
+                            .cornerRadius(12)
+                    }
+                }
+                .padding(.horizontal)
+            }
+            .padding(32)
+            .background(
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(Color(UIColor.systemBackground))
+                    .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
+            )
+            .padding(.horizontal, 32)
+        }
+        .onAppear {
+            isAnimating = true
+            // Haptic feedback for delay change
+            let impact = UIImpactFeedbackGenerator(style: isIncrease ? .medium : .heavy)
+            impact.impactOccurred()
+            
+            // Additional notification sound for decrease (more urgent)
+            if !isIncrease {
+                let notification = UINotificationFeedbackGenerator()
+                notification.notificationOccurred(.warning)
+            }
+        }
+    }
+}
+
 #Preview {
     WalkingMapView(viewModel: WaitingRoomViewModel())
 }
