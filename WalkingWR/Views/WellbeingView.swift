@@ -164,6 +164,10 @@ struct WellbeingView: View {
                 // Reset deep link flag when view disappears
                 hasHandledDeepLink = false
             }
+            .onChange(of: selectedCategory) { _, _ in
+                // Dismiss keyboard when switching categories
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            }
         }
     }
     
@@ -699,6 +703,7 @@ struct GratitudeSection: View {
     @State private var gratitudeText = ""
     @Binding var savedEntries: [String]
     @State private var currentPrompt: String = WellbeingContent.gratitudePrompts.randomElement()?.description ?? "What made you smile today?"
+    @FocusState private var isTextEditorFocused: Bool  // Focus management for reliable keyboard
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -725,10 +730,14 @@ struct GratitudeSection: View {
                     .foregroundColor(.primary)
                 
                 TextEditor(text: $gratitudeText)
+                    .focused($isTextEditorFocused)  // Reliable keyboard control
                     .frame(height: 100)
                     .padding(12)
                     .background(Color.softGray)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .onTapGesture {
+                        isTextEditorFocused = true  // Ensure focus on tap
+                    }
                 
                 Button("Save Entry") {
                     if !gratitudeText.isEmpty {
