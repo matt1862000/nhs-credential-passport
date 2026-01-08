@@ -1543,9 +1543,21 @@ struct LocalRoutePickerSheet: View {
                     let markers = await MainActor.run {
                         createMarkersFromPlaces(cached.route.places, origin: userLocation.coordinate)
                     }
-                    let directions = await MainActor.run {
+                    var directions = await MainActor.run {
                         extractWalkingDirections(from: cached.route.legs)
                     }
+                    
+                    // v1.6.14: If no directions in cache, get them from Apple MapKit
+                    if directions.isEmpty && !cached.route.places.isEmpty {
+                        print("🍎 Cached route has no directions - getting from MapKit...")
+                        let waypointCoords = cached.route.places.map { $0.coordinate }
+                        directions = await mapsService.getMapKitDirectionsForRoute(
+                            origin: userLocation.coordinate,
+                            waypoints: waypointCoords,
+                            destination: userLocation.coordinate
+                        )
+                    }
+                    
                     let routeDifficulty: RouteDifficulty = cached.route.durationMinutes <= 10 ? .easy : (cached.route.durationMinutes <= 20 ? .moderate : .challenging)
                     
                     let localRoute = WalkingRoute(
@@ -1621,9 +1633,20 @@ struct LocalRoutePickerSheet: View {
                         return
                     }
                     
-                    // Extract walking directions
-                    let directions = await MainActor.run {
+                    // Extract walking directions from OSRM/Google legs
+                    var directions = await MainActor.run {
                         extractWalkingDirections(from: result.legs)
+                    }
+                    
+                    // v1.6.14: If no directions (OSRM was used), get them from Apple MapKit
+                    if directions.isEmpty && !result.places.isEmpty {
+                        print("🍎 No directions from route - getting from MapKit...")
+                        let waypointCoords = result.places.map { $0.coordinate }
+                        directions = await mapsService.getMapKitDirectionsForRoute(
+                            origin: userLocation.coordinate,
+                            waypoints: waypointCoords,
+                            destination: userLocation.coordinate
+                        )
                     }
                     
                     // Determine difficulty based on duration
@@ -1637,12 +1660,24 @@ struct LocalRoutePickerSheet: View {
                             vicinity: place.vicinity
                         )
                     }
-                    let aiContent = await GeminiService.shared.generateRouteContent(
+                    var aiContent = await GeminiService.shared.generateRouteContent(
                         waypoints: waypointInfos,
                         durationMinutes: result.durationMinutes,
                         distanceMeters: result.distanceMeters,
                         difficulty: nil
                     )
+                    
+                    // v1.6.14: Retry AI naming once if we get fallback
+                    if aiContent == nil {
+                        print("🤖 AI naming failed, retrying once...")
+                        try? await Task.sleep(nanoseconds: 500_000_000)  // 0.5s delay
+                        aiContent = await GeminiService.shared.generateRouteContent(
+                            waypoints: waypointInfos,
+                            durationMinutes: result.durationMinutes,
+                            distanceMeters: result.distanceMeters,
+                            difficulty: nil
+                        )
+                    }
                     
                     // Use AI content or fallback
                     let routeName: String
@@ -1770,8 +1805,18 @@ struct LocalRoutePickerSheet: View {
                         return
                     }
                     
-                    let directions = await MainActor.run {
+                    var directions = await MainActor.run {
                         extractWalkingDirections(from: result.legs)
+                    }
+                    
+                    // v1.6.14: If no directions, get them from Apple MapKit
+                    if directions.isEmpty && !result.places.isEmpty {
+                        let waypointCoords = result.places.map { $0.coordinate }
+                        directions = await mapsService.getMapKitDirectionsForRoute(
+                            origin: userLocation.coordinate,
+                            waypoints: waypointCoords,
+                            destination: userLocation.coordinate
+                        )
                     }
                     
                     // Determine difficulty based on duration
@@ -1975,11 +2020,20 @@ struct LocalRoutePickerSheet: View {
                         continue
                     }
                     
-                    let directions = await MainActor.run {
+                    var directions = await MainActor.run {
                         extractWalkingDirections(from: result.legs)
                     }
                     
-                    // Determine difficulty
+                    // v1.6.14: If no directions, get them from Apple MapKit
+                    if directions.isEmpty && !result.places.isEmpty {
+                        let waypointCoords = result.places.map { $0.coordinate }
+                        directions = await mapsService.getMapKitDirectionsForRoute(
+                            origin: coordinate,
+                            waypoints: waypointCoords,
+                            destination: coordinate
+                        )
+                    }
+                    
                     // Determine difficulty based on duration
                     let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
                     
