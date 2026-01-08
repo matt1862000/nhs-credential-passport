@@ -2000,9 +2000,9 @@ struct LocalRoutePickerSheet: View {
                     if directions.isEmpty && !result.places.isEmpty {
                         let waypointCoords = result.places.map { $0.coordinate }
                         directions = await mapsService.getMapKitDirectionsForRoute(
-                            origin: coordinate,
+                            origin: userLocation.coordinate,
                             waypoints: waypointCoords,
-                            destination: coordinate
+                            destination: userLocation.coordinate
                         )
                     }
                     
