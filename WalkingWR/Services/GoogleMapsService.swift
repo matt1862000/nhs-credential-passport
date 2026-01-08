@@ -70,6 +70,11 @@ class GoogleMapsService: ObservableObject {
     @Published var shortRouteNotViable = false  // True if 5-7min routes can't work here
     @Published var minimumViableMinutes = 5     // Suggested minimum duration for this area
     
+    // v1.6.24: Early POI prefetching (when clinician is selected)
+    @Published var isPrefetchingEarly = false
+    @Published var earlyPrefetchComplete = false
+    private var earlyPrefetchedPOIs: [PlaceResult] = []
+    private var earlyPrefetchLocation: CLLocationCoordinate2D?
     
     private let session = URLSession.shared
     
@@ -492,6 +497,78 @@ class GoogleMapsService: ObservableObject {
             print("🗄️ Leg time failed: \(poi.name) - \(error.localizedDescription)")
             return nil
         }
+    }
+    
+    // MARK: - Early POI Prefetching
+    /// Prefetch POIs as soon as we have location permission and clinician is selected.
+    /// This runs in the background so routes are ready faster when user wants to walk.
+    /// Call this from ClinicianSelectionView after clinician is selected.
+    func prefetchPOIsEarly(location: CLLocationCoordinate2D) {
+        // Don't prefetch if already done for this location
+        if let existingLocation = earlyPrefetchLocation {
+            let distance = CLLocation(latitude: location.latitude, longitude: location.longitude)
+                .distance(from: CLLocation(latitude: existingLocation.latitude, longitude: existingLocation.longitude))
+            if distance < 50 {
+                print("📦 Early prefetch: Already prefetched for this location")
+                return
+            }
+        }
+        
+        // Don't prefetch if already in progress
+        guard !isPrefetchingEarly else {
+            print("📦 Early prefetch: Already in progress")
+            return
+        }
+        
+        isPrefetchingEarly = true
+        earlyPrefetchComplete = false
+        earlyPrefetchLocation = location
+        
+        print("🚀 EARLY PREFETCH: Starting background POI fetch...")
+        print("📍 Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))")
+        
+        Task {
+            do {
+                let pois = try await findNearbyPlaces(location: location, radiusMeters: 2500)
+                await MainActor.run {
+                    self.earlyPrefetchedPOIs = pois
+                    self.earlyPrefetchComplete = true
+                    self.isPrefetchingEarly = false
+                    print("✅ EARLY PREFETCH COMPLETE: \(pois.count) POIs ready for instant route generation!")
+                }
+            } catch {
+                await MainActor.run {
+                    self.isPrefetchingEarly = false
+                    print("⚠️ Early prefetch failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    /// Get early prefetched POIs if available and still valid for the given location
+    func getEarlyPrefetchedPOIs(for location: CLLocationCoordinate2D) -> [PlaceResult]? {
+        guard earlyPrefetchComplete, !earlyPrefetchedPOIs.isEmpty else { return nil }
+        guard let prefetchLocation = earlyPrefetchLocation else { return nil }
+        
+        // Check if still valid (within 50m of prefetch location)
+        let distance = CLLocation(latitude: location.latitude, longitude: location.longitude)
+            .distance(from: CLLocation(latitude: prefetchLocation.latitude, longitude: prefetchLocation.longitude))
+        
+        if distance < 50 {
+            print("📦 Using \(earlyPrefetchedPOIs.count) early-prefetched POIs!")
+            return earlyPrefetchedPOIs
+        } else {
+            print("📦 User moved \(Int(distance))m - early prefetch invalid, will re-fetch")
+            return nil
+        }
+    }
+    
+    /// Clear early prefetch data (e.g., when user changes location significantly)
+    func clearEarlyPrefetch() {
+        earlyPrefetchedPOIs = []
+        earlyPrefetchLocation = nil
+        earlyPrefetchComplete = false
+        isPrefetchingEarly = false
     }
     
     // MARK: - Find Nearby Places

@@ -1459,10 +1459,19 @@ struct LocalRoutePickerSheet: View {
         guard !isPrefetchingPOIs else { return }
         guard prefetchedPOIs.isEmpty else { return }  // Already fetched
         
+        // 🚀 FIRST: Check if we have early-prefetched POIs from clinician selection
+        // This speeds up route generation significantly!
+        if let earlyPOIs = mapsService.getEarlyPrefetchedPOIs(for: userLocation.coordinate) {
+            prefetchedPOIs = earlyPOIs
+            prefetchedForLocation = userLocation.coordinate
+            print("⚡ Using \(earlyPOIs.count) EARLY-prefetched POIs - instant route ready!")
+            return
+        }
+        
         // Check if this location is already cached (free) or would need a new slot
         let cacheService = POICacheService.shared
         
-        // First check if we already have cached POIs for this location
+        // Check if we already have cached POIs for this location
         if let cachedPOIs = cacheService.getCachedPOIs(near: userLocation.coordinate) {
             prefetchedPOIs = cachedPOIs
             prefetchedForLocation = userLocation.coordinate

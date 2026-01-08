@@ -182,6 +182,14 @@ struct ClinicianSelectionView: View {
                                         onSelect: {
                                             viewModel.selectClinician(clinician)
                                             
+                                            // 🚀 Early prefetch POIs now that we have location + clinician
+                                            // This speeds up route generation when user wants to walk
+                                            if let location = locationHelper.currentLocation {
+                                                GoogleMapsService.shared.prefetchPOIsEarly(
+                                                    location: location.coordinate
+                                                )
+                                            }
+                                            
                                             // Dismiss after short delay
                                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                                 isPresented = false
