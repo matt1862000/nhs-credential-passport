@@ -2658,33 +2658,23 @@ struct CachedLocationsSection: View {
                         .font(.subheadline)
                         .fontWeight(.medium)
                     
-                    Text("\(cachedLocations.count) of \(POICacheService.freeTierLocationLimit) free locations used")
+                    // v1.6.28: No limit - just show count
+                    Text("\(cachedLocations.count) location\(cachedLocations.count == 1 ? "" : "s") cached")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 
                 Spacer()
                 
-                // Progress indicator
-                ZStack {
-                    Circle()
-                        .stroke(Color.gray.opacity(0.2), lineWidth: 4)
-                        .frame(width: 36, height: 36)
-                    
-                    Circle()
-                        .trim(from: 0, to: CGFloat(cachedLocations.count) / CGFloat(POICacheService.freeTierLocationLimit))
-                        .stroke(
-                            cachedLocations.count >= POICacheService.freeTierLocationLimit ? Color.softAmber : Color.tealAccent,
-                            style: StrokeStyle(lineWidth: 4, lineCap: .round)
-                        )
-                        .frame(width: 36, height: 36)
-                        .rotationEffect(.degrees(-90))
-                    
-                    Text("\(cachedLocations.count)")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .foregroundColor(cachedLocations.count >= POICacheService.freeTierLocationLimit ? .softAmber : .tealAccent)
-                }
+                // Count badge
+                Text("\(cachedLocations.count)")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.tealAccent)
+                    .clipShape(Capsule())
             }
             .padding(.vertical, 4)
             
@@ -2756,11 +2746,8 @@ struct CachedLocationsSection: View {
                 Text("Walking Routes Cache")
             }
         } footer: {
-            if cachedLocations.count >= POICacheService.freeTierLocationLimit {
-                Text("You've used all \(POICacheService.freeTierLocationLimit) free locations. Upgrade to WaitWell+ for unlimited locations.")
-            } else {
-                Text("Routes are cached to speed up generation. \(POICacheService.freeTierLocationLimit - cachedLocations.count) free location\(cachedLocations.count == POICacheService.freeTierLocationLimit - 1 ? "" : "s") remaining.")
-            }
+            // v1.6.28: No limit on cached locations
+            Text("Routes are cached to speed up generation. Swipe to delete locations you no longer need.")
         }
         .onAppear {
             refreshCachedLocations()

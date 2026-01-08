@@ -285,6 +285,16 @@ struct EmbeddedWalkMapView: View {
     @State private var userInteractedWithMap: Bool = false  // Cancels intro animation
     @Environment(\.colorScheme) var colorScheme
     
+    // v1.6.28: Opt-in step tracking state
+    // Initialize to true if user has previously opted in and Motion is authorized
+    @State private var isStepTrackingEnabled: Bool = false
+    @State private var showMotionExplainer: Bool = false
+    
+    private var shouldAutoEnableSteps: Bool {
+        viewModel.healthKitService.isMotionAuthorized && 
+        UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled")
+    }
+    
     enum IntroPhase: String {
         case showingFirstWaypoint = "Your first destination"
         case showingFullRoute = "Your route"
@@ -384,7 +394,7 @@ struct EmbeddedWalkMapView: View {
             }
             
             // v1.6.20: Delay banner + compass in same row to save vertical space
-            VStack {
+            VStack(spacing: 8) {
                 HStack(alignment: .top) {
                     // Delay banner on the left (doesn't fill entire width)
                     DelayBanner(
@@ -413,6 +423,15 @@ struct EmbeddedWalkMapView: View {
                 .padding(.leading, 12)
                 .padding(.trailing, 12)
                 .padding(.top, 8)
+                
+                // v1.6.28: Opt-in Steps Card
+                StepsCard(
+                    healthKitService: viewModel.healthKitService,
+                    isStepTrackingEnabled: $isStepTrackingEnabled,
+                    showMotionExplainer: $showMotionExplainer,
+                    walkStartTime: viewModel.walkSession.startTime
+                )
+                .padding(.horizontal, 12)
                 
                 Spacer()
             }
@@ -453,6 +472,32 @@ struct EmbeddedWalkMapView: View {
                 )
             }
             
+            // v1.6.28: Motion permission explainer
+            if showMotionExplainer {
+                MotionPermissionExplainer(
+                    onEnable: {
+                        showMotionExplainer = false
+                        // Request Motion permission
+                        viewModel.healthKitService.requestMotionAuthorization { granted in
+                            if granted {
+                                isStepTrackingEnabled = true
+                                // Mark that step tracking was enabled for post-walk HealthKit offer
+                                viewModel.stepTrackingWasEnabled = true
+                                // Remember preference for future walks
+                                UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
+                                // Start step tracking
+                                if let startTime = viewModel.walkSession.startTime {
+                                    viewModel.healthKitService.startObservingSteps(from: startTime)
+                                }
+                            }
+                        }
+                    },
+                    onCancel: {
+                        showMotionExplainer = false
+                    }
+                )
+            }
+            
             // Intro overlay during camera animation
             if showingIntroOverlay {
                 VStack {
@@ -484,6 +529,11 @@ struct EmbeddedWalkMapView: View {
                 playIntroAnimation()
             } else {
                 calculateRoute()
+            }
+            
+            // v1.6.28: Auto-enable step tracking if user has previously opted in
+            if shouldAutoEnableSteps {
+                isStepTrackingEnabled = true
             }
         }
     }
@@ -1265,6 +1315,381 @@ struct DelayChangeOverlay: View {
             if !isIncrease {
                 let notification = UINotificationFeedbackGenerator()
                 notification.notificationOccurred(.warning)
+            }
+        }
+    }
+}
+
+// MARK: - Steps Card (v1.6.28)
+/// Opt-in step tracking card - disabled by default, requests Motion permission when tapped
+struct StepsCard: View {
+    @ObservedObject var healthKitService: HealthKitService
+    @Binding var isStepTrackingEnabled: Bool
+    @Binding var showMotionExplainer: Bool
+    let walkStartTime: Date?
+    
+    @Environment(\.colorScheme) var colorScheme
+    
+    /// Current state of step tracking
+    private var stepTrackingState: StepTrackingState {
+        if !healthKitService.isPedometerAvailable {
+            return .unavailable
+        } else if healthKitService.isMotionDenied {
+            return .denied
+        } else if isStepTrackingEnabled && healthKitService.isMotionAuthorized {
+            return .tracking
+        } else {
+            return .disabled
+        }
+    }
+    
+    enum StepTrackingState {
+        case disabled    // User hasn't opted in yet
+        case tracking    // Actively counting steps
+        case denied      // User denied Motion permission
+        case unavailable // Device doesn't support step counting
+    }
+    
+    var body: some View {
+        Button(action: handleTap) {
+            HStack(spacing: 12) {
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(iconBackground)
+                        .frame(width: 40, height: 40)
+                    
+                    Image(systemName: iconName)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(iconColor)
+                }
+                
+                // Content
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(titleText)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(titleColor)
+                    
+                    Text(subtitleText)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                // Step count or action indicator
+                if stepTrackingState == .tracking {
+                    Text("\(healthKitService.stepCount)")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.tealAccent)
+                        .monospacedDigit()
+                } else if stepTrackingState == .disabled {
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(12)
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .shadow(color: Color.black.opacity(0.1), radius: 4, y: 2)
+        }
+        .buttonStyle(.plain)
+        .disabled(stepTrackingState == .unavailable)
+    }
+    
+    private func handleTap() {
+        switch stepTrackingState {
+        case .disabled:
+            // Show explainer modal before requesting permission
+            showMotionExplainer = true
+        case .tracking:
+            // Already tracking - could show more details
+            break
+        case .denied:
+            // Open Settings
+            if let url = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(url)
+            }
+        case .unavailable:
+            break
+        }
+    }
+    
+    // MARK: - Appearance
+    
+    private var iconName: String {
+        switch stepTrackingState {
+        case .disabled: return "figure.walk"
+        case .tracking: return "figure.walk.motion"
+        case .denied: return "xmark.circle"
+        case .unavailable: return "figure.walk"
+        }
+    }
+    
+    private var iconBackground: Color {
+        switch stepTrackingState {
+        case .disabled: return Color.gray.opacity(0.2)
+        case .tracking: return Color.tealAccent.opacity(0.2)
+        case .denied: return Color.orange.opacity(0.2)
+        case .unavailable: return Color.gray.opacity(0.1)
+        }
+    }
+    
+    private var iconColor: Color {
+        switch stepTrackingState {
+        case .disabled: return .secondary
+        case .tracking: return .tealAccent
+        case .denied: return .orange
+        case .unavailable: return .gray
+        }
+    }
+    
+    private var titleText: String {
+        switch stepTrackingState {
+        case .disabled: return "Steps"
+        case .tracking: return "Steps"
+        case .denied: return "Steps unavailable"
+        case .unavailable: return "Steps not available"
+        }
+    }
+    
+    private var subtitleText: String {
+        switch stepTrackingState {
+        case .disabled: return "Track steps for this walk (optional)"
+        case .tracking: return "Tracking your walk"
+        case .denied: return "Enable Motion in Settings"
+        case .unavailable: return "Device doesn't support step tracking"
+        }
+    }
+    
+    private var titleColor: Color {
+        switch stepTrackingState {
+        case .disabled: return .primary
+        case .tracking: return .primary
+        case .denied: return .orange
+        case .unavailable: return .gray
+        }
+    }
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color.darkCardBackground : Color.white
+    }
+}
+
+// MARK: - Motion Permission Explainer (v1.6.28)
+/// In-app explainer shown before requesting Motion permission
+struct MotionPermissionExplainer: View {
+    let onEnable: () -> Void
+    let onCancel: () -> Void
+    
+    var body: some View {
+        ZStack {
+            // Dimmed background
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+                .onTapGesture { onCancel() }
+            
+            VStack(spacing: 20) {
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(Color.tealAccent.opacity(0.15))
+                        .frame(width: 80, height: 80)
+                    
+                    Image(systemName: "figure.walk.motion")
+                        .font(.system(size: 36, weight: .semibold))
+                        .foregroundColor(.tealAccent)
+                }
+                
+                // Title
+                Text("Track Your Steps")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                
+                // Description
+                Text("We use Motion & Fitness to count steps during your walk. This data stays on your device.")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                
+                // Privacy note
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.fill")
+                        .font(.caption)
+                        .foregroundColor(.tealAccent)
+                    
+                    Text("Step data is processed locally")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.tealAccent.opacity(0.1))
+                .clipShape(Capsule())
+                
+                // Buttons
+                VStack(spacing: 12) {
+                    Button(action: onEnable) {
+                        Text("Enable Step Tracking")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.tealAccent)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    
+                    Button(action: onCancel) {
+                        Text("Not now")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.top, 8)
+            }
+            .padding(28)
+            .background(
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(Color(UIColor.systemBackground))
+                    .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
+            )
+            .padding(.horizontal, 32)
+        }
+    }
+}
+
+// MARK: - HealthKit Sync Offer Sheet (v1.6.28)
+/// Post-walk opt-in for HealthKit read/write access
+struct HealthKitSyncOfferSheet: View {
+    @ObservedObject var healthKitService: HealthKitService
+    @Binding var isPresented: Bool
+    
+    @State private var isLoading = false
+    
+    var body: some View {
+        VStack(spacing: 24) {
+            // Handle bar
+            Capsule()
+                .fill(Color.gray.opacity(0.3))
+                .frame(width: 40, height: 5)
+                .padding(.top, 12)
+            
+            Spacer()
+            
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(Color.red.opacity(0.1))
+                    .frame(width: 100, height: 100)
+                
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 44))
+                    .foregroundColor(.red)
+            }
+            
+            // Title
+            Text("Sync with Apple Health?")
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            // Description
+            VStack(spacing: 12) {
+                Text("This lets us save your steps and read your step history so your walks are more accurate and consistent across sessions.")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                
+                Text("You can change this anytime in Settings.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal)
+            
+            // Benefits
+            VStack(alignment: .leading, spacing: 12) {
+                benefitRow(icon: "arrow.up.arrow.down", text: "Sync steps with Apple Health")
+                benefitRow(icon: "clock.arrow.circlepath", text: "Track your step history")
+                benefitRow(icon: "chart.line.uptrend.xyaxis", text: "Improve walk accuracy")
+            }
+            .padding()
+            .background(Color.secondary.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            
+            Spacer()
+            
+            // Buttons
+            VStack(spacing: 12) {
+                Button(action: syncWithHealthKit) {
+                    if isLoading {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                    } else {
+                        HStack {
+                            Image(systemName: "heart.fill")
+                            Text("Sync with Apple Health")
+                        }
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                    }
+                }
+                .background(Color.red)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .disabled(isLoading)
+                
+                Button(action: declineOffer) {
+                    Text("Not now")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 8)
+                }
+            }
+            .padding(.bottom, 24)
+        }
+        .padding(.horizontal, 24)
+        .presentationDetents([.medium])
+        .presentationDragIndicator(.hidden)
+    }
+    
+    private func declineOffer() {
+        // Remember that user declined so we don't re-prompt
+        UserDefaults.standard.set(true, forKey: "healthKitSyncOfferDeclined")
+        isPresented = false
+    }
+    
+    private func benefitRow(icon: String, text: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.red)
+                .frame(width: 24)
+            
+            Text(text)
+                .font(.subheadline)
+                .foregroundColor(.primary)
+            
+            Spacer()
+        }
+    }
+    
+    private func syncWithHealthKit() {
+        isLoading = true
+        Task {
+            let granted = await healthKitService.requestAuthorization()
+            await MainActor.run {
+                isLoading = false
+                if granted {
+                    // Mark as synced - future walks will auto-save
+                    UserDefaults.standard.set(true, forKey: "healthKitSyncEnabled")
+                }
+                isPresented = false
             }
         }
     }

@@ -186,8 +186,27 @@ struct RouteSelectionView: View {
             .sheet(isPresented: $viewModel.showPreWalkWellbeing) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPreWalkWellbeing, isPostWalk: false)
             }
-            .sheet(isPresented: $viewModel.showPostWalkWellbeing) {
+            .sheet(isPresented: $viewModel.showPostWalkWellbeing, onDismiss: {
+                // v1.6.28: Show HealthKit sync offer after post-walk wellbeing
+                // Only if:
+                // - Motion permission was granted (user opted into step tracking)
+                // - HealthKit is not already authorized
+                // - User hasn't previously declined the offer
+                let hasDeclinedOffer = UserDefaults.standard.bool(forKey: "healthKitSyncOfferDeclined")
+                if viewModel.stepTrackingWasEnabled && !viewModel.healthKitService.isAuthorized && !hasDeclinedOffer {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        viewModel.showHealthKitSyncOffer = true
+                    }
+                }
+            }) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPostWalkWellbeing, isPostWalk: true, isWalkActivity: true)
+            }
+            // v1.6.28: HealthKit sync offer (after post-walk wellbeing, if Motion was granted)
+            .sheet(isPresented: $viewModel.showHealthKitSyncOffer) {
+                HealthKitSyncOfferSheet(
+                    healthKitService: viewModel.healthKitService,
+                    isPresented: $viewModel.showHealthKitSyncOffer
+                )
             }
             .alert("Halfway Point! 🚶", isPresented: $viewModel.showHalfwayAlert) {
                 Button("Got it") { }
@@ -975,6 +994,7 @@ struct LocalRoutePickerSheet: View {
                     .background(Color(.systemBackground))
                 } else if let route = generatedRoute, showMapPreview {
                     // Stage 2: Show map preview - full screen with solid background
+                    // v1.6.28: Simplified - no permission gates before walk
                     LocalRouteMapPreview(
                         route: route,
                         userLocation: locationService.currentLocation?.coordinate,
@@ -987,22 +1007,8 @@ struct LocalRoutePickerSheet: View {
                         showPremiumUpsell: showPremiumUpsell,
                         hasLimitedPOIs: mapsService.hasLimitedPOIs,  // v1.6.10
                         varietyExhausted: varietyExhausted,  // v1.6.25
-                        healthKitService: viewModel.healthKitService,
-                        onRequestMotion: {
-                            // Request motion permission only
-                            viewModel.healthKitService.requestMotionAuthorization { _ in
-                                // View will re-render with new state
-                            }
-                        },
-                        onRequestHealthKit: {
-                            // Request HealthKit permission only
-                            Task {
-                                _ = await viewModel.healthKitService.requestAuthorization()
-                                // View will re-render with new state
-                            }
-                        },
                         onStartWalk: {
-                            // All permissions granted, start walk directly
+                            // Start walk immediately - no permission gates
                             viewModel.selectRoute(route)
                             viewModel.startWalk()
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -3128,100 +3134,26 @@ struct LocalRouteMapPreview: View {
     var showPremiumUpsell: Bool = false  // True when all routes have been viewed
     var hasLimitedPOIs: Bool = false  // v1.6.10: True when POI count is below threshold
     var varietyExhausted: Bool = false  // v1.6.25: True when no more unique routes available
-    @ObservedObject var healthKitService: HealthKitService  // For permission state
-    let onRequestMotion: () -> Void      // Request motion permission
-    let onRequestHealthKit: () -> Void   // Request HealthKit permission
-    let onStartWalk: () -> Void          // Start the walk (permissions granted)
+    
+    // v1.6.28: Removed permission callbacks - permissions now requested during/after walk
+    let onStartWalk: () -> Void          // Start the walk immediately
     let onShuffle: () -> Void            // Quick regenerate with same settings
     let onDelete: () -> Void             // Delete current route from cache
     
-    /// What the primary button should do
-    enum PrimaryAction {
-        case requestMotion
-        case requestHealthKit
-        case startWalk
-    }
-    
-    var primaryAction: PrimaryAction {
-        // Only show motion permission if pedometer is available (not on simulator)
-        // AND permission is not determined
-        if healthKitService.isPedometerAvailable && healthKitService.isMotionNotDetermined {
-            return .requestMotion
-        } else if !healthKitService.isAuthorized {
-            return .requestHealthKit
-        } else {
-            return .startWalk
-        }
-    }
+    // v1.6.28: Simplified - no permission gates before walk
+    // Permissions are now requested DURING the walk (optional step tracking)
+    // and AFTER the walk (HealthKit sync option)
     
     var primaryButtonText: String {
-        switch primaryAction {
-        case .requestMotion:
-            return "Enable Motion"
-        case .requestHealthKit:
-            return "Enable Steps"
-        case .startWalk:
-            return "Let's Go!"
-        }
+        "Let's Go!"
     }
     
     var primaryButtonIcon: String {
-        switch primaryAction {
-        case .requestMotion:
-            return "figure.walk.motion"
-        case .requestHealthKit:
-            return "heart.fill"
-        case .startWalk:
-            return "figure.walk"
-        }
+        "figure.walk"
     }
     
     var primaryButtonColor: Color {
-        switch primaryAction {
-        case .requestMotion:
-            return Color(red: 0.4, green: 0.6, blue: 0.9)  // Soft sky blue - complements teal
-        case .requestHealthKit:
-            return Color(red: 0.9, green: 0.5, blue: 0.5)  // Soft coral - complements mint
-        case .startWalk:
-            return .tealAccent  // Go/start - teal green (primary app color)
-        }
-    }
-    
-    /// Step indicator for permission flow (e.g., "Step 1 of 2")
-    var permissionStepText: String? {
-        switch primaryAction {
-        case .requestMotion:
-            // Motion is step 1, HealthKit might be step 2
-            let needsHealthKit = !healthKitService.isAuthorized
-            if needsHealthKit {
-                return "Step 1 of 2"
-            } else {
-                return "Step 1 of 1"
-            }
-        case .requestHealthKit:
-            // If we got here, Motion is done (or not needed)
-            // Check if Motion was available and is now authorized (meaning user went through it)
-            let motionWasCompleted = healthKitService.isPedometerAvailable && healthKitService.isMotionAuthorized
-            if motionWasCompleted {
-                return "Step 2 of 2"
-            } else {
-                return "Step 1 of 1"
-            }
-        case .startWalk:
-            return nil  // No step indicator needed
-        }
-    }
-    
-    /// Description for the current permission
-    var permissionDescription: String? {
-        switch primaryAction {
-        case .requestMotion:
-            return "Counts your steps as you walk"
-        case .requestHealthKit:
-            return "Syncs with Apple Health"
-        case .startWalk:
-            return nil
-        }
+        .tealAccent
     }
     
     /// True if route duration exceeds requested target
@@ -3584,39 +3516,16 @@ struct LocalRouteMapPreview: View {
                     }
                     .buttonStyle(.plain)
                     
-                    // Primary action - changes based on permission state
-                    VStack(spacing: 6) {
-                        // Step indicator (only for permissions)
-                        if let stepText = permissionStepText {
-                            Text(stepText)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Button {
-                            switch primaryAction {
-                            case .requestMotion:
-                                onRequestMotion()
-                            case .requestHealthKit:
-                                onRequestHealthKit()
-                            case .startWalk:
-                                onStartWalk()
-                            }
-                        } label: {
-                            HStack {
-                                Image(systemName: primaryButtonIcon)
-                                Text(primaryButtonText)
-                            }
-                        }
-                        .buttonStyle(PrimaryButtonStyle(color: primaryButtonColor))
-                        
-                        // Permission description
-                        if let description = permissionDescription {
-                            Text(description)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                    // v1.6.28: Simplified - start walk immediately (no permission gates)
+                    Button {
+                        onStartWalk()
+                    } label: {
+                        HStack {
+                            Image(systemName: primaryButtonIcon)
+                            Text(primaryButtonText)
                         }
                     }
+                    .buttonStyle(PrimaryButtonStyle(color: primaryButtonColor))
                 }
             }
             .padding(20)

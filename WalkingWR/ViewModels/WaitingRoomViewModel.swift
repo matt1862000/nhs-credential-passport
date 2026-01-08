@@ -31,6 +31,10 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var showPreWalkWellbeing: Bool = false
     @Published var showPostWalkWellbeing: Bool = false
     
+    // v1.6.28: Post-walk HealthKit sync offer (only shown if Motion was granted)
+    @Published var showHealthKitSyncOffer: Bool = false
+    @Published var stepTrackingWasEnabled: Bool = false  // Track if user opted into steps during walk
+    
     // Location-based marker detection
     @Published var showMarkerArrivalPrompt: Bool = false
     @Published var currentMarker: QRMarker? = nil
@@ -573,12 +577,20 @@ class WaitingRoomViewModel: ObservableObject {
         walkSession.stepsThisSession = 0
         walkSession.markersScanned = []
         
+        // v1.6.28: Reset step tracking flag for new walk
+        stepTrackingWasEnabled = false
+        
         // Calculate return time (halfway point of route duration)
         let halfwaySeconds = Double(route.durationMinutes * 60) / 2
         walkSession.estimatedReturnTime = Date().addingTimeInterval(halfwaySeconds)
         
-        // Start health tracking
-        healthKitService.startObservingSteps(from: Date())
+        // v1.6.28: Step tracking is now opt-in via the Steps card during walk
+        // Only auto-start if user has previously opted in AND Motion is already authorized
+        if healthKitService.isMotionAuthorized && UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled") {
+            healthKitService.startObservingSteps(from: Date())
+            stepTrackingWasEnabled = true
+        }
+        // Otherwise, step tracking will start when user taps the Steps card
         
         // Start location tracking (requests permission if needed)
         locationService.startTracking()
@@ -634,6 +646,11 @@ class WaitingRoomViewModel: ObservableObject {
         selectedRoute = nil
         visitedMarkerIds = []
         currentMarker = nil
+        
+        // v1.6.28: Reset step tracking flag for next walk
+        // (stepTrackingWasEnabled is used to determine if HealthKit offer should be shown)
+        // Note: We don't reset it here because we need it for the post-walk flow
+        // It will be reset at the start of the next walk
     }
     
     private func startSessionTimer() {

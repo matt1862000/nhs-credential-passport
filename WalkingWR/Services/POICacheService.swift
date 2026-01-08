@@ -19,30 +19,21 @@ class POICacheService {
     private let maxCachedLocations = 10
     private let matchRadiusMeters: Double = 1000 // 1km
     
-    // Free tier limit
-    static let freeTierLocationLimit = 3
+    // Free tier limit - v1.6.28: Removed limit (was 3)
+    // static let freeTierLocationLimit = 3  // DISABLED
     
     private init() {}
     
     /// Check if user has reached free tier location limit
+    /// v1.6.28: Always returns false (no limit)
     var hasReachedFreeLimit: Bool {
-        loadCache().count >= POICacheService.freeTierLocationLimit
+        false  // No limit for now
     }
     
     /// Check if adding a new location at this coordinate would exceed free limit
-    /// Returns true if OK to add, false if would exceed limit
+    /// v1.6.28: Always returns true (no limit)
     func canAddLocation(at location: CLLocationCoordinate2D) -> Bool {
-        let cached = loadCache()
-        
-        // Check if already cached nearby (no new slot needed)
-        for entry in cached {
-            if distanceBetween(entry.coordinate, location) <= matchRadiusMeters {
-                return true // Already cached, no new slot needed
-            }
-        }
-        
-        // Would need a new slot - check limit
-        return cached.count < POICacheService.freeTierLocationLimit
+        true  // No limit for now
     }
     
     // MARK: - Cache Entry Structure
@@ -105,12 +96,11 @@ class POICacheService {
             print("📦 POI Cache: Removed \(duplicatesRemoved) duplicate location(s) within \(Int(matchRadiusMeters))m")
         }
         
-        // Check free tier limit BEFORE adding (only if this is a genuinely new location)
-        if cached.count >= POICacheService.freeTierLocationLimit {
-            print("📦 POI Cache: Free tier limit reached (\(POICacheService.freeTierLocationLimit) locations)")
-            // Remove oldest entry to make room
+        // v1.6.28: Removed free tier limit check - now unlimited
+        // Only limit is maxCachedLocations (10) to prevent unbounded growth
+        if cached.count >= maxCachedLocations {
+            print("📦 POI Cache: Max locations reached (\(maxCachedLocations)), removing oldest")
             cached.removeLast()
-            print("📦 POI Cache: Removed oldest entry to stay within limit")
         }
         
         // Create new cache entry
