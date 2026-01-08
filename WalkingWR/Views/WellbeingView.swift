@@ -730,14 +730,13 @@ struct GratitudeSection: View {
                     .foregroundColor(.primary)
                 
                 TextEditor(text: $gratitudeText)
-                    .focused($isTextEditorFocused)  // Reliable keyboard control
+                    .focused($isTextEditorFocused)
                     .frame(height: 100)
                     .padding(12)
                     .background(Color.softGray)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .onTapGesture {
-                        isTextEditorFocused = true  // Ensure focus on tap
-                    }
+                    .scrollContentBackground(.hidden)  // iOS 16+ - hide default background
+                    .tint(.coralPink)  // Cursor color
                 
                 Button("Save Entry") {
                     if !gratitudeText.isEmpty {
