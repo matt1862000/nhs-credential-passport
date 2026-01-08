@@ -729,20 +729,15 @@ struct GratitudeSection: View {
                     .font(.bodyLarge)
                     .foregroundColor(.primary)
                 
-                // Use ZStack approach to avoid gesture conflicts with TextEditor
-                ZStack(alignment: .topLeading) {
-                    // Background
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.softGray)
-                    
-                    // TextEditor
-                    TextEditor(text: $gratitudeText)
-                        .focused($isTextEditorFocused)
-                        .scrollContentBackground(.hidden)
-                        .tint(.coralPink)
-                        .padding(12)
-                }
-                .frame(height: 100)
+                // Use TextField with vertical axis for better gesture handling (iOS 16+)
+                TextField("Write your thoughts here...", text: $gratitudeText, axis: .vertical)
+                    .focused($isTextEditorFocused)
+                    .lineLimit(3...6)
+                    .padding(12)
+                    .background(Color(.systemGray6))
+                    .foregroundColor(.primary)
+                    .cornerRadius(12)
+                    .tint(.coralPink)
                 
                 Button("Save Entry") {
                     if !gratitudeText.isEmpty {
