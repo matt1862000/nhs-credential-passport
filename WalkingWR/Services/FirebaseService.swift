@@ -13,6 +13,7 @@ import Combine
 struct FirebaseClinicianData: Identifiable {
     let id: String
     let name: String
+    let location: String       // Clinic location (e.g., "Decisions Unit")
     let title: String
     let specialty: String
     let delay: Int
@@ -85,6 +86,7 @@ class FirebaseService: ObservableObject {
                 let delay = data["delay"] as? Int ?? 0
                 
                 // Optional fields with defaults
+                let location = data["location"] as? String ?? ""
                 let title = data["title"] as? String ?? ""
                 let specialty = data["specialty"] as? String ?? "Clinician"
                 let bio = data["bio"] as? String ?? "Profile information coming soon."
@@ -105,6 +107,7 @@ class FirebaseService: ObservableObject {
                 let clinicianData = FirebaseClinicianData(
                     id: document.documentID,
                     name: name,
+                    location: location,
                     title: title,
                     specialty: specialty,
                     delay: delay,

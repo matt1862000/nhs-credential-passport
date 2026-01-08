@@ -487,6 +487,7 @@ class WaitingRoomViewModel: ObservableObject {
     private func createClinicianFromFirebase(_ data: FirebaseClinicianData) -> Clinician {
         return Clinician(
             name: data.name,
+            location: data.location,           // Clinic location from Google Sheets
             title: data.title,
             specialty: data.specialty,
             photoName: nil,                    // No local asset

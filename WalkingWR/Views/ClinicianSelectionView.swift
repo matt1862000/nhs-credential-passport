@@ -306,6 +306,19 @@ struct ClinicianCard: View {
                         }
                     }
                     
+                    // Location badge
+                    if !clinician.location.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "mappin.circle.fill")
+                                .font(.caption2)
+                                .foregroundColor(.coralPink)
+                            Text(clinician.location)
+                                .font(.caption)
+                                .foregroundColor(.coralPink)
+                                .fontWeight(.medium)
+                        }
+                    }
+                    
                     Text(clinician.specialty)
                         .font(.caption)
                         .foregroundColor(.secondary)

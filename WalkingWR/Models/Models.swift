@@ -67,6 +67,7 @@ struct PolylineDecoder {
 struct Clinician: Identifiable, Codable, Hashable {
     let id: UUID
     let name: String
+    let location: String        // Clinic location (e.g., "Decisions Unit")
     let title: String
     let specialty: String
     let photoName: String?      // Local asset name (legacy)
@@ -90,7 +91,7 @@ struct Clinician: Identifiable, Codable, Hashable {
         let text: String
     }
     
-    init(id: UUID = UUID(), name: String, title: String, specialty: String, 
+    init(id: UUID = UUID(), name: String, location: String = "", title: String, specialty: String, 
          photoName: String? = nil, photoURL: String? = nil, bio: String,
          expertiseDescription: String, expertiseTags: [String],
          achievements: String,
@@ -99,6 +100,7 @@ struct Clinician: Identifiable, Codable, Hashable {
          currentWaitMinutes: Int = 20, queuePosition: Int = 3) {
         self.id = id
         self.name = name
+        self.location = location
         self.title = title
         self.specialty = specialty
         self.photoName = photoName
