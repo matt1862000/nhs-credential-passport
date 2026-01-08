@@ -581,6 +581,7 @@ class GoogleMapsService: ObservableObject {
         print("🌐 Categories: \(placeTypesToSearch.joined(separator: ", "))")
         print("🌐 Endpoint: places.googleapis.com/v1/places:searchNearby")
         print("🌐 Field Mask: places.id, displayName, location, formattedAddress, types (Basic only)")
+        print("🌐 API Key present: \(!apiKey.isEmpty), key prefix: \(String(apiKey.prefix(10)))...")
         
         // Search each type in parallel using TaskGroup
         await withTaskGroup(of: [PlaceResult].self) { group in
@@ -593,7 +594,7 @@ class GoogleMapsService: ObservableObject {
                             type: placeType
                         )
                     } catch {
-                        // Error already logged in searchSingleType
+                        print("   ❌ [\(placeType)] FAILED: \(error.localizedDescription)")
                         return []
                     }
                 }
