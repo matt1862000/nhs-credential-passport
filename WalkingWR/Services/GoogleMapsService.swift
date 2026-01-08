@@ -924,72 +924,75 @@ class GoogleMapsService: ObservableObject {
         ]
         
         print("🍎 APPLE MAPS - Starting search for \(searchQueries.count) categories (radius: \(radiusMeters)m)")
-        print("🍎 Categories: \(searchQueries.prefix(10).joined(separator: ", "))... +\(max(0, searchQueries.count - 10)) more")
         
-        // DEBUG: Do a specific search for "Country Kitchen" to diagnose why it's not being found
-        do {
-            let debugRequest = MKLocalSearch.Request()
-            debugRequest.naturalLanguageQuery = "Country Kitchen"
-            debugRequest.region = MKCoordinateRegion(
-                center: location,
-                latitudinalMeters: Double(radiusMeters * 2),
-                longitudinalMeters: Double(radiusMeters * 2)
-            )
-            let debugSearch = MKLocalSearch(request: debugRequest)
-            let debugResponse = try await debugSearch.start()
-            print("🔍 DEBUG 'Country Kitchen' search: Found \(debugResponse.mapItems.count) results")
-            for item in debugResponse.mapItems {
-                let dist = distanceBetween(location, item.placemark.coordinate)
-                print("   🔍 '\(item.name ?? "?")' at \(Int(dist))m")
-            }
-        } catch {
-            print("🔍 DEBUG 'Country Kitchen' search failed: \(error.localizedDescription)")
-        }
-        
+        // Process in batches of 40 to stay under 50 requests/minute limit
+        let batchSize = 40
         var queriesWithResults = 0
-        for query in searchQueries {
-            do {
-                let request = MKLocalSearch.Request()
-                request.naturalLanguageQuery = query
-                request.region = MKCoordinateRegion(
-                    center: location,
-                    latitudinalMeters: Double(radiusMeters * 2),
-                    longitudinalMeters: Double(radiusMeters * 2)
-                )
-                
-                let search = MKLocalSearch(request: request)
-                let response = try await search.start()
-                
-                for item in response.mapItems {
-                    guard let name = item.name, !seenNames.contains(name) else { continue }
-                    
-                    // DISTANCE FILTER: Only keep POIs actually within search radius
-                    let itemCoord = item.placemark.coordinate
-                    let distance = distanceBetween(location, itemCoord)
-                    guard distance <= Double(radiusMeters) else { continue }
-                    
-                    seenNames.insert(name)
-                    
-                    // Convert MKMapItem to PlaceResult
-                    let placeResult = PlaceResult(
-                        placeId: "apple_\(name.hashValue)",
-                        name: name,
-                        vicinity: item.placemark.title,
-                        geometry: PlaceGeometry(
-                            location: PlaceLocation(
-                                lat: item.placemark.coordinate.latitude,
-                                lng: item.placemark.coordinate.longitude
-                            )
-                        ),
-                        types: [query]
+        var queryIndex = 0
+        
+        for batchStart in stride(from: 0, to: searchQueries.count, by: batchSize) {
+            let batchEnd = min(batchStart + batchSize, searchQueries.count)
+            let batch = Array(searchQueries[batchStart..<batchEnd])
+            
+            if batchStart > 0 {
+                // Wait between batches to respect rate limits
+                print("🍎 Waiting 3s before next batch...")
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+            
+            print("🍎 Processing batch \(batchStart/batchSize + 1)/\((searchQueries.count + batchSize - 1)/batchSize) (\(batch.count) queries)")
+            
+            for query in batch {
+                queryIndex += 1
+                do {
+                    let request = MKLocalSearch.Request()
+                    request.naturalLanguageQuery = query
+                    request.region = MKCoordinateRegion(
+                        center: location,
+                        latitudinalMeters: Double(radiusMeters * 2),
+                        longitudinalMeters: Double(radiusMeters * 2)
                     )
-                    allResults.append(placeResult)
+                    
+                    let search = MKLocalSearch(request: request)
+                    let response = try await search.start()
+                    
+                    for item in response.mapItems {
+                        guard let name = item.name, !seenNames.contains(name) else { continue }
+                        
+                        // DISTANCE FILTER: Only keep POIs actually within search radius
+                        let itemCoord = item.placemark.coordinate
+                        let distance = distanceBetween(location, itemCoord)
+                        guard distance <= Double(radiusMeters) else { continue }
+                        
+                        seenNames.insert(name)
+                        
+                        // Convert MKMapItem to PlaceResult
+                        let placeResult = PlaceResult(
+                            placeId: "apple_\(name.hashValue)",
+                            name: name,
+                            vicinity: item.placemark.title,
+                            geometry: PlaceGeometry(
+                                location: PlaceLocation(
+                                    lat: item.placemark.coordinate.latitude,
+                                    lng: item.placemark.coordinate.longitude
+                                )
+                            ),
+                            types: [query]
+                        )
+                        allResults.append(placeResult)
+                    }
+                    if response.mapItems.count > 0 {
+                        queriesWithResults += 1
+                    }
+                } catch {
+                    // Check if rate limited
+                    let errorDesc = error.localizedDescription
+                    if errorDesc.contains("rate") || errorDesc.contains("429") {
+                        print("🍎 Rate limited at query \(queryIndex), waiting 30s...")
+                        try? await Task.sleep(nanoseconds: 30_000_000_000)
+                    }
+                    // Silently continue - some queries may fail
                 }
-                if response.mapItems.count > 0 {
-                    queriesWithResults += 1
-                }
-            } catch {
-                // Silently continue - some queries may fail
             }
         }
         
