@@ -2062,6 +2062,140 @@ struct LocalRoutePickerSheet: View {
                 try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
             }
             
+            // Check if we only found 1-2 routes - if so, try Google API for more POIs
+            let currentRouteCount = await MainActor.run { allRoutes.count }
+            var updatedPOIs = poisToUse
+            
+            if currentRouteCount <= 2 && mapsService.hasAPIKey {
+                print("⚠️ Only \(currentRouteCount) routes found - calling Google API for more POIs...")
+                
+                let existingPOIs = poisToUse ?? []
+                let newGooglePOIs = await mapsService.fetchGooglePOIsOnDemand(
+                    location: userLocation.coordinate,
+                    radiusMeters: 2500,
+                    existingPOIs: existingPOIs
+                )
+                
+                if !newGooglePOIs.isEmpty {
+                    print("🌐 Got \(newGooglePOIs.count) new POIs from Google - generating more routes...")
+                    
+                    // Update POIs list with Google results
+                    let combinedPOIs = existingPOIs + newGooglePOIs
+                    updatedPOIs = combinedPOIs
+                    
+                    // Also update the prefetchedPOIs for future use
+                    await MainActor.run {
+                        prefetchedPOIs = combinedPOIs
+                    }
+                    
+                    // Try generating more routes with the new POIs
+                    var googleRoutesGenerated = 0
+                    let maxGoogleRoutes = 5  // Try to get up to 5 more routes from Google
+                    var googleFailures = 0
+                    
+                    while googleRoutesGenerated < maxGoogleRoutes && googleFailures < 3 {
+                        do {
+                            let excludedPlaceIds = await MainActor.run {
+                                shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
+                            }
+                            
+                            let result = try await mapsService.generateLocalRoute(
+                                from: userLocation.coordinate,
+                                targetDurationMinutes: selectedDuration,
+                                difficulty: nil,
+                                excludePlaceIds: excludedPlaceIds,
+                                prefetchedPOIs: combinedPOIs
+                            )
+                            
+                            guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
+                                googleFailures += 1
+                                continue
+                            }
+                            
+                            let newPlaceIds = Set(result.places.map { $0.placeId })
+                            let isDuplicate = await MainActor.run { shownPlaceIdSets.contains(newPlaceIds) }
+                            
+                            if isDuplicate {
+                                googleFailures += 1
+                                continue
+                            }
+                            
+                            let markers = await MainActor.run {
+                                createMarkersFromPlaces(result.places, origin: userLocation.coordinate)
+                            }
+                            
+                            guard !markers.isEmpty else {
+                                googleFailures += 1
+                                continue
+                            }
+                            
+                            var directions = await MainActor.run {
+                                extractWalkingDirections(from: result.legs)
+                            }
+                            
+                            if directions.isEmpty && !result.places.isEmpty {
+                                let waypointCoords = result.places.map { $0.coordinate }
+                                directions = await mapsService.getMapKitDirectionsForRoute(
+                                    origin: userLocation.coordinate,
+                                    waypoints: waypointCoords,
+                                    destination: userLocation.coordinate
+                                )
+                            }
+                            
+                            let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                            
+                            let waypointInfos = result.places.map { place in
+                                GeminiService.WaypointInfo(
+                                    name: place.name,
+                                    types: place.types ?? [],
+                                    vicinity: place.vicinity
+                                )
+                            }
+                            let aiContent = await GeminiService.shared.generateRouteContent(
+                                waypoints: waypointInfos,
+                                durationMinutes: result.durationMinutes,
+                                distanceMeters: result.distanceMeters,
+                                difficulty: nil
+                            )
+                            
+                            let route = WalkingRoute(
+                                name: aiContent.name,
+                                description: aiContent.description,
+                                durationMinutes: max(1, result.durationMinutes),
+                                distanceMeters: result.distanceMeters,
+                                difficulty: routeDifficulty,
+                                isIndoor: false,
+                                isAccessible: true,
+                                landmarks: ["Start"] + result.places.map { $0.name } + ["Return"],
+                                icon: "location.fill",
+                                color: .tealAccent,
+                                qrMarkers: markers,
+                                routeType: .local,
+                                encodedPolyline: result.polyline,
+                                walkingDirections: directions
+                            )
+                            
+                            await MainActor.run {
+                                allRoutes.append((route: route, data: result))
+                                shownPlaceIdSets.append(newPlaceIds)
+                                googleRoutesGenerated += 1
+                                googleFailures = 0
+                                print("🌐 ✅ Generated route \(allRoutes.count) using Google POIs")
+                            }
+                            
+                        } catch {
+                            googleFailures += 1
+                        }
+                        
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                    }
+                    
+                    print("🌐 Google fallback complete: +\(googleRoutesGenerated) routes")
+                } else {
+                    print("🌐 Google API returned no new POIs")
+                }
+            }
+            
             await MainActor.run {
                 isPreGeneratingRoutes = false
                 preGenerationComplete = true
@@ -2069,7 +2203,7 @@ struct LocalRoutePickerSheet: View {
             }
             
             // AFTER completing current duration, pre-generate for OTHER durations
-            await preGenerateOtherDurations(from: userLocation.coordinate, currentDuration: selectedDuration, pois: poisToUse)
+            await preGenerateOtherDurations(from: userLocation.coordinate, currentDuration: selectedDuration, pois: updatedPOIs)
         }
     }
     

@@ -687,6 +687,55 @@ class GoogleMapsService: ObservableObject {
         return allResults
     }
     
+    // MARK: - On-Demand Google API (when more routes needed)
+    
+    /// Fetch additional POIs from Google Places API when Apple/OSM didn't find enough variety
+    /// Called when route generation only found 1-2 routes and more options are needed
+    /// Returns the NEW POIs that weren't already in the cache
+    func fetchGooglePOIsOnDemand(
+        location: CLLocationCoordinate2D,
+        radiusMeters: Int = 2500,
+        existingPOIs: [PlaceResult]
+    ) async -> [PlaceResult] {
+        guard !apiKey.isEmpty else {
+            print("🌐 GOOGLE ON-DEMAND: No API key, skipping")
+            return []
+        }
+        
+        print("🌐 ═══════════════════════════════════════════════════════")
+        print("🌐 GOOGLE ON-DEMAND: Fetching additional POIs")
+        print("🌐   📍 Location: (\(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude)))")
+        print("🌐   📦 Existing POIs: \(existingPOIs.count)")
+        print("🌐 ═══════════════════════════════════════════════════════")
+        
+        let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
+        
+        // Filter out POIs we already have (by name or proximity)
+        var newPOIs: [PlaceResult] = []
+        for poi in googlePOIs {
+            let isDuplicate = existingPOIs.contains { existing in
+                existing.name.lowercased() == poi.name.lowercased() ||
+                distanceBetween(existing.coordinate, poi.coordinate) < 50
+            }
+            if !isDuplicate {
+                newPOIs.append(poi)
+            }
+        }
+        
+        print("🌐 GOOGLE ON-DEMAND COMPLETE:")
+        print("🌐   📊 Fetched: \(googlePOIs.count) POIs")
+        print("🌐   ✨ New (after dedup): \(newPOIs.count) POIs")
+        
+        // Merge with cache for future use
+        if !newPOIs.isEmpty {
+            let mergedPOIs = existingPOIs + newPOIs
+            POICacheService.shared.cachePOIs(mergedPOIs, for: location)
+            print("🌐   💾 Cache updated: \(mergedPOIs.count) total POIs")
+        }
+        
+        return newPOIs
+    }
+    
     /// Fetch POIs from Google Places API (called at most once per 24 hours)
     private func fetchGooglePOIs(
         location: CLLocationCoordinate2D,
