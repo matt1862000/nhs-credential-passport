@@ -1037,11 +1037,27 @@ private struct DelayBannerContent: View {
     }
     
     /// Progress showing TIME REMAINING (1.0 = full time left, 0.0 = time's up)
+    /// Includes NaN/infinity guards to prevent CoreGraphics errors
     var progress: Double {
         guard delayMinutes > 0, let start = walkStartTime else { return 1.0 }
         let totalSeconds = Double(delayMinutes * 60)
+        guard totalSeconds > 0 else { return 1.0 }
         let elapsedSeconds = currentDate.timeIntervalSince(start)
-        return max(0, 1.0 - (elapsedSeconds / totalSeconds))
+        let calculated = 1.0 - (elapsedSeconds / totalSeconds)
+        // Guard against NaN/infinity
+        if calculated.isNaN || calculated.isInfinite {
+            return 1.0
+        }
+        return min(1.0, max(0, calculated))
+    }
+    
+    /// Safe progress value for frame width calculation
+    var safeProgressWidth: CGFloat {
+        let p = progress
+        if p.isNaN || p.isInfinite || p < 0 || p > 1 {
+            return 1.0
+        }
+        return CGFloat(p)
     }
     
     /// Urgency level based on time remaining
@@ -1108,10 +1124,10 @@ private struct DelayBannerContent: View {
                         .fill(Color.white.opacity(0.2))
                         .frame(height: 6)
                     
-                    // Progress fill
+                    // Progress fill (using safe width to prevent NaN)
                     RoundedRectangle(cornerRadius: 3)
                         .fill(urgencyColor)
-                        .frame(width: geo.size.width * progress, height: 6)
+                        .frame(width: geo.size.width * safeProgressWidth, height: 6)
                 }
             }
             .frame(width: 80, height: 6)

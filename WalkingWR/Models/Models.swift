@@ -917,7 +917,10 @@ class WalkSession: ObservableObject {
     var progress: Double {
         guard let route = currentRoute else { return 0 }
         let totalSeconds = Double(route.durationMinutes * 60)
-        return min(elapsedTime / totalSeconds, 1.0)
+        guard totalSeconds > 0 else { return 0 }
+        let calculated = elapsedTime / totalSeconds
+        // Guard against NaN/infinity for CoreGraphics
+        return calculated.isNaN || calculated.isInfinite ? 0 : min(1.0, max(0, calculated))
     }
     
     func updateElapsedTime() {

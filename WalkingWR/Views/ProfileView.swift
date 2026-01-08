@@ -204,7 +204,9 @@ struct StatsSummaryCard: View {
     
     var levelProgress: Double {
         let pointsInCurrentLevel = progress.totalPoints % 100
-        return Double(pointsInCurrentLevel) / 100.0
+        let calculated = Double(pointsInCurrentLevel) / 100.0
+        // Guard against NaN/infinity for CoreGraphics
+        return calculated.isNaN || calculated.isInfinite ? 0 : min(1.0, max(0, calculated))
     }
 }
 
@@ -1505,7 +1507,9 @@ struct BadgeView: View {
     var requiredAmount: Int = 1
     
     var progressPercent: Double {
-        min(Double(currentProgress) / Double(requiredAmount), 1.0)
+        guard requiredAmount > 0 else { return 0 }
+        let calculated = Double(currentProgress) / Double(requiredAmount)
+        return calculated.isNaN || calculated.isInfinite ? 0 : min(1.0, max(0, calculated))
     }
     
     var body: some View {
@@ -1562,7 +1566,9 @@ struct BadgeDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
     
     var progressPercent: Double {
-        min(Double(currentProgress) / Double(requiredAmount), 1.0)
+        guard requiredAmount > 0 else { return 0 }
+        let calculated = Double(currentProgress) / Double(requiredAmount)
+        return calculated.isNaN || calculated.isInfinite ? 0 : min(1.0, max(0, calculated))
     }
     
     var body: some View {
@@ -1732,7 +1738,9 @@ struct DigitalLiteracyProgressCard: View {
     }
     
     var progress: Double {
-        min(Double(scans) / Double(totalSkills), 1.0)
+        guard totalSkills > 0 else { return 0 }
+        let calculated = Double(scans) / Double(totalSkills)
+        return calculated.isNaN || calculated.isInfinite ? 0 : min(1.0, max(0, calculated))
     }
 }
 

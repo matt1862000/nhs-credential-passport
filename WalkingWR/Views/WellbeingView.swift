@@ -729,15 +729,10 @@ struct GratitudeSection: View {
                     .font(.bodyLarge)
                     .foregroundColor(.primary)
                 
-                // Use TextField with vertical axis for better gesture handling (iOS 16+)
+                // Minimal text input - avoid complex modifiers
                 TextField("Write your thoughts here...", text: $gratitudeText, axis: .vertical)
-                    .focused($isTextEditorFocused)
+                    .textFieldStyle(.roundedBorder)
                     .lineLimit(3...6)
-                    .padding(12)
-                    .background(Color(.systemGray6))
-                    .foregroundColor(.primary)
-                    .cornerRadius(12)
-                    .tint(.coralPink)
                 
                 Button("Save Entry") {
                     if !gratitudeText.isEmpty {
