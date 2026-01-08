@@ -437,7 +437,7 @@ class GoogleMapsService: ObservableObject {
     /// 3. OpenStreetMap (FREE, always called to supplement)
     func findNearbyPlaces(
         location: CLLocationCoordinate2D,
-        radiusMeters: Int = 500,
+        radiusMeters: Int = 2500,  // Increased from 500m for better coverage
         types: [String] = ["point_of_interest"]
     ) async throws -> [PlaceResult] {
         
@@ -495,8 +495,22 @@ class GoogleMapsService: ObservableObject {
         }
         print("🍎 APPLE MAPS - Added \(appleAdded) unique POIs (after dedup)")
         
-        // Note: OpenStreetMap POIs not used - Google cached daily + Apple Maps is sufficient
-        // OSRM still used for routing when MapKit is rate-limited
+        // 🗺️ PRIORITY 3: OpenStreetMap (FREE, good for rural UK areas)
+        print("🗺️ OSM - Searching (FREE, good for footpaths & local places)...")
+        let osmPOIs = await searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
+        print("🗺️ OSM - Found \(osmPOIs.count) POIs")
+        var osmAdded = 0
+        for poi in osmPOIs {
+            let isDuplicate = allResults.contains { existing in
+                existing.name.lowercased() == poi.name.lowercased() ||
+                distanceBetween(existing.coordinate, poi.coordinate) < 50
+            }
+            if !isDuplicate {
+                allResults.append(poi)
+                osmAdded += 1
+            }
+        }
+        print("🗺️ OSM - Added \(osmAdded) unique POIs (after dedup)")
         
         // 💾 Cache combined results for next time
         if !allResults.isEmpty {

@@ -1486,7 +1486,7 @@ struct LocalRoutePickerSheet: View {
                 // Use a generous radius to cover most duration options
                 let pois = try await mapsService.findNearbyPlaces(
                     location: userLocation.coordinate,
-                    radiusMeters: 1500  // Cover up to ~30min walks
+                    radiusMeters: 2500  // Cover up to ~60min walks
                 )
                 await MainActor.run {
                     prefetchedPOIs = pois
@@ -2230,7 +2230,7 @@ struct LocalRoutePickerSheet: View {
             print("🧪 [\(name)] Using \(cachedPOIs.count) CACHED POIs")
         } else {
             print("🧪 [\(name)] Fetching fresh POIs...")
-            pois = try? await mapsService.findNearbyPlaces(location: coordinate, radiusMeters: 1500)
+            pois = try? await mapsService.findNearbyPlaces(location: coordinate, radiusMeters: 2500)
         }
         
         poiCount = pois?.count ?? 0
@@ -2353,7 +2353,7 @@ struct LocalRoutePickerSheet: View {
             // 3. Fetch fresh POIs only if cache is empty (will cache for future)
             else {
                 print("🧪 ⚠️ Cache empty - fetching fresh POIs (1 API call)")
-                pois = try? await mapsService.findNearbyPlaces(location: testCoordinate, radiusMeters: 1500)
+                pois = try? await mapsService.findNearbyPlaces(location: testCoordinate, radiusMeters: 2500)
             }
             
             await MainActor.run {
