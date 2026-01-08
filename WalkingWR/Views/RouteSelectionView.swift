@@ -986,6 +986,7 @@ struct LocalRoutePickerSheet: View {
                         isLoadingMoreRoutes: isPreGeneratingRoutes,
                         showPremiumUpsell: showPremiumUpsell,
                         hasLimitedPOIs: mapsService.hasLimitedPOIs,  // v1.6.10
+                        varietyExhausted: varietyExhausted,  // v1.6.25
                         healthKitService: viewModel.healthKitService,
                         onRequestMotion: {
                             // Request motion permission only
@@ -2655,6 +2656,13 @@ struct LocalRoutePickerSheet: View {
                 var routesForThisDuration: [(routeNum: Int, actual: Int, time: Double, accuracy: Double, status: String, waypoints: Int, distance: Int, routeKey: String, waypointNames: [String])] = []
                 var consecutiveFailures = 0
                 
+                // v1.6.25: Signature-based deduplication with early stopping
+                var durationSignatures = Set<String>()  // Unique signatures for this duration
+                var consecutiveDuplicates = 0
+                let maxConsecutiveDuplicates = 3  // Stop when variety exhausted
+                var varietyExhausted = false
+                var uniqueRoutesFound = 0
+                
                 await MainActor.run {
                     routeTestResults += "\n📌 \(duration) MINUTES\n"
                     routeTestResults += "───────────────────────────────────────\n"
@@ -2662,6 +2670,7 @@ struct LocalRoutePickerSheet: View {
                 
                 for routeNum in 1...maxRoutesPerDuration {
                     guard consecutiveFailures < 3 else { break }  // Stop after 3 failures
+                    guard !varietyExhausted else { break }  // v1.6.25: Stop when variety exhausted
                     
                     let startTime = Date()
                     var actualMin = 0
@@ -2693,25 +2702,46 @@ struct LocalRoutePickerSheet: View {
                                 excludedPlaceIds.insert(place.placeId)
                             }
                             
-                            // Create a unique key for this route
+                            // v1.6.25: Use signature-based duplicate detection (matches app behavior)
+                            let sortedIds = result.places.map { $0.placeId }.sorted().joined(separator: ",")
+                            let distanceBucket = (distance / 100) * 100
+                            let signature = "\(sortedIds)|\(distanceBucket)"
+                            
+                            let isDuplicate = durationSignatures.contains(signature)
+                            
+                            // Also create legacy routeKey for global tracking
                             let firstPOI = result.places.first?.name.prefix(10) ?? "?"
                             routeKey = "\(distance)m_\(waypoints)wp_\(firstPOI)"
                             
                             // Calculate accuracy as percentage of target
                             accuracy = Double(actualMin) / Double(duration) * 100
                             
-                            let isDuplicate = seenRouteKeys.contains(routeKey)
-                            if accuracy >= 80 && accuracy <= 120 {
-                                status = isDuplicate ? "🔁" : "✅"
-                            } else if accuracy >= 70 && accuracy <= 130 {
-                                status = isDuplicate ? "🔁" : "⚠️"
-                            } else if accuracy < 70 {
-                                status = "📉"
+                            if isDuplicate {
+                                // v1.6.25: Track consecutive duplicates for early stopping
+                                consecutiveDuplicates += 1
+                                status = "🔁"
+                                
+                                if consecutiveDuplicates >= maxConsecutiveDuplicates {
+                                    varietyExhausted = true
+                                }
                             } else {
-                                status = "📈"
+                                // Unique route found
+                                durationSignatures.insert(signature)
+                                seenRouteKeys.insert(routeKey)
+                                uniqueRoutesFound += 1
+                                consecutiveDuplicates = 0  // Reset on unique find
+                                
+                                if accuracy >= 80 && accuracy <= 120 {
+                                    status = "✅"
+                                } else if accuracy >= 70 && accuracy <= 130 {
+                                    status = "⚠️"
+                                } else if accuracy < 70 {
+                                    status = "📉"
+                                } else {
+                                    status = "📈"
+                                }
                             }
                             
-                            seenRouteKeys.insert(routeKey)
                             consecutiveFailures = 0
                             totalRoutesGenerated += 1
                         } else {
@@ -2753,10 +2783,11 @@ struct LocalRoutePickerSheet: View {
                     try? await Task.sleep(nanoseconds: 200_000_000)
                 }
                 
-                // Summary for this duration
+                // v1.6.25: Improved summary with honest counts
                 await MainActor.run {
                     let validRoutes = routesForThisDuration.filter { $0.status == "✅" || $0.status == "⚠️" }.count
-                    routeTestResults += "  📊 \(validRoutes)/\(routesForThisDuration.count) valid routes\n"
+                    let exhaustedIndicator = varietyExhausted ? " (variety exhausted)" : ""
+                    routeTestResults += "  📊 \(uniqueRoutesFound) unique / \(validRoutes) valid\(exhaustedIndicator)\n"
                 }
             }
             
@@ -2781,10 +2812,33 @@ struct LocalRoutePickerSheet: View {
                 let avgAccuracy = validResults.isEmpty ? 0 : validResults.map { $0.accuracy }.reduce(0, +) / Double(validResults.count)
                 let avgTime = results.map { $0.time }.reduce(0, +) / Double(results.count)
                 
-                routeTestResults += "\n📊 TOTAL ROUTES GENERATED: \(totalRoutesGenerated)\n"
-                routeTestResults += "🎯 UNIQUE ROUTES: \(uniqueRoutes)\n"
-                routeTestResults += "🔁 Duplicates:    \(duplicates)\n\n"
-                routeTestResults += "BY ACCURACY:\n"
+                // v1.6.25: Calculate per-duration unique counts
+                var durationUniqueMap: [Int: Int] = [:]
+                var currentDuration = 0
+                var currentSignatures = Set<String>()
+                for r in results {
+                    if r.duration != currentDuration {
+                        currentDuration = r.duration
+                        currentSignatures.removeAll()
+                    }
+                    let signature = r.routeKey  // Use routeKey as signature proxy
+                    if !currentSignatures.contains(signature) && r.status != "🔁" {
+                        currentSignatures.insert(signature)
+                        durationUniqueMap[r.duration, default: 0] += 1
+                    }
+                }
+                
+                let requestedTotal = 12 * maxRoutesPerDuration  // 12 durations × 5 routes
+                let varietyRate = Double(uniqueRoutes) / Double(requestedTotal) * 100
+                
+                routeTestResults += "\n📊 ROUTE AVAILABILITY (v1.6.25 - honest counts)\n"
+                routeTestResults += "───────────────────────────────────────\n"
+                routeTestResults += "🎯 Requested: \(requestedTotal) routes (12 durations × \(maxRoutesPerDuration))\n"
+                routeTestResults += "✅ Unique found: \(uniqueRoutes)\n"
+                routeTestResults += "🔁 Duplicates stopped: \(duplicates)\n"
+                routeTestResults += "📈 Variety rate: \(String(format: "%.0f", varietyRate))%\n\n"
+                
+                routeTestResults += "BY ACCURACY (unique routes only):\n"
                 routeTestResults += "✅ On-target (80-120%): \(successful)\n"
                 routeTestResults += "⚠️ Marginal (70-130%):  \(marginal)\n"
                 routeTestResults += "📉 Too short (<70%):    \(tooShort)\n"
@@ -2995,6 +3049,7 @@ struct LocalRouteMapPreview: View {
     var isLoadingMoreRoutes: Bool = false  // True when pre-generating in background
     var showPremiumUpsell: Bool = false  // True when all routes have been viewed
     var hasLimitedPOIs: Bool = false  // v1.6.10: True when POI count is below threshold
+    var varietyExhausted: Bool = false  // v1.6.25: True when no more unique routes available
     @ObservedObject var healthKitService: HealthKitService  // For permission state
     let onRequestMotion: () -> Void      // Request motion permission
     let onRequestHealthKit: () -> Void   // Request HealthKit permission
@@ -3383,19 +3438,36 @@ struct LocalRouteMapPreview: View {
                     Spacer()
                 }
                 
-                // Route index indicator
-                HStack(spacing: 6) {
-                    Text("\(currentRouteIndex) of \(totalRoutes)")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(.secondary)
+                // Route index indicator with sparse area warning (v1.6.25)
+                VStack(spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text("\(currentRouteIndex) of \(totalRoutes)")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+                        
+                        if isLoadingMoreRoutes {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("finding more...")
+                                .font(.caption)
+                                .foregroundColor(.secondary.opacity(0.7))
+                        }
+                    }
                     
-                    if isLoadingMoreRoutes {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                        Text("finding more...")
-                            .font(.caption)
-                            .foregroundColor(.secondary.opacity(0.7))
+                    // v1.6.25: Sparse area warning - shown when variety exhausted
+                    if varietyExhausted && !isLoadingMoreRoutes {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.caption2)
+                            Text("You're seeing all available routes")
+                                .font(.caption)
+                        }
+                        .foregroundColor(.tealAccent)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(Color.tealAccent.opacity(0.1))
+                        .clipShape(Capsule())
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
