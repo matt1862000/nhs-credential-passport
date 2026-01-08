@@ -904,6 +904,10 @@ struct LocalRoutePickerSheet: View {
     @State private var showPremiumUpsell = false  // Show upgrade message when all routes viewed
     @State private var showLocationLimitAlert = false  // Show when free tier location limit reached
     
+    // v1.6.25: Route deduplication - track unique route signatures
+    @State private var routeSignatures: Set<String> = []  // Unique signatures: "sortedPOIIds|distanceBucket"
+    @State private var varietyExhausted = false  // True when no more unique routes possible
+    
     // Pre-fetched POIs for faster route generation
     @State private var prefetchedPOIs: [PlaceResult] = []
     @State private var isPrefetchingPOIs = false
@@ -1025,6 +1029,7 @@ struct LocalRoutePickerSheet: View {
                                 currentRouteIndex = 0
                                 preGenerationComplete = false
                                 viewedRouteIndices = []
+                                resetRouteSignatures()  // v1.6.25: Clear signatures
                                 showPremiumUpsell = false
                                 showMapPreview = false
                                 errorMessage = nil
@@ -1451,6 +1456,37 @@ struct LocalRoutePickerSheet: View {
         selectedDuration * 80
     }
     
+    // MARK: - Route Deduplication (v1.6.25)
+    
+    /// Generate a unique signature for a route based on its waypoints and distance
+    /// This allows detecting "same route" even if POI order differs slightly
+    func generateRouteSignature(places: [PlaceResult], distanceMeters: Int) -> String {
+        // Sort place IDs for consistent comparison regardless of visit order
+        let sortedIds = places.map { $0.placeId }.sorted().joined(separator: ",")
+        
+        // Distance bucket (100m granularity) to catch near-identical routes
+        let distanceBucket = (distanceMeters / 100) * 100
+        
+        return "\(sortedIds)|\(distanceBucket)"
+    }
+    
+    /// Check if a route is a duplicate based on its signature
+    func isRouteUnique(places: [PlaceResult], distanceMeters: Int) -> Bool {
+        let signature = generateRouteSignature(places: places, distanceMeters: distanceMeters)
+        return !routeSignatures.contains(signature)
+    }
+    
+    /// Register a route signature as "seen"
+    func registerRouteSignature(places: [PlaceResult], distanceMeters: Int) {
+        let signature = generateRouteSignature(places: places, distanceMeters: distanceMeters)
+        routeSignatures.insert(signature)
+    }
+    
+    /// Reset route signatures when starting fresh
+    func resetRouteSignatures() {
+        routeSignatures.removeAll()
+        varietyExhausted = false
+    }
     
     /// Pre-fetch POIs in background while user selects duration
     func prefetchPOIsIfNeeded() {
@@ -1950,17 +1986,20 @@ struct LocalRoutePickerSheet: View {
         guard !isPreGeneratingRoutes else { return }
         
         isPreGeneratingRoutes = true
+        varietyExhausted = false
         print("🚀 Starting background pre-generation of up to \(maxRoutesToGenerate) routes...")
         
         Task {
             var routesGenerated = allRoutes.count
+            var consecutiveDuplicates = 0
+            let maxConsecutiveDuplicates = 3  // Stop after 3 duplicates in a row - variety exhausted
             var consecutiveFailures = 0
-            let maxConsecutiveFailures = 5  // Try harder to find more routes
+            let maxConsecutiveFailures = 3  // Reduced from 5 - stop earlier if failing
             
             // Get pre-fetched POIs once for all iterations
             let poisToUse = await MainActor.run { prefetchedPOIs.isEmpty ? nil : prefetchedPOIs }
             
-            while routesGenerated < maxRoutesToGenerate && consecutiveFailures < maxConsecutiveFailures {
+            while routesGenerated < maxRoutesToGenerate && consecutiveFailures < maxConsecutiveFailures && consecutiveDuplicates < maxConsecutiveDuplicates {
                 do {
                     // Collect all place IDs we've already used
                     let excludedPlaceIds = await MainActor.run {
@@ -1981,15 +2020,24 @@ struct LocalRoutePickerSheet: View {
                         continue
                     }
                     
-                    // Check if this is a duplicate route
-                    let newPlaceIds = Set(result.places.map { $0.placeId })
-                    let isDuplicate = await MainActor.run { shownPlaceIdSets.contains(newPlaceIds) }
+                    // v1.6.25: Use signature-based duplicate detection
+                    // This catches routes with same POIs even if place ID sets differ slightly
+                    let isUnique = await MainActor.run {
+                        isRouteUnique(places: result.places, distanceMeters: result.distanceMeters)
+                    }
                     
-                    if isDuplicate {
-                        consecutiveFailures += 1
-                        print("⚠️ Pre-generation found duplicate route, skipping...")
+                    if !isUnique {
+                        consecutiveDuplicates += 1
+                        print("⚠️ Duplicate route detected (signature match) - \(consecutiveDuplicates)/\(maxConsecutiveDuplicates)")
+                        if consecutiveDuplicates >= maxConsecutiveDuplicates {
+                            print("🛑 Variety exhausted - stopping early (found \(routesGenerated) unique routes)")
+                            await MainActor.run { varietyExhausted = true }
+                        }
                         continue
                     }
+                    
+                    // Reset duplicate counter on finding unique route
+                    consecutiveDuplicates = 0
                     
                     // Create markers and directions
                     let markers = await MainActor.run {
@@ -2056,10 +2104,15 @@ struct LocalRoutePickerSheet: View {
                     
                     await MainActor.run {
                         allRoutes.append((route: route, data: result))
-                        shownPlaceIdSets.append(newPlaceIds)
+                        
+                        // v1.6.25: Register route signature for deduplication
+                        registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
+                        let placeIds = Set(result.places.map { $0.placeId })
+                        shownPlaceIdSets.append(placeIds)
+                        
                         routesGenerated = allRoutes.count
                         consecutiveFailures = 0  // Reset on success
-                        print("✅ Pre-generated route \(routesGenerated) of \(maxRoutesToGenerate)")
+                        print("✅ Pre-generated route \(routesGenerated) (unique: \(routeSignatures.count))")
                     }
                     
                 } catch {
@@ -2186,10 +2239,14 @@ struct LocalRoutePickerSheet: View {
                             
                             await MainActor.run {
                                 allRoutes.append((route: route, data: result))
+                                
+                                // v1.6.25: Register route signature for deduplication
+                                registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
                                 shownPlaceIdSets.append(newPlaceIds)
+                                
                                 googleRoutesGenerated += 1
                                 googleFailures = 0
-                                print("🌐 ✅ Generated route \(allRoutes.count) using Google POIs")
+                                print("🌐 ✅ Generated route \(allRoutes.count) (unique: \(routeSignatures.count)) using Google POIs")
                             }
                             
                         } catch {
@@ -2208,7 +2265,14 @@ struct LocalRoutePickerSheet: View {
             await MainActor.run {
                 isPreGeneratingRoutes = false
                 preGenerationComplete = true
-                print("🏁 Pre-generation complete for \(selectedDuration)min! Total routes: \(allRoutes.count)")
+                
+                // v1.6.25: Log variety status
+                let uniqueCount = routeSignatures.count
+                if varietyExhausted {
+                    print("🏁 Pre-generation complete for \(selectedDuration)min! \(uniqueCount) unique routes (variety exhausted)")
+                } else {
+                    print("🏁 Pre-generation complete for \(selectedDuration)min! \(allRoutes.count) routes generated")
+                }
             }
             
             // AFTER completing current duration, pre-generate for OTHER durations
