@@ -212,14 +212,37 @@ class GoogleMapsService: ObservableObject {
     // Estimates round-trip time BEFORE expensive routing API calls
     // Rejects POIs that would create routes way outside target duration
     
+    /// Get adaptive road factor based on POI type
+    /// Parks/trails have more direct paths, urban areas have more roads
+    private func adaptiveRoadFactor(for poi: PlaceResult) -> Double {
+        let types = Set(poi.types ?? [])
+        
+        // Parks/nature: more direct walking paths (1.15-1.25)
+        let parkTypes = Set(["park", "playground", "nature_reserve", "garden", "trail",
+                            "hiking_area", "botanical_garden", "national_park", "forest",
+                            "beach", "campground"])
+        if !types.isDisjoint(with: parkTypes) {
+            return 1.2
+        }
+        
+        // Car-centric locations: more road detours (1.5)
+        let carTypes = Set(["gas_station", "car_wash", "car_dealer", "car_repair",
+                           "parking", "car_rental", "atm", "bank"])
+        if !types.isDisjoint(with: carTypes) {
+            return 1.5
+        }
+        
+        // Default: mixed urban (1.35)
+        return 1.35
+    }
+    
     /// Estimate round-trip walking time to a POI (in minutes)
-    /// Uses straight-line distance × road factor × 2 (round trip)
+    /// Uses straight-line distance × adaptive road factor × 2 (round trip)
     private func estimateRoundTripMinutes(from origin: CLLocationCoordinate2D, to poi: PlaceResult) -> Int {
         let straightLineDistance = distanceBetween(origin, poi.coordinate)
         
-        // Road factor: actual walking distance is typically 1.3-1.5x straight-line
-        // Use 1.4 as conservative estimate
-        let roadFactor = 1.4
+        // Road factor varies by POI type: parks 1.2, urban 1.35, car-centric 1.5
+        let roadFactor = adaptiveRoadFactor(for: poi)
         let estimatedWalkingDistance = straightLineDistance * roadFactor * 2  // Round trip
         
         // Walking speed (use adaptive if available)
@@ -3032,25 +3055,39 @@ class GoogleMapsService: ObservableObject {
         // Return best valid route (50-100% of target, never exceeds)
         // PRIORITY: 1) Most waypoints  2) Less backtracking  3) Closest to target time
         if !validRoutes.isEmpty {
-            // Calculate backtracking scores for all valid routes
-            let routesWithScores = validRoutes.map { route -> (route: GeneratedRoute, backtrackScore: Double) in
-                let score = calculateBacktrackingScore(polyline: route.polyline)
-                return (route, score)
+            // Calculate composite scores for all valid routes
+            // Includes backtracking score AND soft cap overrun penalty
+            let routesWithScores = validRoutes.map { route -> (route: GeneratedRoute, backtrackScore: Double, overrunPenalty: Double) in
+                let backtrack = calculateBacktrackingScore(polyline: route.polyline)
+                
+                // SOFT CAP OVERRUN PENALTY: Routes >130% get penalized
+                // 150% loses 10 points, 180% loses 25 points
+                let accuracy = Double(route.durationSeconds / 60) / Double(targetDurationMinutes)
+                var overrunPenalty = 0.0
+                if accuracy > 1.3 {
+                    overrunPenalty = (accuracy - 1.3) * 50  // Steep penalty after 130%
+                }
+                
+                return (route, backtrack, overrunPenalty)
             }
             
-            // Sort by: most waypoints, then least backtracking, then closest to target
+            // Sort by: least overrun penalty, then most waypoints, then least backtracking, then closest to target
             let sorted = routesWithScores.sorted { r1, r2 in
-                // First: more waypoints is better
+                // FIRST: Lower overrun penalty is better (kills 150%+ routes)
+                if abs(r1.overrunPenalty - r2.overrunPenalty) > 1.0 {
+                    return r1.overrunPenalty < r2.overrunPenalty
+                }
+                // Second: more waypoints is better
                 if r1.route.places.count != r2.route.places.count {
                     return r1.route.places.count > r2.route.places.count
                 }
-                // Second: less backtracking is better (lower score = more loop-like)
+                // Third: less backtracking is better (lower score = more loop-like)
                 if abs(r1.backtrackScore - r2.backtrackScore) > 0.1 {
                     return r1.backtrackScore < r2.backtrackScore
                 }
-                // Third: closer to target is better (all are at or under)
-                let diff1 = targetDurationMinutes - r1.route.durationSeconds / 60
-                let diff2 = targetDurationMinutes - r2.route.durationSeconds / 60
+                // Fourth: closer to target is better
+                let diff1 = abs(targetDurationMinutes - r1.route.durationSeconds / 60)
+                let diff2 = abs(targetDurationMinutes - r2.route.durationSeconds / 60)
                 return diff1 < diff2  // Prefer routes closer to target
             }
             
