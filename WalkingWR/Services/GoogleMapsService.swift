@@ -260,10 +260,21 @@ class GoogleMapsService: ObservableObject {
         origin: CLLocationCoordinate2D,
         targetDurationMinutes: Int
     ) -> [PlaceResult] {
-        // Accept POIs where estimated round-trip is 40-140% of target
-        // Tightened from 30-180% to reduce "too long" routes
-        let minDuration = max(2, targetDurationMinutes * 40 / 100)  // 40% of target
-        let maxDuration = targetDurationMinutes * 140 / 100  // 140% of target
+        // DURATION-AWARE PRE-FILTER: Tighter for short routes, looser for long
+        // Short routes are more sensitive to overshoot (5min → 8min feels wrong)
+        // Long routes have more natural variation in path winding
+        let (minPercent, maxPercent): (Int, Int)
+        switch targetDurationMinutes {
+        case 0...20:
+            minPercent = 55; maxPercent = 110  // Very tight for short walks
+        case 21...40:
+            minPercent = 50; maxPercent = 115  // Moderate
+        default:  // 45+ min
+            minPercent = 45; maxPercent = 120  // Looser for long walks
+        }
+        
+        let minDuration = max(2, targetDurationMinutes * minPercent / 100)
+        let maxDuration = targetDurationMinutes * maxPercent / 100
         
         var accepted: [PlaceResult] = []
         var rejected: [(name: String, estimated: Int, reason: String)] = []
@@ -283,7 +294,7 @@ class GoogleMapsService: ObservableObject {
         if !rejected.isEmpty {
             let tooShort = rejected.filter { $0.reason == "too short" }.count
             let tooLong = rejected.filter { $0.reason == "too long" }.count
-            print("🎯 ⏱️ PRE-FILTER: Kept \(accepted.count)/\(pois.count) POIs for \(targetDurationMinutes)min target")
+            print("🎯 ⏱️ PRE-FILTER: Kept \(accepted.count)/\(pois.count) POIs for \(targetDurationMinutes)min target (\(minPercent)-\(maxPercent)% range)")
             if tooShort > 0 {
                 print("   ❌ Too short (<\(minDuration)min): \(tooShort) POIs")
             }
@@ -3064,12 +3075,13 @@ class GoogleMapsService: ObservableObject {
             let routesWithScores = validRoutes.map { route -> (route: GeneratedRoute, backtrackScore: Double, overrunPenalty: Double) in
                 let backtrack = calculateBacktrackingScore(polyline: route.polyline)
                 
-                // SOFT CAP OVERRUN PENALTY: Routes >130% get penalized
-                // 150% loses 10 points, 180% loses 25 points
+                // SOFT CAP OVERRUN PENALTY: Routes >115% get penalized
+                // 115% is "this better be really good" threshold
+                // 130% loses 7.5 points, 150% loses 17.5 points
                 let accuracy = Double(route.durationSeconds / 60) / Double(targetDurationMinutes)
                 var overrunPenalty = 0.0
-                if accuracy > 1.3 {
-                    overrunPenalty = (accuracy - 1.3) * 50  // Steep penalty after 130%
+                if accuracy > 1.15 {
+                    overrunPenalty = (accuracy - 1.15) * 50  // Steep penalty after 115%
                 }
                 
                 return (route, backtrack, overrunPenalty)
@@ -3240,9 +3252,9 @@ class GoogleMapsService: ObservableObject {
             }
         }
         
-        // Last resort: return a reachable POI but cap at 150% of target
-        // This prevents returning a 90min route for a 60min target
-        let absoluteMaxDuration = targetDurationMinutes * 150 / 100  // 150% cap
+        // Last resort: return a reachable POI but cap at 130% of target
+        // Tightened from 150% to reduce outliers
+        let absoluteMaxDuration = targetDurationMinutes * 130 / 100  // 130% cap
         var bestLastResort: GeneratedRoute? = nil
         var bestLastResortDiff = Int.max
         
