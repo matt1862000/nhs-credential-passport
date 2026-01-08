@@ -538,6 +538,7 @@ class GoogleMapsService: ObservableObject {
         radiusMeters: Int = 2500
     ) async throws -> [PlaceResult] {
         var allResults: [PlaceResult] = []
+        var seenPlaceIds = Set<String>()
         
         print("🧪 [TEST MODE] Fetching POIs WITHOUT caching (bypass limit)")
         
@@ -547,13 +548,36 @@ class GoogleMapsService: ObservableObject {
             return cachedPOIs
         }
         
-        // 2. Fetch from Apple Maps (FREE, no limits)
+        // 2. Google Places API (will fail if quota exceeded, but makes it a TRUE test)
+        if !apiKey.isEmpty {
+            print("🌐 GOOGLE (test mode) - Calling API...")
+            let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
+            for poi in googlePOIs {
+                if !seenPlaceIds.contains(poi.placeId) {
+                    seenPlaceIds.insert(poi.placeId)
+                    allResults.append(poi)
+                }
+            }
+            print("🌐 Got \(googlePOIs.count) from Google")
+        } else {
+            print("⚠️ GOOGLE SKIPPED - No API key")
+        }
+        
+        // 3. Fetch from Apple Maps (FREE, no limits)
         print("🍎 APPLE MAPS (test mode)...")
         let applePOIs = await searchAppleMapsForPOIs(location: location, radiusMeters: radiusMeters)
-        allResults.append(contentsOf: applePOIs)
+        for poi in applePOIs {
+            let isDuplicate = allResults.contains { existing in
+                existing.name.lowercased() == poi.name.lowercased() ||
+                distanceBetween(existing.coordinate, poi.coordinate) < 50
+            }
+            if !isDuplicate {
+                allResults.append(poi)
+            }
+        }
         print("🍎 Got \(applePOIs.count) from Apple")
         
-        // 3. Fetch from OpenStreetMap (FREE, no limits)
+        // 4. Fetch from OpenStreetMap (FREE, no limits)
         print("🗺️ OSM (test mode)...")
         let osmPOIs = await searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
         for poi in osmPOIs {
@@ -567,9 +591,7 @@ class GoogleMapsService: ObservableObject {
         }
         print("🗺️ Got \(osmPOIs.count) from OSM")
         
-        // NOTE: We intentionally skip Google API for test mode to avoid charges
-        // and do NOT cache results to avoid exceeding the free tier limit
-        
+        // NOTE: We do NOT cache results to avoid exceeding the free tier limit
         print("🧪 [TEST MODE] Total POIs: \(allResults.count) (not cached)")
         return allResults
     }
