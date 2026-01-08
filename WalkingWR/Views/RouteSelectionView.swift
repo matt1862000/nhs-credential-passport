@@ -193,10 +193,19 @@ struct RouteSelectionView: View {
                 // - HealthKit is not already authorized
                 // - User hasn't previously declined the offer
                 let hasDeclinedOffer = UserDefaults.standard.bool(forKey: "healthKitSyncOfferDeclined")
+                print("🏥 Post-walk wellbeing dismissed - checking HealthKit offer conditions:")
+                print("🏥   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
+                print("🏥   isAuthorized: \(viewModel.healthKitService.isAuthorized)")
+                print("🏥   hasDeclinedOffer: \(hasDeclinedOffer)")
+                print("🏥   stepTrackingAutoEnabled (UserDefaults): \(UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled"))")
+                
                 if viewModel.stepTrackingWasEnabled && !viewModel.healthKitService.isAuthorized && !hasDeclinedOffer {
+                    print("🏥   ✅ All conditions met - showing HealthKit offer")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         viewModel.showHealthKitSyncOffer = true
                     }
+                } else {
+                    print("🏥   ❌ Conditions not met - NOT showing HealthKit offer")
                 }
             }) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPostWalkWellbeing, isPostWalk: true, isWalkActivity: true)
@@ -589,7 +598,7 @@ struct CompactRouteCard: View {
                         }
                         
                         HStack(spacing: 8) {
-                            Label("\(route.durationMinutes) mins", systemImage: "clock")
+                            Label("\(route.durationMinutes)m", systemImage: "clock")
                             Label("\(route.qrMarkers.count) spots", systemImage: "mappin")
                             if route.isIndoor {
                                 Label("Indoor", systemImage: "building.2")
@@ -4344,20 +4353,22 @@ struct ActiveWalkView: View {
                         
                         Spacer()
                         
-                        // Timer
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text(formatSeconds(viewModel.walkSession.elapsedSeconds))
+                        // Static clinic delay
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text("\(viewModel.waitTimeInfo.estimatedMinutes)")
                                 .font(.title2)
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
                                 .monospacedDigit()
-                            
-                            if viewModel.walkSession.halfwayAlertSent {
-                                Text("Head back!")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.softAmber)
-                            }
+                            Text("mins delay")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                        
+                        if viewModel.walkSession.halfwayAlertSent {
+                            Text("↩︎")
+                                .font(.title2)
+                                .foregroundColor(.softAmber)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -4375,7 +4386,7 @@ struct ActiveWalkView: View {
                             set: { viewModel.locationService.currentDirectionIndex = $0 }
                         ),
                         showAllDirections: $showAllDirections,
-                        elapsedTime: formatSeconds(viewModel.walkSession.elapsedSeconds),
+                        delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
                         distanceWalked: Int(viewModel.locationService.distanceWalked),
                         halfwayAlert: viewModel.walkSession.halfwayAlertSent
                     )
@@ -4453,7 +4464,7 @@ struct WalkingDirectionsBanner: View {
     let directions: [WalkingDirection]
     @Binding var currentIndex: Int
     @Binding var showAllDirections: Bool
-    var elapsedTime: String = ""
+    var delayMinutes: Int = 0
     var distanceWalked: Int = 0
     var halfwayAlert: Bool = false
     
@@ -4517,16 +4528,14 @@ struct WalkingDirectionsBanner: View {
                     
                     Spacer()
                     
-                    // Timer on right
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(elapsedTime)
+                    // Static clinic delay
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text("\(delayMinutes)")
                             .font(.title3)
                             .fontWeight(.bold)
                             .foregroundColor(.white)
                             .monospacedDigit()
-                        
-                        // Step counter
-                        Text("\(currentIndex + 1)/\(directions.count)")
+                        Text("mins delay")
                             .font(.caption2)
                             .foregroundColor(.white.opacity(0.7))
                     }
