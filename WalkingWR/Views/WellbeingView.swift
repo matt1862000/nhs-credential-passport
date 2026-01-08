@@ -728,12 +728,12 @@ struct GratitudeSection: View {
                     .font(.bodyLarge)
                     .foregroundColor(.primary)
                 
-                // Text input with proper styling
-                TextField("Write your thoughts here...", text: $gratitudeText, axis: .vertical)
-                    .lineLimit(3...6)
-                    .padding(12)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(12)
+                // Text input - using simple style to avoid NaN issues
+                TextField("Write your thoughts here...", text: $gratitudeText)
+                    .textFieldStyle(.plain)
+                    .padding()
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 
                 Button("Save Entry") {
                     if !gratitudeText.isEmpty {

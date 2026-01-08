@@ -3087,19 +3087,29 @@ struct LocalRouteMapPreview: View {
             return .automatic
         }
         
-        // Calculate bounds of all points
-        let lats = allPoints.map { $0.latitude }
-        let lngs = allPoints.map { $0.longitude }
+        // Calculate bounds of all points (filter out any NaN values)
+        let validPoints = allPoints.filter { !$0.latitude.isNaN && !$0.longitude.isNaN }
+        guard !validPoints.isEmpty else {
+            return .automatic
+        }
         
-        let minLat = lats.min()!
-        let maxLat = lats.max()!
-        let minLng = lngs.min()!
-        let maxLng = lngs.max()!
+        let lats = validPoints.map { $0.latitude }
+        let lngs = validPoints.map { $0.longitude }
         
-        let center = CLLocationCoordinate2D(
-            latitude: (minLat + maxLat) / 2,
-            longitude: (minLng + maxLng) / 2
-        )
+        guard let minLat = lats.min(), let maxLat = lats.max(),
+              let minLng = lngs.min(), let maxLng = lngs.max(),
+              !minLat.isNaN, !maxLat.isNaN, !minLng.isNaN, !maxLng.isNaN else {
+            return .automatic
+        }
+        
+        let centerLat = (minLat + maxLat) / 2
+        let centerLng = (minLng + maxLng) / 2
+        
+        guard !centerLat.isNaN, !centerLng.isNaN else {
+            return .automatic
+        }
+        
+        let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLng)
         
         // Add 20% padding
         let latSpan = (maxLat - minLat) * 1.3
@@ -3107,7 +3117,10 @@ struct LocalRouteMapPreview: View {
         
         let region = MKCoordinateRegion(
             center: center,
-            span: MKCoordinateSpan(latitudeDelta: max(0.005, latSpan), longitudeDelta: max(0.005, lngSpan))
+            span: MKCoordinateSpan(
+                latitudeDelta: max(0.005, latSpan.isNaN ? 0.01 : latSpan),
+                longitudeDelta: max(0.005, lngSpan.isNaN ? 0.01 : lngSpan)
+            )
         )
         
         return .region(region)
