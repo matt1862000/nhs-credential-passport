@@ -385,32 +385,33 @@ struct EmbeddedWalkMapView: View {
             
             // v1.6.20: Delay banner + compass in same row to save vertical space
             VStack {
-                HStack(alignment: .top, spacing: 12) {
-                    // Delay banner takes most of the width
+                HStack(alignment: .top) {
+                    // Delay banner on the left (doesn't fill entire width)
                     DelayBanner(
                         delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
                         walkStartTime: viewModel.walkSession.startTime
                     )
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     
-                    // Custom compass/location button on the right
-                    VStack(spacing: 8) {
-                        // Compass button (follows user location)
-                        Button(action: {
-                            withAnimation {
-                                cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
-                            }
-                        }) {
-                            Image(systemName: "location.fill")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.tealAccent)
-                                .frame(width: 44, height: 44)
-                                .background(Color.darkCardBackground)
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                                .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
+                    Spacer()
+                    
+                    // Location button at far right
+                    Button(action: {
+                        withAnimation {
+                            cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
                         }
+                    }) {
+                        Image(systemName: "location.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.tealAccent)
+                            .frame(width: 44, height: 44)
+                            .background(Color.darkCardBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
                     }
                 }
-                .padding(.horizontal, 12)
+                .padding(.leading, 12)
+                .padding(.trailing, 12)
                 .padding(.top, 8)
                 
                 Spacer()
