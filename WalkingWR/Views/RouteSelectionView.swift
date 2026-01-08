@@ -589,7 +589,7 @@ struct CompactRouteCard: View {
                         }
                         
                         HStack(spacing: 8) {
-                            Label("\(route.durationMinutes)m", systemImage: "clock")
+                            Label("\(route.durationMinutes) mins", systemImage: "clock")
                             Label("\(route.qrMarkers.count) spots", systemImage: "mappin")
                             if route.isIndoor {
                                 Label("Indoor", systemImage: "building.2")
