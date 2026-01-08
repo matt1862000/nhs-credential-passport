@@ -2813,7 +2813,9 @@ class GoogleMapsService: ObservableObject {
         
         // ENFORCE MINIMUM WAYPOINTS per tier to ensure distinct routes
         // This prevents 15min routes from using the same 1-waypoint as 10min
-        let minWaypoints = max(minWaypointsForTier, quickMode ? max(1, idealWaypoints / 2) : max(1, idealWaypoints - 2))
+        // SAFETY: Never let minWaypoints exceed standardMaxWaypoints (prevents crash with few POIs)
+        let idealMinWaypoints = max(minWaypointsForTier, quickMode ? max(1, idealWaypoints / 2) : max(1, idealWaypoints - 2))
+        let minWaypoints = min(idealMinWaypoints, standardMaxWaypoints)  // Clamp to available max
         print("🗺️ Waypoint range: \(minWaypoints) to \(standardMaxWaypoints) (extended: \(extendedMaxWaypoints))")
         
         // QUICK MODE: Try ASCENDING order (fewest waypoints first) for faster matching
