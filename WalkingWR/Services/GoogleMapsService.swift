@@ -299,6 +299,18 @@ class GoogleMapsService: ObservableObject {
             if !rejected.isEmpty {
                 print("   ❌ Rejected \(rejected.count) POIs with >10min estimated")
             }
+            
+            // DEBUG: Check for specific nearby places
+            let foodPlaces = pois.filter { poi in
+                let types = Set(poi.types ?? [])
+                return !types.isDisjoint(with: ["restaurant", "cafe", "meal_takeaway", "food", "bakery"])
+            }
+            print("🍽️ DEBUG: Found \(foodPlaces.count) food places nearby:")
+            for fp in foodPlaces.prefix(10) {
+                let est = estimateRoundTripMinutes(from: origin, to: fp)
+                print("   🍽️ \(fp.name): ~\(est)min round-trip")
+            }
+            
             return accepted
         }
         
@@ -859,6 +871,12 @@ class GoogleMapsService: ObservableObject {
             "takeaway",               // Fish & chips, kebabs
             "bakery",                 // Bakeries
             "bar",                    // Bars
+            "kitchen",                // Kitchens, cafes with "kitchen" in name
+            "catering",               // Catering services
+            "deli",                   // Delis
+            "sandwich",               // Sandwich shops
+            "coffee",                 // Coffee shops
+            "food",                   // General food places
             
             // Retail
             "supermarket",            // Supermarkets
@@ -906,8 +924,28 @@ class GoogleMapsService: ObservableObject {
             "bed and breakfast"       // B&Bs, guest houses
         ]
         
-        print("🍎 APPLE MAPS - Starting search for \(searchQueries.count) categories")
+        print("🍎 APPLE MAPS - Starting search for \(searchQueries.count) categories (radius: \(radiusMeters)m)")
         print("🍎 Categories: \(searchQueries.prefix(10).joined(separator: ", "))... +\(max(0, searchQueries.count - 10)) more")
+        
+        // DEBUG: Do a specific search for "Country Kitchen" to diagnose why it's not being found
+        do {
+            let debugRequest = MKLocalSearch.Request()
+            debugRequest.naturalLanguageQuery = "Country Kitchen"
+            debugRequest.region = MKCoordinateRegion(
+                center: location,
+                latitudinalMeters: Double(radiusMeters * 2),
+                longitudinalMeters: Double(radiusMeters * 2)
+            )
+            let debugSearch = MKLocalSearch(request: debugRequest)
+            let debugResponse = try await debugSearch.start()
+            print("🔍 DEBUG 'Country Kitchen' search: Found \(debugResponse.mapItems.count) results")
+            for item in debugResponse.mapItems {
+                let dist = distanceBetween(location, item.placemark.coordinate)
+                print("   🔍 '\(item.name ?? "?")' at \(Int(dist))m")
+            }
+        } catch {
+            print("🔍 DEBUG 'Country Kitchen' search failed: \(error.localizedDescription)")
+        }
         
         var queriesWithResults = 0
         for query in searchQueries {
