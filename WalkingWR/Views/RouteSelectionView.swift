@@ -1660,37 +1660,16 @@ struct LocalRoutePickerSheet: View {
                             vicinity: place.vicinity
                         )
                     }
-                    var aiContent = await GeminiService.shared.generateRouteContent(
+                    // Generate route name and description (always succeeds with template fallback)
+                    let aiContent = await GeminiService.shared.generateRouteContent(
                         waypoints: waypointInfos,
                         durationMinutes: result.durationMinutes,
                         distanceMeters: result.distanceMeters,
                         difficulty: nil
                     )
                     
-                    // v1.6.14: Retry AI naming once if we get fallback
-                    if aiContent == nil {
-                        print("🤖 AI naming failed, retrying once...")
-                        try? await Task.sleep(nanoseconds: 500_000_000)  // 0.5s delay
-                        aiContent = await GeminiService.shared.generateRouteContent(
-                            waypoints: waypointInfos,
-                            durationMinutes: result.durationMinutes,
-                            distanceMeters: result.distanceMeters,
-                            difficulty: nil
-                        )
-                    }
-                    
-                    // Use AI content or fallback
-                    let routeName: String
-                    let description: String
-                    
-                    if let content = aiContent {
-                        routeName = content.name
-                        description = content.description
-                    } else {
-                        // Fallback name and description if AI fails
-                        routeName = "Local Discovery"
-                        description = "A \(result.formattedDuration) walk passing \(result.places.count) local points of interest."
-                    }
+                    let routeName = aiContent.name
+                    let description = aiContent.description
                     
                     // Create the walking route with actual polyline and directions
                     let localRoute = WalkingRoute(
@@ -1829,6 +1808,7 @@ struct LocalRoutePickerSheet: View {
                             vicinity: place.vicinity
                         )
                     }
+                    // Generate route name (always succeeds with template fallback)
                     let aiContent = await GeminiService.shared.generateRouteContent(
                         waypoints: waypointInfos,
                         durationMinutes: result.durationMinutes,
@@ -1836,16 +1816,8 @@ struct LocalRoutePickerSheet: View {
                         difficulty: nil
                     )
                     
-                    let routeName: String
-                    let description: String
-                    
-                    if let content = aiContent {
-                        routeName = content.name
-                        description = content.description
-                    } else {
-                        routeName = "Local Discovery"
-                        description = "Explore \(markers.count) interesting spots nearby"
-                    }
+                    let routeName = aiContent.name
+                    let description = aiContent.description
                     
                     await MainActor.run {
                         let route = WalkingRoute(
@@ -2045,6 +2017,7 @@ struct LocalRoutePickerSheet: View {
                             vicinity: place.vicinity
                         )
                     }
+                    // Generate route name (always succeeds with template fallback)
                     let aiContent = await GeminiService.shared.generateRouteContent(
                         waypoints: waypointInfos,
                         durationMinutes: result.durationMinutes,
@@ -2052,8 +2025,8 @@ struct LocalRoutePickerSheet: View {
                         difficulty: nil
                     )
                     
-                    let routeName = aiContent?.name ?? "Local Discovery"
-                    let description = aiContent?.description ?? "Explore \(markers.count) interesting spots nearby"
+                    let routeName = aiContent.name
+                    let description = aiContent.description
                     
                     let route = WalkingRoute(
                         name: routeName,

@@ -38,7 +38,7 @@ class GeminiService {
         distanceMeters: Int,
         difficulty: RouteDifficulty?,
         originCoordinate: (lat: Double, lon: Double)? = nil  // For privacy filtering
-    ) async -> RouteContent? {
+    ) async -> RouteContent {
         // Try Gemini first if API key available
         if !apiKey.isEmpty {
             if let geminiContent = await tryGeminiGeneration(
@@ -47,18 +47,23 @@ class GeminiService {
                 distanceMeters: distanceMeters,
                 difficulty: difficulty
             ) {
+                print("🤖 Gemini generated: \(geminiContent.name)")
                 return geminiContent
             }
+            print("🤖 Gemini failed, falling back to template")
+        } else {
+            print("🤖 No Gemini API key, using template")
         }
         
-        // Fallback to privacy-safe templates
-        print("🏷️ Using template-based route names (Gemini unavailable)")
-        return generateTemplateContent(
+        // Fallback to privacy-safe templates (ALWAYS succeeds)
+        let templateContent = generateTemplateContent(
             waypoints: waypoints,
             durationMinutes: durationMinutes,
             distanceMeters: distanceMeters,
             originCoordinate: originCoordinate
         )
+        print("🏷️ Template generated: \(templateContent.name)")
+        return templateContent
     }
     
     /// Privacy-safe template-based name and description generation
