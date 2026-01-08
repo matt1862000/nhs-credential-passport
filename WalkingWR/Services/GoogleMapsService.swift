@@ -236,10 +236,10 @@ class GoogleMapsService: ObservableObject {
         origin: CLLocationCoordinate2D,
         targetDurationMinutes: Int
     ) -> [PlaceResult] {
-        // Accept POIs where estimated round-trip is 30-180% of target
-        // This is wide because we filter more precisely later
-        let minDuration = max(2, targetDurationMinutes * 30 / 100)  // 30% of target
-        let maxDuration = targetDurationMinutes * 180 / 100  // 180% of target
+        // Accept POIs where estimated round-trip is 40-140% of target
+        // Tightened from 30-180% to reduce "too long" routes
+        let minDuration = max(2, targetDurationMinutes * 40 / 100)  // 40% of target
+        let maxDuration = targetDurationMinutes * 140 / 100  // 140% of target
         
         var accepted: [PlaceResult] = []
         var rejected: [(name: String, estimated: Int, reason: String)] = []

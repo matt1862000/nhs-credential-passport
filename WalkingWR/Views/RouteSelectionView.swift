@@ -1322,16 +1322,13 @@ struct LocalRoutePickerSheet: View {
                                     .buttonStyle(PrimaryButtonStyle(color: locationReady && !isGenerating ? .tealAccent : .gray))
                                     .disabled(!locationReady || isGenerating)
                                     
-                                    // Debug test button with location picker (long press for menu)
+                                    // Debug test button with location picker
                                     Menu {
                                         Button("📍 Current Location") {
                                             runRouteGenerationTest(at: nil)
                                         }
-                                        Button("🏙️ Sheffield S5 7AU (Urban)") {
+                                        Button("🏙️ Sheffield S5 7AU") {
                                             runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4577))
-                                        }
-                                        Button("🏡 Wakefield WF4 (Suburban)") {
-                                            runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.7029, longitude: -1.5496))
                                         }
                                     } label: {
                                         if isRunningRouteTest {
@@ -2120,14 +2117,6 @@ struct LocalRoutePickerSheet: View {
     @State private var isRunningRouteTest = false
     @State private var routeTestResults: String = ""
     @State private var showRouteTestResults = false
-    @State private var showTestLocationPicker = false
-    
-    // Test locations for comparison
-    private let testLocations: [(name: String, coordinate: CLLocationCoordinate2D)] = [
-        ("Current Location", CLLocationCoordinate2D(latitude: 0, longitude: 0)),  // Placeholder, will use actual
-        ("Sheffield S5 7AU (Urban)", CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4577)),
-        ("Wakefield WF4 (Suburban)", CLLocationCoordinate2D(latitude: 53.7029, longitude: -1.5496))
-    ]
     
     /// Test route generation for all durations (5-60min) and report results
     func runRouteGenerationTest(at testLocation: CLLocationCoordinate2D? = nil) {
@@ -2137,10 +2126,12 @@ struct LocalRoutePickerSheet: View {
         
         if let provided = testLocation {
             testCoordinate = provided
-            locationName = testLocations.first(where: { 
-                abs($0.coordinate.latitude - provided.latitude) < 0.001 && 
-                abs($0.coordinate.longitude - provided.longitude) < 0.001 
-            })?.name ?? "Custom"
+            // Check if it's Sheffield S5 7AU
+            if abs(provided.latitude - 53.4115) < 0.01 && abs(provided.longitude - (-1.4577)) < 0.01 {
+                locationName = "Sheffield S5 7AU"
+            } else {
+                locationName = "Test Location"
+            }
         } else if let userLocation = locationService.currentLocation {
             testCoordinate = userLocation.coordinate
             locationName = "Current Location"
@@ -2161,13 +2152,23 @@ struct LocalRoutePickerSheet: View {
             var seenRouteKeys = Set<String>()  // Track unique routes globally
             var totalRoutesGenerated = 0
             
-            // Get POIs for test location (may need to fetch fresh for non-current locations)
+            // Get POIs - check cache first, then prefetched, then fetch fresh
             var pois: [PlaceResult]? = nil
-            if testLocation != nil {
-                // Fetch fresh POIs for test location
+            
+            // 1. Check POI cache for this location (FREE - no API call)
+            if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: testCoordinate), !cachedPOIs.isEmpty {
+                pois = cachedPOIs
+                print("🧪 Using \(cachedPOIs.count) CACHED POIs (no API call)")
+            }
+            // 2. Use prefetched POIs if available and we're at current location
+            else if testLocation == nil && !prefetchedPOIs.isEmpty {
+                pois = prefetchedPOIs
+                print("🧪 Using \(prefetchedPOIs.count) prefetched POIs")
+            }
+            // 3. Fetch fresh POIs only if cache is empty (will cache for future)
+            else {
+                print("🧪 ⚠️ Cache empty - fetching fresh POIs (1 API call)")
                 pois = try? await mapsService.findNearbyPlaces(location: testCoordinate, radiusMeters: 1500)
-            } else {
-                pois = prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
             }
             
             await MainActor.run {
