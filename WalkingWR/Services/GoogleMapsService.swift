@@ -2334,18 +2334,33 @@ class GoogleMapsService: ObservableObject {
         // Defaults to 80m/min, adjusts to 65-90m/min based on actual pace
         let walkingSpeedMeterPerMin = adaptiveWalkingSpeed
         
-        // v1.6.9b: DUAL-MULTIPLIER APPROACH (safer than global reduction)
+        // v1.6.10: DUAL-MULTIPLIER + DENSITY-AWARE (for 5-min routes)
         // - estimationMultiplier: Aggressive - used for POI selection, aims shorter
         // - validationMultiplier: Original - used for accepting routes, realistic
-        // This fixes overshoot without causing undershoot in well-gridded areas
+        // For ≤5 min routes: use POI density as proxy for street grid density
         let estimationMultiplier: Double
         let validationMultiplier: Double
         
-        if targetDurationMinutes <= 10 {
-            estimationMultiplier = 0.65  // Aim very short (were 180%)
-            validationMultiplier = 0.85  // Accept realistic routes
+        // Determine POI density for adaptive 5-min estimation
+        let poiDensity = prefetchedPOIs?.count ?? 100  // Default to medium if unknown
+        
+        if targetDurationMinutes <= 5 {
+            // DENSITY-AWARE 5-MIN ESTIMATION (v1.6.10)
+            // Explains the 60%-180% split between locations
+            if poiDensity > 300 {
+                estimationMultiplier = 0.55   // Dense street grids (Ecclesall) - aim much shorter
+            } else if poiDensity < 80 {
+                estimationMultiplier = 0.75   // Sparse / park-heavy (Chapeltown) - less aggressive
+            } else {
+                estimationMultiplier = 0.65   // Default
+            }
+            validationMultiplier = 0.85
+            print("🎯 5-min density-aware: \(poiDensity) POIs → estimation=\(estimationMultiplier)")
+        } else if targetDurationMinutes <= 10 {
+            estimationMultiplier = 0.65
+            validationMultiplier = 0.85
         } else if targetDurationMinutes <= 15 {
-            estimationMultiplier = 0.70  // Aim shorter
+            estimationMultiplier = 0.70
             validationMultiplier = 0.85
         } else if targetDurationMinutes <= 20 {
             estimationMultiplier = 0.75
@@ -2456,12 +2471,21 @@ class GoogleMapsService: ObservableObject {
         let preFilteredPlaces = preFilterPOIsByDuration(places, origin: location, targetDurationMinutes: targetDurationMinutes)
         places = preFilteredPlaces
         
-        // 📊 POI CAP: Limit to 150 best POIs (v1.6.9: reduced from 300)
-        // Batch test showed 644 POIs → 40% valid vs 127 POIs → 63% valid
-        // Fewer, better-scored POIs produce more accurate routes
-        let maxPOIs = 150
+        // 📊 DYNAMIC POI CAP (v1.6.10): Density-adaptive cap
+        // High-density areas (Ecclesall 648 POIs) have too much candidate-selection noise
+        // Lower cap for dense areas, preserve suburban/rural performance
+        let rawPOICount = places.count
+        let maxPOIs: Int
+        if rawPOICount > 500 {
+            maxPOIs = 75    // Ultra-dense (e.g., Ecclesall) - aggressive reduction
+        } else if rawPOICount > 200 {
+            maxPOIs = 100   // Dense (e.g., Firth Park)
+        } else {
+            maxPOIs = 150   // Normal / suburban / rural
+        }
+        
         if places.count > maxPOIs {
-            print("📊 POI CAP: \(places.count) POIs exceeds limit, keeping best \(maxPOIs)")
+            print("📊 POI CAP: \(rawPOICount) raw → \(maxPOIs) (density tier: \(rawPOICount > 500 ? "ultra-dense" : rawPOICount > 200 ? "dense" : "normal"))")
             
             // Score POIs by: walkability + distance fit to target
             let targetDistance = Double(targetDurationMinutes) * 80 / 2  // Ideal one-way distance
