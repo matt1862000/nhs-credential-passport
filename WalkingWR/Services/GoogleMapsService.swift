@@ -266,13 +266,36 @@ class GoogleMapsService: ObservableObject {
         targetDurationMinutes: Int
     ) -> [PlaceResult] {
         // DURATION-AWARE PRE-FILTER: 
-        // v1.6.9: TIGHTER pre-filter based on batch test results showing 125% avg accuracy
-        // - Short routes were 180% too long → much tighter filter
-        // - Long routes also consistently over → tighter across the board
+        // v1.6.12: HARD CUTOFF for 5-minute routes (batch test showed 180% consistently)
+        // The root cause is selection-dominated: we pick wrong POIs, not route wrong
+        // For 5min routes: max 7min estimated round-trip (allows ~40% slack)
+        
+        // v1.6.12 FIX #3: HARD 7-MINUTE CUTOFF FOR 5-MIN ROUTES
+        if targetDurationMinutes == 5 {
+            var accepted: [PlaceResult] = []
+            var rejected = 0
+            
+            for poi in pois {
+                let estimated = estimateRoundTripMinutes(from: origin, to: poi)
+                if estimated <= 7 {
+                    accepted.append(poi)
+                } else {
+                    rejected += 1
+                }
+            }
+            
+            print("🎯 ⏱️ 5-MIN HARD CUTOFF: Kept \(accepted.count)/\(pois.count) POIs (max 7min round-trip)")
+            if rejected > 0 {
+                print("   ❌ Rejected \(rejected) POIs with >7min estimated round-trip")
+            }
+            return accepted
+        }
+        
+        // Standard percentage-based filter for other durations
         let (minPercent, maxPercent): (Int, Int)
         switch targetDurationMinutes {
-        case 0...10:
-            minPercent = 40; maxPercent = 95   // Very tight for 5-10min (were running 180%)
+        case 6...10:
+            minPercent = 40; maxPercent = 95   // Very tight for 6-10min
         case 11...15:
             minPercent = 45; maxPercent = 100  // Tight for 15min
         case 16...25:
@@ -2476,17 +2499,18 @@ class GoogleMapsService: ObservableObject {
         let preFilteredPlaces = preFilterPOIsByDuration(places, origin: location, targetDurationMinutes: targetDurationMinutes)
         places = preFilteredPlaces
         
-        // 📊 DYNAMIC POI CAP (v1.6.10): Density-adaptive cap
-        // High-density areas (Ecclesall 648 POIs) have too much candidate-selection noise
-        // Lower cap for dense areas, preserve suburban/rural performance
+        // 📊 DYNAMIC POI CAP (v1.6.12): More aggressive density-adaptive cap
+        // Batch test showed: more POIs ≠ better accuracy
+        // 127 POIs (Chapeltown) → 72% valid, 296 POIs (Firth Park) → 42% valid
+        // Root cause: too many candidates = selection noise dominates
         let rawPOICount = places.count
         let maxPOIs: Int
-        if rawPOICount > 500 {
-            maxPOIs = 75    // Ultra-dense (e.g., Ecclesall) - aggressive reduction
+        if rawPOICount > 300 {
+            maxPOIs = 50    // Very dense - aggressive reduction
         } else if rawPOICount > 200 {
-            maxPOIs = 100   // Dense (e.g., Firth Park)
+            maxPOIs = 75    // Dense (e.g., Firth Park, Ecclesall)
         } else {
-            maxPOIs = 150   // Normal / suburban / rural
+            maxPOIs = 150   // Normal / suburban / rural (working well)
         }
         
         if places.count > maxPOIs {
@@ -2630,6 +2654,12 @@ class GoogleMapsService: ObservableObject {
             
             print("🎯 Ideal endpoint: \(Int(idealEndpointDistance))m (range: \(Int(minEndpointDistance))-\(Int(maxEndpointDistance))m) [speed: \(walkingSpeedMeterPerMin)m/min]")
             
+            // v1.6.12 FIX #1: CLOSEST-FIRST FOR SHORT ROUTES (5-10 min)
+            // Root cause: short routes are SELECTION-dominated, not routing-dominated
+            // For 5-10min, the "good" POIs are almost always among the nearest 3-5
+            // Randomized/scored order is actively harmful for short routes
+            let useClosestFirst = targetDurationMinutes <= 10
+            
             // Find POIs at the right distance, with CORRIDOR PENALTY scoring
             // Score = 0.7 * |distance - ideal| + 0.3 * (2×distance / targetTotal) * 100
             // This penalizes POIs that would create overly long out-and-backs
@@ -2646,9 +2676,22 @@ class GoogleMapsService: ObservableObject {
                     return (poi, dist, score)
                 }
                 .filter { $0.distance >= minEndpointDistance && $0.distance <= maxEndpointDistance }
-                .sorted { $0.score < $1.score }  // Best matches first (lower score = better)
+                .sorted { 
+                    if useClosestFirst {
+                        // v1.6.12: For short routes, sort by DISTANCE (closest first)
+                        // This ensures we try the nearest POIs first, which almost always work
+                        return $0.distance < $1.distance
+                    } else {
+                        // For longer routes, use score-based sorting
+                        return $0.score < $1.score
+                    }
+                }
             
-            print("🎯 Found \(endpointCandidates.count) endpoint candidates")
+            if useClosestFirst {
+                print("🎯 Found \(endpointCandidates.count) endpoint candidates (CLOSEST-FIRST for \(targetDurationMinutes)min)")
+            } else {
+                print("🎯 Found \(endpointCandidates.count) endpoint candidates (score-sorted)")
+            }
             
             // PRE-CHECK POI DENSITY: If fewer than 3 candidates, skip endpoint-first entirely
             // Go straight to loop approach which handles sparse areas better
