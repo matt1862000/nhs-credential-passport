@@ -853,75 +853,74 @@ class GoogleMapsService: ObservableObject {
         var allResults: [PlaceResult] = []
         var seenNames = Set<String>()
         
-        // Apple Maps has 50 requests/minute limit - maximize usage with 45 queries
+        // COMPREHENSIVE UK POI SEARCH - 80+ categories for maximum coverage
+        // Apple Maps handles rate limiting internally, and we cache results
         let searchQueries = [
-            // PRIORITY: Community venues (what we're looking for!)
-            "village hall",           // Village halls
-            "community centre",       // Community centers
-            "town hall",              // Town halls, civic buildings
-            "church",                 // Churches, chapels
-            "memorial hall",          // Memorial halls, war memorials
-            "sports club",            // Sports clubs
-            "social club",            // Social clubs, working men's clubs
+            // PRIORITY: Community venues
+            "village hall", "community centre", "town hall", "church", "chapel",
+            "memorial hall", "sports club", "social club", "working mens club",
+            "scout hall", "youth club", "mosque", "temple", "gurdwara",
             
-            // Food & Drink
-            "pub",                    // Pubs, inns
-            "restaurant",             // Restaurants
-            "cafe",                   // Coffee shops, cafes
-            "takeaway",               // Fish & chips, kebabs
-            "bakery",                 // Bakeries
-            "bar",                    // Bars
-            "kitchen",                // Kitchens, cafes with "kitchen" in name
-            "catering",               // Catering services
-            "deli",                   // Delis
-            "sandwich",               // Sandwich shops
-            "coffee",                 // Coffee shops
-            "food",                   // General food places
+            // Food & Drink - General
+            "pub", "restaurant", "cafe", "coffee shop", "tea room",
+            "bar", "inn", "tavern", "bistro", "brasserie",
             
-            // Retail
-            "supermarket",            // Supermarkets
-            "convenience store",      // Corner shops
-            "shop",                   // General retail
-            "pharmacy",               // Chemists
-            "newsagent",              // Newsagents
-            "butcher",                // Butchers
-            "florist",                // Florists
+            // Food & Drink - Takeaways
+            "takeaway", "fish and chips", "chippy", "kebab", "pizza",
+            "indian restaurant", "chinese restaurant", "thai restaurant",
+            "italian restaurant", "mexican restaurant",
+            
+            // Food & Drink - Quick Service
+            "bakery", "sandwich shop", "deli", "catering", "kitchen",
+            "greggs", "costa", "starbucks", "mcdonalds", "subway",
+            "ice cream", "dessert", "patisserie",
+            
+            // Retail - Groceries
+            "supermarket", "convenience store", "corner shop", "co-op", "spar",
+            "tesco", "sainsburys", "aldi", "lidl", "morrisons", "asda",
+            "off licence", "farm shop", "greengrocer", "butcher",
+            
+            // Retail - Other
+            "shop", "pharmacy", "chemist", "newsagent", "florist",
+            "charity shop", "bookshop", "gift shop", "pet shop",
+            "hardware store", "garden centre", "pound shop",
             
             // Services
-            "post office",            // Post offices
-            "bank",                   // Banks
-            "library",                // Libraries
-            "hairdresser",            // Hair salons, barbers
+            "post office", "bank", "library", "hairdresser", "barber",
+            "beauty salon", "nail salon", "dry cleaner", "launderette",
+            "optician", "estate agent", "solicitor",
             
             // Health
-            "doctor",                 // GP surgeries
-            "dentist",                // Dentists
-            "veterinary",             // Vets
+            "doctor", "gp surgery", "dentist", "veterinary", "vet",
+            "clinic", "hospital", "physiotherapy", "osteopath",
             
             // Education
-            "school",                 // Schools
-            "nursery",                // Nurseries, preschools
+            "school", "primary school", "nursery", "preschool", "college",
+            "university", "academy", "playcare", "childcare",
             
-            // Leisure
-            "park",                   // Parks
-            "gym",                    // Gyms
-            "swimming pool",          // Swimming pools
-            "leisure centre",         // Leisure centres
-            "playground",             // Playgrounds
+            // Leisure - Outdoor
+            "park", "playground", "recreation ground", "playing field",
+            "nature reserve", "woodland", "garden", "allotment",
+            "canal", "river walk", "lake", "pond",
             
-            // Culture
-            "museum",                 // Museums
-            "theatre",                // Theatres
-            "cinema",                 // Cinemas
+            // Leisure - Sports
+            "gym", "fitness", "swimming pool", "leisure centre", "sports centre",
+            "golf", "tennis", "football", "cricket", "bowling",
             
-            // Transport & Auto
-            "train station",          // Railway stations
-            "petrol station",         // Petrol stations
-            "car park",               // Car parks
+            // Culture & Entertainment
+            "museum", "gallery", "theatre", "cinema", "concert",
+            "nightclub", "arcade", "bingo",
+            
+            // Transport
+            "train station", "bus station", "bus stop", "taxi rank",
+            "petrol station", "car park", "garage", "car wash",
             
             // Accommodation
-            "hotel",                  // Hotels
-            "bed and breakfast"       // B&Bs, guest houses
+            "hotel", "bed and breakfast", "guest house", "hostel",
+            
+            // Landmarks & Points of Interest
+            "monument", "statue", "war memorial", "historic site",
+            "castle", "manor", "stately home", "landmark"
         ]
         
         print("🍎 APPLE MAPS - Starting search for \(searchQueries.count) categories (radius: \(radiusMeters)m)")
