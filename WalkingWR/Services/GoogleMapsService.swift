@@ -2271,6 +2271,99 @@ class GoogleMapsService: ObservableObject {
         return allDirections
     }
     
+    // MARK: - v1.6.38: Refresh Route with MapKit Directions
+    /// Refreshes a WalkingRoute with fresh Apple MapKit directions
+    /// Called when "Let's Go" is pressed to ensure best quality navigation
+    /// - Parameters:
+    ///   - route: The route to refresh
+    ///   - userLocation: Current user location (start/end point)
+    /// - Returns: Updated route with fresh MapKit directions and polyline
+    func refreshRouteWithMapKit(
+        route: WalkingRoute,
+        userLocation: CLLocationCoordinate2D
+    ) async -> WalkingRoute {
+        print("🍎 REFRESH: Getting fresh MapKit directions for navigation...")
+        
+        // Extract waypoint coordinates from QR markers
+        let waypoints = route.qrMarkers.map { $0.coordinate }
+        
+        guard !waypoints.isEmpty else {
+            print("🍎 REFRESH: No waypoints, keeping original route")
+            return route
+        }
+        
+        // Get fresh MapKit directions
+        let freshDirections = await getMapKitDirectionsForRoute(
+            origin: userLocation,
+            waypoints: waypoints,
+            destination: userLocation  // Round trip
+        )
+        
+        // Get fresh polyline from MapKit
+        var freshPolylinePoints: [CLLocationCoordinate2D] = []
+        var totalDistance = 0
+        var totalDuration = 0
+        
+        let allPoints = [userLocation] + waypoints + [userLocation]
+        
+        for i in 0..<(allPoints.count - 1) {
+            let legOrigin = allPoints[i]
+            let legDestination = allPoints[i + 1]
+            
+            await checkMapKitRateLimit()
+            
+            let request = MKDirections.Request()
+            request.source = MKMapItem(placemark: MKPlacemark(coordinate: legOrigin))
+            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: legDestination))
+            request.transportType = .walking
+            
+            let directions = MKDirections(request: request)
+            recordMapKitRequest()
+            
+            do {
+                let response = try await directions.calculate()
+                if let mkRoute = response.routes.first {
+                    // Extract polyline points
+                    let pointCount = mkRoute.polyline.pointCount
+                    var points = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
+                    mkRoute.polyline.getCoordinates(&points, range: NSRange(location: 0, length: pointCount))
+                    freshPolylinePoints.append(contentsOf: points)
+                    
+                    totalDistance += Int(mkRoute.distance)
+                    totalDuration += Int(mkRoute.expectedTravelTime)
+                }
+            } catch {
+                print("🍎 REFRESH: Leg \(i) failed: \(error.localizedDescription)")
+            }
+        }
+        
+        // Encode the fresh polyline
+        let freshEncodedPolyline = encodePolyline(freshPolylinePoints)
+        let durationMinutes = max(1, totalDuration / 60)
+        
+        print("🍎 REFRESH: Complete - \(freshDirections.count) directions, \(totalDistance)m, \(durationMinutes)min")
+        
+        // Create updated route with fresh data
+        let refreshedRoute = WalkingRoute(
+            name: route.name,
+            description: route.description,
+            durationMinutes: durationMinutes,
+            distanceMeters: totalDistance > 0 ? totalDistance : route.distanceMeters,
+            difficulty: route.difficulty,
+            isIndoor: route.isIndoor,
+            isAccessible: route.isAccessible,
+            landmarks: route.landmarks,
+            icon: route.icon,
+            color: route.color,
+            qrMarkers: route.qrMarkers,
+            routeType: route.routeType,
+            encodedPolyline: freshEncodedPolyline.isEmpty ? route.encodedPolyline : freshEncodedPolyline,
+            walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
+        )
+        
+        return refreshedRoute
+    }
+    
     /// Extract maneuver type from instruction text
     private func extractManeuverType(from instruction: String) -> String {
         let lowercased = instruction.lowercased()

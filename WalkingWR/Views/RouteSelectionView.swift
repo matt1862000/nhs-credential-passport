@@ -1869,10 +1869,30 @@ struct LocalRoutePickerSheet: View {
     }
     
     private func handleStartWalk(route: WalkingRoute) {
-        viewModel.selectRoute(route)
-        viewModel.startWalk()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            isPresented = false
+        // v1.6.38: Always refresh directions via Apple MapKit for best navigation quality
+        Task {
+            if let userLocation = locationService.currentLocation?.coordinate {
+                let refreshedRoute = await mapsService.refreshRouteWithMapKit(
+                    route: route,
+                    userLocation: userLocation
+                )
+                await MainActor.run {
+                    viewModel.selectRoute(refreshedRoute)
+                    viewModel.startWalk()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        isPresented = false
+                    }
+                }
+            } else {
+                // Fallback: use original route if no location
+                await MainActor.run {
+                    viewModel.selectRoute(route)
+                    viewModel.startWalk()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        isPresented = false
+                    }
+                }
+            }
         }
     }
     
