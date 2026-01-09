@@ -1163,7 +1163,7 @@ struct LocalRoutePickerSheet: View {
                                                 .foregroundColor(.secondary)
                                         }
                                         
-                                        Slider(value: $customTimeValue, in: 10...60, step: 1)
+                                        Slider(value: $customTimeValue, in: 10...60, step: 5)
                                             .tint(sliderColor)
                                             .onChange(of: customTimeValue) { _, newValue in
                                                 selectedDuration = Int(newValue)
