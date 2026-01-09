@@ -263,7 +263,7 @@ struct WalkingInfoCard: View {
             DelayBanner(
                 delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
                 walkDurationMinutes: viewModel.selectedRoute?.durationMinutes ?? 0,
-                hasClinicianSelected: viewModel.selectedClinician != nil
+                hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable
             )
             .padding(.top, 8)
         }

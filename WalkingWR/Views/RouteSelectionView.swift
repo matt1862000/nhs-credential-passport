@@ -4384,7 +4384,7 @@ struct ActiveWalkView: View {
                         
                         // Static clinic delay OR walk duration (if no clinician selected)
                         VStack(alignment: .trailing, spacing: 1) {
-                            if viewModel.selectedClinician != nil {
+                            if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
                                 Text("\(viewModel.waitTimeInfo.estimatedMinutes)")
                                     .font(.title2)
                                     .fontWeight(.bold)
@@ -4428,7 +4428,7 @@ struct ActiveWalkView: View {
                         showAllDirections: $showAllDirections,
                         delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
                         walkDurationMinutes: route.durationMinutes,
-                        hasClinicianSelected: viewModel.selectedClinician != nil,
+                        hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable,
                         distanceWalked: Int(viewModel.locationService.distanceWalked),
                         halfwayAlert: viewModel.walkSession.halfwayAlertSent
                     )
