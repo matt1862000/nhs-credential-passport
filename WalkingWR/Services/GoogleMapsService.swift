@@ -1676,6 +1676,25 @@ class GoogleMapsService: ObservableObject {
         return status.currentCount >= 40
     }
     
+    /// Check if background pre-generation should pause (to reserve quota for user requests)
+    /// Returns true if rate limit is too high for background work
+    func shouldPauseBackgroundGeneration() async -> Bool {
+        let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
+        // Pause background work at 60% of limit (30+ requests)
+        // This reserves 20 requests for user-initiated actions
+        let shouldPause = status.currentCount >= 30
+        if shouldPause {
+            print("⏸️ Background pre-generation paused (MapKit: \(status.currentCount)/50) - reserving quota for user")
+        }
+        return shouldPause
+    }
+    
+    /// Get current MapKit rate limit status (for UI/debugging)
+    func getMapKitRateLimitStatus() async -> (current: Int, limit: Int, waitTime: TimeInterval?) {
+        let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
+        return (status.currentCount, 50, status.waitTime)
+    }
+    
     // MARK: - OSRM Dynamic Calibration
     // OSRM often overestimates distances/durations compared to MapKit
     // We dynamically calibrate by comparing results from both services
