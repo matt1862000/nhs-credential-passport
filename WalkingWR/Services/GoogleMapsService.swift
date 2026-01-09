@@ -940,6 +940,24 @@ class GoogleMapsService: ObservableObject {
         }
         print("🗺️ Got \(osmPOIs.count) from OSM")
         
+        // 🚫 FILTER: Remove POIs that are unrealistically far away (same as main function)
+        let maxRealisticDistance = Double(radiusMeters) * 2.0
+        let beforeFilterCount = allResults.count
+        
+        allResults = allResults.filter { poi in
+            let distance = distanceBetween(location, poi.coordinate)
+            if distance > maxRealisticDistance {
+                print("🚫 FILTERED: '\(poi.name)' at \(Int(distance))m (max: \(Int(maxRealisticDistance))m)")
+                return false
+            }
+            return true
+        }
+        
+        let filteredCount = beforeFilterCount - allResults.count
+        if filteredCount > 0 {
+            print("🚫 Distance filter removed \(filteredCount) unrealistic POIs (>\(Int(maxRealisticDistance))m)")
+        }
+        
         // NOTE: We do NOT cache results to avoid exceeding the free tier limit
         print("🧪 [TEST MODE] Total POIs: \(allResults.count) (not cached)")
         return allResults

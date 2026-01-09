@@ -2696,7 +2696,7 @@ struct LocalRoutePickerSheet: View {
     
     /// Run test for a single location and return summary stats
     func runSingleLocationTest(coordinate: CLLocationCoordinate2D, name: String) async -> (avgAccuracy: Double, validRate: Double, avgSpeed: Double, poiCount: Int) {
-        let durations = stride(from: 5, through: 60, by: 5).map { $0 }
+        let durations = stride(from: 10, through: 60, by: 5).map { $0 }  // v1.6.38: Start at 10min (no 5min)
         let maxRoutesPerDuration = 5
         var allResults: [(accuracy: Double, time: Double, isValid: Bool)] = []
         var poiCount = 0
@@ -2840,7 +2840,7 @@ struct LocalRoutePickerSheet: View {
         routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         
         Task {
-            let durations = stride(from: 5, through: 60, by: 5).map { $0 }
+            let durations = stride(from: 10, through: 60, by: 5).map { $0 }  // v1.6.38: Start at 10min (no 5min)
             let maxRoutesPerDuration = 5  // Try to generate up to 5 routes per duration
             var allResults: [(duration: Int, routeNum: Int, actual: Int, time: Double, accuracy: Double, status: String, waypoints: Int, distance: Int, routeKey: String, waypointNames: [String])] = []
             var seenRouteKeys = Set<String>()  // Track unique routes globally
