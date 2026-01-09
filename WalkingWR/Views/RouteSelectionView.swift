@@ -914,7 +914,7 @@ struct LocalRoutePickerSheet: View {
     @State private var generatedRouteData: GeneratedRoute?
     @State private var showMapPreview = false
     @State private var errorMessage: String?
-    @State private var customTimeValue: Double = 5
+    @State private var customTimeValue: Double = 10  // Minimum 10 min - 5 min routes are unreliable
     
     
     // Store last valid route for recycling when shuffle exhausts options
@@ -1163,14 +1163,14 @@ struct LocalRoutePickerSheet: View {
                                                 .foregroundColor(.secondary)
                                         }
                                         
-                                        Slider(value: $customTimeValue, in: 1...60, step: 1)
+                                        Slider(value: $customTimeValue, in: 10...60, step: 1)
                                             .tint(sliderColor)
                                             .onChange(of: customTimeValue) { _, newValue in
                                                 selectedDuration = Int(newValue)
                                             }
                                         
                                         HStack {
-                                            Text("1 min")
+                                            Text("10 min")
                                                 .font(.caption2)
                                                 .foregroundColor(.secondary)
                                             Spacer()

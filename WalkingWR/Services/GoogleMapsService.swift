@@ -2919,22 +2919,26 @@ class GoogleMapsService: ObservableObject {
         let minPercent: Double
         let maxPercent: Double
         
+        // v1.6.36: HARD CAP at 130% - routes >130% are never shown to user
+        // This improves trust: users get routes within ±30% of target
+        let hardMaxPercent = 1.30
+        
         if isQuickMode {
             // QUICK mode: 70-130% to catch more routes on first try
             // Better to show a slightly off route than keep searching
             if isEdgeCase {
-                minPercent = 0.65  // Edge cases: more flexible (65-140%)
-                maxPercent = 1.40
+                minPercent = 0.65  // Edge cases: more flexible (65-130%)
+                maxPercent = hardMaxPercent  // Was 1.40, now capped
             } else {
                 minPercent = 0.70  // Standard: 70-130%
-                maxPercent = 1.30
+                maxPercent = hardMaxPercent
             }
         } else if expandedSearch {
             minPercent = 0.40  // Very flexible during retry
-            maxPercent = 1.60  // Allow longer routes
+            maxPercent = hardMaxPercent  // Was 1.60, now capped at 130%
         } else {
             minPercent = 0.50  // Systematic retry
-            maxPercent = 1.40
+            maxPercent = hardMaxPercent  // Was 1.40, now capped
         }
         
         let minAcceptableMinutes = max(1, Int(Double(targetDurationMinutes) * minPercent))
@@ -3761,9 +3765,15 @@ class GoogleMapsService: ObservableObject {
             if quickMode && !validRoutes.isEmpty {
                 let bestRouteMinutes = validRoutes.first!.durationSeconds / 60
                 let minimumAcceptable = Int(Double(targetDurationMinutes) * 0.75)  // 75% minimum
-                if bestRouteMinutes >= minimumAcceptable {
-                    print("🗺️ ⚡ Quick mode: returning valid route (\(bestRouteMinutes)min >= \(minimumAcceptable)min threshold)")
+                let maximumAcceptable = Int(Double(targetDurationMinutes) * 1.20)  // 120% maximum for early return
+                
+                if bestRouteMinutes >= minimumAcceptable && bestRouteMinutes <= maximumAcceptable {
+                    print("🗺️ ⚡ Quick mode: returning valid route (\(bestRouteMinutes)min within 75-120%)")
                     break
+                } else if bestRouteMinutes > maximumAcceptable {
+                    // v1.6.36: Route too long (>120%) - stop adding waypoints, try fewer
+                    print("🗺️ ⚡ Quick mode: route too long (\(bestRouteMinutes)min > \(maximumAcceptable)min), trying fewer waypoints...")
+                    // Don't break - continue to try fewer waypoints in next iteration
                 } else if waypointCount <= standardMaxWaypoints {
                     // Route too short, but we have fallback waypoint counts to try
                     print("🗺️ ⚡ Quick mode: route too short (\(bestRouteMinutes)min < \(minimumAcceptable)min), trying more waypoints...")
@@ -3914,12 +3924,15 @@ class GoogleMapsService: ObservableObject {
                     if routeMins >= minAcceptableMinutes && routeMins <= maxAcceptableMinutes {
                         print("🗺️ ✓ Found valid route with \(waypointCount) POIs")
                     }
-                        // If route is too long, break and try fewer waypoints
-                        if routeMins > maxAcceptableMinutes + 5 {
-                            print("🗺️ Route too long (\(routeMins)min vs max \(maxAcceptableMinutes)min), breaking to try fewer waypoints...")
-                            break  // Exit this waypoint count loop, try fewer waypoints
-                        }
+                    
+                    // v1.6.36: EARLY BREAK if route is >120% of target
+                    // Don't waste attempts on more combinations with same waypoint count
+                    let earlyBreakThreshold = Int(Double(targetDurationMinutes) * 1.20)
+                    if routeMins > earlyBreakThreshold {
+                        print("🗺️ ⚡ Route too long (\(routeMins)min > 120% threshold \(earlyBreakThreshold)min), trying fewer waypoints...")
+                        break  // Exit this waypoint count loop, try fewer waypoints
                     }
+                }
                 } catch GoogleMapsError.rateLimited(let waitTime) {
                     // Rate limited - wait for cooldown then return best route so far
                     print("🚫 Rate limited! Waiting \(waitTime) seconds before continuing...")
