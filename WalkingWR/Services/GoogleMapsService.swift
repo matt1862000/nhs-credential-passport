@@ -638,8 +638,23 @@ class GoogleMapsService: ObservableObject {
         
         // 🎯 PRIORITY 1: Check cached POI data
         if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: location) {
-            print("💰 CACHE HIT! Using \(cachedPOIs.count) cached POIs")
-            allResults = cachedPOIs
+            print("💰 CACHE HIT! Found \(cachedPOIs.count) cached POIs")
+            
+            // Filter out any previously cached POIs that are too far away
+            // This cleans up old caches that might have unrealistic distant POIs
+            let maxRealisticDistance = Double(radiusMeters) * 2.0
+            let filteredPOIs = cachedPOIs.filter { poi in
+                let distance = distanceBetween(location, poi.coordinate)
+                return distance <= maxRealisticDistance
+            }
+            
+            let filteredCount = cachedPOIs.count - filteredPOIs.count
+            if filteredCount > 0 {
+                print("🚫 Filtered \(filteredCount) distant POIs from cache (>\(Int(maxRealisticDistance))m)")
+            }
+            
+            print("💰 Using \(filteredPOIs.count) valid cached POIs")
+            allResults = filteredPOIs
             for poi in allResults {
                 seenPlaceIds.insert(poi.placeId)
             }
@@ -774,6 +789,26 @@ class GoogleMapsService: ObservableObject {
             } else {
                 print("✅ GOOGLE SKIPPED - OSM+Apple sufficient (\(allResults.count) POIs, good coverage)")
             }
+        }
+        
+        // 🚫 FILTER: Remove POIs that are unrealistically far away
+        // APIs (especially Google) can return "popular" places way outside the search radius
+        // Max realistic distance = radiusMeters * 2 (allows for winding walking paths)
+        let maxRealisticDistance = Double(radiusMeters) * 2.0
+        let beforeFilterCount = allResults.count
+        
+        allResults = allResults.filter { poi in
+            let distance = distanceBetween(location, poi.coordinate)
+            if distance > maxRealisticDistance {
+                print("🚫 FILTERED: '\(poi.name)' at \(Int(distance))m (max: \(Int(maxRealisticDistance))m)")
+                return false
+            }
+            return true
+        }
+        
+        let filteredCount = beforeFilterCount - allResults.count
+        if filteredCount > 0 {
+            print("🚫 Distance filter removed \(filteredCount) unrealistic POIs (>\(Int(maxRealisticDistance))m)")
         }
         
         // 💾 Cache combined results for next time
