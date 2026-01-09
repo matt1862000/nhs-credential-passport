@@ -959,171 +959,13 @@ struct LocalRoutePickerSheet: View {
                 
                 // Show map preview with optional shuffle overlay
                 if let route = generatedRoute, showMapPreview {
-                    // Stage 2: Show map preview - full screen with solid background
-                    // v1.6.36: Keep map visible during shuffle with overlay
-                    ZStack {
-                        LocalRouteMapPreview(
-                            route: route,
-                            userLocation: locationService.currentLocation?.coordinate,
-                            generatedData: generatedRouteData,
-                            isRecycled: isRecycledRoute,
-                            targetDurationMinutes: selectedDuration,
-                            currentRouteIndex: currentRouteIndex + 1,  // 1-based for display
-                            totalRoutes: allRoutes.count,
-                            isLoadingMoreRoutes: isPreGeneratingRoutes,
-                            showPremiumUpsell: showPremiumUpsell,
-                            hasLimitedPOIs: mapsService.hasLimitedPOIs,
-                            varietyExhausted: varietyExhausted,
-                            onStartWalk: {
-                                viewModel.selectRoute(route)
-                                viewModel.startWalk()
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                    isPresented = false
-                                }
-                            },
-                            onShuffle: {
-                                shuffleToNextRoute()
-                            },
-                            onBack: {
-                                showMapPreview = false
-                                // Reset generation state
-                                allRoutes = []
-                                currentRouteIndex = 0
-                                preGenerationComplete = false
-                                isPreGeneratingRoutes = false
-                                viewedRouteIndices = []
-                                showPremiumUpsell = false
-                                routeSignatures = []
-                                varietyExhausted = false
-                            },
-                            onDelete: {
-                                // Delete the current route from the array
-                                guard !allRoutes.isEmpty else { return }
-                                
-                                // Remove the current route
-                                allRoutes.remove(at: currentRouteIndex)
-                                
-                                if allRoutes.isEmpty {
-                                    // No routes left - go back to options
-                                    generatedRoute = nil
-                                    generatedRouteData = nil
-                                    lastValidRoute = nil
-                                    lastValidRouteData = nil
-                                    shownPlaceIdSets = []
-                                    allRoutes = []
-                                    currentRouteIndex = 0
-                                    preGenerationComplete = false
-                                    viewedRouteIndices = []
-                                    resetRouteSignatures()
-                                    showPremiumUpsell = false
-                                    showMapPreview = false
-                                    errorMessage = nil
-                                    print("🗑️ Deleted last route - returning to options")
-                                } else {
-                                    // Show next available route (or previous if at end)
-                                    if currentRouteIndex >= allRoutes.count {
-                                        currentRouteIndex = allRoutes.count - 1
-                                    }
-                                    let nextRoute = allRoutes[currentRouteIndex]
-                                    generatedRoute = nextRoute.route
-                                    generatedRouteData = nextRoute.data
-                                    print("🗑️ Deleted route - now showing \(currentRouteIndex + 1) of \(allRoutes.count)")
-                                }
-                            }
-                        )
-                        .background(Color(.systemBackground))
-                        .disabled(isShuffling)  // Disable interactions while shuffling
-                        
-                        // Shuffle loading overlay - semi-transparent on top of map
-                        if isShuffling {
-                            ZStack {
-                                // Blur/dim the background
-                                Color.black.opacity(0.6)
-                                    .ignoresSafeArea()
-                                
-                                // Loading card
-                                VStack(spacing: 16) {
-                                    ProgressView()
-                                        .scaleEffect(1.5)
-                                        .tint(.tealAccent)
-                                    
-                                    Text(mapsService.retryStatus ?? "Finding alternative route...")
-                                        .font(.headline)
-                                        .foregroundColor(.white)
-                                        .animation(.easeInOut, value: mapsService.retryStatus)
-                                    
-                                    Button("Cancel") {
-                                        // Cancel shuffle and restore previous route
-                                        isShuffling = false
-                                        if let previousRoute = routeBeforeShuffle {
-                                            generatedRoute = previousRoute
-                                            generatedRouteData = routeDataBeforeShuffle
-                                        }
-                                        routeBeforeShuffle = nil
-                                        routeDataBeforeShuffle = nil
-                                    }
-                                    .font(.subheadline)
-                                    .foregroundColor(.white.opacity(0.7))
-                                    .padding(.top, 8)
-                                }
-                                .padding(32)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 20)
-                                        .fill(Color(.systemBackground).opacity(0.95))
-                                        .shadow(radius: 20)
-                                )
-                            }
-                            .transition(.opacity)
-                        }
-                    }
+                    mapPreviewSection(route: route)
                 } else if isShuffling && generatedRoute == nil {
                     // First-time generation with no previous route to show
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                            .tint(.tealAccent)
-                        
-                        Text(mapsService.retryStatus ?? "Finding route...")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                            .animation(.easeInOut, value: mapsService.retryStatus)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(.systemBackground))
+                    firstTimeGenerationView()
                 } else if let error = errorMessage, generatedRoute == nil, showMapPreview {
                     // Shuffle failed - show error with retry
-                    VStack(spacing: 20) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 50))
-                            .foregroundColor(.softAmber)
-                        
-                        Text("Couldn't find a different route")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        
-                        Text(error)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                        
-                        HStack(spacing: 16) {
-                            Button("Try Again") {
-                                errorMessage = nil
-                                isShuffling = true
-                                generateRouteForShuffle()
-                            }
-                            .buttonStyle(PrimaryButtonStyle())
-                            
-                            Button("Change Options") {
-                                showMapPreview = false
-                                errorMessage = nil
-                            }
-                            .foregroundColor(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(.systemBackground))
+                    shuffleErrorView(error: error)
                 } else {
                     // Stage 1: Duration picker
                     ScrollView {
@@ -1902,6 +1744,178 @@ struct LocalRoutePickerSheet: View {
         } else {
             // Use basic generation (fallback)
             generateBasicRoute(from: userLocation.coordinate)
+        }
+    }
+    
+    // MARK: - View Builders (extracted to help compiler)
+    
+    @ViewBuilder
+    private func firstTimeGenerationView() -> some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.5)
+                .tint(.tealAccent)
+            
+            Text(mapsService.retryStatus ?? "Finding route...")
+                .font(.headline)
+                .foregroundColor(.primary)
+                .animation(.easeInOut, value: mapsService.retryStatus)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
+    }
+    
+    @ViewBuilder
+    private func shuffleErrorView(error: String) -> some View {
+        VStack(spacing: 20) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 50))
+                .foregroundColor(.softAmber)
+            
+            Text("Couldn't find a different route")
+                .font(.headline)
+                .foregroundColor(.primary)
+            
+            Text(error)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            
+            HStack(spacing: 16) {
+                Button("Try Again") {
+                    errorMessage = nil
+                    isShuffling = true
+                    generateRouteForShuffle()
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                
+                Button("Change Options") {
+                    showMapPreview = false
+                    errorMessage = nil
+                }
+                .foregroundColor(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
+    }
+    
+    @ViewBuilder
+    private func shuffleLoadingOverlay() -> some View {
+        ZStack {
+            Color.black.opacity(0.6)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 16) {
+                ProgressView()
+                    .scaleEffect(1.5)
+                    .tint(.tealAccent)
+                
+                Text(mapsService.retryStatus ?? "Finding alternative route...")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                
+                Button("Cancel") {
+                    isShuffling = false
+                    if let previousRoute = routeBeforeShuffle {
+                        generatedRoute = previousRoute
+                        generatedRouteData = routeDataBeforeShuffle
+                    }
+                    routeBeforeShuffle = nil
+                    routeDataBeforeShuffle = nil
+                }
+                .font(.subheadline)
+                .foregroundColor(.white.opacity(0.7))
+                .padding(.top, 8)
+            }
+            .padding(32)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color(.systemBackground).opacity(0.95))
+                    .shadow(radius: 20)
+            )
+        }
+        .transition(.opacity)
+    }
+    
+    @ViewBuilder
+    private func mapPreviewSection(route: WalkingRoute) -> some View {
+        ZStack {
+            LocalRouteMapPreview(
+                route: route,
+                userLocation: locationService.currentLocation?.coordinate,
+                generatedData: generatedRouteData,
+                isRecycled: isRecycledRoute,
+                targetDurationMinutes: selectedDuration,
+                currentRouteIndex: currentRouteIndex + 1,
+                totalRoutes: allRoutes.count,
+                isLoadingMoreRoutes: isPreGeneratingRoutes,
+                showPremiumUpsell: showPremiumUpsell,
+                hasLimitedPOIs: mapsService.hasLimitedPOIs,
+                varietyExhausted: varietyExhausted,
+                onStartWalk: { handleStartWalk(route: route) },
+                onShuffle: { shuffleToNextRoute() },
+                onBack: { handleBackFromPreview() },
+                onDelete: { handleDeleteRoute() }
+            )
+            .background(Color(.systemBackground))
+            .disabled(isShuffling)
+            
+            if isShuffling {
+                shuffleLoadingOverlay()
+            }
+        }
+    }
+    
+    private func handleStartWalk(route: WalkingRoute) {
+        viewModel.selectRoute(route)
+        viewModel.startWalk()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            isPresented = false
+        }
+    }
+    
+    private func handleBackFromPreview() {
+        showMapPreview = false
+        allRoutes = []
+        currentRouteIndex = 0
+        preGenerationComplete = false
+        isPreGeneratingRoutes = false
+        viewedRouteIndices = []
+        showPremiumUpsell = false
+        routeSignatures = []
+        varietyExhausted = false
+    }
+    
+    private func handleDeleteRoute() {
+        guard !allRoutes.isEmpty else { return }
+        
+        allRoutes.remove(at: currentRouteIndex)
+        
+        if allRoutes.isEmpty {
+            generatedRoute = nil
+            generatedRouteData = nil
+            lastValidRoute = nil
+            lastValidRouteData = nil
+            shownPlaceIdSets = []
+            allRoutes = []
+            currentRouteIndex = 0
+            preGenerationComplete = false
+            viewedRouteIndices = []
+            resetRouteSignatures()
+            showPremiumUpsell = false
+            showMapPreview = false
+            errorMessage = nil
+            print("🗑️ Deleted last route - returning to options")
+        } else {
+            if currentRouteIndex >= allRoutes.count {
+                currentRouteIndex = allRoutes.count - 1
+            }
+            let nextRoute = allRoutes[currentRouteIndex]
+            generatedRoute = nextRoute.route
+            generatedRouteData = nextRoute.data
+            print("🗑️ Deleted route - now showing \(currentRouteIndex + 1) of \(allRoutes.count)")
         }
     }
     
@@ -3242,6 +3256,7 @@ struct LocalRouteMapPreview: View {
     // v1.6.28: Removed permission callbacks - permissions now requested during/after walk
     let onStartWalk: () -> Void          // Start the walk immediately
     let onShuffle: () -> Void            // Quick regenerate with same settings
+    let onBack: () -> Void               // Go back to duration picker
     let onDelete: () -> Void             // Delete current route from cache
     
     // v1.6.28: Simplified - no permission gates before walk
