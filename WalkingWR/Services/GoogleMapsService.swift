@@ -3033,11 +3033,11 @@ class GoogleMapsService: ObservableObject {
         var minWaypointsForTier: Int
         
         switch targetDurationMinutes {
-        case 5...10:
+        case 1...10:  // Minimum is 10 min, but handle edge cases
             routeMethod = .endpointOnly
             dynamicMaxWaypoints = 2
             minWaypointsForTier = 1
-            print("🗺️ 📋 Tier 5-10min: 1-\(dynamicMaxWaypoints) waypoints")
+            print("🗺️ 📋 Tier 10min: 1-\(dynamicMaxWaypoints) waypoints")
         case 11...20:
             routeMethod = .endpointOnly
             dynamicMaxWaypoints = 3

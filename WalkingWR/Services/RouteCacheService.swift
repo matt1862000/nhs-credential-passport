@@ -108,7 +108,7 @@ class RouteCacheService {
             roundedDuration - 5, roundedDuration + 5,
             roundedDuration - 10, roundedDuration + 10,
             roundedDuration - 15, roundedDuration + 15
-        ].filter { $0 >= 5 && $0 <= 60 }  // Keep within valid range
+        ].filter { $0 >= 10 && $0 <= 60 }  // Keep within valid range (min 10 min)
         
         for checkDuration in durationsToCheck {
             // Find matching cache entry for this duration

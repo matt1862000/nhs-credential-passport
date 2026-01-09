@@ -44,7 +44,7 @@ struct RouteSelectionView: View {
     
     // Custom duration value based on delay (with 6 min buffer)
     private var customDurationForDelay: Int {
-        max(5, viewModel.waitTimeInfo.estimatedMinutes - 6)
+        max(10, viewModel.waitTimeInfo.estimatedMinutes - 6)
     }
     
     var filteredRoutes: [WalkingRoute] {
@@ -374,7 +374,7 @@ struct LocalRouteCard: View {
                 HStack(spacing: 16) {
                     FeatureTag(icon: "building.2", text: "Real POIs")
                     FeatureTag(icon: "road.lanes", text: "Walking paths")
-                    FeatureTag(icon: "clock", text: "5-30 min")
+                    FeatureTag(icon: "clock", text: "10-60 min")
                 }
                 
                 // Status and action
@@ -914,7 +914,7 @@ struct LocalRoutePickerSheet: View {
     @State private var generatedRouteData: GeneratedRoute?
     @State private var showMapPreview = false
     @State private var errorMessage: String?
-    @State private var customTimeValue: Double = 10  // Minimum 10 min - 5 min routes are unreliable
+    @State private var customTimeValue: Double = 10  // Minimum walk duration is 10 minutes
     
     
     // Store last valid route for recycling when shuffle exhausts options
@@ -2387,7 +2387,7 @@ struct LocalRoutePickerSheet: View {
         // Preset buttons users see first (most likely choices)
         let presetDurations = [10, 15, 20, 25, 30]
         // Custom/less common durations (fill in after)
-        let gapDurations = [5, 45, 60]
+        let gapDurations = [45, 60]  // Removed 5 - minimum is now 10 min
         
         // v1.6.33: Prioritize preset buttons first (adjacent ones at top), then gaps
         let presetOthers = presetDurations.filter { $0 != currentDuration }
