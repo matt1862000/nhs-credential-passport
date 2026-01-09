@@ -2375,16 +2375,24 @@ struct LocalRoutePickerSheet: View {
     }
     
     /// Pre-generate ONE route for each standard duration (except current) for instant switching
-    /// Prioritizes adjacent durations (±5, ±10) first for faster switching to nearby times
+    /// Prioritizes: 1) Preset buttons (10-30) adjacent first, 2) Then fill gaps (5, 45, 60)
     func preGenerateOtherDurations(from location: CLLocationCoordinate2D, currentDuration: Int, pois: [PlaceResult]?) async {
-        let standardDurations = [5, 10, 15, 20, 25, 30, 45, 60]
-        let otherDurations = standardDurations.filter { $0 != currentDuration }
+        // Preset buttons users see first (most likely choices)
+        let presetDurations = [10, 15, 20, 25, 30]
+        // Custom/less common durations (fill in after)
+        let gapDurations = [5, 45, 60]
         
-        // v1.6.33: Prioritize adjacent durations first (most likely user choices)
-        // Sort by distance from current duration - closest first
-        let durationsToGenerate = otherDurations.sorted { a, b in
-            abs(a - currentDuration) < abs(b - currentDuration)
-        }
+        // v1.6.33: Prioritize preset buttons first (adjacent ones at top), then gaps
+        let presetOthers = presetDurations.filter { $0 != currentDuration }
+        let gapOthers = gapDurations.filter { $0 != currentDuration }
+        
+        // Sort presets by distance from current (closest first)
+        let sortedPresets = presetOthers.sorted { abs($0 - currentDuration) < abs($1 - currentDuration) }
+        // Sort gaps by distance from current (closest first)  
+        let sortedGaps = gapOthers.sorted { abs($0 - currentDuration) < abs($1 - currentDuration) }
+        
+        // Presets first, then gaps
+        let durationsToGenerate = sortedPresets + sortedGaps
         
         // Store where we pre-generated (for movement detection)
         await MainActor.run {
