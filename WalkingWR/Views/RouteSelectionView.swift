@@ -2375,16 +2375,23 @@ struct LocalRoutePickerSheet: View {
     }
     
     /// Pre-generate ONE route for each standard duration (except current) for instant switching
+    /// Prioritizes adjacent durations (±5, ±10) first for faster switching to nearby times
     func preGenerateOtherDurations(from location: CLLocationCoordinate2D, currentDuration: Int, pois: [PlaceResult]?) async {
         let standardDurations = [5, 10, 15, 20, 25, 30, 45, 60]
-        let durationsToGenerate = standardDurations.filter { $0 != currentDuration }
+        let otherDurations = standardDurations.filter { $0 != currentDuration }
+        
+        // v1.6.33: Prioritize adjacent durations first (most likely user choices)
+        // Sort by distance from current duration - closest first
+        let durationsToGenerate = otherDurations.sorted { a, b in
+            abs(a - currentDuration) < abs(b - currentDuration)
+        }
         
         // Store where we pre-generated (for movement detection)
         await MainActor.run {
             preGeneratedAtLocation = location
         }
         
-        print("🔮 Starting pre-generation for other durations: \(durationsToGenerate.map { "\($0)min" }.joined(separator: ", "))")
+        print("🔮 Pre-generating other durations (prioritized): \(durationsToGenerate.map { "\($0)min" }.joined(separator: ", "))")
         
         for duration in durationsToGenerate {
             // Check if already cached
@@ -2412,8 +2419,8 @@ struct LocalRoutePickerSheet: View {
                 RouteCacheService.shared.cacheRoutes([result], at: location, durationMinutes: duration)
                 print("✅ Pre-generated and cached \(duration)min route (\(result.durationSeconds/60)min actual)")
                 
-                // Small delay to avoid rate limiting
-                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second between durations
+                // v1.6.33: Reduced delay for faster pre-generation (0.5s instead of 1s)
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds between durations
                 
             } catch {
                 print("⚠️ \(duration)min pre-generation error: \(error.localizedDescription)")
