@@ -4019,34 +4019,41 @@ class GoogleMapsService: ObservableObject {
             return selected
         }
         
-        // Return BEST fallback route we found - better to show something than nothing
+        // Return BEST fallback route we found - but ONLY if within 130% cap
         if var best = bestFallbackRoute {
             let mins = best.durationSeconds / 60
+            let hardCap = Int(Double(targetDurationMinutes) * 1.30)  // 130% hard cap
             
+            // v1.6.36: NEVER return routes >130% - this was the bug causing 180-200% routes
+            if mins > hardCap {
+                print("🗺️ ❌ Fallback route exceeds 130% cap: \(mins)min > \(hardCap)min - REJECTING")
+                // Don't return this route, fall through to guaranteed fallback
+            } else {
                 // Remove waypoints that are too close together (should be ~5 min / 300m+ apart)
                 best = removeCloseWaypoints(from: best, minDistance: 250)
-            
-            // Check if route is within 80-100% tolerance
-            let toleranceMin = Int(Double(targetDurationMinutes) * 0.80)
-            let toleranceMax = targetDurationMinutes
-            let isWithinTolerance = mins >= toleranceMin && mins <= toleranceMax
-            
-            if isWithinTolerance {
-                print("🗺️ ✓ Fallback route within 80-100%: \(mins)min (target: \(targetDurationMinutes)min)")
-            } else if mins < toleranceMin {
-                print("🗺️ ⚠️ Returning shorter route: \(mins)min (target: \(targetDurationMinutes)min)")
-            } else {
-                print("🗺️ ⚠️ Returning longer route: \(mins)min (target: \(targetDurationMinutes)min)")
+                
+                // Check if route is within 80-100% tolerance
+                let toleranceMin = Int(Double(targetDurationMinutes) * 0.80)
+                let toleranceMax = targetDurationMinutes
+                let isWithinTolerance = mins >= toleranceMin && mins <= toleranceMax
+                
+                if isWithinTolerance {
+                    print("🗺️ ✓ Fallback route within 80-100%: \(mins)min (target: \(targetDurationMinutes)min)")
+                } else if mins < toleranceMin {
+                    print("🗺️ ⚠️ Returning shorter route: \(mins)min (target: \(targetDurationMinutes)min)")
+                } else {
+                    print("🗺️ ⚠️ Returning longer route: \(mins)min (target: \(targetDurationMinutes)min)")
+                }
+                
+                // Mark POIs as recently used for variety
+                for place in best.places {
+                    markPOIAsUsed(place.placeId)
+                }
+                
+                // Note: Google fallback is handled separately in generateLocalRouteWithGoogleFallback
+                // This function just returns the best MapKit route
+                return best
             }
-            
-            // Mark POIs as recently used for variety
-            for place in best.places {
-                markPOIAsUsed(place.placeId)
-            }
-            
-            // Note: Google fallback is handled separately in generateLocalRouteWithGoogleFallback
-            // This function just returns the best MapKit route
-            return best
         }
         
         // GUARANTEED FALLBACK: Create a simple out-and-back route if all else fails
@@ -4062,14 +4069,22 @@ class GoogleMapsService: ObservableObject {
             availablePOIs: places
         ) {
             let mins = guaranteedRoute.durationSeconds / 60
-            print("🗺️ ✓ Guaranteed fallback created: \(mins)min (target: \(targetDurationMinutes)min)")
+            let hardCap = Int(Double(targetDurationMinutes) * 1.30)  // 130% hard cap
             
-            // Mark POIs as recently used for variety
-            for place in guaranteedRoute.places {
-                markPOIAsUsed(place.placeId)
+            // v1.6.36: NEVER return routes >130%
+            if mins > hardCap {
+                print("🗺️ 🆘 ❌ Guaranteed fallback exceeds 130%: \(mins)min > \(hardCap)min - REJECTING")
+                // Fall through to throw error
+            } else {
+                print("🗺️ ✓ Guaranteed fallback created: \(mins)min (target: \(targetDurationMinutes)min)")
+                
+                // Mark POIs as recently used for variety
+                for place in guaranteedRoute.places {
+                    markPOIAsUsed(place.placeId)
+                }
+                
+                return guaranteedRoute
             }
-            
-            return guaranteedRoute
         }
         
         throw GoogleMapsError.noRouteFound
@@ -4127,9 +4142,9 @@ class GoogleMapsService: ObservableObject {
                 let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
                 let durationMinutes = totalDuration / 60
                 
-                // Accept if within 40-160% of target (very flexible for fallback)
+                // Accept if within 40-130% of target (v1.6.36: capped at 130%)
                 let minAccept = max(2, targetDurationMinutes * 4 / 10)  // 40%
-                let maxAccept = targetDurationMinutes * 16 / 10  // 160%
+                let maxAccept = targetDurationMinutes * 13 / 10  // 130% - hard cap
                 
                 if durationMinutes >= minAccept && durationMinutes <= maxAccept {
                     print("🗺️ 🆘 ✓ Found viable out-and-back: \(durationMinutes)min")
