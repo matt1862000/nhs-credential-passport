@@ -4578,11 +4578,11 @@ struct ActiveWalkView: View {
                 .padding(.bottom, 12)
             }
         }
-        .alert("End Walk?", isPresented: $showEndConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("End & Save") {
+        .confirmationDialog("End Walk?", isPresented: $showEndConfirmation) {
+            Button("End & Save Progress") {
                 viewModel.endWalk(completed: true)
             }
+            Button("Cancel", role: .cancel) { }
         } message: {
             Text("Your steps and progress will be saved.")
         }
