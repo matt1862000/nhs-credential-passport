@@ -15,7 +15,7 @@ import CoreLocation
 class RouteCacheService {
     static let shared = RouteCacheService()
     
-    private let cacheKey = "cachedRoutes_v26"  // v26: Dynamic OSRM calibration (learns from MapKit vs OSRM comparisons)
+    private let cacheKey = "cachedRoutes_v27"  // v27: Hard cap at 130% - routes >130% rejected
     private let maxCachedRouteSets = 50
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
     private let cacheExpiryHours: Double = 24 // Routes expire after 24 hours
