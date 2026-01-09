@@ -14,7 +14,7 @@ import UIKit
 struct ProfileView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @ObservedObject var healthKitService: HealthKitService
-    @State private var showSettings = false
+    // Settings moved to WaitTimeView (Delay tab)
     @State private var showHelpSheet = false
     @State private var showIntroduction = false
     @Environment(\.scenePhase) private var scenePhase
@@ -67,26 +67,12 @@ struct ProfileView: View {
             .navigationBarTitleDisplayMode(.large)
             #endif
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: { showSettings = true }) {
-                        Image(systemName: "gearshape.fill")
-                            .foregroundColor(.tealAccent)
-                    }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: { showHelpSheet = true }) {
                         Image(systemName: "hand.raised.fill")
                             .foregroundColor(.coralPink)
                     }
                 }
-            }
-            .sheet(isPresented: $showSettings) {
-                SettingsView(
-                    viewModel: viewModel,
-                    healthKitService: viewModel.healthKitService,
-                    locationService: viewModel.locationService,
-                    showIntroduction: $showIntroduction
-                )
             }
             .sheet(isPresented: $showHelpSheet) {
                 HelpView()

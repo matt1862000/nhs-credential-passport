@@ -10,6 +10,7 @@ import SwiftUI
 // Sheet types for WaitTimeView
 enum WaitTimeSheetType: Identifiable {
     case help
+    case settings
     case anxietyCheck
     case clinicianProfile
     case clinicianSelection
@@ -17,6 +18,7 @@ enum WaitTimeSheetType: Identifiable {
     var id: String {
         switch self {
         case .help: return "help"
+        case .settings: return "settings"
         case .anxietyCheck: return "anxietyCheck"
         case .clinicianProfile: return "clinicianProfile"
         case .clinicianSelection: return "clinicianSelection"
@@ -33,6 +35,7 @@ struct WaitTimeView: View {
     
     @State private var pulseAnimation = false
     @State private var activeSheet: WaitTimeSheetType?
+    @State private var showIntroduction = false
     
     var body: some View {
         NavigationStack {
@@ -77,6 +80,12 @@ struct WaitTimeView: View {
             .navigationBarTitleDisplayMode(.large)
             #endif
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: { activeSheet = .settings }) {
+                        Image(systemName: "gearshape.fill")
+                            .foregroundColor(.tealAccent)
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: { activeSheet = .help }) {
                         Image(systemName: "hand.raised.fill")
@@ -89,6 +98,13 @@ struct WaitTimeView: View {
                     switch sheetType {
                     case .help:
                         HelpView()
+                    case .settings:
+                        SettingsView(
+                            viewModel: viewModel,
+                            healthKitService: viewModel.healthKitService,
+                            locationService: viewModel.locationService,
+                            showIntroduction: $showIntroduction
+                        )
                     case .anxietyCheck:
                         AnxietyCheckSheet(viewModel: viewModel, isPresented: .init(
                             get: { activeSheet == .anxietyCheck },
@@ -175,6 +191,9 @@ struct WaitTimeView: View {
                 } else {
                     Text("The clinic delay has been updated.")
                 }
+            }
+            .fullScreenCover(isPresented: $showIntroduction) {
+                IntroductionReplayView(isPresented: $showIntroduction)
             }
         }
     }
