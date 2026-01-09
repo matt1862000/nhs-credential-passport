@@ -1154,8 +1154,8 @@ struct BirdSpottingView: View {
         BirdInfo(name: "Magpie", scientificName: "Pica pica",
                  description: "Striking black and white bird with long tail. Iridescent blue-green on wings.",
                  habitat: "Gardens, parks, farmland",
-                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/Pica_pica_-_Compans_Caffarelli.jpg/220px-Pica_pica_-_Compans_Caffarelli.jpg",
-                 localAsset: nil,
+                 imageURL: "https://www.rspb.org.uk/birds-and-wildlife/magpie",
+                 localAsset: "Magpie",
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "Wood Pigeon", scientificName: "Columba palumbus",
                  description: "Large grey pigeon with white neck patch and pink breast. Distinctive cooing call.",
@@ -1170,10 +1170,10 @@ struct BirdSpottingView: View {
                  localAsset: "CarrionCrow",
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "Wren", scientificName: "Troglodytes troglodytes",
-                 description: "Tiny brown bird with upturned tail. Incredibly loud song for its size.",
+                 description: "Tiny brown bird with upturned tail. Incredibly loud song for its size. UK's most common breeding bird!",
                  habitat: "Gardens, hedgerows, undergrowth",
-                 imageURL: "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/Troglodytes_troglodytes.jpg/220px-Troglodytes_troglodytes.jpg",
-                 localAsset: nil,
+                 imageURL: "https://www.rspb.org.uk/birds-and-wildlife/wren",
+                 localAsset: "Wren",
                  seasonalNote: "Year-round resident", isYearRound: true, summerOnly: false, winterOnly: false),
         BirdInfo(name: "Goldfinch", scientificName: "Carduelis carduelis",
                  description: "Colourful finch with red face and gold wing bars. Loves thistle seeds.",
@@ -1215,6 +1215,54 @@ struct BirdSpottingView: View {
                  seasonalNote: "Winter visitor (Oct-Mar)", isYearRound: false, summerOnly: false, winterOnly: true)
     ]
     
+    // Season names for display
+    var currentSeasonName: String {
+        switch currentMonth {
+        case 3...5: return "Spring"
+        case 6...8: return "Summer"
+        case 9...11: return "Autumn"
+        default: return "Winter"
+        }
+    }
+    
+    // Season color for badge
+    var seasonColor: Color {
+        switch currentMonth {
+        case 3...5: return .green      // Spring
+        case 6...8: return .orange     // Summer
+        case 9...11: return .brown     // Autumn
+        default: return .blue          // Winter
+        }
+    }
+    
+    // Seasonal message
+    var seasonalMessage: String {
+        switch currentMonth {
+        case 4: return "🌸 Spring arrivals! Look out for Swallows and House Martins returning from Africa."
+        case 5: return "🐦 Peak breeding season! Swifts have arrived - listen for their screaming calls."
+        case 6...7: return "☀️ Summer chorus! Best time to spot fledglings learning to fly."
+        case 8: return "🍂 Late summer. Swifts are heading south - catch them while you can!"
+        case 9: return "🍁 Autumn migration. Summer visitors departing, watch for passing migrants."
+        case 10: return "❄️ Winter thrushes arriving! Look for Fieldfares and Redwings from Scandinavia."
+        case 11...12: return "🌨️ Winter flocks. Fieldfares and Redwings raid berry bushes."
+        case 1...2: return "❄️ Coldest months. Garden birds more visible at feeders."
+        case 3: return "🌱 Spring is coming! Early migrants may appear on warm days."
+        default: return "🐦 Great time for birdwatching!"
+        }
+    }
+    
+    // Special seasonal birds to highlight
+    var seasonalHighlights: [BirdInfo] {
+        let month = currentMonth
+        return allBirds.filter { bird in
+            // Highlight arriving summer visitors in spring
+            if bird.summerOnly && (month == 4 || month == 5) { return true }
+            // Highlight arriving winter visitors in autumn
+            if bird.winterOnly && (month == 10 || month == 11) { return true }
+            return false
+        }
+    }
+    
     // Filter birds based on current season
     var seasonalBirds: [BirdInfo] {
         let isSummer = currentMonth >= 4 && currentMonth <= 9  // April to September
@@ -1241,8 +1289,36 @@ struct BirdSpottingView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    // Header card
-                    VStack(spacing: 8) {
+                    // Seasonal header card
+                    VStack(spacing: 12) {
+                        // Season indicator
+                        HStack {
+                            Text(currentSeasonName)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(seasonColor)
+                                .clipShape(Capsule())
+                            
+                            Spacer()
+                            
+                            // RSPB credit
+                            Text("Data: RSPB")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        // Seasonal message
+                        Text(seasonalMessage)
+                            .font(.subheadline)
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        
+                        Divider()
+                        
+                        // Stats
                         HStack {
                             Image(systemName: "bird.fill")
                                 .font(.title)
@@ -1270,6 +1346,36 @@ struct BirdSpottingView: View {
                     .padding()
                     .background(Color(.secondarySystemBackground))
                     .cornerRadius(16)
+                    
+                    // Seasonal highlights (if any)
+                    if !seasonalHighlights.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("✨ Seasonal Specials")
+                                .font(.headline)
+                                .foregroundColor(.orange)
+                            
+                            Text("These birds are special to spot right now!")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            
+                            ForEach(seasonalHighlights) { bird in
+                                HStack(spacing: 8) {
+                                    Image(systemName: spottedBirds.contains(bird.name) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(spottedBirds.contains(bird.name) ? .green : .orange)
+                                    Text(bird.name)
+                                        .fontWeight(.medium)
+                                    Spacer()
+                                    Text(bird.seasonalNote)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
+                        .padding()
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(16)
+                    }
                     
                     // Bird cards
                     ForEach(seasonalBirds) { bird in
