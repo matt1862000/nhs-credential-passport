@@ -2078,6 +2078,9 @@ struct SettingsView: View {
                             .foregroundColor(.mintGreen)
                     }
                 }
+                
+                // DEBUG: Saved Batch Test Results (remove in final version)
+                SavedBatchTestsSection()
             }
             .navigationTitle("Settings")
             #if os(iOS)
@@ -2887,6 +2890,168 @@ struct CachedPOIsDetailView: View {
         if types.contains("church") { return "cross.fill" }
         
         return "mappin"
+    }
+}
+
+// MARK: - Saved Batch Tests Section (DEBUG - remove in final version)
+
+struct SavedBatchTest: Codable, Identifiable {
+    let id: UUID
+    let timestamp: Date
+    let results: String
+    let summary: String  // Short summary for list view
+    
+    init(results: String) {
+        self.id = UUID()
+        self.timestamp = Date()
+        self.results = results
+        
+        // Extract summary from results (first location's valid rate or overall)
+        if let overallMatch = results.range(of: "Valid rate: \\d+%", options: .regularExpression) {
+            self.summary = String(results[overallMatch])
+        } else {
+            self.summary = "Test completed"
+        }
+    }
+}
+
+class BatchTestStorage {
+    static let shared = BatchTestStorage()
+    private let storageKey = "savedBatchTests"
+    private let maxTests = 10  // Keep last 10 tests
+    
+    func saveTest(_ results: String) {
+        var tests = getAllTests()
+        let newTest = SavedBatchTest(results: results)
+        tests.insert(newTest, at: 0)  // Most recent first
+        
+        // Keep only the last N tests
+        if tests.count > maxTests {
+            tests = Array(tests.prefix(maxTests))
+        }
+        
+        if let encoded = try? JSONEncoder().encode(tests) {
+            UserDefaults.standard.set(encoded, forKey: storageKey)
+        }
+        print("💾 Saved batch test result (\(tests.count) total)")
+    }
+    
+    func getAllTests() -> [SavedBatchTest] {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let tests = try? JSONDecoder().decode([SavedBatchTest].self, from: data) else {
+            return []
+        }
+        return tests
+    }
+    
+    func deleteTest(_ id: UUID) {
+        var tests = getAllTests()
+        tests.removeAll { $0.id == id }
+        if let encoded = try? JSONEncoder().encode(tests) {
+            UserDefaults.standard.set(encoded, forKey: storageKey)
+        }
+    }
+    
+    func clearAllTests() {
+        UserDefaults.standard.removeObject(forKey: storageKey)
+    }
+}
+
+struct SavedBatchTestsSection: View {
+    @State private var savedTests: [SavedBatchTest] = []
+    @State private var selectedTest: SavedBatchTest?
+    @State private var showClearConfirmation = false
+    
+    var body: some View {
+        Section {
+            if savedTests.isEmpty {
+                Text("No saved batch tests")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(savedTests) { test in
+                    Button {
+                        selectedTest = test
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(test.timestamp, style: .date)
+                                    .font(.subheadline)
+                                    .foregroundColor(.primary)
+                                Text(test.timestamp, style: .time)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Text(test.summary)
+                                .font(.caption)
+                                .foregroundColor(.tealAccent)
+                        }
+                    }
+                }
+                .onDelete { indexSet in
+                    for index in indexSet {
+                        BatchTestStorage.shared.deleteTest(savedTests[index].id)
+                    }
+                    savedTests = BatchTestStorage.shared.getAllTests()
+                }
+                
+                Button(role: .destructive) {
+                    showClearConfirmation = true
+                } label: {
+                    HStack {
+                        Image(systemName: "trash")
+                        Text("Clear All Tests")
+                    }
+                    .font(.caption)
+                }
+            }
+        } header: {
+            HStack {
+                Image(systemName: "flask.fill")
+                    .foregroundColor(.orange)
+                Text("Batch Tests (DEBUG)")
+                    .foregroundColor(.orange)
+            }
+        } footer: {
+            Text("Saved test results for debugging. Will be removed in final version.")
+        }
+        .onAppear {
+            savedTests = BatchTestStorage.shared.getAllTests()
+        }
+        .sheet(item: $selectedTest) { test in
+            NavigationStack {
+                ScrollView {
+                    Text(test.results)
+                        .font(.system(.caption2, design: .monospaced))
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .navigationTitle("Test: \(test.timestamp.formatted(date: .abbreviated, time: .shortened))")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") {
+                            selectedTest = nil
+                        }
+                    }
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button {
+                            UIPasteboard.general.string = test.results
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                    }
+                }
+            }
+        }
+        .confirmationDialog("Clear All Tests?", isPresented: $showClearConfirmation) {
+            Button("Clear All", role: .destructive) {
+                BatchTestStorage.shared.clearAllTests()
+                savedTests = []
+            }
+            Button("Cancel", role: .cancel) { }
+        }
     }
 }
 

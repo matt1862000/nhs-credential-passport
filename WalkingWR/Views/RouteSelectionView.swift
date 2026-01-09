@@ -2688,6 +2688,9 @@ struct LocalRoutePickerSheet: View {
                 
                 routeTestResults += "\n🏁 Batch test complete!\n"
                 
+                // Save to storage for later review
+                BatchTestStorage.shared.saveTest(routeTestResults)
+                
                 isRunningRouteTest = false
                 showRouteTestResults = true
             }
