@@ -203,16 +203,68 @@ class GoogleMapsService: ObservableObject {
     
     /// Source quality score - prefer Google POIs over OSM/Apple
     /// Google POIs are more accurate and up-to-date
-    private func sourceQualityScore(for poi: PlaceResult, googlePOICount: Int) -> Double {
-        // Only apply bonus if we have sufficient Google POIs (10+)
+    /// OSM/Apple POIs not verified against Google cache are deprioritized
+    private func sourceQualityScore(for poi: PlaceResult, googlePOICount: Int, googlePOIs: [PlaceResult] = []) -> Double {
+        // Only apply scoring if we have sufficient Google POIs (10+)
         // This ensures we still use OSM/Apple in sparse areas
         guard googlePOICount >= 10 else { return 0.0 }
         
         if isGooglePOI(poi) {
             return 3.0  // Strong preference for Google POIs
         } else {
-            return 0.0  // No penalty, just no bonus
+            // OSM/Apple POI - check if verified against Google cache
+            if !googlePOIs.isEmpty {
+                let isVerified = hasMatchingGooglePOI(poi, in: googlePOIs)
+                if isVerified {
+                    return 1.0  // Verified OSM/Apple POI - slight bonus
+                } else {
+                    return -2.0  // Unverified - deprioritize (may be closed/outdated)
+                }
+            }
+            return 0.0  // No Google cache to verify against
         }
+    }
+    
+    /// Check if an OSM/Apple POI has a matching Google POI nearby
+    /// Uses location proximity (~100m) and name similarity (50%+)
+    private func hasMatchingGooglePOI(_ poi: PlaceResult, in googlePOIs: [PlaceResult]) -> Bool {
+        let maxDistanceMeters: Double = 100  // Must be within 100m
+        let minNameSimilarity: Double = 0.5  // 50% name match
+        
+        for googlePOI in googlePOIs {
+            let distance = distanceBetween(poi.coordinate, googlePOI.coordinate)
+            if distance <= maxDistanceMeters {
+                let similarity = nameSimilarity(poi.name, googlePOI.name)
+                if similarity >= minNameSimilarity {
+                    return true  // Found matching Google POI
+                }
+            }
+        }
+        
+        // Log deprioritized POI (only first time)
+        if !loggedUnverifiedPOIs.contains(poi.placeId) {
+            print("⚠️ UNVERIFIED: '\(poi.name)' - no matching Google POI (may be closed)")
+            loggedUnverifiedPOIs.insert(poi.placeId)
+        }
+        
+        return false  // No match found - likely closed or outdated
+    }
+    
+    /// Track which unverified POIs we've logged to avoid spam
+    private var loggedUnverifiedPOIs: Set<String> = []
+    
+    /// Calculate name similarity between two strings (0.0 - 1.0)
+    /// Uses Jaccard similarity on word tokens
+    private func nameSimilarity(_ name1: String, _ name2: String) -> Double {
+        let words1 = Set(name1.lowercased().split(separator: " ").map { String($0) })
+        let words2 = Set(name2.lowercased().split(separator: " ").map { String($0) })
+        
+        guard !words1.isEmpty || !words2.isEmpty else { return 0.0 }
+        
+        let intersection = words1.intersection(words2).count
+        let union = words1.union(words2).count
+        
+        return Double(intersection) / Double(union)
     }
     
     private func walkabilityScore(for poi: PlaceResult) -> Double {
@@ -421,12 +473,14 @@ class GoogleMapsService: ObservableObject {
     /// Calculate combined POI score for ranking
     /// Higher score = better candidate for route
     /// - Parameter googlePOICount: Number of Google POIs available (for source prioritization)
+    /// - Parameter googlePOIs: List of Google POIs for verifying OSM/Apple POIs
     func calculatePOIScore(
         poi: PlaceResult,
         origin: CLLocationCoordinate2D,
         idealDistance: Double,
         targetDurationMinutes: Int,
-        googlePOICount: Int = 0
+        googlePOICount: Int = 0,
+        googlePOIs: [PlaceResult] = []
     ) -> Double {
         let distance = distanceBetween(origin, poi.coordinate)
         
@@ -442,7 +496,8 @@ class GoogleMapsService: ObservableObject {
         let recentPenalty = recentUsePenalty(for: poi.placeId)
         
         // v1.6.33: Source quality bonus - prefer Google POIs when plentiful
-        let sourceBonus = sourceQualityScore(for: poi, googlePOICount: googlePOICount) * 0.1
+        // v1.6.38: OSM/Apple POIs not verified against Google are deprioritized
+        let sourceBonus = sourceQualityScore(for: poi, googlePOICount: googlePOICount, googlePOIs: googlePOIs) * 0.1
         
         // Combined score
         let finalScore = distanceScore + walkabilityBonus - recentPenalty + sourceBonus
@@ -3163,16 +3218,18 @@ class GoogleMapsService: ObservableObject {
         if places.count > maxPOIs {
             print("📊 POI CAP: \(rawPOICount) raw → \(maxPOIs) (density tier: \(rawPOICount > 500 ? "ultra-dense" : rawPOICount > 200 ? "dense" : "normal"))")
             
-            // v1.6.33: Count Google POIs to determine if we should prioritize them
-            let googlePOICount = places.filter { isGooglePOI($0) }.count
+            // v1.6.33: Extract Google POIs for verification of OSM/Apple POIs
+            let googlePOIs = places.filter { isGooglePOI($0) }
+            let googlePOICount = googlePOIs.count
             
             // Score POIs by: walkability + distance fit + source quality (prefer Google when plentiful)
+            // v1.6.38: OSM/Apple POIs not found in Google cache are deprioritized (may be closed)
             let targetDistance = Double(targetDurationMinutes) * 80 / 2  // Ideal one-way distance
             let scoredPlaces = places.map { poi -> (poi: PlaceResult, score: Double) in
                 let distance = distanceBetween(location, poi.coordinate)
                 let distanceFit = 1.0 - min(1.0, abs(distance - targetDistance) / targetDistance)
                 let walkScore = walkabilityScore(for: poi)
-                let sourceScore = sourceQualityScore(for: poi, googlePOICount: googlePOICount)
+                let sourceScore = sourceQualityScore(for: poi, googlePOICount: googlePOICount, googlePOIs: googlePOIs)
                 return (poi, distanceFit * 10 + walkScore + sourceScore)
             }.sorted { $0.score > $1.score }
             
@@ -4569,12 +4626,18 @@ class GoogleMapsService: ObservableObject {
         case .moderate, .none:
             // Moderate/None: Use combined scoring with walkability + angular diversity
             // Score each POI: distance fit + walkability bonus - recent use penalty
+            // v1.6.38: OSM/Apple POIs not verified against Google are deprioritized
+            let googlePOIs = places.filter { isGooglePOI($0) }
+            let googlePOICount = googlePOIs.count
+            
             let scoredPOIs = placesWithAngles.map { item -> (place: PlaceResult, score: Double, angle: Double) in
                 let combinedScore = calculatePOIScore(
                     poi: item.place,
                     origin: origin,
                     idealDistance: idealDistance,
-                    targetDurationMinutes: targetDurationMinutes
+                    targetDurationMinutes: targetDurationMinutes,
+                    googlePOICount: googlePOICount,
+                    googlePOIs: googlePOIs
                 )
                 return (item.place, combinedScore, item.angle)
             }
