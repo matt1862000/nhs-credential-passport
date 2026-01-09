@@ -2075,11 +2075,11 @@ struct LocalRoutePickerSheet: View {
             let poisToUse = await MainActor.run { prefetchedPOIs.isEmpty ? nil : prefetchedPOIs }
             
             while routesGenerated < maxRoutesToGenerate && consecutiveFailures < maxConsecutiveFailures && consecutiveDuplicates < maxConsecutiveDuplicates {
-                // v1.6.33: Check rate limit - pause if too high to reserve quota for user
+                // v1.6.33: Check rate limit - pause briefly if too high
                 if await mapsService.shouldPauseBackgroundGeneration() {
-                    // Wait 10 seconds then check again
-                    try? await Task.sleep(nanoseconds: 10_000_000_000)
-                    continue
+                    // Wait 5 seconds then continue (quota refreshes over time)
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    // Don't skip - just continue after brief pause
                 }
                 
                 do {
@@ -2409,15 +2409,11 @@ struct LocalRoutePickerSheet: View {
         print("🔮 Pre-generating other durations (prioritized): \(durationsToGenerate.map { "\($0)min" }.joined(separator: ", "))")
         
         for duration in durationsToGenerate {
-            // v1.6.33: Check rate limit - pause if too high to reserve quota for user
+            // v1.6.33: Check rate limit - pause briefly if too high
             if await mapsService.shouldPauseBackgroundGeneration() {
-                // Wait 10 seconds then check again
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-                // Re-check - if still high, skip this duration
-                if await mapsService.shouldPauseBackgroundGeneration() {
-                    print("⏸️ Skipping \(duration)min - rate limit still high")
-                    continue
-                }
+                // Wait 5 seconds then continue (quota refreshes over time)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                // Don't skip - just continue after brief pause
             }
             
             // Check if already cached

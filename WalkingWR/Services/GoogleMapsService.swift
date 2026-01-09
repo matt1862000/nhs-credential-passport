@@ -1680,11 +1680,12 @@ class GoogleMapsService: ObservableObject {
     /// Returns true if rate limit is too high for background work
     func shouldPauseBackgroundGeneration() async -> Bool {
         let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
-        // Pause background work at 60% of limit (30+ requests)
-        // This reserves 20 requests for user-initiated actions
-        let shouldPause = status.currentCount >= 30
+        // Pause background work at 80% of limit (40+ requests)
+        // This reserves 10 requests for user-initiated actions
+        // More generous than before - allows more pre-generation
+        let shouldPause = status.currentCount >= 40
         if shouldPause {
-            print("⏸️ Background pre-generation paused (MapKit: \(status.currentCount)/50) - reserving quota for user")
+            print("⏸️ Background paused briefly (MapKit: \(status.currentCount)/50)")
         }
         return shouldPause
     }
