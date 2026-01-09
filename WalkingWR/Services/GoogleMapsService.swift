@@ -195,6 +195,26 @@ class GoogleMapsService: ObservableObject {
     
     /// Calculate walkability score for a POI based on its type
     /// Returns score from -2 (avoid) to +2 (prefer)
+    /// Check if POI is from Google (highest quality, most up-to-date)
+    private func isGooglePOI(_ poi: PlaceResult) -> Bool {
+        // Google POIs don't have "apple_" or "osm_" prefix
+        return !poi.placeId.hasPrefix("apple_") && !poi.placeId.hasPrefix("osm_")
+    }
+    
+    /// Source quality score - prefer Google POIs over OSM/Apple
+    /// Google POIs are more accurate and up-to-date
+    private func sourceQualityScore(for poi: PlaceResult, googlePOICount: Int) -> Double {
+        // Only apply bonus if we have sufficient Google POIs (10+)
+        // This ensures we still use OSM/Apple in sparse areas
+        guard googlePOICount >= 10 else { return 0.0 }
+        
+        if isGooglePOI(poi) {
+            return 3.0  // Strong preference for Google POIs
+        } else {
+            return 0.0  // No penalty, just no bonus
+        }
+    }
+    
     private func walkabilityScore(for poi: PlaceResult) -> Double {
         let types = Set(poi.types ?? [])
         
@@ -400,11 +420,13 @@ class GoogleMapsService: ObservableObject {
     
     /// Calculate combined POI score for ranking
     /// Higher score = better candidate for route
+    /// - Parameter googlePOICount: Number of Google POIs available (for source prioritization)
     func calculatePOIScore(
         poi: PlaceResult,
         origin: CLLocationCoordinate2D,
         idealDistance: Double,
-        targetDurationMinutes: Int
+        targetDurationMinutes: Int,
+        googlePOICount: Int = 0
     ) -> Double {
         let distance = distanceBetween(origin, poi.coordinate)
         
@@ -419,8 +441,11 @@ class GoogleMapsService: ObservableObject {
         // Recently used penalty (0 to 0.9)
         let recentPenalty = recentUsePenalty(for: poi.placeId)
         
+        // v1.6.33: Source quality bonus - prefer Google POIs when plentiful
+        let sourceBonus = sourceQualityScore(for: poi, googlePOICount: googlePOICount) * 0.1
+        
         // Combined score
-        let finalScore = distanceScore + walkabilityBonus - recentPenalty
+        let finalScore = distanceScore + walkabilityBonus - recentPenalty + sourceBonus
         
         return finalScore
     }
@@ -3079,18 +3104,25 @@ class GoogleMapsService: ObservableObject {
         if places.count > maxPOIs {
             print("📊 POI CAP: \(rawPOICount) raw → \(maxPOIs) (density tier: \(rawPOICount > 500 ? "ultra-dense" : rawPOICount > 200 ? "dense" : "normal"))")
             
-            // Score POIs by: walkability + distance fit to target
+            // v1.6.33: Count Google POIs to determine if we should prioritize them
+            let googlePOICount = places.filter { isGooglePOI($0) }.count
+            
+            // Score POIs by: walkability + distance fit + source quality (prefer Google when plentiful)
             let targetDistance = Double(targetDurationMinutes) * 80 / 2  // Ideal one-way distance
             let scoredPlaces = places.map { poi -> (poi: PlaceResult, score: Double) in
                 let distance = distanceBetween(location, poi.coordinate)
                 let distanceFit = 1.0 - min(1.0, abs(distance - targetDistance) / targetDistance)
                 let walkScore = walkabilityScore(for: poi)
-                return (poi, distanceFit * 10 + walkScore)
+                let sourceScore = sourceQualityScore(for: poi, googlePOICount: googlePOICount)
+                return (poi, distanceFit * 10 + walkScore + sourceScore)
             }.sorted { $0.score > $1.score }
             
             places = Array(scoredPlaces.prefix(maxPOIs).map { $0.poi })
             cappedPOICount = places.count
-            print("📊 Kept top \(places.count) POIs by score")
+            
+            // Log source breakdown
+            let keptGoogleCount = places.filter { isGooglePOI($0) }.count
+            print("📊 Kept top \(places.count) POIs by score (Google: \(keptGoogleCount), OSM/Apple: \(places.count - keptGoogleCount))")
         }
         
         // 📊 FINAL FUNNEL SUMMARY
