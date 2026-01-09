@@ -921,6 +921,7 @@ struct LocalRoutePickerSheet: View {
     @State private var lastValidRoute: WalkingRoute?
     @State private var lastValidRouteData: GeneratedRoute?
     @State private var isRecycledRoute = false  // Indicates shuffle fell back to previous route
+    @State private var isDeadZoneFallback = false  // v1.6.39: Indicates route is 70-74% (closest available)
     @State private var shownPlaceIdSets: [Set<String>] = []  // Track all shown route combinations
     
     // Store route before shuffle so Cancel restores it (not exits completely)
@@ -1609,6 +1610,7 @@ struct LocalRoutePickerSheet: View {
                         allRoutes = [(route: localRoute, data: cached.route)]
                         currentRouteIndex = 0
                         isRecycledRoute = false
+                        isDeadZoneFallback = cached.isDeadZoneFallback  // v1.6.39: Set from cache
                         viewedRouteIndices = [0]
                         shownPlaceIdSets = [Set(cached.route.places.map { $0.placeId })]
                         showMapPreview = true
@@ -1724,6 +1726,7 @@ struct LocalRoutePickerSheet: View {
                         currentRouteIndex = 0
                         preGenerationComplete = false
                         isRecycledRoute = false  // First route is never recycled
+                        isDeadZoneFallback = false  // v1.6.39: Fresh routes are not fallbacks
                         viewedRouteIndices = [0]  // Mark first route as viewed
                         // Track place IDs for this route
                         let placeIds = Set(result.places.map { $0.placeId })
@@ -1854,6 +1857,7 @@ struct LocalRoutePickerSheet: View {
                 showPremiumUpsell: showPremiumUpsell,
                 hasLimitedPOIs: mapsService.hasLimitedPOIs,
                 varietyExhausted: varietyExhausted,
+                isDeadZoneFallback: isDeadZoneFallback,  // v1.6.39
                 onStartWalk: { handleStartWalk(route: route) },
                 onShuffle: { shuffleToNextRoute() },
                 onBack: { handleBackFromPreview() },
@@ -3306,6 +3310,7 @@ struct LocalRouteMapPreview: View {
     var showPremiumUpsell: Bool = false  // True when all routes have been viewed
     var hasLimitedPOIs: Bool = false  // v1.6.10: True when POI count is below threshold
     var varietyExhausted: Bool = false  // v1.6.25: True when no more unique routes available
+    var isDeadZoneFallback: Bool = false  // v1.6.39: True when route is 70-74% (closest available)
     
     // v1.6.28: Removed permission callbacks - permissions now requested during/after walk
     let onStartWalk: () -> Void          // Start the walk immediately
@@ -3635,6 +3640,17 @@ struct LocalRouteMapPreview: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
+                    }
+                    
+                    // v1.6.39: Dead zone fallback indicator
+                    if isDeadZoneFallback {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption2)
+                            Text("Closest available route for this duration")
+                                .font(.caption)
+                        }
+                        .foregroundColor(.softAmber)
                     }
                     
                     // v1.6.25: All routes found message

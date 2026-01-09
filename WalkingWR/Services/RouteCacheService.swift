@@ -82,6 +82,7 @@ class RouteCacheService {
         let route: GeneratedRoute
         let name: String?
         let description: String?
+        var isDeadZoneFallback: Bool = false  // v1.6.39: True if route is 70-74% (closest available)
     }
     
     /// Check if we have cached routes for this location and duration
@@ -109,6 +110,11 @@ class RouteCacheService {
             roundedDuration - 10, roundedDuration + 10,
             roundedDuration - 15, roundedDuration + 15
         ].filter { $0 >= 10 && $0 <= 60 }  // Keep within valid range (min 10 min)
+        
+        // v1.6.39: Track best dead-zone fallback routes (70-74%) in case no valid routes found
+        var deadZoneFallbackRoutes: [CachedRouteWithMetadata] = []
+        let deadZoneMinPercent = 0.70
+        let deadZoneMinAcceptable = Int(Double(roundedDuration) * deadZoneMinPercent)
         
         for checkDuration in durationsToCheck {
             // Find matching cache entry for this duration
@@ -142,8 +148,37 @@ class RouteCacheService {
                         }
                         return validRoutes
                     }
+                    
+                    // v1.6.39: DEAD ZONE ESCAPE HATCH
+                    // If no valid routes (75%+), collect routes that are 70-74% as fallbacks
+                    if deadZoneFallbackRoutes.isEmpty {
+                        let escapableRoutes = allRoutes.filter { routeWithMeta in
+                            let actualDuration = routeWithMeta.route.durationMinutes
+                            return actualDuration >= deadZoneMinAcceptable && actualDuration < minAcceptable
+                        }
+                        if !escapableRoutes.isEmpty {
+                            // Mark these as dead zone fallbacks
+                            deadZoneFallbackRoutes = escapableRoutes.map { route in
+                                var mutable = route
+                                mutable.isDeadZoneFallback = true
+                                return mutable
+                            }
+                        }
+                    }
                 }
             }
+        }
+        
+        // v1.6.39: DEAD ZONE ESCAPE - If no valid routes found, return best 70-74% routes
+        if !deadZoneFallbackRoutes.isEmpty {
+            // Sort by closest to target (highest accuracy first)
+            let sorted = deadZoneFallbackRoutes.sorted { r1, r2 in
+                r1.route.durationMinutes > r2.route.durationMinutes  // Prefer longer (closer to target)
+            }
+            let bestFallback = sorted.first!
+            let accuracy = Double(bestFallback.route.durationMinutes) / Double(roundedDuration) * 100
+            print("📦 🆘 DEAD ZONE ESCAPE! No routes ≥75%, returning closest available: \(bestFallback.route.durationMinutes)min (\(Int(accuracy))% of \(roundedDuration)min target)")
+            return [sorted.first!]  // Return best single route
         }
         
         return nil
