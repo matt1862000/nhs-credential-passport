@@ -2748,7 +2748,9 @@ struct LocalRoutePickerSheet: View {
                         let elapsed = Date().timeIntervalSince(startTime)
                         let actualMin = route.durationSeconds / 60
                         let accuracy = Double(actualMin) / Double(duration) * 100
-                        let isValid = accuracy >= 80 && accuracy <= 120
+                        // v1.6.39: 75-79% now "short but acceptable", 80-120% fully valid
+                        let isValid = accuracy >= 75 && accuracy <= 120
+                        let isShort = accuracy >= 75 && accuracy < 80
                         
                         allResults.append((accuracy: accuracy, time: elapsed, isValid: isValid))
                         
@@ -2766,7 +2768,8 @@ struct LocalRoutePickerSheet: View {
                         ))
                         
                         // Output route details
-                        let icon = isValid ? "✅" : (accuracy < 80 ? "📉" : "📈")
+                        // v1.6.39: ⚡ for short (75-79%), ✅ for valid (80-120%)
+                        let icon = isShort ? "⚡" : (isValid ? "✅" : (accuracy < 75 ? "📉" : "📈"))
                         await MainActor.run {
                             routeTestResults += "  \(icon) R\(routeNum): \(actualMin)min (\(Int(accuracy))%) \(route.distanceMeters)m\n"
                             routeTestResults += "     → \(waypointNames)\(moreCount)\n"
@@ -2785,16 +2788,24 @@ struct LocalRoutePickerSheet: View {
                 }
             }
             
-            // Duration summary
+            // Duration summary - v1.6.39: separate short (75-79%) from valid (80-120%)
             let validForDuration = routesForDuration.filter { $0.accuracy >= 80 && $0.accuracy <= 120 }.count
+            let shortForDuration = routesForDuration.filter { $0.accuracy >= 75 && $0.accuracy < 80 }.count
+            let acceptableForDuration = validForDuration + shortForDuration
             await MainActor.run {
-                routeTestResults += "  📊 \(validForDuration)/\(routesForDuration.count) valid\n"
+                if shortForDuration > 0 {
+                    routeTestResults += "  📊 \(acceptableForDuration)/\(routesForDuration.count) acceptable (\(validForDuration) valid + \(shortForDuration) short)\n"
+                } else {
+                    routeTestResults += "  📊 \(validForDuration)/\(routesForDuration.count) valid\n"
+                }
             }
         }
         
-        // Calculate summary stats
+        // Calculate summary stats - v1.6.39: track short (75-79%) separately
         let avgAccuracy = allResults.isEmpty ? 0 : allResults.map { $0.accuracy }.reduce(0, +) / Double(allResults.count)
-        let validCount = allResults.filter { $0.isValid }.count
+        let validCount = allResults.filter { $0.isValid }.count  // Now includes 75-79%
+        let strictValidCount = allResults.filter { $0.accuracy >= 80 && $0.accuracy <= 120 }.count
+        let shortCount = allResults.filter { $0.accuracy >= 75 && $0.accuracy < 80 }.count
         let validRate = allResults.isEmpty ? 0 : Double(validCount) / Double(allResults.count) * 100
         let avgSpeed = allResults.isEmpty ? 0 : allResults.map { $0.time }.reduce(0, +) / Double(allResults.count)
         
@@ -2802,7 +2813,13 @@ struct LocalRoutePickerSheet: View {
             routeTestResults += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             routeTestResults += "📊 \(name) SUMMARY:\n"
             routeTestResults += "   Routes: \(allResults.count) | Avg accuracy: \(String(format: "%.0f%%", avgAccuracy))\n"
-            routeTestResults += "   Valid (80-120%): \(validCount)/\(allResults.count) (\(String(format: "%.0f%%", validRate)))\n"
+            if shortCount > 0 {
+                routeTestResults += "   Acceptable (75-120%): \(validCount)/\(allResults.count) (\(String(format: "%.0f%%", validRate)))\n"
+                routeTestResults += "   ├─ Valid (80-120%): \(strictValidCount)\n"
+                routeTestResults += "   └─ Short (75-79%): \(shortCount)\n"
+            } else {
+                routeTestResults += "   Valid (80-120%): \(validCount)/\(allResults.count) (\(String(format: "%.0f%%", validRate)))\n"
+            }
             routeTestResults += "   Avg speed: \(String(format: "%.1fs", avgSpeed))\n"
         }
         
@@ -2956,14 +2973,17 @@ struct LocalRoutePickerSheet: View {
                                 uniqueRoutesFound += 1
                                 consecutiveDuplicates = 0  // Reset on unique find
                                 
+                                // v1.6.39: ⚡ for short (75-79%), ✅ for valid (80-120%)
                                 if accuracy >= 80 && accuracy <= 120 {
                                     status = "✅"
-                                } else if accuracy >= 70 && accuracy <= 130 {
-                                    status = "⚠️"
-                                } else if accuracy < 70 {
-                                    status = "📉"
+                                } else if accuracy >= 75 && accuracy < 80 {
+                                    status = "⚡"  // Short but acceptable
+                                } else if accuracy > 120 && accuracy <= 130 {
+                                    status = "⚠️"  // Marginal (over)
+                                } else if accuracy < 75 {
+                                    status = "📉"  // Too short
                                 } else {
-                                    status = "📈"
+                                    status = "📈"  // Too long (>130%)
                                 }
                             }
                             
@@ -3008,11 +3028,17 @@ struct LocalRoutePickerSheet: View {
                     try? await Task.sleep(nanoseconds: 200_000_000)
                 }
                 
-                // v1.6.25: Improved summary with honest counts
+                // v1.6.39: Improved summary with short routes included
                 await MainActor.run {
-                    let validRoutes = routesForThisDuration.filter { $0.status == "✅" || $0.status == "⚠️" }.count
+                    let validRoutes = routesForThisDuration.filter { $0.status == "✅" }.count
+                    let shortRoutes = routesForThisDuration.filter { $0.status == "⚡" }.count
+                    let acceptableRoutes = validRoutes + shortRoutes
                     let exhaustedIndicator = varietyExhausted ? " (variety exhausted)" : ""
-                    routeTestResults += "  📊 \(uniqueRoutesFound) unique / \(validRoutes) valid\(exhaustedIndicator)\n"
+                    if shortRoutes > 0 {
+                        routeTestResults += "  📊 \(uniqueRoutesFound) unique / \(acceptableRoutes) acceptable (\(validRoutes)✅ + \(shortRoutes)⚡)\(exhaustedIndicator)\n"
+                    } else {
+                        routeTestResults += "  📊 \(uniqueRoutesFound) unique / \(validRoutes) valid\(exhaustedIndicator)\n"
+                    }
                 }
             }
             
@@ -3026,6 +3052,7 @@ struct LocalRoutePickerSheet: View {
                 routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 
                 let successful = results.filter { $0.status == "✅" }.count
+                let shortAcceptable = results.filter { $0.status == "⚡" }.count  // v1.6.39
                 let marginal = results.filter { $0.status == "⚠️" }.count
                 let tooShort = results.filter { $0.status == "📉" }.count
                 let tooLong = results.filter { $0.status == "📈" }.count
@@ -3065,10 +3092,14 @@ struct LocalRoutePickerSheet: View {
                 
                 routeTestResults += "BY ACCURACY (unique routes only):\n"
                 routeTestResults += "✅ On-target (80-120%): \(successful)\n"
-                routeTestResults += "⚠️ Marginal (70-130%):  \(marginal)\n"
-                routeTestResults += "📉 Too short (<70%):    \(tooShort)\n"
+                routeTestResults += "⚡ Short (75-79%):      \(shortAcceptable)\n"
+                routeTestResults += "⚠️ Marginal (121-130%): \(marginal)\n"
+                routeTestResults += "📉 Too short (<75%):    \(tooShort)\n"
                 routeTestResults += "📈 Too long (>130%):    \(tooLong)\n"
                 routeTestResults += "❌ Failed/Error:        \(failed)\n"
+                let totalAcceptable = successful + shortAcceptable
+                routeTestResults += "───────────────────────────────────────\n"
+                routeTestResults += "📊 Total acceptable:    \(totalAcceptable) (\(successful) valid + \(shortAcceptable) short)\n"
                 
                 routeTestResults += "\n📈 ACCURACY STATS:\n"
                 routeTestResults += "   Average: \(String(format: "%.0f", avgAccuracy))% of target\n"
