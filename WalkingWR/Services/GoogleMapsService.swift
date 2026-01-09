@@ -295,6 +295,64 @@ class GoogleMapsService: ObservableObject {
         return 0.0
     }
     
+    // MARK: - v1.6.39: Spatial Thinning for POI Diversity
+    
+    /// Apply spatial thinning to ensure geographic diversity of POIs
+    /// Divides area into grid cells and keeps top-scored POIs per cell
+    /// Prevents clusters of POIs in one area from dominating selection
+    ///
+    /// - Parameters:
+    ///   - scoredPlaces: POIs already sorted by score (highest first)
+    ///   - origin: User's location (center of grid)
+    ///   - maxPOIs: Maximum number of POIs to return
+    ///   - gridSizeMeters: Size of each grid cell (smaller = more spread)
+    /// - Returns: Spatially diverse subset of POIs, still prioritizing high scores
+    private func applySpatialThinning(
+        scoredPlaces: [(poi: PlaceResult, score: Double)],
+        origin: CLLocationCoordinate2D,
+        maxPOIs: Int,
+        gridSizeMeters: Double = 150
+    ) -> [PlaceResult] {
+        guard !scoredPlaces.isEmpty else { return [] }
+        
+        // Convert grid size to approximate lat/lng degrees
+        // 1 degree latitude ≈ 111km, 1 degree longitude varies by latitude
+        let latDegreePerMeter = 1.0 / 111_000.0
+        let lngDegreePerMeter = 1.0 / (111_000.0 * cos(origin.latitude * .pi / 180))
+        let gridLatSize = gridSizeMeters * latDegreePerMeter
+        let gridLngSize = gridSizeMeters * lngDegreePerMeter
+        
+        // Track how many POIs we've taken from each grid cell
+        var cellCounts: [String: Int] = [:]
+        let maxPerCell = 3  // Allow max 3 POIs from same cell
+        
+        var result: [PlaceResult] = []
+        var skippedDueToClustering = 0
+        
+        for (poi, _) in scoredPlaces {
+            if result.count >= maxPOIs { break }
+            
+            // Calculate grid cell for this POI
+            let cellX = Int((poi.coordinate.latitude - origin.latitude) / gridLatSize)
+            let cellY = Int((poi.coordinate.longitude - origin.longitude) / gridLngSize)
+            let cellKey = "\(cellX),\(cellY)"
+            
+            let currentCount = cellCounts[cellKey] ?? 0
+            if currentCount < maxPerCell {
+                result.append(poi)
+                cellCounts[cellKey] = currentCount + 1
+            } else {
+                skippedDueToClustering += 1
+            }
+        }
+        
+        if skippedDueToClustering > 0 {
+            print("📊 Spatial thinning: skipped \(skippedDueToClustering) clustered POIs for better diversity")
+        }
+        
+        return result
+    }
+    
     // MARK: - Pre-Filter POIs by Estimated Duration
     // Estimates round-trip time BEFORE expensive routing API calls
     // Rejects POIs that would create routes way outside target duration
@@ -3344,12 +3402,20 @@ class GoogleMapsService: ObservableObject {
                 return (poi, distanceFit * 10 + walkScore + sourceScore)
             }.sorted { $0.score > $1.score }
             
-            places = Array(scoredPlaces.prefix(maxPOIs).map { $0.poi })
+            // v1.6.39: Apply spatial thinning AFTER scoring to ensure geographic diversity
+            // This prevents clusters of POIs in one area dominating the selection
+            let spatiallyThinnedPOIs = applySpatialThinning(
+                scoredPlaces: scoredPlaces,
+                origin: location,
+                maxPOIs: maxPOIs,
+                gridSizeMeters: 150  // ~2 minute walk between POIs minimum
+            )
+            places = spatiallyThinnedPOIs
             cappedPOICount = places.count
             
             // Log source breakdown
             let keptGoogleCount = places.filter { isGooglePOI($0) }.count
-            print("📊 Kept top \(places.count) POIs by score (Google: \(keptGoogleCount), OSM/Apple: \(places.count - keptGoogleCount))")
+            print("📊 Kept \(places.count) POIs with spatial diversity (Google: \(keptGoogleCount), OSM/Apple: \(places.count - keptGoogleCount))")
         }
         
         // 📊 FINAL FUNNEL SUMMARY
