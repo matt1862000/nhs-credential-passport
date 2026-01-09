@@ -3374,34 +3374,16 @@ struct LocalRouteMapPreview: View {
         VStack(spacing: 0) {
             // Map - with explicit camera position to show full route
             Map(initialPosition: mapCameraPosition) {
-                // User's starting location with route index
+                // User's starting location
                 if let userLoc = userLocation {
                     Annotation("Start/End", coordinate: userLoc) {
-                        VStack(spacing: 4) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.blue)
-                                    .frame(width: 24, height: 24)
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 10, height: 10)
-                            }
-                            
-                            // Label with route index
-                            VStack(spacing: 1) {
-                                Text("Start/End")
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                                Text("\(currentRouteIndex)/\(totalRoutes)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color(.systemBackground).opacity(0.9))
-                            )
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue)
+                                .frame(width: 24, height: 24)
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 10, height: 10)
                         }
                     }
                 }
@@ -3585,14 +3567,17 @@ struct LocalRouteMapPreview: View {
                     Spacer()
                 }
                 
-                // Route status indicators (v1.6.25)
-                VStack(spacing: 4) {
-                    // Loading more routes indicator
-                    if isLoadingMoreRoutes {
-                        HStack(spacing: 6) {
+                // Route index indicator - left aligned, consistent caption font
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text("\(currentRouteIndex) of \(totalRoutes)")
+                            .font(.caption)
+                            .foregroundColor(.primary)
+                        
+                        if isLoadingMoreRoutes {
                             ProgressView()
-                                .scaleEffect(0.7)
-                            Text("Finding more routes...")
+                                .scaleEffect(0.6)
+                            Text("finding more...")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
