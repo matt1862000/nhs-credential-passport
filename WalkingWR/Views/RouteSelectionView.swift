@@ -4382,16 +4382,27 @@ struct ActiveWalkView: View {
                         
                         Spacer()
                         
-                        // Static clinic delay
+                        // Static clinic delay OR walk duration (if no clinician selected)
                         VStack(alignment: .trailing, spacing: 1) {
-                            Text("\(viewModel.waitTimeInfo.estimatedMinutes)")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.white)
-                                .monospacedDigit()
-                            Text("mins delay")
-                                .font(.caption2)
-                                .foregroundColor(.white.opacity(0.7))
+                            if viewModel.selectedClinician != nil {
+                                Text("\(viewModel.waitTimeInfo.estimatedMinutes)")
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.white)
+                                    .monospacedDigit()
+                                Text("mins delay")
+                                    .font(.caption2)
+                                    .foregroundColor(.white.opacity(0.7))
+                            } else {
+                                Text("\(route.durationMinutes)")
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.white)
+                                    .monospacedDigit()
+                                Text("min walk")
+                                    .font(.caption2)
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
                         }
                         
                         if viewModel.walkSession.halfwayAlertSent {
@@ -4416,6 +4427,8 @@ struct ActiveWalkView: View {
                         ),
                         showAllDirections: $showAllDirections,
                         delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
+                        walkDurationMinutes: route.durationMinutes,
+                        hasClinicianSelected: viewModel.selectedClinician != nil,
                         distanceWalked: Int(viewModel.locationService.distanceWalked),
                         halfwayAlert: viewModel.walkSession.halfwayAlertSent
                     )
@@ -4494,6 +4507,8 @@ struct WalkingDirectionsBanner: View {
     @Binding var currentIndex: Int
     @Binding var showAllDirections: Bool
     var delayMinutes: Int = 0
+    var walkDurationMinutes: Int = 0  // Used when no clinician selected
+    var hasClinicianSelected: Bool = true
     var distanceWalked: Int = 0
     var halfwayAlert: Bool = false
     
@@ -4557,16 +4572,27 @@ struct WalkingDirectionsBanner: View {
                     
                     Spacer()
                     
-                    // Static clinic delay
+                    // Static clinic delay OR walk duration (if no clinician selected)
                     VStack(alignment: .trailing, spacing: 0) {
-                        Text("\(delayMinutes)")
-                            .font(.title3)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                            .monospacedDigit()
-                        Text("mins delay")
-                            .font(.caption2)
-                            .foregroundColor(.white.opacity(0.7))
+                        if hasClinicianSelected {
+                            Text("\(delayMinutes)")
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
+                                .monospacedDigit()
+                            Text("mins delay")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.7))
+                        } else {
+                            Text("\(walkDurationMinutes)")
+                                .font(.title3)
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
+                                .monospacedDigit()
+                            Text("min walk")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.7))
+                        }
                     }
                     
                     // Expand button

@@ -259,8 +259,11 @@ struct WalkingInfoCard: View {
             }
             
             // v1.6.10: Prominent delay display with urgency colors (static, no countdown)
+            // Shows "X mins delay" if clinician selected, "X min walk" otherwise
             DelayBanner(
-                delayMinutes: viewModel.waitTimeInfo.estimatedMinutes
+                delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
+                walkDurationMinutes: viewModel.selectedRoute?.durationMinutes ?? 0,
+                hasClinicianSelected: viewModel.selectedClinician != nil
             )
             .padding(.top, 8)
         }
@@ -1083,8 +1086,11 @@ struct WaypointMarkerView: View {
 /// Combined delay + steps banner that saves vertical space
 /// - When steps NOT enabled: alternates between delay info and "Tap to enable steps"
 /// - When steps enabled: only shows delay info (static, no countdown)
+/// - Shows "X min walk" instead of "X mins delay" when no clinician selected
 struct CombinedStatusBanner: View {
     let delayMinutes: Int
+    var walkDurationMinutes: Int = 0  // Used when no clinician selected
+    var hasClinicianSelected: Bool = true
     @ObservedObject var healthKitService: HealthKitService
     @Binding var isStepTrackingEnabled: Bool
     @Binding var showMotionExplainer: Bool
@@ -1100,6 +1106,8 @@ struct CombinedStatusBanner: View {
         TimelineView(.periodic(from: .now, by: 3.0)) { _ in
             CombinedStatusBannerContent(
                 delayMinutes: delayMinutes,
+                walkDurationMinutes: walkDurationMinutes,
+                hasClinicianSelected: hasClinicianSelected,
                 colorScheme: colorScheme,
                 shouldAlternate: shouldAlternate,
                 onTapSteps: {
@@ -1113,9 +1121,21 @@ struct CombinedStatusBanner: View {
 /// Inner content view for CombinedStatusBanner
 private struct CombinedStatusBannerContent: View {
     let delayMinutes: Int
+    var walkDurationMinutes: Int = 0
+    var hasClinicianSelected: Bool = true
     let colorScheme: ColorScheme
     let shouldAlternate: Bool
     let onTapSteps: () -> Void
+    
+    /// Value to display (delay or walk duration)
+    private var displayMinutes: Int {
+        hasClinicianSelected ? delayMinutes : walkDurationMinutes
+    }
+    
+    /// Label to display
+    private var displayLabel: String {
+        hasClinicianSelected ? "mins delay" : "min walk"
+    }
     
     /// Toggle between delay and steps display (changes every 3 seconds)
     private var showingStepsPrompt: Bool {
@@ -1125,15 +1145,17 @@ private struct CombinedStatusBannerContent: View {
         return (seconds / 3) % 2 == 1
     }
     
-    /// Urgency level based on static delay value
+    /// Urgency level based on static delay value (only applies when clinician selected)
     enum Urgency {
         case relaxed      // > 20 min
         case gentle       // 10-20 min
         case warning      // 5-10 min
         case urgent       // < 5 min
+        case walkMode     // No clinician - neutral color
     }
     
     var urgency: Urgency {
+        guard hasClinicianSelected else { return .walkMode }
         switch delayMinutes {
         case 21...: return .relaxed
         case 10...20: return .gentle
@@ -1148,6 +1170,7 @@ private struct CombinedStatusBannerContent: View {
         case .gentle: return .softAmber
         case .warning: return .orange
         case .urgent: return .red
+        case .walkMode: return .tealAccent
         }
     }
     
@@ -1157,6 +1180,7 @@ private struct CombinedStatusBannerContent: View {
         case .gentle: return "clock.fill"
         case .warning: return "exclamationmark.triangle.fill"
         case .urgent: return "bell.badge.fill"
+        case .walkMode: return "figure.walk"
         }
     }
     
@@ -1177,18 +1201,18 @@ private struct CombinedStatusBannerContent: View {
     
     private var delayView: some View {
         HStack(spacing: 12) {
-            // Urgency icon
+            // Urgency icon (or walk icon)
             Image(systemName: urgencyIcon)
                 .font(.title3)
                 .foregroundColor(urgencyColor)
             
-            // Static delay display
+            // Static delay/walk display
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("\(delayMinutes)")
+                Text("\(displayMinutes)")
                     .font(.title2)
                     .fontWeight(.bold)
                     .foregroundColor(urgencyColor)
-                Text("mins delay")
+                Text(displayLabel)
                     .font(.subheadline)
                     .foregroundColor(.white.opacity(0.7))
             }
@@ -1379,32 +1403,52 @@ private struct CompactStatusPillContent: View {
 
 // MARK: - Delay Banner (v1.6.10) - Legacy, kept for reference
 /// Static delay display with color-coded urgency (no countdown)
+/// Shows "X mins delay" if clinician selected, "X min walk" otherwise
 struct DelayBanner: View {
     let delayMinutes: Int
+    var walkDurationMinutes: Int = 0  // Used when no clinician selected
+    var hasClinicianSelected: Bool = true
     @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
         DelayBannerContent(
             delayMinutes: delayMinutes,
+            walkDurationMinutes: walkDurationMinutes,
+            hasClinicianSelected: hasClinicianSelected,
             colorScheme: colorScheme
         )
     }
 }
 
 /// Inner content view for DelayBanner - shows static delay value
+/// Shows "X mins delay" if clinician selected, "X min walk" otherwise
 private struct DelayBannerContent: View {
     let delayMinutes: Int
+    var walkDurationMinutes: Int = 0
+    var hasClinicianSelected: Bool = true
     let colorScheme: ColorScheme
     
-    /// Urgency level based on static delay value
+    /// Value to display (delay or walk duration)
+    private var displayMinutes: Int {
+        hasClinicianSelected ? delayMinutes : walkDurationMinutes
+    }
+    
+    /// Label to display
+    private var displayLabel: String {
+        hasClinicianSelected ? "mins delay" : "min walk"
+    }
+    
+    /// Urgency level based on static delay value (only applies when clinician selected)
     enum Urgency {
         case relaxed      // > 20 min
         case gentle       // 10-20 min
         case warning      // 5-10 min
         case urgent       // < 5 min
+        case walkMode     // No clinician - neutral color
     }
     
     var urgency: Urgency {
+        guard hasClinicianSelected else { return .walkMode }
         switch delayMinutes {
         case 21...: return .relaxed
         case 10...20: return .gentle
@@ -1419,6 +1463,7 @@ private struct DelayBannerContent: View {
         case .gentle: return .softAmber
         case .warning: return .orange
         case .urgent: return .red
+        case .walkMode: return .tealAccent
         }
     }
     
@@ -1428,23 +1473,24 @@ private struct DelayBannerContent: View {
         case .gentle: return "clock.fill"
         case .warning: return "exclamationmark.triangle.fill"
         case .urgent: return "bell.badge.fill"
+        case .walkMode: return "figure.walk"
         }
     }
     
     var body: some View {
         HStack(spacing: 12) {
-            // Urgency icon
+            // Urgency icon (or walk icon)
             Image(systemName: urgencyIcon)
                 .font(.title3)
                 .foregroundColor(urgencyColor)
             
-            // Static delay display
+            // Static delay/walk display
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("\(delayMinutes)")
+                Text("\(displayMinutes)")
                     .font(.title2)
                     .fontWeight(.bold)
                     .foregroundColor(urgencyColor)
-                Text("mins delay")
+                Text(displayLabel)
                     .font(.subheadline)
                     .foregroundColor(.white.opacity(0.7))
             }
