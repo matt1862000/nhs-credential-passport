@@ -1351,8 +1351,18 @@ struct LocalRoutePickerSheet: View {
                         ToolbarItem(placement: .cancellationAction) {
                             Button {
                                 UIPasteboard.general.string = routeTestResults
+                                didCopyResults = true
+                                // Reset after 2 seconds
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                    didCopyResults = false
+                                }
                             } label: {
-                                Image(systemName: "doc.on.doc")
+                                HStack(spacing: 4) {
+                                    Image(systemName: didCopyResults ? "checkmark" : "doc.on.doc")
+                                    Text(didCopyResults ? "Copied!" : "Copy All")
+                                        .font(.caption)
+                                }
+                                .foregroundColor(didCopyResults ? .green : .accentColor)
                             }
                         }
                     }
@@ -2606,6 +2616,7 @@ struct LocalRoutePickerSheet: View {
     @State private var isRunningRouteTest = false
     @State private var routeTestResults: String = ""
     @State private var showRouteTestResults = false
+    @State private var didCopyResults = false  // For "Copied!" feedback
     
     /// Fixed test locations for batch testing
     private let fixedTestLocations: [(name: String, coordinate: CLLocationCoordinate2D)] = [
