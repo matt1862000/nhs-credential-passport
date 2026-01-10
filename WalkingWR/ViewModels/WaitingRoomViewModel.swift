@@ -746,6 +746,9 @@ class WaitingRoomViewModel: ObservableObject {
         guard let route = selectedRoute,
               let userLocation = locationService.currentLocation else { return }
         
+        // Get route path for dynamic radius calculation
+        let routePath = route.routePath
+        
         // Check each marker on the route
         for marker in route.qrMarkers {
             // Skip already visited markers
@@ -753,10 +756,17 @@ class WaitingRoomViewModel: ObservableObject {
             
             // Calculate distance to marker (in meters)
             let markerLocation = CLLocation(latitude: marker.coordinate.latitude, longitude: marker.coordinate.longitude)
-            let distance = userLocation.distance(from: markerLocation)
+            let userDistanceToMarker = userLocation.distance(from: markerLocation)
             
-            // Trigger when within 20 meters of marker
-            if distance < 20 {
+            // v1.7.2: Dynamic activation radius based on POI distance from route
+            // POIs close to the road get tight radius, set-back buildings get generous radius
+            let activationRadius = calculateDynamicActivationRadius(
+                markerCoordinate: marker.coordinate,
+                routePath: routePath
+            )
+            
+            if userDistanceToMarker < activationRadius {
+                print("📍 Waypoint activated: \(marker.name) (distance: \(Int(userDistanceToMarker))m, radius: \(Int(activationRadius))m)")
                 currentMarker = marker
                 visitedMarkerIds.insert(marker.id)
                 walkSession.markersScanned.append(marker)
@@ -772,6 +782,43 @@ class WaitingRoomViewModel: ObservableObject {
                 break
             }
         }
+    }
+    
+    /// Calculates a dynamic activation radius based on how far the POI is from the walking route.
+    /// - POIs on the roadside (cafes, bus stops): ~25m radius
+    /// - POIs set back from road (schools, parks): up to 75m radius
+    private func calculateDynamicActivationRadius(
+        markerCoordinate: CLLocationCoordinate2D,
+        routePath: [CLLocationCoordinate2D]
+    ) -> Double {
+        // Find minimum distance from marker to any point on the route
+        let markerLocation = CLLocation(latitude: markerCoordinate.latitude, longitude: markerCoordinate.longitude)
+        
+        var minDistanceToRoute: Double = .greatestFiniteMagnitude
+        
+        for routePoint in routePath {
+            let routeLocation = CLLocation(latitude: routePoint.latitude, longitude: routePoint.longitude)
+            let distance = markerLocation.distance(from: routeLocation)
+            minDistanceToRoute = min(minDistanceToRoute, distance)
+        }
+        
+        // If route is empty, use default radius
+        guard minDistanceToRoute != .greatestFiniteMagnitude else {
+            return 50.0 // Default fallback
+        }
+        
+        // Dynamic radius formula:
+        // Base: 20m (minimum for GPS accuracy)
+        // + Distance from route (accounts for set-back buildings)
+        // + Buffer: 15m (walking on opposite side of street, GPS drift)
+        // Capped at 75m to prevent false activations
+        let baseRadius: Double = 20.0
+        let buffer: Double = 15.0
+        let maxRadius: Double = 75.0
+        
+        let dynamicRadius = min(baseRadius + minDistanceToRoute + buffer, maxRadius)
+        
+        return dynamicRadius
     }
     
     func dismissMarkerPrompt() {
