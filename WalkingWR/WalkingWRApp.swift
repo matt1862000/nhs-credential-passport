@@ -26,9 +26,11 @@ struct WalkingWRApp: App {
         // Configure tab bar
         UITabBar.appearance().unselectedItemTintColor = .darkGray
         
-        // v1.7.5: Cancel any orphaned walk notifications on app launch
+        // v1.7.8: Cancel orphaned walk notifications ASYNC to avoid blocking init
         // This handles the case where app was force-closed during a walk
-        cancelOrphanedWalkNotifications()
+        DispatchQueue.main.async {
+            Self.cancelOrphanedWalkNotifications()
+        }
     }
     
     var body: some Scene {
@@ -47,7 +49,7 @@ struct WalkingWRApp: App {
     }
     
     /// Cancel orphaned walk notifications on app launch
-    private func cancelOrphanedWalkNotifications() {
+    private static func cancelOrphanedWalkNotifications() {
         // Check if there's an active walk by looking at UserDefaults flag
         let hasActiveWalk = UserDefaults.standard.bool(forKey: "hasActiveWalk")
         

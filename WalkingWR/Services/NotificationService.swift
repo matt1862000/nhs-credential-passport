@@ -353,8 +353,12 @@ class NotificationService: ObservableObject {
     }
     
     func cancelAllWalkingNotifications() {
-        let center = UNUserNotificationCenter.current()
-        center.removeAllPendingNotificationRequests()
+        // v1.7.8: Run on background thread to prevent main thread blocking
+        DispatchQueue.global(qos: .utility).async {
+            let center = UNUserNotificationCenter.current()
+            center.removeAllPendingNotificationRequests()
+            print("🔕 Cancelled all pending walk notifications")
+        }
     }
     
     func cancelNotification(identifier: String) {

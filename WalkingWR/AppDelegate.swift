@@ -192,19 +192,23 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         } else {
             // This is a walking notification (no topic) - cancel all pending walk notifications
             print("🔕 Walking notification - cancelling all pending walk notifications")
-            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
             
-            // Also clear the active walk flag so no more are scheduled
-            UserDefaults.standard.set(false, forKey: "hasActiveWalk")
-            
-            // Post notification so ViewModel knows to stop the walk
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: Notification.Name("WalkNotificationsStopped"),
-                    object: nil
-                )
+            // v1.7.8: Do all operations async to prevent blocking the notification handler
+            DispatchQueue.global(qos: .utility).async {
+                UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+                
+                // Also clear the active walk flag so no more are scheduled
+                UserDefaults.standard.set(false, forKey: "hasActiveWalk")
+                
+                // Post notification so ViewModel knows to stop the walk
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: Notification.Name("WalkNotificationsStopped"),
+                        object: nil
+                    )
+                }
+                print("✅ Walk notifications stopped")
             }
-            print("✅ Walk notifications stopped")
         }
     }
 }
