@@ -1643,15 +1643,29 @@ struct LocalRoutePickerSheet: View {
                     
                     await MainActor.run {
                         isGenerating = false
-                        generatedRoute = firstRoute.route
-                        generatedRouteData = firstRoute.data
-                        lastValidRoute = firstRoute.route
-                        lastValidRouteData = firstRoute.data
                         allRoutes = loadedRoutes
-                        currentRouteIndex = 0
+                        
+                        // v1.6.45: Auto-advance to route 2 if available (skip template Route 1)
+                        if loadedRoutes.count >= 2 {
+                            currentRouteIndex = 1
+                            let secondRoute = loadedRoutes[1]
+                            generatedRoute = secondRoute.route
+                            generatedRouteData = secondRoute.data
+                            lastValidRoute = secondRoute.route
+                            lastValidRouteData = secondRoute.data
+                            viewedRouteIndices = [1]
+                            print("🚀 Auto-advanced to route 2 (skipped template Route 1)")
+                        } else {
+                            currentRouteIndex = 0
+                            generatedRoute = firstRoute.route
+                            generatedRouteData = firstRoute.data
+                            lastValidRoute = firstRoute.route
+                            lastValidRouteData = firstRoute.data
+                            viewedRouteIndices = [0]
+                        }
+                        
                         isRecycledRoute = false
                         isDeadZoneFallback = firstCached.isDeadZoneFallback
-                        viewedRouteIndices = [0]
                         shownPlaceIdSets = loadedPlaceIdSets
                         preGenerationComplete = loadedRoutes.count >= maxRoutesToGenerate
                         showMapPreview = true
@@ -1659,7 +1673,7 @@ struct LocalRoutePickerSheet: View {
                         let totalTime = Date().timeIntervalSince(generateStartTime)
                         print("═══════════════════════════════════════════════════════════")
                         print("✅ CACHE LOADED - \(loadedRoutes.count) routes in \(String(format: "%.2f", totalTime))s")
-                        print("   📍 First route: \(firstRoute.data.places.count) POIs, \(firstRoute.data.durationMinutes)min")
+                        print("   📍 Showing route \(currentRouteIndex + 1): \(generatedRouteData?.places.count ?? 0) POIs, \(generatedRouteData?.durationMinutes ?? 0)min")
                         print("═══════════════════════════════════════════════════════════")
                         
                         // Only pre-generate more if we don't have enough
