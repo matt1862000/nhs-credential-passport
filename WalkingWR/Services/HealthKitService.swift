@@ -71,23 +71,14 @@ class HealthKitService: ObservableObject {
                 return
             }
             
-            // We got a response (or error)
+            // We got a response (or error) - check authorization status
             DispatchQueue.main.async {
                 // Stop the updates since we just wanted to trigger the prompt
                 self.pedometer.stopUpdates()
                 self.objectWillChange.send()
                 
-                // v1.6.30: Trust the callback result, not just authorizationStatus()
-                // If we got data without error, we're authorized
-                // authorizationStatus() can have timing issues
-                let statusGranted = CMPedometer.authorizationStatus() == .authorized
-                let dataGranted = data != nil && error == nil
-                let granted = statusGranted || dataGranted
-                
-                print("📱 Motion authorization result: \(granted)")
-                print("📱   - statusGranted (authorizationStatus): \(statusGranted)")
-                print("📱   - dataGranted (data != nil && error == nil): \(dataGranted)")
-                print("📱   - authorizationStatus.rawValue: \(CMPedometer.authorizationStatus().rawValue)")
+                let granted = CMPedometer.authorizationStatus() == .authorized
+                print("📱 Motion authorization result: \(granted), status: \(CMPedometer.authorizationStatus().rawValue)")
                 completion?(granted)
             }
         }

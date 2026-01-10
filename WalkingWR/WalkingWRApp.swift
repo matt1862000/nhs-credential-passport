@@ -55,7 +55,10 @@ struct WalkingWRApp: App {
         
         if !hasActiveWalk {
             print("📱 No active walk on launch - cancelling any orphaned walk notifications")
-            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+            // v1.7.10: Run on background thread to prevent main thread hang
+            DispatchQueue.global(qos: .utility).async {
+                UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+            }
         }
     }
     
@@ -64,8 +67,8 @@ struct WalkingWRApp: App {
         // Post notification so ViewModel can check and set the flag
         NotificationCenter.default.post(name: Notification.Name("CheckActiveWalkForBackground"), object: nil)
         
-        // Give the ViewModel a moment to respond, then check
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        // Give the ViewModel a moment to respond, then check on background thread
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.1) {
             let hasActiveWalk = UserDefaults.standard.bool(forKey: "hasActiveWalk")
             if !hasActiveWalk {
                 print("📱 No active walk - cancelling pending walk notifications")
