@@ -63,7 +63,7 @@ exports.onClinicianDelayChange = onDocumentUpdated('clinicians/{clinicianId}', a
     apns: {
       payload: {
         aps: {
-          'category': 'DELAY_UPDATE',  // Matches AppDelegate.delayNotificationCategory
+          'category': 'DELAY_NOTIFICATION',  // Must match NotificationService.registerNotificationCategories()
           'mutable-content': 1,
           'sound': 'default'
         }
@@ -72,7 +72,7 @@ exports.onClinicianDelayChange = onDocumentUpdated('clinicians/{clinicianId}', a
     topic: topic
   };
   
-  console.log('Sending notification to topic: ' + topic + ' with category DELAY_UPDATE');
+  console.log('Sending notification to topic: ' + topic + ' with category DELAY_NOTIFICATION');
   
   try {
     const response = await getMessaging().send(message);

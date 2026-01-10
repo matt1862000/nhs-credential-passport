@@ -275,7 +275,7 @@ class NotificationService: ObservableObject {
         content.title = "Wait Time Updated"
         content.body = "Your estimated wait is now \(newWaitMinutes) minutes. We'll keep you updated."
         content.sound = .default
-        content.categoryIdentifier = "DELAY_UPDATE"
+        content.categoryIdentifier = "DELAY_NOTIFICATION"
         
         let request = UNNotificationRequest(
             identifier: "delay-update-\(UUID().uuidString)",
@@ -295,7 +295,7 @@ class NotificationService: ObservableObject {
         content.body = "The clinic delay has increased by \(increase) minutes (now \(newMinutes) min delay). We apologise for any inconvenience. Feel free to explore our wellbeing activities while you wait."
         
         content.sound = .default
-        content.categoryIdentifier = "DELAY_UPDATE"
+        content.categoryIdentifier = "DELAY_NOTIFICATION"
         content.interruptionLevel = .timeSensitive
         
         let request = UNNotificationRequest(
@@ -322,7 +322,7 @@ class NotificationService: ObservableObject {
         }
         
         content.sound = .default
-        content.categoryIdentifier = "DELAY_UPDATE"
+        content.categoryIdentifier = "DELAY_NOTIFICATION"
         content.interruptionLevel = .timeSensitive
         
         let request = UNNotificationRequest(
