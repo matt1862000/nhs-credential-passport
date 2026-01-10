@@ -136,17 +136,10 @@ class FirebaseService: ObservableObject {
             print("📊 All loaded delays: \(delays)")
             print("👥 Available clinicians from Firebase: \(clinicianList.map { $0.fullName })")
             
-            let dispatchStart = Date()
-            print("⏱️ Firebase: Dispatching to main thread...")
             DispatchQueue.main.async {
-                print("⏱️ Firebase: Main thread dispatch started after \(String(format: "%.2f", Date().timeIntervalSince(dispatchStart)))s")
-                let updateStart = Date()
                 self.clinicianDelays = delays
-                print("⏱️ Firebase: clinicianDelays updated in \(String(format: "%.3f", Date().timeIntervalSince(updateStart)))s")
                 self.availableClinicianNames = names
-                print("⏱️ Firebase: availableClinicianNames updated")
                 self.clinicians = clinicianList
-                print("⏱️ Firebase: clinicians updated - triggering Combine pipeline")
             }
         }
     }

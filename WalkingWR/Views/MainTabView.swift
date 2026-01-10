@@ -334,28 +334,22 @@ struct DelayAlertsModifier: ViewModifier {
             // Watch for ViewModel alert triggers
             .onChange(of: viewModel.showWaitTimeIncreasedAlert) { _, shouldShow in
                 if shouldShow {
-                    print("⏱️ Alert: onChange triggered for increased alert")
                     let title = "Clinic Delay Updated"
                     let message = buildIncreaseMessage()
                     viewModel.showWaitTimeIncreasedAlert = false
-                    print("⏱️ Alert: Scheduling presentation after 0.4s delay...")
                     // Delay to let any re-renders settle, then show UIKit alert
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                        print("⏱️ Alert: 0.4s delay completed, calling showUIKitAlert")
                         showUIKitAlert(title: title, message: message)
                     }
                 }
             }
             .onChange(of: viewModel.showWaitTimeDecreasedAlert) { _, shouldShow in
                 if shouldShow {
-                    print("⏱️ Alert: onChange triggered for decreased alert")
                     let title = "Delay Reduction"
                     let message = buildDecreaseMessage()
                     viewModel.showWaitTimeDecreasedAlert = false
-                    print("⏱️ Alert: Scheduling presentation after 0.4s delay...")
                     // Delay to let any re-renders settle, then show UIKit alert
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                        print("⏱️ Alert: 0.4s delay completed, calling showUIKitAlert")
                         showUIKitAlert(title: title, message: message)
                     }
                 }
@@ -377,23 +371,17 @@ struct DelayAlertsModifier: ViewModifier {
     }
     
     private func presentNewAlert(title: String, message: String) {
-        print("⏱️ Alert: presentNewAlert started")
-        let presentStart = Date()
-        
         // Get the top-most view controller (works even with sheets/covers)
         guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               let window = windowScene.windows.first,
               var topController = window.rootViewController else {
-            print("⏱️ Alert: Failed to get window/controller")
             return
         }
-        print("⏱️ Alert: Got window in \(String(format: "%.3f", Date().timeIntervalSince(presentStart)))s")
         
         // Find the top-most presented view controller
         while let presented = topController.presentedViewController {
             topController = presented
         }
-        print("⏱️ Alert: Found top controller in \(String(format: "%.3f", Date().timeIntervalSince(presentStart)))s")
         
         // Create and show UIAlertController
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
@@ -410,9 +398,7 @@ struct DelayAlertsModifier: ViewModifier {
         // Store reference to dismiss later if new alert comes in
         DelayAlertsModifier.currentDelayAlert = alert
         
-        print("⏱️ Alert: About to present alert...")
         topController.present(alert, animated: true)
-        print("⏱️ Alert: present() called - total time: \(String(format: "%.3f", Date().timeIntervalSince(presentStart)))s")
         
         // Auto-dismiss after 15 seconds if user doesn't interact (prevents stuck alerts)
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak alert] in
