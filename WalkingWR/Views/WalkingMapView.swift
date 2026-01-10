@@ -1617,6 +1617,7 @@ struct DelayChangeOverlay: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)  // Allow text to wrap fully
                     .padding(.horizontal)
                 
                 // Action buttons
