@@ -15,7 +15,7 @@ import CoreLocation
 class RouteCacheService {
     static let shared = RouteCacheService()
     
-    private let cacheKey = "cachedRoutes_v28"  // v28: Fixed fallback paths bypassing 130% cap
+    private let cacheKey = "cachedRoutes_v29"  // v29: Distance bonus for short walks (escape cluster trap)
     private let maxCachedRouteSets = 50
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
     private let cacheExpiryHours: Double = 24 // Routes expire after 24 hours

@@ -557,10 +557,58 @@ class GoogleMapsService: ObservableObject {
         // v1.6.38: OSM/Apple POIs not verified against Google are deprioritized
         let sourceBonus = sourceQualityScore(for: poi, googlePOICount: googlePOICount, googlePOIs: googlePOIs) * 0.1
         
+        // v1.6.41: Distance bonus for short walks - escape cluster trap
+        // Bell curve centered on idealDistance, penalizes POIs that are too close
+        let shortWalkDistanceBonus = calculateShortWalkDistanceBonus(
+            distance: distance,
+            targetDurationMinutes: targetDurationMinutes
+        )
+        
         // Combined score
-        let finalScore = distanceScore + walkabilityBonus - recentPenalty + sourceBonus
+        let finalScore = distanceScore + walkabilityBonus - recentPenalty + sourceBonus + shortWalkDistanceBonus
         
         return finalScore
+    }
+    
+    /// v1.6.41: Calculate distance bonus for short walks to escape POI clusters
+    /// Uses bell-shaped curve: peak at ideal distance, penalty for too close
+    /// Effect tapers for longer walks (>25 min) since they self-correct
+    private func calculateShortWalkDistanceBonus(
+        distance: Double,
+        targetDurationMinutes: Int
+    ) -> Double {
+        // Constants based on analysis
+        let idealDistance = Double(targetDurationMinutes) * 40.0  // meters
+        let minAcceptableDistance = 200.0  // meters - penalty below this
+        let maxAcceptableDistance = Double(targetDurationMinutes) * 60.0  // meters
+        
+        // Calculate base bonus using bell curve
+        let baseBonus: Double
+        if distance < minAcceptableDistance {
+            // Too close - penalize (prevents cluster trap)
+            let closenessRatio = distance / minAcceptableDistance
+            baseBonus = -2.0 * (1.0 - closenessRatio)  // -2.0 at 0m, 0 at 200m
+        } else if distance > maxAcceptableDistance {
+            // Too far - soft penalty
+            let overshootRatio = (distance - maxAcceptableDistance) / maxAcceptableDistance
+            baseBonus = -1.0 * min(overshootRatio, 1.0)  // Max -1.0 penalty
+        } else {
+            // In acceptable range - bonus based on closeness to ideal
+            let deviation = abs(distance - idealDistance) / idealDistance
+            baseBonus = 1.5 * max(0, 1.0 - deviation)  // Peak 1.5 at ideal, 0 at edges
+        }
+        
+        // Duration-based weight: full effect for ≤25 min, tapers to 0 by 60 min
+        let durationWeight: Double
+        if targetDurationMinutes <= 25 {
+            durationWeight = 1.0
+        } else if targetDurationMinutes >= 60 {
+            durationWeight = 0.0
+        } else {
+            durationWeight = 1.0 - Double(targetDurationMinutes - 25) / 35.0
+        }
+        
+        return baseBonus * durationWeight
     }
     
     // MARK: - Adaptive Walking Speed
@@ -3585,6 +3633,7 @@ class GoogleMapsService: ObservableObject {
             // Find POIs at the right distance, with CORRIDOR PENALTY scoring
             // Score = 0.7 * |distance - ideal| + 0.3 * (2×distance / targetTotal) * 100
             // This penalizes POIs that would create overly long out-and-backs
+            // v1.6.41: Add distance bonus to escape cluster trap for short walks
             var endpointCandidates = places
                 .filter { !excludePlaceIds.contains($0.placeId) }
                 .map { poi -> (poi: PlaceResult, distance: Double, score: Double) in
@@ -3594,7 +3643,19 @@ class GoogleMapsService: ObservableObject {
                     let twoLegDistance = dist * 2
                     let distanceRatio = twoLegDistance / targetTotalMeters
                     let corridorPenalty = max(0, distanceRatio - 1.0) * 100  // Penalty if ratio > 1.0
-                    let score = 0.7 * distanceScore + 0.3 * corridorPenalty
+                    
+                    // v1.6.41: Distance bonus for short walks - escape cluster trap
+                    // Negative bonus = penalty for POIs too close to origin
+                    let shortWalkBonus = calculateShortWalkDistanceBonus(
+                        distance: dist,
+                        targetDurationMinutes: targetDurationMinutes
+                    )
+                    // Convert bonus to score penalty (higher score = worse in this context)
+                    // shortWalkBonus is positive for good distances, negative for bad
+                    // We want to REDUCE score for good distances, so subtract the bonus × weight
+                    let shortWalkPenalty = -shortWalkBonus * 50  // Scale to match other scoring
+                    
+                    let score = 0.7 * distanceScore + 0.3 * corridorPenalty + shortWalkPenalty
                     return (poi, dist, score)
                 }
                 .filter { $0.distance >= minEndpointDistance && $0.distance <= maxEndpointDistance }

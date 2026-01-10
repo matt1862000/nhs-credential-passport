@@ -2632,6 +2632,9 @@ struct LocalRoutePickerSheet: View {
         routeTestResults += "Testing \(allTestLocations.count) locations...\n\n"
         
         Task {
+            // v1.6.41: Track total test duration
+            let batchStartTime = Date()
+            
             var allLocationSummaries: [(name: String, avgAccuracy: Double, validRate: Double, avgSpeed: Double, poiCount: Int)] = []
             
             for (index, location) in allTestLocations.enumerated() {
@@ -2689,6 +2692,12 @@ struct LocalRoutePickerSheet: View {
                 routeTestResults += "   Accuracy: \(String(format: "%.0f%%", overallAvgAccuracy))\n"
                 routeTestResults += "   Valid rate: \(String(format: "%.0f%%", overallValidRate))\n"
                 routeTestResults += "   Speed: \(String(format: "%.1fs", overallAvgSpeed)) per route\n"
+                
+                // v1.6.41: Show total test duration
+                let totalDuration = Date().timeIntervalSince(batchStartTime)
+                let totalMinutes = Int(totalDuration) / 60
+                let totalSeconds = Int(totalDuration) % 60
+                routeTestResults += "\n⏱️ Total time: \(totalMinutes)m \(totalSeconds)s\n"
                 
                 routeTestResults += "\n🏁 Batch test complete!\n"
                 
