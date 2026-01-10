@@ -3665,8 +3665,21 @@ struct LocalRouteMapPreview: View {
     
     /// Calculate camera position to show entire route
     var mapCameraPosition: MapCameraPosition {
-        let allPoints = route.routePath
-        print("🗺️ Map preview: routePath has \(allPoints.count) points, polyline length: \(route.encodedPolyline?.count ?? 0) chars")
+        // v1.6.45: Include route path, user location, AND POI markers in bounds
+        var allPoints = route.routePath
+        
+        // Add user location to ensure it's visible
+        if let userLoc = userLocation {
+            allPoints.append(userLoc)
+        }
+        
+        // Add POI marker locations to ensure they're visible
+        for marker in route.qrMarkers {
+            allPoints.append(marker.coordinate)
+        }
+        
+        print("🗺️ Map preview: \(route.routePath.count) route points + \(route.qrMarkers.count) POIs")
+        
         guard !allPoints.isEmpty else {
             if let loc = userLocation {
                 return .region(MKCoordinateRegion(center: loc, latitudinalMeters: 500, longitudinalMeters: 500))
@@ -3674,7 +3687,7 @@ struct LocalRouteMapPreview: View {
             return .automatic
         }
         
-        // Calculate bounds of all points
+        // Calculate bounds of all points (route + POIs + user location)
         let lats = allPoints.map { $0.latitude }
         let lngs = allPoints.map { $0.longitude }
         
@@ -3683,18 +3696,24 @@ struct LocalRouteMapPreview: View {
         let minLng = lngs.min()!
         let maxLng = lngs.max()!
         
+        // v1.6.45: Shift center UP to account for bottom info panel
+        // The bottom panel covers ~40% of screen, so shift center to upper third
+        let latRange = maxLat - minLat
+        let shiftedCenterLat = (minLat + maxLat) / 2 + (latRange * 0.15) // Shift up by 15%
+        
         let center = CLLocationCoordinate2D(
-            latitude: (minLat + maxLat) / 2,
+            latitude: shiftedCenterLat,
             longitude: (minLng + maxLng) / 2
         )
         
-        // Add 20% padding
-        let latSpan = (maxLat - minLat) * 1.3
-        let lngSpan = (maxLng - minLng) * 1.3
+        // v1.6.45: Add 60% padding vertically to ensure nothing is cut off
+        // Extra vertical padding because bottom panel covers map
+        let latSpan = (maxLat - minLat) * 1.6  // 60% padding
+        let lngSpan = (maxLng - minLng) * 1.4  // 40% horizontal padding
         
         let region = MKCoordinateRegion(
             center: center,
-            span: MKCoordinateSpan(latitudeDelta: max(0.005, latSpan), longitudeDelta: max(0.005, lngSpan))
+            span: MKCoordinateSpan(latitudeDelta: max(0.008, latSpan), longitudeDelta: max(0.008, lngSpan))
         )
         
         return .region(region)
