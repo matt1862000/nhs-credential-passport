@@ -3590,6 +3590,9 @@ struct LocalRouteMapPreview: View {
     var isDeadZoneFallback: Bool = false  // v1.6.39: True when route is 70-74% (closest available)
     var isStartingWalk: Bool = false  // v1.6.45: Loading state for Let's Go button
     
+    // v1.6.45: Track map loading state
+    @State private var isMapLoading = true
+    
     // v1.6.28: Removed permission callbacks - permissions now requested during/after walk
     let onStartWalk: () -> Void          // Start the walk immediately
     let onShuffle: () -> Void            // Quick regenerate with same settings
@@ -3717,49 +3720,9 @@ struct LocalRouteMapPreview: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Map - with placeholder background while loading
+            // Map - with loading overlay
             ZStack {
-                // v1.6.45: Placeholder background that shows while map tiles load
-                ZStack {
-                    // Dark gradient simulating unloaded map
-                    LinearGradient(
-                        colors: [
-                            Color(.systemGray6),
-                            Color(.systemGray5),
-                            Color(.systemGray6)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    
-                    // Subtle grid pattern
-                    VStack(spacing: 40) {
-                        ForEach(0..<5, id: \.self) { _ in
-                            HStack(spacing: 40) {
-                                ForEach(0..<5, id: \.self) { _ in
-                                    Circle()
-                                        .fill(Color(.systemGray4).opacity(0.3))
-                                        .frame(width: 8, height: 8)
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Loading indicator
-                    VStack(spacing: 12) {
-                        ProgressView()
-                            .scaleEffect(1.2)
-                            .tint(.tealAccent)
-                        Text("Loading map...")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding()
-                    .background(Color(.systemBackground).opacity(0.8))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-                
-                // Actual map (renders on top when loaded)
+                // Actual map
                 Map(initialPosition: mapCameraPosition) {
                     // User's starting location
                     if let userLoc = userLocation {
@@ -3808,6 +3771,60 @@ struct LocalRouteMapPreview: View {
                     }
                 }
                 .mapStyle(.standard)
+                
+                // v1.6.45: Loading overlay that fades out
+                if isMapLoading {
+                    ZStack {
+                        // Semi-transparent background
+                        Color(.systemBackground).opacity(0.9)
+                        
+                        // Subtle grid pattern
+                        VStack(spacing: 40) {
+                            ForEach(0..<5, id: \.self) { row in
+                                HStack(spacing: 40) {
+                                    ForEach(0..<5, id: \.self) { col in
+                                        Circle()
+                                            .fill(Color.tealAccent.opacity(0.2))
+                                            .frame(width: 8, height: 8)
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Loading indicator
+                        VStack(spacing: 12) {
+                            ProgressView()
+                                .scaleEffect(1.2)
+                                .tint(.tealAccent)
+                            Text("Loading map...")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 16)
+                        .background(Color(.secondarySystemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                        .shadow(radius: 8)
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .onAppear {
+                // Fade out loading overlay after brief delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        isMapLoading = false
+                    }
+                }
+            }
+            .onChange(of: route.id) { _, _ in
+                // Reset loading state when route changes
+                isMapLoading = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        isMapLoading = false
+                    }
+                }
             }
             
             // Warning banners
