@@ -16,6 +16,9 @@ import UIKit
 extension Notification.Name {
     static let runBatchTest = Notification.Name("runBatchTest")
     static let runSingleLocationTest = Notification.Name("runSingleLocationTest")
+    // v1.6.45: Internal notifications (after sheet is opened)
+    static let runBatchTestInternal = Notification.Name("runBatchTestInternal")
+    static let runSingleLocationTestInternal = Notification.Name("runSingleLocationTestInternal")
 }
 
 struct ProfileView: View {

@@ -246,6 +246,25 @@ struct RouteSelectionView: View {
             } message: {
                 Text("Great job completing your walk! Head back to the waiting area when ready.")
             }
+            // v1.6.45: Batch test listeners - moved here so they work even when sheet is closed
+            .onReceive(NotificationCenter.default.publisher(for: .runBatchTest)) { _ in
+                print("📬 Received runBatchTest notification")
+                showLocalRoutePicker = true
+                // Delay to allow sheet to open, then run test
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    NotificationCenter.default.post(name: .runBatchTestInternal, object: nil)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTest)) { notification in
+                print("📬 Received runSingleLocationTest notification")
+                if let userInfo = notification.userInfo {
+                    showLocalRoutePicker = true
+                    // Delay to allow sheet to open, then run test
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        NotificationCenter.default.post(name: .runSingleLocationTestInternal, object: nil, userInfo: userInfo)
+                    }
+                }
+            }
         }
     }
     
@@ -1287,14 +1306,16 @@ struct LocalRoutePickerSheet: View {
                 // Pre-fetch POIs while user selects duration (speeds up Generate)
                 prefetchPOIsIfNeeded()
             }
-            // Listen for batch test trigger from Settings
-            .onReceive(NotificationCenter.default.publisher(for: .runBatchTest)) { _ in
+            // v1.6.45: Listen for INTERNAL batch test trigger (after sheet is opened)
+            .onReceive(NotificationCenter.default.publisher(for: .runBatchTestInternal)) { _ in
+                print("📬 Sheet received runBatchTestInternal - starting tests")
                 runAllLocationTests()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTest)) { notification in
+            .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTestInternal)) { notification in
                 // Handle single location test from Settings
+                print("📬 Sheet received runSingleLocationTestInternal")
                 if let userInfo = notification.userInfo,
-                   let name = userInfo["name"] as? String,
+                   let name = userInfo["locationName"] as? String,
                    let lat = userInfo["latitude"] as? Double,
                    let lon = userInfo["longitude"] as? Double {
                     
