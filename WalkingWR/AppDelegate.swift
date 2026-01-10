@@ -168,9 +168,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     }
     
     private func handleStopNotifications(userInfo: [AnyHashable: Any]) {
-        // Extract clinician topic from notification data
+        // Check if this is a clinician/delay notification (has topic)
         if let topic = userInfo["topic"] as? String {
-            print("🔕 Unsubscribing from topic: \(topic)")
+            // Unsubscribe from this clinician's FCM topic
+            print("🔕 Unsubscribing from clinician topic: \(topic)")
             
             Messaging.messaging().unsubscribe(fromTopic: topic) { error in
                 if let error = error {
@@ -189,8 +190,21 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
                 }
             }
         } else {
-            // Fallback: unsubscribe from all clinician topics
-            print("🔕 No topic in notification, cannot unsubscribe specific clinician")
+            // This is a walking notification (no topic) - cancel all pending walk notifications
+            print("🔕 Walking notification - cancelling all pending walk notifications")
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+            
+            // Also clear the active walk flag so no more are scheduled
+            UserDefaults.standard.set(false, forKey: "hasActiveWalk")
+            
+            // Post notification so ViewModel knows to stop the walk
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: Notification.Name("WalkNotificationsStopped"),
+                    object: nil
+                )
+            }
+            print("✅ Walk notifications stopped")
         }
     }
 }
