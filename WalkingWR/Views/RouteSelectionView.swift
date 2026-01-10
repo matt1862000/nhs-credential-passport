@@ -1531,21 +1531,34 @@ struct LocalRoutePickerSheet: View {
     }
     
     func generateRoute() {
-        guard let userLocation = locationService.currentLocation else { return }
+        let generateStartTime = Date()
+        print("═══════════════════════════════════════════════════════════")
+        print("🚀 GENERATE ROUTE START - \(selectedDuration)min")
+        print("═══════════════════════════════════════════════════════════")
+        
+        guard let userLocation = locationService.currentLocation else {
+            print("❌ No user location available")
+            return
+        }
+        print("📍 Location: (\(String(format: "%.5f", userLocation.coordinate.latitude)), \(String(format: "%.5f", userLocation.coordinate.longitude)))")
         
         // Check location limit before generating (only if not already cached)
         let cacheService = POICacheService.shared
         if cacheService.getCachedPOIs(near: userLocation.coordinate) == nil {
+            print("📦 No cached POIs for this location")
             // No cached POIs - would need a new slot
             if !cacheService.canAddLocation(at: userLocation.coordinate) {
                 showLocationLimitAlert = true
                 print("🔒 Location limit reached - showing upgrade prompt")
                 return
             }
+        } else {
+            print("📦 POIs already cached for this location")
         }
         
         isGenerating = true
         errorMessage = nil
+        print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting generation...")
         
         if mapsService.hasAPIKey {
             // Use Google APIs for smart routing
@@ -1562,7 +1575,10 @@ struct LocalRoutePickerSheet: View {
                     shouldUseCache = true  // No pre-gen location yet, check cache anyway
                 }
                 
+                print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Checking route cache...")
+                
                 if shouldUseCache, let cachedRoutes = RouteCacheService.shared.getCachedRoutes(near: userLocation.coordinate, durationMinutes: selectedDuration), !cachedRoutes.isEmpty {
+                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE HIT! Found \(cachedRoutes.count) cached routes")
                     print("📦 Using \(cachedRoutes.count) cached routes for \(selectedDuration)min")
                     
                     // v1.6.45: Load ALL cached routes, not just the first one
@@ -1629,22 +1645,36 @@ struct LocalRoutePickerSheet: View {
                         preGenerationComplete = loadedRoutes.count >= maxRoutesToGenerate
                         showMapPreview = true
                         
-                        print("📦 Loaded \(loadedRoutes.count) cached routes - ready instantly!")
+                        let totalTime = Date().timeIntervalSince(generateStartTime)
+                        print("═══════════════════════════════════════════════════════════")
+                        print("✅ CACHE LOADED - \(loadedRoutes.count) routes in \(String(format: "%.2f", totalTime))s")
+                        print("   📍 First route: \(firstRoute.data.places.count) POIs, \(firstRoute.data.durationMinutes)min")
+                        print("═══════════════════════════════════════════════════════════")
                         
                         // Only pre-generate more if we don't have enough
                         if loadedRoutes.count < maxRoutesToGenerate {
+                            print("📦 Only \(loadedRoutes.count)/\(maxRoutesToGenerate) routes cached - will pre-generate more")
                             preGenerateRemainingRoutes()
+                        } else {
+                            print("📦 All \(loadedRoutes.count) routes loaded from cache - no pre-generation needed")
                         }
                     }
                     return
                 }
                 
+                print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE MISS - generating fresh route...")
+                
                 do {
                     // Use pre-fetched POIs if available (faster!)
                     let poisToUse = prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
                     if poisToUse != nil {
-                        print("⚡ Using pre-fetched POIs for instant route generation")
+                        print("⚡ Using \(prefetchedPOIs.count) pre-fetched POIs for instant route generation")
+                    } else {
+                        print("⚠️ No pre-fetched POIs - will fetch during generation (slower)")
                     }
+                    
+                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting route generation...")
+                    let routeGenStartTime = Date()
                     
                     let result = try await mapsService.generateLocalRouteWithRetry(
                         from: userLocation.coordinate,
@@ -1652,6 +1682,9 @@ struct LocalRoutePickerSheet: View {
                         difficulty: nil,
                         prefetchedPOIs: poisToUse
                     )
+                    
+                    let routeGenTime = Date().timeIntervalSince(routeGenStartTime)
+                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Route generated in \(String(format: "%.2f", routeGenTime))s")
                     
                     // Validate result
                     guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
@@ -1661,6 +1694,8 @@ struct LocalRoutePickerSheet: View {
                         }
                         return
                     }
+                    
+                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Creating markers...")
                     
                     // Create markers from places (needs MainActor for some operations)
                     let markers = await MainActor.run {
@@ -1676,6 +1711,8 @@ struct LocalRoutePickerSheet: View {
                         return
                     }
                     
+                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Extracting directions...")
+                    
                     // Extract walking directions from OSRM/Google legs
                     var directions = await MainActor.run {
                         extractWalkingDirections(from: result.legs)
@@ -1684,16 +1721,20 @@ struct LocalRoutePickerSheet: View {
                     // v1.6.14: If no directions (OSRM was used), get them from Apple MapKit
                     if directions.isEmpty && !result.places.isEmpty {
                         print("🍎 No directions from route - getting from MapKit...")
+                        let mapKitStartTime = Date()
                         let waypointCoords = result.places.map { $0.coordinate }
                         directions = await mapsService.getMapKitDirectionsForRoute(
                             origin: userLocation.coordinate,
                             waypoints: waypointCoords,
                             destination: userLocation.coordinate
                         )
+                        print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - MapKit directions took \(String(format: "%.2f", Date().timeIntervalSince(mapKitStartTime)))s")
                     }
                     
                     // Determine difficulty based on duration
                     let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                    
+                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Generating route name (template)...")
                     
                     // v1.6.45: Use INSTANT template for Route 1 (saves 1-3 sec)
                     // AI naming happens for subsequent routes in background
@@ -1710,7 +1751,7 @@ struct LocalRoutePickerSheet: View {
                         durationMinutes: result.durationMinutes,
                         distanceMeters: result.distanceMeters
                     )
-                    print("⚡ Route 1: Using instant template naming (skipped Gemini)")
+                    print("⚡ Route 1: '\(templateContent.name)' (instant template)")
                     
                     let routeName = templateContent.name
                     let description = templateContent.description
@@ -1752,6 +1793,12 @@ struct LocalRoutePickerSheet: View {
                         shownPlaceIdSets = [placeIds]
                         showMapPreview = true
                         
+                        let totalTime = Date().timeIntervalSince(generateStartTime)
+                        print("═══════════════════════════════════════════════════════════")
+                        print("✅ ROUTE 1 READY - Total time: \(String(format: "%.2f", totalTime))s")
+                        print("   📍 \(result.places.count) POIs, \(result.durationMinutes)min, \(result.distanceMeters)m")
+                        print("═══════════════════════════════════════════════════════════")
+                        
                         // Start pre-generating more routes in background
                         preGenerateRemainingRoutes()
                     }
@@ -1759,7 +1806,8 @@ struct LocalRoutePickerSheet: View {
                     await MainActor.run {
                         isGenerating = false
                         errorMessage = "Could not find a route within time limit. Try different options."
-                        print("🗺️ Smart routing error: \(error)")
+                        print("❌ Smart routing error: \(error)")
+                        print("⏱️ Failed after \(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s")
                     }
                 }
             }
