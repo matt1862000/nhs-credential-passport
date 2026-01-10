@@ -1682,7 +1682,8 @@ struct LocalRoutePickerSheet: View {
                             qrMarkers: markers,
                             routeType: .local,
                             encodedPolyline: cached.route.polyline,
-                            walkingDirections: directions
+                            walkingDirections: directions,
+                            usedOSRMRouting: cached.route.usedOSRM  // v1.7.1: Track OSRM usage for polyline refresh
                         )
                         
                         loadedRoutes.append((route: localRoute, data: cached.route))
@@ -1847,7 +1848,8 @@ struct LocalRoutePickerSheet: View {
                         qrMarkers: markers,
                         routeType: .local,
                         encodedPolyline: result.polyline,
-                        walkingDirections: directions
+                        walkingDirections: directions,
+                        usedOSRMRouting: result.usedOSRM  // v1.7.1: Track OSRM usage for polyline refresh
                     )
                     
                     await MainActor.run {
@@ -2205,15 +2207,19 @@ struct LocalRoutePickerSheet: View {
     }
     
     private func handleStartWalk(route: WalkingRoute) {
-        // v1.6.46: Check if route used OSRM (driving profile) - needs MapKit refresh for proper walking route
-        // Detection: OSRM doesn't provide step-by-step directions, so legs have nil steps
-        let usedOSRM = generatedRouteData?.usedOSRM ?? false
-        let legsHaveNoSteps = generatedRouteData?.legs.allSatisfy { $0.steps == nil || $0.steps?.isEmpty == true } ?? false
-        let needsRefresh = usedOSRM || legsHaveNoSteps
+        // v1.7.1: ALWAYS refresh polyline with MapKit for proper walking route display
+        // The cached walkingDirections might be correct, but the POLYLINE could still be from OSRM (driving)
+        // This ensures the map shows actual walking paths, not driving routes through private land
         
-        // Skip refresh ONLY if we have directions AND route was NOT generated with OSRM
-        if !route.walkingDirections.isEmpty && !needsRefresh {
-            print("⚡ Let's Go: Using cached MapKit directions - instant start!")
+        let generatedDataUsedOSRM = generatedRouteData?.usedOSRM ?? false
+        let routeUsedOSRM = route.usedOSRMRouting
+        
+        // v1.7.1: Only skip refresh if we have a verified MapKit polyline (not OSRM)
+        // A route is safe if: has directions AND was NOT generated with OSRM
+        let hasVerifiedMapKitRoute = !route.walkingDirections.isEmpty && !generatedDataUsedOSRM && !routeUsedOSRM
+        
+        if hasVerifiedMapKitRoute {
+            print("⚡ Let's Go: Route has verified MapKit polyline - instant start!")
             viewModel.selectRoute(route)
             viewModel.startWalk()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -2222,13 +2228,12 @@ struct LocalRoutePickerSheet: View {
             return
         }
         
-        // Route needs refresh: either no directions OR used OSRM (driving polyline)
-        // v1.6.45: Show loading state on button
+        // Route needs MapKit polyline refresh
         isStartingWalk = true
-        if needsRefresh {
-            print("🍎 Let's Go: Route may have used OSRM (no steps) - refreshing with MapKit walking route...")
+        if generatedDataUsedOSRM || routeUsedOSRM {
+            print("🍎 Let's Go: Route used OSRM (driving profile) - refreshing polyline with MapKit walking route...")
         } else {
-            print("🍎 Let's Go: No cached directions - refreshing via MapKit...")
+            print("🍎 Let's Go: Getting fresh MapKit walking route for display...")
         }
         
         Task {
@@ -2412,7 +2417,8 @@ struct LocalRoutePickerSheet: View {
                             qrMarkers: markers,
                             routeType: .local,
                             encodedPolyline: result.polyline,
-                            walkingDirections: directions
+                            walkingDirections: directions,
+                            usedOSRMRouting: result.usedOSRM  // v1.7.1: Track OSRM usage
                         )
                         
                         // Check if this route has been shown before in this session
@@ -2631,7 +2637,8 @@ struct LocalRoutePickerSheet: View {
                         qrMarkers: markers,
                         routeType: .local,
                         encodedPolyline: result.polyline,
-                        walkingDirections: directions
+                        walkingDirections: directions,
+                        usedOSRMRouting: result.usedOSRM  // v1.7.1: Track OSRM usage
                     )
                     
                     await MainActor.run {
