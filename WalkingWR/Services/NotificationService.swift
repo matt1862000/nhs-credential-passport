@@ -49,12 +49,6 @@ class NotificationService: ObservableObject {
             options: .foreground
         )
         
-        let dismissAction = UNNotificationAction(
-            identifier: "DISMISS",
-            title: "Dismiss",
-            options: .destructive
-        )
-        
         // v1.7.4: "Stop Notifications" action - available on ALL notification types
         // Shows in red, doesn't open app, runs in background
         let stopNotificationsAction = UNNotificationAction(

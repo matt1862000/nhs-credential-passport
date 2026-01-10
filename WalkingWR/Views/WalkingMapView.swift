@@ -1778,7 +1778,7 @@ struct StepsCard: View {
                 isPulsing = true
             }
         }
-        .onChange(of: stepTrackingState) { newState in
+        .onChange(of: stepTrackingState) { _, newState in
             // Stop pulsing when state changes from disabled
             isPulsing = newState == .disabled
         }
