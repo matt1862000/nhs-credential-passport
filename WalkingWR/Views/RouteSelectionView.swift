@@ -2884,12 +2884,27 @@ struct LocalRoutePickerSheet: View {
     
     /// v1.6.45: Run test for a single location by coordinate
     func runSingleTest(at coordinate: CLLocationCoordinate2D, name: String) {
-        // If lat/lon are 0, use current location
+        // If lat/lon are 0, use current location (with retry)
         if coordinate.latitude == 0 && coordinate.longitude == 0 {
             if let userLocation = locationService.currentLocation {
+                print("🧪 Using current location: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
                 runRouteGenerationTest(at: userLocation.coordinate)
             } else {
-                print("❌ No current location available for test")
+                print("⏳ Waiting for current location...")
+                // Request fresh location and retry after delay
+                locationService.requestFreshLocation()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    if let userLocation = locationService.currentLocation {
+                        print("🧪 Got location after wait: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+                        runRouteGenerationTest(at: userLocation.coordinate)
+                    } else {
+                        print("❌ Still no current location available for test")
+                        // Show error in results
+                        isRunningRouteTest = true
+                        routeTestResults = "❌ ERROR: Could not get current location.\n\nPlease ensure location permissions are granted and try again."
+                        showRouteTestResults = true
+                    }
+                }
             }
         } else {
             runRouteGenerationTest(at: coordinate)
