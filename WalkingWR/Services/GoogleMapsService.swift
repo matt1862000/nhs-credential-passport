@@ -3383,6 +3383,14 @@ class GoogleMapsService: ObservableObject {
             print("🗺️ 📋 Tier 46+min: 3-\(dynamicMaxWaypoints) waypoints")
         }
         
+        // v1.6.43: Multi-POI bias for ≥30 min walks with sufficient POIs
+        // Data shows multi-POI routes hit duration more reliably for longer walks
+        // Only apply when POI count ≥100 (sparse area protection)
+        if targetDurationMinutes >= 30 && (prefetchedPOIs?.count ?? 0) >= 100 {
+            minWaypointsForTier = max(minWaypointsForTier, 2)  // Ensure at least 2 waypoints
+            print("🗺️ 📋 Multi-POI bias active: min waypoints = \(minWaypointsForTier)")
+        }
+        
         // Step 1: Find nearby POIs - use pre-fetched if available (faster!)
         // Waypoints spaced 5 min apart: N waypoints = N+1 segments
         // desiredSpots = (duration / 5) - 1, but minimum 2 for variety
