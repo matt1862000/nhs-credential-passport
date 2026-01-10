@@ -2286,8 +2286,14 @@ struct LocalRoutePickerSheet: View {
         }
     }
     
-    /// Handle shuffle button press - cycles through pre-generated routes or triggers generation
+    /// Handle shuffle button press - cycles through pre-generated routes
     func shuffleToNextRoute() {
+        // v1.6.45: Only 1 route available - do nothing
+        if allRoutes.count <= 1 {
+            print("🔀 Only 1 route available - Next button disabled")
+            return
+        }
+        
         // If we have more pre-generated routes to show, cycle to next
         if currentRouteIndex < allRoutes.count - 1 {
             // Show next pre-generated route instantly
@@ -2299,34 +2305,15 @@ struct LocalRoutePickerSheet: View {
             isRecycledRoute = viewedRouteIndices.contains(currentRouteIndex)
             viewedRouteIndices.insert(currentRouteIndex)  // Mark as viewed
             print("🔀 Showing route \(currentRouteIndex + 1) of \(allRoutes.count) (recycled: \(isRecycledRoute))")
-        } else if preGenerationComplete && currentRouteIndex >= allRoutes.count - 1 {
-            // All routes have been shown, cycle back to start
+        } else {
+            // v1.6.45: At last route - cycle back to route 1 (no dialog)
             currentRouteIndex = 0
             let firstRoute = allRoutes[0]
             generatedRoute = firstRoute.route
             generatedRouteData = firstRoute.data
             isRecycledRoute = true  // Always recycled when cycling back
             showPremiumUpsell = true  // Show upgrade message when all routes viewed
-            print("🔄 Cycling back to route 1 of \(allRoutes.count) - showing premium upsell")
-        } else {
-            // First shuffle or still generating - trigger new route generation
-            // Store current route so Cancel can restore it (instead of exiting)
-            if let currentRoute = generatedRoute {
-                routeBeforeShuffle = currentRoute
-                routeDataBeforeShuffle = generatedRouteData
-            }
-            
-            isShuffling = true
-            // DON'T clear generatedRoute - keep showing it with overlay
-            errorMessage = nil
-            
-            // Start pre-generation in background if not already running
-            if !isPreGeneratingRoutes && !preGenerationComplete {
-                preGenerateRemainingRoutes()
-            }
-            
-            // Generate next route
-            generateRouteForShuffle()
+            print("🔄 Cycling back to route 1 of \(allRoutes.count)")
         }
     }
     
@@ -3951,25 +3938,25 @@ struct LocalRouteMapPreview: View {
                 
                 // Action buttons
                 HStack(spacing: 10) {
-                    // Shuffle - quick regenerate with same settings
-                    Button(action: onShuffle) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "shuffle")
-                                .font(.title3)
-                                .fontWeight(.medium)
-                            if totalRoutes > 1 {
+                    // v1.6.45: Only show Next button if there's more than 1 route
+                    if totalRoutes > 1 {
+                        Button(action: onShuffle) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "shuffle")
+                                    .font(.title3)
+                                    .fontWeight(.medium)
                                 Text("Next")
                                     .font(.subheadline)
                                     .fontWeight(.medium)
                             }
+                            .foregroundColor(.tealAccent)
+                            .padding(.horizontal, 16)
+                            .frame(height: 48)
+                            .background(Color.tealAccent.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-                        .foregroundColor(.tealAccent)
-                        .padding(.horizontal, totalRoutes > 1 ? 16 : 12)
-                        .frame(height: 48)
-                        .background(Color.tealAccent.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                     
                     // Delete - remove current route (replaces settings button)
                     Button(action: onDelete) {
