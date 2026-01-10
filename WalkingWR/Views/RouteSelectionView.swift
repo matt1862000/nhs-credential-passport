@@ -2762,10 +2762,13 @@ struct LocalRoutePickerSheet: View {
                         let actualMin = route.durationSeconds / 60
                         let accuracy = Double(actualMin) / Double(duration) * 100
                         // v1.6.43: 75-125% acceptable (symmetric bounds)
+                        // v1.6.44: 70-130% acceptable for 10 min walks only (more tolerance)
                         // 75-79% = short, 80-120% = valid, 121-125% = long
-                        let isAcceptable = accuracy >= 75 && accuracy <= 125
-                        let isShort = accuracy >= 75 && accuracy < 80
-                        let isLong = accuracy > 120 && accuracy <= 125
+                        let lowerBound = duration == 10 ? 70.0 : 75.0
+                        let upperBound = duration == 10 ? 130.0 : 125.0
+                        let isAcceptable = accuracy >= lowerBound && accuracy <= upperBound
+                        let isShort = accuracy >= lowerBound && accuracy < 80
+                        let isLong = accuracy > 120 && accuracy <= upperBound
                         
                         allResults.append((accuracy: accuracy, time: elapsed, isValid: isAcceptable))
                         

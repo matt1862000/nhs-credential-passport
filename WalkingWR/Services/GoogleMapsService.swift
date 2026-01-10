@@ -577,6 +577,7 @@ class GoogleMapsService: ObservableObject {
     /// Uses bell-shaped curve: peak at ideal distance, penalty for too close
     /// Effect tapers for longer walks (>25 min) since they self-correct
     /// v1.6.42: POI-density-aware - reduced effect in sparse areas to prevent overshoot
+    /// v1.6.44: Reduced distance penalty for 10-15 min walks (150-200m is fine for short walks)
     private func calculateShortWalkDistanceBonus(
         distance: Double,
         targetDurationMinutes: Int,
@@ -584,7 +585,19 @@ class GoogleMapsService: ObservableObject {
     ) -> Double {
         // Constants based on analysis
         let idealDistance = Double(targetDurationMinutes) * 40.0  // meters
-        let minAcceptableDistance = 200.0  // meters - penalty below this
+        
+        // v1.6.44: Make minAcceptableDistance duration-aware for short walks
+        // For 10 min walks: ideal = 400m, so 150m is acceptable (not a "cluster trap")
+        // For 20+ min walks: keep at 200m
+        let minAcceptableDistance: Double
+        if targetDurationMinutes <= 10 {
+            minAcceptableDistance = 150.0  // More lenient for 10 min
+        } else if targetDurationMinutes <= 15 {
+            minAcceptableDistance = 175.0  // Slightly lenient for 15 min
+        } else {
+            minAcceptableDistance = 200.0  // Standard for 20+ min
+        }
+        
         let maxAcceptableDistance = Double(targetDurationMinutes) * 60.0  // meters
         
         // Calculate base bonus using bell curve
@@ -592,7 +605,7 @@ class GoogleMapsService: ObservableObject {
         if distance < minAcceptableDistance {
             // Too close - penalize (prevents cluster trap)
             let closenessRatio = distance / minAcceptableDistance
-            baseBonus = -2.0 * (1.0 - closenessRatio)  // -2.0 at 0m, 0 at 200m
+            baseBonus = -2.0 * (1.0 - closenessRatio)  // -2.0 at 0m, 0 at threshold
         } else if distance > maxAcceptableDistance {
             // Too far - soft penalty
             let overshootRatio = (distance - maxAcceptableDistance) / maxAcceptableDistance

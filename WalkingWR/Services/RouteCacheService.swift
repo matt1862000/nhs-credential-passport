@@ -15,7 +15,7 @@ import CoreLocation
 class RouteCacheService {
     static let shared = RouteCacheService()
     
-    private let cacheKey = "cachedRoutes_v31"  // v31: Symmetric 75-125% bounds + multi-POI bias ≥30min
+    private let cacheKey = "cachedRoutes_v32"  // v32: 10min walks get 70-130% tolerance + reduced distance penalty
     private let maxCachedRouteSets = 50
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
     private let cacheExpiryHours: Double = 24 // Routes expire after 24 hours
