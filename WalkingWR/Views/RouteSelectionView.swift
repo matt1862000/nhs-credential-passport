@@ -2045,7 +2045,19 @@ struct LocalRoutePickerSheet: View {
     }
     
     private func handleStartWalk(route: WalkingRoute) {
-        // v1.6.38: Always refresh directions via Apple MapKit for best navigation quality
+        // v1.6.45: Skip MapKit refresh if route already has directions (cached)
+        if !route.walkingDirections.isEmpty {
+            print("⚡ Let's Go: Using cached directions - instant start!")
+            viewModel.selectRoute(route)
+            viewModel.startWalk()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                isPresented = false
+            }
+            return
+        }
+        
+        // Route has no directions (rare) - refresh via MapKit
+        print("🍎 Let's Go: No cached directions - refreshing via MapKit...")
         Task {
             if let userLocation = locationService.currentLocation?.coordinate {
                 let refreshedRoute = await mapsService.refreshRouteWithMapKit(
@@ -2055,7 +2067,7 @@ struct LocalRoutePickerSheet: View {
                 await MainActor.run {
                     viewModel.selectRoute(refreshedRoute)
                     viewModel.startWalk()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         isPresented = false
                     }
                 }
@@ -2064,7 +2076,7 @@ struct LocalRoutePickerSheet: View {
                 await MainActor.run {
                     viewModel.selectRoute(route)
                     viewModel.startWalk()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         isPresented = false
                     }
                 }
