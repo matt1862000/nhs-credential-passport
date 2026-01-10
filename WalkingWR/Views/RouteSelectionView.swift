@@ -3778,12 +3778,12 @@ struct LocalRoutePickerSheet: View {
                 }
                 
                 // v1.6.47: Calculate and display Route Score
-                let varietyRate = Double(uniqueCount) / Double(max(1, results.count)) * 100
-                let validRateForScore = Double(successful + shortAcceptable) / Double(max(1, uniqueCount)) * 100
+                let varietyRateForScore = Double(uniqueRoutes) / Double(max(1, results.count)) * 100
+                let validRateForScore = Double(successful + shortAcceptable) / Double(max(1, uniqueRoutes)) * 100
                 let routeScore = Self.calculateRouteScore(
                     validRate: validRateForScore,
                     avgAccuracy: avgAccuracy,
-                    varietyRate: varietyRate,
+                    varietyRate: varietyRateForScore,
                     avgSpeed: avgTime
                 )
                 
