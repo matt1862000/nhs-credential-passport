@@ -1290,6 +1290,21 @@ struct LocalRoutePickerSheet: View {
             .onReceive(NotificationCenter.default.publisher(for: .runBatchTest)) { _ in
                 runAllLocationTests()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTest)) { notification in
+                // Handle single location test from Settings
+                if let userInfo = notification.userInfo,
+                   let name = userInfo["name"] as? String,
+                   let lat = userInfo["latitude"] as? Double,
+                   let lon = userInfo["longitude"] as? Double {
+                    
+                    // If "Current Location", use actual location
+                    if name == "Current Location", let currentLoc = locationService.currentLocation {
+                        runRouteGenerationTest(at: currentLoc.coordinate)
+                    } else if lat != 0 && lon != 0 {
+                        runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: lat, longitude: lon))
+                    }
+                }
+            }
             .onChange(of: locationService.currentLocation) { _, newLocation in
                 // Re-fetch POIs if location significantly changed
                 if newLocation != nil, prefetchedPOIs.isEmpty {
@@ -2786,8 +2801,13 @@ struct LocalRoutePickerSheet: View {
         
         poiCount = pois?.count ?? 0
         
+        // v1.6.45: Enhanced logging - show POI sources
+        let googlePOIs = pois?.filter { !$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") }.count ?? 0
+        let applePOIs = pois?.filter { $0.placeId.hasPrefix("apple_") }.count ?? 0
+        let osmPOIs = pois?.filter { $0.placeId.hasPrefix("osm_") }.count ?? 0
+        
         await MainActor.run {
-            routeTestResults += "📦 POIs: \(poiCount)\n"
+            routeTestResults += "📦 POIs: \(poiCount) (Google: \(googlePOIs), Apple: \(applePOIs), OSM: \(osmPOIs))\n"
         }
         
         for duration in durations {
@@ -2843,9 +2863,11 @@ struct LocalRoutePickerSheet: View {
                         
                         // Output route details
                         // v1.6.43: ⚡ for short (75-79%), ✅ for valid (80-120%), 🔷 for long (121-125%)
+                        // v1.6.45: Added generation time to logging
                         let icon = isShort ? "⚡" : (isLong ? "🔷" : (isAcceptable ? "✅" : (accuracy < 75 ? "📉" : "📈")))
+                        let elapsedStr = String(format: "%.1fs", elapsed)
                         await MainActor.run {
-                            routeTestResults += "  \(icon) R\(routeNum): \(actualMin)min (\(Int(accuracy))%) \(route.distanceMeters)m\n"
+                            routeTestResults += "  \(icon) R\(routeNum): \(actualMin)min (\(Int(accuracy))%) \(route.distanceMeters)m ⏱\(elapsedStr)\n"
                             routeTestResults += "     → \(waypointNames)\(moreCount)\n"
                         }
                         

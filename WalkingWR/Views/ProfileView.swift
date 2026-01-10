@@ -14,6 +14,7 @@ import UIKit
 // MARK: - Notification Names for Batch Testing
 extension Notification.Name {
     static let runBatchTest = Notification.Name("runBatchTest")
+    static let runSingleLocationTest = Notification.Name("runSingleLocationTest")
 }
 
 struct ProfileView: View {
@@ -2967,13 +2968,22 @@ struct SavedBatchTestsSection: View {
     @State private var selectedTest: SavedBatchTest?
     @State private var showClearConfirmation = false
     @State private var didCopyAllHistory = false
+    @State private var isTestRunning = false
     @Environment(\.dismiss) private var dismiss
+    
+    /// Fixed test locations (same as RouteSelectionView)
+    private let testLocations: [(name: String, lat: Double, lon: Double)] = [
+        ("Current Location", 0, 0),  // Will be replaced with actual location
+        ("S5 7AU (Firth Park)", 53.4115, -1.4577),
+        ("S11 9BF (Ecclesall)", 53.3631, -1.4989),
+        ("S12 4QN (Hackenthorpe)", 53.3447, -1.3633),
+        ("S35 0JW (Chapeltown)", 53.4633, -1.4667)
+    ]
     
     var body: some View {
         Section {
-            // Run Batch Test button
+            // Run ALL Locations Test button
             Button {
-                // Close settings and trigger batch test
                 dismiss()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     NotificationCenter.default.post(name: .runBatchTest, object: nil)
@@ -2988,6 +2998,41 @@ struct SavedBatchTestsSection: View {
                     Image(systemName: "chevron.right")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                }
+            }
+            
+            // Individual location tests
+            DisclosureGroup {
+                ForEach(testLocations, id: \.name) { location in
+                    Button {
+                        dismiss()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            NotificationCenter.default.post(
+                                name: .runSingleLocationTest,
+                                object: nil,
+                                userInfo: [
+                                    "name": location.name,
+                                    "latitude": location.lat,
+                                    "longitude": location.lon
+                                ]
+                            )
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: location.name == "Current Location" ? "location.fill" : "mappin")
+                                .foregroundColor(.orange)
+                                .frame(width: 20)
+                            Text(location.name)
+                                .foregroundColor(.primary)
+                        }
+                    }
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "map")
+                        .foregroundColor(.orange)
+                    Text("Test Single Location")
+                        .foregroundColor(.primary)
                 }
             }
             
