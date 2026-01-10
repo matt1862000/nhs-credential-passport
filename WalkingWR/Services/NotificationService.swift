@@ -353,11 +353,54 @@ class NotificationService: ObservableObject {
     }
     
     func cancelAllWalkingNotifications() {
-        // v1.7.8: Run on background thread to prevent main thread blocking
-        DispatchQueue.global(qos: .utility).async {
-            let center = UNUserNotificationCenter.current()
-            center.removeAllPendingNotificationRequests()
-            print("🔕 Cancelled all pending walk notifications")
+        // v1.7.13: Only cancel walk-specific notifications, not delay notifications
+        // This preserves clinician delay alerts while stopping stale walk alerts
+        let center = UNUserNotificationCenter.current()
+        
+        center.getPendingNotificationRequests { requests in
+            // Walk notification prefixes - these should be cancelled
+            let walkPrefixes = ["walk-started-", "halfway-", "return-", "complete-", 
+                               "marker-arrival-", "direction-", "encouragement-"]
+            
+            let walkNotificationIds = requests
+                .filter { request in
+                    walkPrefixes.contains { prefix in
+                        request.identifier.hasPrefix(prefix)
+                    }
+                }
+                .map { $0.identifier }
+            
+            if !walkNotificationIds.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: walkNotificationIds)
+                print("🔕 Cancelled \(walkNotificationIds.count) walk notifications")
+            } else {
+                print("🔕 No walk notifications to cancel")
+            }
+        }
+    }
+    
+    /// Cancel stale walk notifications on app launch (called from WalkingWRApp)
+    /// This runs regardless of hasActiveWalk flag since force-close leaves the flag stale
+    func cancelStaleWalkNotifications() {
+        let center = UNUserNotificationCenter.current()
+        
+        center.getPendingNotificationRequests { requests in
+            // Walk notification prefixes that become stale after force-close
+            let walkPrefixes = ["walk-started-", "halfway-", "return-", "complete-", 
+                               "marker-arrival-", "direction-", "encouragement-"]
+            
+            let staleIds = requests
+                .filter { request in
+                    walkPrefixes.contains { prefix in
+                        request.identifier.hasPrefix(prefix)
+                    }
+                }
+                .map { $0.identifier }
+            
+            if !staleIds.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: staleIds)
+                print("📱 Cancelled \(staleIds.count) stale walk notifications on launch")
+            }
         }
     }
     

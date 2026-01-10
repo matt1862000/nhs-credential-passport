@@ -26,10 +26,13 @@ struct WalkingWRApp: App {
         // Configure tab bar
         UITabBar.appearance().unselectedItemTintColor = .darkGray
         
-        // v1.7.8: Cancel orphaned walk notifications ASYNC to avoid blocking init
-        // This handles the case where app was force-closed during a walk
+        // v1.7.13: ALWAYS cancel stale walk notifications on launch
+        // This handles force-close scenario where hasActiveWalk flag is stale
+        // Only cancels walk-specific notifications, preserves delay notifications
         DispatchQueue.main.async {
-            Self.cancelOrphanedWalkNotifications()
+            NotificationService.shared.cancelStaleWalkNotifications()
+            // Also reset the active walk flag since no walk survives a force-close
+            UserDefaults.standard.set(false, forKey: "hasActiveWalk")
         }
     }
     
@@ -40,42 +43,24 @@ struct WalkingWRApp: App {
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .background {
-                // v1.7.5: Cancel walk notifications when app goes to background
-                // This prevents "halfway" notifications firing after user closed the app
-                print("📱 App entering background - cancelling walk notifications")
+                // v1.7.13: Cancel walk notifications when app goes to background
+                // Only if there's no active walk (user just closed the app without ending walk)
+                print("📱 App entering background")
                 cancelWalkNotificationsIfNoActiveWalk()
-            }
-        }
-    }
-    
-    /// Cancel orphaned walk notifications on app launch
-    private static func cancelOrphanedWalkNotifications() {
-        // Check if there's an active walk by looking at UserDefaults flag
-        let hasActiveWalk = UserDefaults.standard.bool(forKey: "hasActiveWalk")
-        
-        if !hasActiveWalk {
-            print("📱 No active walk on launch - cancelling any orphaned walk notifications")
-            // v1.7.10: Run on background thread to prevent main thread hang
-            DispatchQueue.global(qos: .utility).async {
-                UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
             }
         }
     }
     
     /// Cancel walk notifications if no active walk (called when going to background)
     private func cancelWalkNotificationsIfNoActiveWalk() {
-        // Post notification so ViewModel can check and set the flag
-        NotificationCenter.default.post(name: Notification.Name("CheckActiveWalkForBackground"), object: nil)
+        // Check the flag - ViewModel sets this to true when walk is active
+        let hasActiveWalk = UserDefaults.standard.bool(forKey: "hasActiveWalk")
         
-        // Give the ViewModel a moment to respond, then check on background thread
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.1) {
-            let hasActiveWalk = UserDefaults.standard.bool(forKey: "hasActiveWalk")
-            if !hasActiveWalk {
-                print("📱 No active walk - cancelling pending walk notifications")
-                UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
-            } else {
-                print("📱 Active walk detected - keeping walk notifications")
-            }
+        if !hasActiveWalk {
+            print("📱 No active walk - cancelling walk notifications (keeping delay notifications)")
+            NotificationService.shared.cancelAllWalkingNotifications()
+        } else {
+            print("📱 Active walk detected - keeping walk notifications")
         }
     }
 }
