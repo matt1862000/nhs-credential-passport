@@ -337,9 +337,9 @@ struct EmbeddedWalkMapView: View {
                     UserAnnotation()
                 }
                 
-                // Start/End marker (user's starting position or clinic)
-                if let currentRoute = viewModel.walkSession.currentRoute,
-                   let startPoint = currentRoute.routePath.first {
+                // Start/End marker (user's actual GPS position when walk started)
+                // v1.6.48: Use walkSession.startLocation to avoid GPS drift between route generation and walk start
+                if let startPoint = viewModel.walkSession.startLocation ?? viewModel.walkSession.currentRoute?.routePath.first {
                     Annotation("Start/End", coordinate: startPoint) {
                         ZStack {
                             Circle()

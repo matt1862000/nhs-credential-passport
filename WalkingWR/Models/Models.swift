@@ -914,6 +914,7 @@ class WalkSession: ObservableObject {
     @Published var stepsThisSession: Int = 0
     @Published var markersScanned: [QRMarker] = []
     @Published var elapsedSeconds: Int = 0
+    @Published var startLocation: CLLocationCoordinate2D?  // v1.6.48: User's actual GPS position when walk started
     
     var elapsedTime: TimeInterval {
         return TimeInterval(elapsedSeconds)
