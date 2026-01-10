@@ -745,6 +745,9 @@ struct GratitudeSection: View {
                 
                 Button("Save Entry") {
                     if !gratitudeText.isEmpty {
+                        // Dismiss keyboard first
+                        isTextEditorFocused = false
+                        
                         savedEntries.append(gratitudeText)
                         gratitudeText = ""
                         // Only change prompt after saving
