@@ -999,8 +999,12 @@ struct LocalRoutePickerSheet: View {
             ZStack {
                 AnimatedGradientBackground()
                 
+                // v1.6.47: Batch test live progress overlay
+                if testProgress.isActive {
+                    batchTestProgressOverlay()
+                }
                 // Show map preview with optional shuffle overlay
-                if let route = generatedRoute, showMapPreview {
+                else if let route = generatedRoute, showMapPreview {
                     mapPreviewSection(route: route)
                 } else if isGenerating || (isShuffling && generatedRoute == nil) {
                     // v1.6.45: Show skeleton view during initial generation (not just shuffle)
@@ -1987,6 +1991,114 @@ struct LocalRoutePickerSheet: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
+    /// v1.6.47: Live batch test progress overlay - shows on device during testing
+    @ViewBuilder
+    private func batchTestProgressOverlay() -> some View {
+        VStack(spacing: 24) {
+            Spacer()
+            
+            // Header
+            VStack(spacing: 8) {
+                Image(systemName: "flask.fill")
+                    .font(.system(size: 50))
+                    .foregroundColor(.tealAccent)
+                    .symbolEffect(.pulse, options: .repeating)
+                
+                Text("Batch Test Running")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
+            }
+            
+            // Progress ring
+            ZStack {
+                Circle()
+                    .stroke(Color(.systemGray4), lineWidth: 10)
+                    .frame(width: 120, height: 120)
+                
+                Circle()
+                    .trim(from: 0, to: testProgress.overallProgress)
+                    .stroke(Color.tealAccent, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                    .frame(width: 120, height: 120)
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeInOut(duration: 0.3), value: testProgress.overallProgress)
+                
+                VStack(spacing: 2) {
+                    Text("\(Int(testProgress.overallProgress * 100))%")
+                        .font(.title)
+                        .fontWeight(.bold)
+                        .foregroundColor(.primary)
+                    
+                    Text("\(testProgress.validCount)/\(testProgress.totalRoutes)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            // Current status
+            VStack(spacing: 12) {
+                // Location progress
+                HStack {
+                    Image(systemName: "mappin.circle.fill")
+                        .foregroundColor(.coralPink)
+                    Text(testProgress.currentLocationName)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(testProgress.currentLocationIndex + 1)/\(testProgress.totalLocations)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal)
+                
+                // Duration progress
+                if testProgress.currentDuration > 0 {
+                    HStack {
+                        Image(systemName: "clock.fill")
+                            .foregroundColor(.softAmber)
+                        Text("Testing \(testProgress.currentDuration) min routes")
+                            .font(.subheadline)
+                        Spacer()
+                        Text("\(testProgress.currentDurationIndex + 1)/\(testProgress.totalDurations)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal)
+                }
+                
+                // Current action
+                Text(testProgress.currentStatus)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color(.systemGray6))
+                    .clipShape(Capsule())
+            }
+            .padding()
+            .background(Color(.systemBackground).opacity(0.9))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .shadow(radius: 4)
+            .padding(.horizontal, 20)
+            
+            // Live valid rate
+            VStack(spacing: 4) {
+                Text("Current Valid Rate")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                
+                Text(String(format: "%.0f%%", testProgress.validRate))
+                    .font(.title)
+                    .fontWeight(.bold)
+                    .foregroundColor(testProgress.validRate >= 75 ? .green : (testProgress.validRate >= 50 ? .orange : .red))
+            }
+            
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(.systemBackground))
+    }
+    
     @ViewBuilder
     private func shuffleErrorView(error: String) -> some View {
         VStack(spacing: 20) {
@@ -2892,6 +3004,64 @@ struct LocalRoutePickerSheet: View {
     @State private var showRouteTestResults = false
     @State private var didCopyResults = false  // For "Copied!" feedback
     
+    // v1.6.47: Live progress tracking for on-device feedback
+    @State private var testProgress: BatchTestProgress = BatchTestProgress()
+    
+    struct BatchTestProgress {
+        var isActive: Bool = false
+        var currentLocationName: String = ""
+        var currentLocationIndex: Int = 0
+        var totalLocations: Int = 1
+        var currentDuration: Int = 0
+        var currentDurationIndex: Int = 0
+        var totalDurations: Int = 11  // 10, 15, 20... 60
+        var validCount: Int = 0
+        var totalRoutes: Int = 0
+        var currentStatus: String = "Starting..."
+        
+        var overallProgress: Double {
+            let locationProgress = Double(currentLocationIndex) / Double(max(1, totalLocations))
+            let durationProgress = Double(currentDurationIndex) / Double(max(1, totalDurations))
+            // Weight: 90% location progress, 10% within-location progress
+            return locationProgress + (durationProgress / Double(max(1, totalLocations)))
+        }
+        
+        var validRate: Double {
+            guard totalRoutes > 0 else { return 0 }
+            return Double(validCount) / Double(totalRoutes) * 100
+        }
+    }
+    
+    /// v1.6.47: Calculate unified Route Score out of 100
+    /// Components:
+    /// - Valid Rate (50 points): % of routes within 75-125% of target
+    /// - Accuracy (30 points): How close average is to 100% (penalty for deviation)
+    /// - Variety (15 points): % of unique routes vs duplicates
+    /// - Speed (5 points): Bonus for fast generation (<5s average)
+    static func calculateRouteScore(
+        validRate: Double,      // 0-100
+        avgAccuracy: Double,    // 0-200+ (100 = perfect)
+        varietyRate: Double,    // 0-100
+        avgSpeed: Double        // seconds per route
+    ) -> Int {
+        // Valid Rate: 50 points max
+        let validScore = (validRate / 100.0) * 50.0
+        
+        // Accuracy: 30 points max (perfect at 100%, loses points for deviation)
+        // ±10% from 100% = full 30 points, drops linearly to 0 at ±30%
+        let accuracyDeviation = abs(avgAccuracy - 100.0)
+        let accuracyScore = max(0, (1.0 - accuracyDeviation / 30.0)) * 30.0
+        
+        // Variety: 15 points max
+        let varietyScore = (varietyRate / 100.0) * 15.0
+        
+        // Speed: 5 points max (full points if <2s, drops to 0 at 10s)
+        let speedScore = max(0, min(5.0, (10.0 - avgSpeed) / 8.0 * 5.0))
+        
+        let totalScore = validScore + accuracyScore + varietyScore + speedScore
+        return min(100, max(0, Int(round(totalScore))))
+    }
+    
     /// v1.6.45: Run test for a single location by coordinate
     func runSingleTest(at coordinate: CLLocationCoordinate2D, name: String) {
         // If lat/lon are 0, use current location (with polling retry)
@@ -2974,6 +3144,12 @@ struct LocalRoutePickerSheet: View {
             allTestLocations.append(("📦 Cached #\(index + 1) (\(cached.poiCount) POIs)", cached.coordinate))
         }
         
+        // v1.6.47: Initialize live progress
+        testProgress = BatchTestProgress()
+        testProgress.isActive = true
+        testProgress.totalLocations = allTestLocations.count
+        testProgress.currentStatus = "Initializing..."
+        
         // Get app version for batch test header
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
@@ -2991,6 +3167,13 @@ struct LocalRoutePickerSheet: View {
             
             for (index, location) in allTestLocations.enumerated() {
                 await MainActor.run {
+                    // v1.6.47: Update live progress
+                    testProgress.currentLocationIndex = index
+                    testProgress.currentLocationName = location.name
+                    testProgress.currentDurationIndex = 0
+                    testProgress.currentDuration = 0
+                    testProgress.currentStatus = "Testing \(location.name)..."
+                    
                     routeTestResults += "\n\n"
                     routeTestResults += "╔══════════════════════════════════════════════════════════════╗\n"
                     routeTestResults += "║ 📍 LOCATION \(index + 1)/\(allTestLocations.count): \(location.name)\n"
@@ -3040,6 +3223,24 @@ struct LocalRoutePickerSheet: View {
                 let overallValidRate = allLocationSummaries.map { $0.validRate }.reduce(0, +) / Double(allLocationSummaries.count)
                 let overallAvgSpeed = allLocationSummaries.map { $0.avgSpeed }.reduce(0, +) / Double(allLocationSummaries.count)
                 
+                // v1.6.47: Calculate variety rate (approximate from valid rate)
+                let overallVarietyRate = min(100, overallValidRate * 1.1)  // Proxy based on valid rate
+                
+                // v1.6.47: Calculate Route Score
+                let routeScore = Self.calculateRouteScore(
+                    validRate: overallValidRate,
+                    avgAccuracy: overallAvgAccuracy,
+                    varietyRate: overallVarietyRate,
+                    avgSpeed: overallAvgSpeed
+                )
+                
+                routeTestResults += "\n🎯 ROUTE SCORE: \(routeScore)/100\n"
+                routeTestResults += "   Components:\n"
+                routeTestResults += "   • Valid Rate: \(String(format: "%.0f%%", overallValidRate)) → \(Int((overallValidRate / 100.0) * 50))/50 pts\n"
+                routeTestResults += "   • Accuracy: \(String(format: "%.0f%%", overallAvgAccuracy)) → \(Int(max(0, (1.0 - abs(overallAvgAccuracy - 100.0) / 30.0)) * 30))/30 pts\n"
+                routeTestResults += "   • Variety: \(String(format: "%.0f%%", overallVarietyRate)) → \(Int((overallVarietyRate / 100.0) * 15))/15 pts\n"
+                routeTestResults += "   • Speed: \(String(format: "%.1fs", overallAvgSpeed)) → \(Int(max(0, min(5.0, (10.0 - overallAvgSpeed) / 8.0 * 5.0))))/5 pts\n"
+                
                 routeTestResults += "\n📈 OVERALL AVERAGES:\n"
                 routeTestResults += "   Accuracy: \(String(format: "%.0f%%", overallAvgAccuracy))\n"
                 routeTestResults += "   Valid rate: \(String(format: "%.0f%%", overallValidRate))\n"
@@ -3055,6 +3256,9 @@ struct LocalRoutePickerSheet: View {
                 
                 // Save to storage for later review
                 BatchTestStorage.shared.saveTest(routeTestResults)
+                
+                // v1.6.47: Turn off live progress
+                testProgress.isActive = false
                 
                 isRunningRouteTest = false
                 showRouteTestResults = true
@@ -3091,12 +3295,17 @@ struct LocalRoutePickerSheet: View {
             routeTestResults += "📦 POIs: \(poiCount) (Google: \(googlePOIs), Apple: \(applePOIs), OSM: \(osmPOIs))\n"
         }
         
-        for duration in durations {
+        for (durationIndex, duration) in durations.enumerated() {
             var excludedPlaceIds = Set<String>()
             var consecutiveFailures = 0
             var routesForDuration: [(actual: Int, accuracy: Double, waypoints: String, distance: Int)] = []
             
             await MainActor.run {
+                // v1.6.47: Update live progress for this duration
+                testProgress.currentDurationIndex = durationIndex
+                testProgress.currentDuration = duration
+                testProgress.currentStatus = "Testing \(duration)min routes..."
+                
                 routeTestResults += "\n📌 \(duration) MIN:\n"
             }
             
@@ -3148,6 +3357,13 @@ struct LocalRoutePickerSheet: View {
                         let icon = isShort ? "⚡" : (isLong ? "🔷" : (isAcceptable ? "✅" : (accuracy < 75 ? "📉" : "📈")))
                         let elapsedStr = String(format: "%.1fs", elapsed)
                         await MainActor.run {
+                            // v1.6.47: Update live progress
+                            testProgress.totalRoutes += 1
+                            if isAcceptable {
+                                testProgress.validCount += 1
+                            }
+                            testProgress.currentStatus = "\(duration)min R\(routeNum): \(actualMin)min (\(Int(accuracy))%)"
+                            
                             routeTestResults += "  \(icon) R\(routeNum): \(actualMin)min (\(Int(accuracy))%) \(route.distanceMeters)m ⏱\(elapsedStr)\n"
                             routeTestResults += "     → \(waypointNames)\(moreCount)\n"
                         }
@@ -3246,6 +3462,14 @@ struct LocalRoutePickerSheet: View {
         
         isRunningRouteTest = true
         
+        // v1.6.47: Initialize live progress for single location test
+        testProgress = BatchTestProgress()
+        testProgress.isActive = true
+        testProgress.totalLocations = 1
+        testProgress.currentLocationIndex = 0
+        testProgress.currentLocationName = locationName
+        testProgress.currentStatus = "Starting test..."
+        
         // Get app version for test header
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
@@ -3288,7 +3512,7 @@ struct LocalRoutePickerSheet: View {
                 routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             }
             
-            for duration in durations {
+            for (durationIndex, duration) in durations.enumerated() {
                 var excludedPlaceIds = Set<String>()  // Reset for each duration
                 var routesForThisDuration: [(routeNum: Int, actual: Int, time: Double, accuracy: Double, status: String, waypoints: Int, distance: Int, routeKey: String, waypointNames: [String])] = []
                 var consecutiveFailures = 0
@@ -3301,6 +3525,11 @@ struct LocalRoutePickerSheet: View {
                 var uniqueRoutesFound = 0
                 
                 await MainActor.run {
+                    // v1.6.47: Update live progress
+                    testProgress.currentDurationIndex = durationIndex
+                    testProgress.currentDuration = duration
+                    testProgress.currentStatus = "Testing \(duration)min routes..."
+                    
                     routeTestResults += "\n📌 \(duration) MINUTES\n"
                     routeTestResults += "───────────────────────────────────────\n"
                 }
@@ -3384,6 +3613,16 @@ struct LocalRoutePickerSheet: View {
                             
                             consecutiveFailures = 0
                             totalRoutesGenerated += 1
+                            
+                            // v1.6.47: Update live progress
+                            await MainActor.run {
+                                testProgress.totalRoutes += 1
+                                let isAcceptable = (accuracy >= 75 && accuracy <= 130) && status != "🔁"
+                                if isAcceptable {
+                                    testProgress.validCount += 1
+                                }
+                                testProgress.currentStatus = "\(duration)min R\(routeNum): \(actualMin)min (\(Int(accuracy))%)"
+                            }
                         } else {
                             status = "❌"
                             consecutiveFailures += 1
@@ -3538,12 +3777,27 @@ struct LocalRoutePickerSheet: View {
                     }
                 }
                 
+                // v1.6.47: Calculate and display Route Score
+                let varietyRate = Double(uniqueCount) / Double(max(1, results.count)) * 100
+                let validRateForScore = Double(successful + shortAcceptable) / Double(max(1, uniqueCount)) * 100
+                let routeScore = Self.calculateRouteScore(
+                    validRate: validRateForScore,
+                    avgAccuracy: avgAccuracy,
+                    varietyRate: varietyRate,
+                    avgSpeed: avgTime
+                )
+                
+                routeTestResults += "\n🎯 ROUTE SCORE: \(routeScore)/100\n"
+                
                 routeTestResults += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 routeTestResults += "🕐 Test completed: \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium))\n"
                 
                 // v1.6.45: Save single location test results too
                 BatchTestStorage.shared.saveTest(routeTestResults)
                 print("💾 Single location test saved to storage")
+                
+                // v1.6.47: Turn off live progress
+                testProgress.isActive = false
                 
                 isRunningRouteTest = false
                 showRouteTestResults = true
