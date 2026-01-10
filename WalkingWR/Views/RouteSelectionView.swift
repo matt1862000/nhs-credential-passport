@@ -3696,24 +3696,21 @@ struct LocalRouteMapPreview: View {
         let minLng = lngs.min()!
         let maxLng = lngs.max()!
         
-        // v1.6.45: Shift center UP to account for bottom info panel
-        // The bottom panel covers ~40% of screen, so shift center to upper third
-        let latRange = maxLat - minLat
-        let shiftedCenterLat = (minLat + maxLat) / 2 + (latRange * 0.15) // Shift up by 15%
-        
+        // Keep center at geometric middle
         let center = CLLocationCoordinate2D(
-            latitude: shiftedCenterLat,
+            latitude: (minLat + maxLat) / 2,
             longitude: (minLng + maxLng) / 2
         )
         
-        // v1.6.45: Add 60% padding vertically to ensure nothing is cut off
-        // Extra vertical padding because bottom panel covers map
-        let latSpan = (maxLat - minLat) * 1.6  // 60% padding
-        let lngSpan = (maxLng - minLng) * 1.4  // 40% horizontal padding
+        // v1.6.45: Use DOUBLE padding (2x) to ensure all annotations visible
+        // Annotations have labels that extend beyond the coordinate point
+        let latSpan = (maxLat - minLat) * 2.0  // 100% extra padding
+        let lngSpan = (maxLng - minLng) * 2.0  // 100% extra padding
         
+        // Minimum span to prevent over-zooming on small routes
         let region = MKCoordinateRegion(
             center: center,
-            span: MKCoordinateSpan(latitudeDelta: max(0.008, latSpan), longitudeDelta: max(0.008, lngSpan))
+            span: MKCoordinateSpan(latitudeDelta: max(0.01, latSpan), longitudeDelta: max(0.01, lngSpan))
         )
         
         return .region(region)
