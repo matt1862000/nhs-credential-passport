@@ -128,9 +128,26 @@ class RouteCacheService {
                     let allRoutes = convertToGeneratedRoutesWithMetadata(entry.routes)
                     
                     // Filter routes to only those within tolerance FOR THE REQUESTED DURATION
-                    let validRoutes = allRoutes.filter { routeWithMeta in
+                    var validRoutes: [CachedRouteWithMetadata] = []
+                    var filteredRoutes: [(name: String, duration: Int, reason: String)] = []
+                    
+                    for routeWithMeta in allRoutes {
                         let actualDuration = routeWithMeta.route.durationMinutes
-                        return actualDuration >= minAcceptable && actualDuration <= maxAcceptable
+                        if actualDuration >= minAcceptable && actualDuration <= maxAcceptable {
+                            validRoutes.append(routeWithMeta)
+                        } else {
+                            let routeName = routeWithMeta.name ?? "Unnamed"
+                            let reason = actualDuration < minAcceptable ? "too short (\(actualDuration)min < \(minAcceptable)min)" : "too long (\(actualDuration)min > \(maxAcceptable)min)"
+                            filteredRoutes.append((name: routeName, duration: actualDuration, reason: reason))
+                        }
+                    }
+                    
+                    // Log filtered routes for debugging
+                    if !filteredRoutes.isEmpty {
+                        print("📦 ⚠️ Filtered \(filteredRoutes.count) cached routes:")
+                        for filtered in filteredRoutes {
+                            print("   ❌ '\(filtered.name)' - \(filtered.reason)")
+                        }
                     }
                     
                     if !validRoutes.isEmpty {
