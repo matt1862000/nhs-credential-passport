@@ -973,8 +973,8 @@ struct LocalRoutePickerSheet: View {
                 // Show map preview with optional shuffle overlay
                 if let route = generatedRoute, showMapPreview {
                     mapPreviewSection(route: route)
-                } else if isShuffling && generatedRoute == nil {
-                    // First-time generation with no previous route to show
+                } else if isGenerating || (isShuffling && generatedRoute == nil) {
+                    // v1.6.45: Show skeleton view during initial generation (not just shuffle)
                     firstTimeGenerationView()
                 } else if let error = errorMessage, generatedRoute == nil, showMapPreview {
                     // Shuffle failed - show error with retry
@@ -1589,19 +1589,30 @@ struct LocalRoutePickerSheet: View {
                         let markers = await MainActor.run {
                             createMarkersFromPlaces(cached.route.places, origin: userLocation.coordinate)
                         }
-                        var directions = await MainActor.run {
-                            extractWalkingDirections(from: cached.route.legs)
-                        }
                         
-                        // Get MapKit directions if not in cache (only for first route to save time)
-                        if directions.isEmpty && !cached.route.places.isEmpty && index == 0 {
-                            print("🍎 Cached route has no directions - getting from MapKit...")
-                            let waypointCoords = cached.route.places.map { $0.coordinate }
-                            directions = await mapsService.getMapKitDirectionsForRoute(
-                                origin: userLocation.coordinate,
-                                waypoints: waypointCoords,
-                                destination: userLocation.coordinate
-                            )
+                        // v1.6.45: Use cached directions if available (instant!)
+                        var directions: [WalkingDirection] = []
+                        if let cachedDirections = cached.directions, !cachedDirections.isEmpty {
+                            directions = cachedDirections
+                            if index == 0 {
+                                print("⚡ Using cached directions - instant load!")
+                            }
+                        } else {
+                            // Fallback: extract from legs
+                            directions = await MainActor.run {
+                                extractWalkingDirections(from: cached.route.legs)
+                            }
+                            
+                            // Get MapKit directions if not in cache (only for first route to save time)
+                            if directions.isEmpty && !cached.route.places.isEmpty && index == 0 {
+                                print("🍎 Cached route has no directions - getting from MapKit...")
+                                let waypointCoords = cached.route.places.map { $0.coordinate }
+                                directions = await mapsService.getMapKitDirectionsForRoute(
+                                    origin: userLocation.coordinate,
+                                    waypoints: waypointCoords,
+                                    destination: userLocation.coordinate
+                                )
+                            }
                         }
                         
                         let routeDifficulty: RouteDifficulty = cached.route.durationMinutes <= 10 ? .easy : (cached.route.durationMinutes <= 20 ? .moderate : .challenging)
@@ -1821,18 +1832,98 @@ struct LocalRoutePickerSheet: View {
     
     @ViewBuilder
     private func firstTimeGenerationView() -> some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .scaleEffect(1.5)
-                .tint(.tealAccent)
+        // v1.6.45: Enhanced skeleton view with pulsing map preview
+        ZStack {
+            // Background map skeleton
+            VStack(spacing: 0) {
+                // Map area with skeleton
+                ZStack {
+                    // Gradient background simulating map
+                    LinearGradient(
+                        colors: [
+                            Color(.systemGray5),
+                            Color(.systemGray6),
+                            Color(.systemGray5)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    
+                    // Fake route line
+                    Path { path in
+                        path.move(to: CGPoint(x: 100, y: 200))
+                        path.addCurve(
+                            to: CGPoint(x: 250, y: 150),
+                            control1: CGPoint(x: 150, y: 100),
+                            control2: CGPoint(x: 200, y: 180)
+                        )
+                        path.addCurve(
+                            to: CGPoint(x: 180, y: 300),
+                            control1: CGPoint(x: 300, y: 200),
+                            control2: CGPoint(x: 220, y: 280)
+                        )
+                        path.addCurve(
+                            to: CGPoint(x: 100, y: 200),
+                            control1: CGPoint(x: 140, y: 320),
+                            control2: CGPoint(x: 80, y: 250)
+                        )
+                    }
+                    .stroke(Color.tealAccent.opacity(0.3), style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [8, 8]))
+                    
+                    // Pulsing center indicator
+                    Circle()
+                        .fill(Color.tealAccent.opacity(0.3))
+                        .frame(width: 60, height: 60)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.tealAccent, lineWidth: 2)
+                        )
+                        .scaleEffect(isGenerating ? 1.2 : 1.0)
+                        .opacity(isGenerating ? 0.5 : 1.0)
+                        .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: isGenerating)
+                }
+                .frame(height: 350)
+                
+                // Bottom card skeleton
+                VStack(spacing: 12) {
+                    // Route name skeleton
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(.systemGray5))
+                        .frame(height: 24)
+                        .frame(maxWidth: 200)
+                    
+                    // Duration/distance skeleton
+                    HStack(spacing: 20) {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(.systemGray5))
+                            .frame(width: 80, height: 18)
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(.systemGray5))
+                            .frame(width: 60, height: 18)
+                    }
+                }
+                .padding()
+                .background(Color(.systemBackground))
+            }
             
-            Text(mapsService.retryStatus ?? "Finding route...")
-                .font(.headline)
-                .foregroundColor(.primary)
-                .animation(.easeInOut, value: mapsService.retryStatus)
+            // Overlay with status
+            VStack(spacing: 16) {
+                ProgressView()
+                    .scaleEffect(1.3)
+                    .tint(.tealAccent)
+                
+                Text(mapsService.retryStatus ?? "Finding the best route...")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color(.systemBackground).opacity(0.9))
+                    .clipShape(Capsule())
+                    .shadow(radius: 4)
+                    .animation(.easeInOut, value: mapsService.retryStatus)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
     }
     
     @ViewBuilder
@@ -2387,18 +2478,20 @@ struct LocalRoutePickerSheet: View {
                             }
                         }
                         
-                        // v1.6.45: Cache all routes so they persist when user cancels and returns
+                        // v1.6.45: Cache all routes WITH directions so they persist
                         let allRouteData = allRoutes.map { $0.data }
                         let allNames = allRoutes.map { $0.route.name as String? }
                         let allDescriptions = allRoutes.map { $0.route.description as String? }
+                        let allDirections = allRoutes.map { $0.route.walkingDirections }
                         RouteCacheService.shared.cacheRoutes(
                             allRouteData,
                             at: userLocation.coordinate,
                             durationMinutes: selectedDuration,
                             names: allNames,
-                            descriptions: allDescriptions
+                            descriptions: allDescriptions,
+                            directions: allDirections
                         )
-                        print("💾 Cached \(allRoutes.count) routes for \(selectedDuration)min")
+                        print("💾 Cached \(allRoutes.count) routes with directions for \(selectedDuration)min")
                     }
                     
                 } catch {
@@ -2553,18 +2646,20 @@ struct LocalRoutePickerSheet: View {
                                     }
                                 }
                                 
-                                // v1.6.45: Cache all routes (including Google) so they persist
+                                // v1.6.45: Cache all routes WITH directions (including Google)
                                 let allRouteData = allRoutes.map { $0.data }
                                 let allNames = allRoutes.map { $0.route.name as String? }
                                 let allDescriptions = allRoutes.map { $0.route.description as String? }
+                                let allDirections = allRoutes.map { $0.route.walkingDirections }
                                 RouteCacheService.shared.cacheRoutes(
                                     allRouteData,
                                     at: userLocation.coordinate,
                                     durationMinutes: selectedDuration,
                                     names: allNames,
-                                    descriptions: allDescriptions
+                                    descriptions: allDescriptions,
+                                    directions: allDirections
                                 )
-                                print("💾 Cached \(allRoutes.count) routes for \(selectedDuration)min (incl. Google)")
+                                print("💾 Cached \(allRoutes.count) routes with directions for \(selectedDuration)min (incl. Google)")
                             }
                             
                         } catch {

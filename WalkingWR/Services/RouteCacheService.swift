@@ -15,7 +15,7 @@ import CoreLocation
 class RouteCacheService {
     static let shared = RouteCacheService()
     
-    private let cacheKey = "cachedRoutes_v32"  // v32: 10min walks get 70-130% tolerance + reduced distance penalty
+    private let cacheKey = "cachedRoutes_v33"  // v33: Cache directions for instant route load
     private let maxCachedRouteSets = 50
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
     private let cacheExpiryHours: Double = 24 // Routes expire after 24 hours
@@ -56,9 +56,39 @@ class RouteCacheService {
         let durationSeconds: Int
         let name: String?
         let description: String?
+        let directions: [CachedDirection]?  // v1.6.45: Cache directions for instant load
         
         var durationMinutes: Int {
             durationSeconds / 60
+        }
+    }
+    
+    // v1.6.45: Cached walking directions for instant route load
+    struct CachedDirection: Codable {
+        let instruction: String
+        let distance: String
+        let distanceMeters: Int
+        let duration: String
+        let maneuver: String?
+        
+        func toWalkingDirection() -> WalkingDirection {
+            WalkingDirection(
+                instruction: instruction,
+                distance: distance,
+                distanceMeters: distanceMeters,
+                duration: duration,
+                maneuver: maneuver
+            )
+        }
+        
+        static func from(_ direction: WalkingDirection) -> CachedDirection {
+            CachedDirection(
+                instruction: direction.instruction,
+                distance: direction.distance,
+                distanceMeters: direction.distanceMeters,
+                duration: direction.duration,
+                maneuver: direction.maneuver
+            )
         }
     }
     
@@ -77,11 +107,12 @@ class RouteCacheService {
     
     // MARK: - Public Methods
     
-    /// Cached route with metadata (name, description)
+    /// Cached route with metadata (name, description, directions)
     struct CachedRouteWithMetadata {
         let route: GeneratedRoute
         let name: String?
         let description: String?
+        let directions: [WalkingDirection]?  // v1.6.45: Cached directions for instant load
         var isDeadZoneFallback: Bool = false  // v1.6.39: True if route is 70-74% (closest available)
     }
     
@@ -202,7 +233,8 @@ class RouteCacheService {
     }
     
     /// Cache routes for a location and duration (rounded to nearest 5 minutes)
-    func cacheRoutes(_ routes: [GeneratedRoute], at location: CLLocationCoordinate2D, durationMinutes: Int, names: [String?] = [], descriptions: [String?] = []) {
+    /// v1.6.45: Now also caches directions for instant load
+    func cacheRoutes(_ routes: [GeneratedRoute], at location: CLLocationCoordinate2D, durationMinutes: Int, names: [String?] = [], descriptions: [String?] = [], directions: [[WalkingDirection]] = []) {
         var cached = loadCache()
         
         // Round to nearest 5 minutes for consistent caching
@@ -239,6 +271,11 @@ class RouteCacheService {
             
             seenPlaceIdSets.append(newPlaceIds)
             
+            // v1.6.45: Cache directions if provided
+            let routeDirections: [CachedDirection]? = directions.indices.contains(index) && !directions[index].isEmpty
+                ? directions[index].map { CachedDirection.from($0) }
+                : nil
+            
             cachedRoutes.append(CachedRoute(
                 places: route.places.map { place in
                     CachedPlace(
@@ -254,7 +291,8 @@ class RouteCacheService {
                 distanceMeters: route.distanceMeters,
                 durationSeconds: route.durationSeconds,
                 name: names.indices.contains(index) ? names[index] : nil,
-                description: descriptions.indices.contains(index) ? descriptions[index] : nil
+                description: descriptions.indices.contains(index) ? descriptions[index] : nil,
+                directions: routeDirections
             ))
         }
         
@@ -349,10 +387,14 @@ class RouteCacheService {
                 legs: [] // Legs not cached, but not needed for display
             )
             
+            // v1.6.45: Convert cached directions to WalkingDirection
+            let walkingDirections = cached.directions?.map { $0.toWalkingDirection() }
+            
             return CachedRouteWithMetadata(
                 route: route,
                 name: cached.name,
-                description: cached.description
+                description: cached.description,
+                directions: walkingDirections
             )
         }
     }
