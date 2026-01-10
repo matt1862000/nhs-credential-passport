@@ -406,7 +406,8 @@ struct EmbeddedWalkMapView: View {
                         walkStartTime: viewModel.walkSession.startTime,
                         healthKitService: viewModel.healthKitService,
                         isStepTrackingEnabled: $isStepTrackingEnabled,
-                        showMotionExplainer: $showMotionExplainer
+                        showMotionExplainer: $showMotionExplainer,
+                        hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable  // v1.6.45
                     )
                     
                     Spacer()
@@ -1276,23 +1277,40 @@ struct CompactStatusRing: View {
     @ObservedObject var healthKitService: HealthKitService
     @Binding var isStepTrackingEnabled: Bool
     @Binding var showMotionExplainer: Bool
+    var hasClinicianSelected: Bool = true  // v1.6.45: Hide time when no clinic
     
     /// Whether we should show alternating content (steps not yet enabled)
     private var shouldAlternate: Bool {
         !isStepTrackingEnabled && healthKitService.isPedometerAvailable && !healthKitService.isMotionDenied
     }
     
+    /// v1.6.45: Whether to show steps prompt only (no time countdown)
+    private var showStepsOnly: Bool {
+        !hasClinicianSelected && shouldAlternate
+    }
+    
+    /// v1.6.45: Hide pill entirely when no clinic and steps already enabled
+    private var shouldHidePill: Bool {
+        !hasClinicianSelected && !shouldAlternate
+    }
+    
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0)) { context in
-            CompactStatusPillContent(
-                walkDurationMinutes: walkDurationMinutes,
-                walkStartTime: walkStartTime,
-                currentDate: context.date,
-                shouldAlternate: shouldAlternate,
-                onTapSteps: {
-                    showMotionExplainer = true
-                }
-            )
+        if shouldHidePill {
+            // No clinic + steps enabled = nothing to show
+            EmptyView()
+        } else {
+            TimelineView(.periodic(from: .now, by: 1.0)) { context in
+                CompactStatusPillContent(
+                    walkDurationMinutes: walkDurationMinutes,
+                    walkStartTime: walkStartTime,
+                    currentDate: context.date,
+                    shouldAlternate: shouldAlternate,
+                    showStepsOnly: showStepsOnly,  // v1.6.45
+                    onTapSteps: {
+                        showMotionExplainer = true
+                    }
+                )
+            }
         }
     }
 }
@@ -1303,10 +1321,13 @@ private struct CompactStatusPillContent: View {
     let walkStartTime: Date?
     let currentDate: Date
     let shouldAlternate: Bool
+    var showStepsOnly: Bool = false  // v1.6.45: When no clinic, only show steps prompt
     let onTapSteps: () -> Void
     
     /// Toggle between info and steps display (changes every 5 seconds)
     private var showingStepsPrompt: Bool {
+        // v1.6.45: Always show steps prompt when no clinic
+        if showStepsOnly { return true }
         guard shouldAlternate else { return false }
         let seconds = Int(currentDate.timeIntervalSince1970)
         return (seconds / 5) % 2 == 1
