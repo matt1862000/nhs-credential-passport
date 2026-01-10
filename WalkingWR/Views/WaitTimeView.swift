@@ -499,8 +499,17 @@ struct WalkingSuggestionCard: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var selectedTab: Int
     
+    // Check if we have an active clinic delay to base suggestion on
+    private var hasActiveClinicDelay: Bool {
+        viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable
+    }
+    
     // Suggested duration based on wait time (leave 5 min buffer)
+    // Returns 15 as default if no clinic is active (free walk mode)
     private var suggestedDuration: Int {
+        if !hasActiveClinicDelay {
+            return 15 // Default for free walk mode
+        }
         let waitTime = viewModel.waitTimeInfo.estimatedMinutes
         if waitTime >= 25 { return 20 }
         if waitTime >= 20 { return 15 }
@@ -559,13 +568,26 @@ struct WalkingSuggestionCard: View {
                 .background(Color.tealAccent.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 
-                Text("You have time for a \(suggestedDuration)-minute route. We'll notify you when to head back.")
-                    .font(.caption)
-                    .foregroundColor(.primary)
+                if hasActiveClinicDelay {
+                    Text("You have time for a \(suggestedDuration)-minute route. We'll notify you when to head back.")
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                } else {
+                    Text("No clinic selected. Enjoy a walk at your own pace!")
+                        .font(.caption)
+                        .foregroundColor(.primary)
+                }
             } else {
-                Text("Wait time is short, stay close to reception.")
-                    .font(.bodyMedium)
-                    .foregroundColor(.primary)
+                if hasActiveClinicDelay {
+                    Text("Wait time is short, stay close to reception.")
+                        .font(.bodyMedium)
+                        .foregroundColor(.primary)
+                } else {
+                    // This shouldn't happen (no clinic + suggestedDuration=0), but handle gracefully
+                    Text("Select a clinician to get walk recommendations based on your wait time.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
         }
         .padding(20)
