@@ -1665,7 +1665,8 @@ struct LocalRoutePickerSheet: View {
                     // Determine difficulty based on duration
                     let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
                     
-                    // Generate AI-powered name and description with rich waypoint info
+                    // v1.6.45: Use INSTANT template for Route 1 (saves 1-3 sec)
+                    // AI naming happens for subsequent routes in background
                     let waypointInfos = result.places.map { place in
                         GeminiService.WaypointInfo(
                             name: place.name,
@@ -1673,16 +1674,16 @@ struct LocalRoutePickerSheet: View {
                             vicinity: place.vicinity
                         )
                     }
-                    // Generate route name and description (always succeeds with template fallback)
-                    let aiContent = await GeminiService.shared.generateRouteContent(
+                    // Use template directly - no network call, instant response
+                    let templateContent = GeminiService.shared.generateTemplateContent(
                         waypoints: waypointInfos,
                         durationMinutes: result.durationMinutes,
-                        distanceMeters: result.distanceMeters,
-                        difficulty: nil
+                        distanceMeters: result.distanceMeters
                     )
+                    print("⚡ Route 1: Using instant template naming (skipped Gemini)")
                     
-                    let routeName = aiContent.name
-                    let description = aiContent.description
+                    let routeName = templateContent.name
+                    let description = templateContent.description
                     
                     // Create the walking route with actual polyline and directions
                     let localRoute = WalkingRoute(
