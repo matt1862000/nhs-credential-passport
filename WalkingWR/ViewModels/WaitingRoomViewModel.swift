@@ -283,6 +283,9 @@ class WaitingRoomViewModel: ObservableObject {
     }
     
     private func rebuildCliniciansFromFirebase(_ firebaseClinicians: [FirebaseClinicianData]) {
+        print("⏱️ ViewModel: rebuildCliniciansFromFirebase started with \(firebaseClinicians.count) clinicians")
+        let rebuildStart = Date()
+        
         guard !firebaseClinicians.isEmpty else {
             // No clinicians in Firebase - show empty list
             availableClinicians = []
@@ -480,6 +483,8 @@ class WaitingRoomViewModel: ObservableObject {
                 }
             }
         }
+        
+        print("⏱️ ViewModel: rebuildCliniciansFromFirebase completed in \(String(format: "%.3f", Date().timeIntervalSince(rebuildStart)))s")
     }
     
     /// Create a Clinician from Firebase/Google Sheets data
