@@ -2288,6 +2288,16 @@ struct LocalRoutePickerSheet: View {
                         consecutiveFailures = 0  // Reset on success
                         print("✅ Pre-generated route \(routesGenerated) (unique: \(routeSignatures.count))")
                         
+                        // v1.6.45: Auto-advance to first AI route when user is still on placeholder
+                        if allRoutes.count == 2 && currentRouteIndex == 0 {
+                            currentRouteIndex = 1
+                            let newRoute = allRoutes[1]
+                            generatedRoute = newRoute.route
+                            generatedRouteData = newRoute.data
+                            viewedRouteIndices.insert(1)
+                            print("🚀 Auto-advanced to first AI-generated route")
+                        }
+                        
                         // v1.6.26: Try waypoint permutation for 2+ waypoint routes
                         if result.places.count >= 2 {
                             if let permuted = createPermutedRoute(from: route, data: result) {
@@ -2431,6 +2441,16 @@ struct LocalRoutePickerSheet: View {
                                 googleRoutesGenerated += 1
                                 googleFailures = 0
                                 print("🌐 ✅ Generated route \(allRoutes.count) (unique: \(routeSignatures.count)) using Google POIs")
+                                
+                                // v1.6.45: Auto-advance to first AI route when user is still on placeholder
+                                if allRoutes.count == 2 && currentRouteIndex == 0 {
+                                    currentRouteIndex = 1
+                                    let newRoute = allRoutes[1]
+                                    generatedRoute = newRoute.route
+                                    generatedRouteData = newRoute.data
+                                    viewedRouteIndices.insert(1)
+                                    print("🚀 Auto-advanced to first AI-generated route (Google)")
+                                }
                                 
                                 // v1.6.26: Try waypoint permutation for 2+ waypoint routes
                                 if result.places.count >= 2 {
