@@ -25,8 +25,19 @@ struct RouteSelectionView: View {
         self._showLocalRoutePicker = showLocalRoutePicker
     }
     
+    // Check if we have an active clinic delay to base suggestion on
+    private var hasActiveClinicDelay: Bool {
+        viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable
+    }
+    
     // Calculate recommended duration based on delay time (with 5 min buffer)
+    // Defaults to 30 min if no clinic is active (free walk mode - best route reliability)
     private var recommendedDuration: Int {
+        // If no active clinic, default to 30 min (most reliable routes)
+        if !hasActiveClinicDelay {
+            return 30
+        }
+        
         let availableTime = viewModel.waitTimeInfo.estimatedMinutes - 5
         let presetOptions = [10, 15, 20, 25, 30]
         
@@ -38,8 +49,9 @@ struct RouteSelectionView: View {
     }
     
     // Whether custom time should be auto-selected (delay > 35 min, i.e., 30 min walk + 5 min buffer)
+    // Only applies when a clinic is active - free walk mode uses preset 30 min
     private var shouldUseCustom: Bool {
-        viewModel.waitTimeInfo.estimatedMinutes > 35
+        hasActiveClinicDelay && viewModel.waitTimeInfo.estimatedMinutes > 35
     }
     
     // Custom duration value based on delay (with 6 min buffer)
