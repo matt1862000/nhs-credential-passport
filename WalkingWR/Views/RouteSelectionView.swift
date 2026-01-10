@@ -2892,34 +2892,49 @@ struct LocalRoutePickerSheet: View {
         }
     }
     
-    /// Wait for location with polling (more reliable than fixed delay)
+    /// Wait for location with polling, fallback to cached POI location
     private func waitForLocationAndRunTest() {
-        print("⏳ Waiting for current location...")
-        locationService.requestCurrentLocation()  // Don't clear, just request
+        // First check: Do we already have a location?
+        if let userLocation = locationService.currentLocation {
+            print("🧪 Using existing location: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+            runRouteGenerationTest(at: userLocation.coordinate)
+            return
+        }
         
-        // Poll for location every 0.5s for up to 5 seconds
+        // Second check: Can we use a cached POI location?
+        let cachedLocations = POICacheService.shared.getCachedLocationsInfo()
+        if let firstCached = cachedLocations.first {
+            print("🧪 Using cached POI location: \(firstCached.coordinate.latitude), \(firstCached.coordinate.longitude)")
+            print("   (This location has \(firstCached.poiCount) cached POIs)")
+            runRouteGenerationTest(at: firstCached.coordinate)
+            return
+        }
+        
+        // Last resort: Try to request and wait
+        print("⏳ No cached location - requesting fresh GPS...")
+        locationService.requestCurrentLocation()
+        
         var attempts = 0
-        let maxAttempts = 10
+        let maxAttempts = 6  // 3 seconds total
         
         func checkLocation() {
             if let userLocation = locationService.currentLocation {
-                print("🧪 Got location: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+                print("🧪 Got fresh location: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
                 runRouteGenerationTest(at: userLocation.coordinate)
             } else if attempts < maxAttempts {
                 attempts += 1
-                print("⏳ Attempt \(attempts)/\(maxAttempts) - still waiting for location...")
+                print("⏳ Attempt \(attempts)/\(maxAttempts)...")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     checkLocation()
                 }
             } else {
-                print("❌ Could not get location after \(maxAttempts) attempts")
+                print("❌ Could not get location")
                 isRunningRouteTest = true
-                routeTestResults = "❌ ERROR: Could not get current location.\n\nPlease ensure:\n1. Location permissions are granted\n2. GPS signal is available\n\nTry going outside or near a window, then try again."
+                routeTestResults = "❌ ERROR: No location available.\n\nPlease:\n1. Generate a route first (this caches your location)\n2. Or ensure location permissions are granted"
                 showRouteTestResults = true
             }
         }
         
-        // Start polling
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             checkLocation()
         }
