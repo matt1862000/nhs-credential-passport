@@ -2090,7 +2090,7 @@ struct SettingsView: View {
                 }
                 
                 // DEBUG: Saved Batch Test Results (remove in final version)
-                SavedBatchTestsSection()
+                SavedBatchTestsSection(locationService: locationService)
             }
             .navigationTitle("Settings")
             #if os(iOS)
@@ -2968,11 +2968,13 @@ class BatchTestStorage {
 }
 
 struct SavedBatchTestsSection: View {
+    @ObservedObject var locationService: LocationService  // v1.6.45: Need location access
     @State private var savedTests: [SavedBatchTest] = []
     @State private var selectedTest: SavedBatchTest?
     @State private var showClearConfirmation = false
     @State private var didCopyAllHistory = false
     @State private var isTestRunning = false
+    @State private var isRequestingLocation = false  // v1.6.45: Show loading state
     @State private var cachedLocations: [POICacheService.CachedLocationInfo] = []
     @Environment(\.dismiss) private var dismiss
     
@@ -2980,23 +2982,32 @@ struct SavedBatchTestsSection: View {
         Section {
             // Run ALL Locations Test button
             Button {
-                dismiss()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    NotificationCenter.default.post(name: .runBatchTest, object: nil)
-                }
+                // v1.6.45: Request location first, then run test
+                isRequestingLocation = true
+                locationService.requestCurrentLocation()
+                
+                // Poll for location, then dismiss and run
+                pollForLocationThenRunTest(testType: .batch)
             } label: {
                 HStack {
-                    Image(systemName: "play.fill")
-                        .foregroundColor(.green)
-                    Text("Run Batch Test (All \(cachedLocations.count) Cached)")
+                    if isRequestingLocation {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "play.fill")
+                            .foregroundColor(.green)
+                    }
+                    Text(isRequestingLocation ? "Getting location..." : "Run Batch Test (All \(cachedLocations.count) Cached)")
                         .foregroundColor(.primary)
                     Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if !isRequestingLocation {
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
-            .disabled(cachedLocations.isEmpty)
+            .disabled(cachedLocations.isEmpty || isRequestingLocation)
             
             // Individual location tests from CACHED locations
             if !cachedLocations.isEmpty {
@@ -3207,6 +3218,79 @@ struct SavedBatchTestsSection: View {
                 savedTests = []
             }
             Button("Cancel", role: .cancel) { }
+        }
+    }
+    
+    // v1.6.45: Poll for location then run the batch test
+    enum TestType {
+        case batch
+        case singleCurrent
+        case singleCached(lat: Double, lon: Double, name: String)
+    }
+    
+    private func pollForLocationThenRunTest(testType: TestType) {
+        var attempts = 0
+        let maxAttempts = 10  // 5 seconds total
+        
+        func check() {
+            if let location = locationService.currentLocation {
+                // Got location! Dismiss and run test
+                print("✅ Got location for batch test: \(location.coordinate.latitude), \(location.coordinate.longitude)")
+                isRequestingLocation = false
+                dismiss()
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    switch testType {
+                    case .batch:
+                        NotificationCenter.default.post(name: .runBatchTest, object: nil)
+                    case .singleCurrent:
+                        NotificationCenter.default.post(
+                            name: .runSingleLocationTest,
+                            object: nil,
+                            userInfo: [
+                                "locationName": "Current Location",
+                                "latitude": location.coordinate.latitude,
+                                "longitude": location.coordinate.longitude
+                            ]
+                        )
+                    case .singleCached(let lat, let lon, let name):
+                        NotificationCenter.default.post(
+                            name: .runSingleLocationTest,
+                            object: nil,
+                            userInfo: [
+                                "locationName": name,
+                                "latitude": lat,
+                                "longitude": lon
+                            ]
+                        )
+                    }
+                }
+            } else if attempts < maxAttempts {
+                attempts += 1
+                print("⏳ Waiting for location... attempt \(attempts)/\(maxAttempts)")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    check()
+                }
+            } else {
+                // Failed to get location - still run with cached location fallback
+                print("⚠️ Could not get location, running with fallback")
+                isRequestingLocation = false
+                dismiss()
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    switch testType {
+                    case .batch:
+                        NotificationCenter.default.post(name: .runBatchTest, object: nil)
+                    case .singleCurrent, .singleCached:
+                        NotificationCenter.default.post(name: .runBatchTest, object: nil)  // Fall back to batch
+                    }
+                }
+            }
+        }
+        
+        // Start checking after initial request
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            check()
         }
     }
 }
