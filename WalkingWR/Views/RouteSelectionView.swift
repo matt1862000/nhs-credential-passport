@@ -922,6 +922,7 @@ struct LocalRoutePickerSheet: View {
     @Binding var isPresented: Bool
     @State private var isGenerating = false
     @State private var isShuffling = false  // Separate state for shuffle loading
+    @State private var isStartingWalk = false  // v1.6.45: Loading state for Let's Go button
     @State private var generatedRoute: WalkingRoute?
     @State private var generatedRouteData: GeneratedRoute?
     @State private var showMapPreview = false
@@ -2029,7 +2030,8 @@ struct LocalRoutePickerSheet: View {
                 showPremiumUpsell: showPremiumUpsell,
                 hasLimitedPOIs: mapsService.hasLimitedPOIs,
                 varietyExhausted: varietyExhausted,
-                isDeadZoneFallback: isDeadZoneFallback,  // v1.6.39
+                isDeadZoneFallback: isDeadZoneFallback,
+                isStartingWalk: isStartingWalk,  // v1.6.45: Loading state
                 onStartWalk: { handleStartWalk(route: route) },
                 onShuffle: { shuffleToNextRoute() },
                 onBack: { handleBackFromPreview() },
@@ -2057,7 +2059,10 @@ struct LocalRoutePickerSheet: View {
         }
         
         // Route has no directions (rare) - refresh via MapKit
+        // v1.6.45: Show loading state on button
+        isStartingWalk = true
         print("🍎 Let's Go: No cached directions - refreshing via MapKit...")
+        
         Task {
             if let userLocation = locationService.currentLocation?.coordinate {
                 let refreshedRoute = await mapsService.refreshRouteWithMapKit(
@@ -2065,6 +2070,7 @@ struct LocalRoutePickerSheet: View {
                     userLocation: userLocation
                 )
                 await MainActor.run {
+                    isStartingWalk = false
                     viewModel.selectRoute(refreshedRoute)
                     viewModel.startWalk()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -2074,6 +2080,7 @@ struct LocalRoutePickerSheet: View {
             } else {
                 // Fallback: use original route if no location
                 await MainActor.run {
+                    isStartingWalk = false
                     viewModel.selectRoute(route)
                     viewModel.startWalk()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -3581,6 +3588,7 @@ struct LocalRouteMapPreview: View {
     var hasLimitedPOIs: Bool = false  // v1.6.10: True when POI count is below threshold
     var varietyExhausted: Bool = false  // v1.6.25: True when no more unique routes available
     var isDeadZoneFallback: Bool = false  // v1.6.39: True when route is 70-74% (closest available)
+    var isStartingWalk: Bool = false  // v1.6.45: Loading state for Let's Go button
     
     // v1.6.28: Removed permission callbacks - permissions now requested during/after walk
     let onStartWalk: () -> Void          // Start the walk immediately
@@ -3593,11 +3601,11 @@ struct LocalRouteMapPreview: View {
     // and AFTER the walk (HealthKit sync option)
     
     var primaryButtonText: String {
-        "Let's Go!"
+        isStartingWalk ? "Starting..." : "Let's Go!"
     }
     
     var primaryButtonIcon: String {
-        "figure.walk"
+        isStartingWalk ? "arrow.trianglehead.2.clockwise" : "figure.walk"
     }
     
     var primaryButtonColor: Color {
@@ -3987,11 +3995,19 @@ struct LocalRouteMapPreview: View {
                         onStartWalk()
                     } label: {
                         HStack {
-                            Image(systemName: primaryButtonIcon)
+                            if isStartingWalk {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    .scaleEffect(0.8)
+                            } else {
+                                Image(systemName: primaryButtonIcon)
+                            }
                             Text(primaryButtonText)
                         }
                     }
                     .buttonStyle(PrimaryButtonStyle(color: primaryButtonColor))
+                    .disabled(isStartingWalk)
+                    .opacity(isStartingWalk ? 0.7 : 1.0)
                 }
             }
             .padding(20)
