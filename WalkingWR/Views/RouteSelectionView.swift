@@ -259,18 +259,33 @@ struct RouteSelectionView: View {
             }
             // v1.6.45: Batch test listeners - moved here so they work even when sheet is closed
             .onReceive(NotificationCenter.default.publisher(for: .runBatchTest)) { _ in
-                print("📬 Received runBatchTest notification - opening sheet and starting test")
-                pendingBatchTest = .allLocations
-                showLocalRoutePicker = true
+                print("📬 Received runBatchTest notification - requesting location first")
+                // Request location first, then open sheet
+                viewModel.locationService.requestFreshLocation()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    print("📬 Location ready, opening sheet for batch test")
+                    pendingBatchTest = .allLocations
+                    showLocalRoutePicker = true
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTest)) { notification in
-                print("📬 Received runSingleLocationTest notification")
+                print("📬 Received runSingleLocationTest notification - requesting location first")
                 if let userInfo = notification.userInfo,
                    let lat = userInfo["latitude"] as? Double,
                    let lon = userInfo["longitude"] as? Double {
                     let name = userInfo["locationName"] as? String ?? userInfo["name"] as? String ?? "Test Location"
-                    pendingBatchTest = .singleLocation(name: name, lat: lat, lon: lon)
-                    showLocalRoutePicker = true
+                    // Request location first for "Current Location" tests
+                    if lat == 0 && lon == 0 {
+                        viewModel.locationService.requestFreshLocation()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            print("📬 Location ready, opening sheet for single test")
+                            pendingBatchTest = .singleLocation(name: name, lat: lat, lon: lon)
+                            showLocalRoutePicker = true
+                        }
+                    } else {
+                        pendingBatchTest = .singleLocation(name: name, lat: lat, lon: lon)
+                        showLocalRoutePicker = true
+                    }
                 }
             }
         }
