@@ -852,133 +852,71 @@ class GoogleMapsService: ObservableObject {
             print("📭 CACHE MISS - No cached POIs within 1km")
             
             // ═══════════════════════════════════════════════════════════════
-            // 🗺️ PRIORITY 1: OpenStreetMap FIRST (FREE, NO RATE LIMITS!)
-            // OSM has comprehensive UK data and zero cost/limits
+            // 🚀 v1.7.1: PARALLEL FETCH FOR NEW LOCATIONS
+            // Fetch ALL sources simultaneously for best first-time experience
+            // Cost: ~$0.02 per NEW location (cached locations are free)
             // ═══════════════════════════════════════════════════════════════
-            print("🗺️ OSM - Searching FIRST (FREE, no limits!)...")
-            let osmPOIs = await searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
-            print("🗺️ OSM - Found \(osmPOIs.count) POIs")
-            for poi in osmPOIs {
-                if !seenPlaceIds.contains(poi.placeId) {
-                    seenPlaceIds.insert(poi.placeId)
-                    allResults.append(poi)
+            print("🚀 PARALLEL FETCH - Fetching OSM + Apple + Google simultaneously...")
+            let parallelStartTime = Date()
+            
+            // Launch all fetches in parallel
+            async let osmTask = searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
+            async let appleTask = searchAppleMapsForPOIsComplete(location: location, radiusMeters: radiusMeters)
+            async let googleTask: [PlaceResult] = apiKey.isEmpty ? [] : fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
+            
+            // Await all results
+            let osmPOIs = await osmTask
+            let applePOIs = await appleTask
+            let googlePOIs = await googleTask
+            
+            let parallelTime = Date().timeIntervalSince(parallelStartTime)
+            print("⏱️ PARALLEL FETCH completed in \(String(format: "%.2f", parallelTime))s")
+            print("   🗺️ OSM:    \(osmPOIs.count) POIs")
+            print("   🍎 Apple:  \(applePOIs.count) POIs")
+            print("   🌐 Google: \(googlePOIs.count) POIs")
+            
+            // Merge results with deduplication
+            // Priority: Google > Apple > OSM (Google has best verification)
+            var mergedResults: [PlaceResult] = []
+            var mergedPlaceIds = Set<String>()
+            
+            // Add Google first (highest quality)
+            for poi in googlePOIs {
+                if !mergedPlaceIds.contains(poi.placeId) {
+                    mergedPlaceIds.insert(poi.placeId)
+                    mergedResults.append(poi)
                 }
             }
+            let googleCount = mergedResults.count
             
-            // ═══════════════════════════════════════════════════════════════
-            // 🍎 PRIORITY 2: Apple Maps FAST MODE (first batch only)
-            // Get 40 high-priority queries instantly, background scan continues
-            // ═══════════════════════════════════════════════════════════════
-            print("🍎 APPLE MAPS - FAST MODE (first 40 queries only)...")
-            let applePOIs = await searchAppleMapsForPOIsFast(location: location, radiusMeters: radiusMeters)
-            print("🍎 APPLE MAPS - Found \(applePOIs.count) POIs (fast mode)")
+            // Add Apple (check for duplicates by name/location)
             var appleAdded = 0
             for poi in applePOIs {
-                let isDuplicate = allResults.contains { existing in
+                let isDuplicate = mergedResults.contains { existing in
                     existing.name.lowercased() == poi.name.lowercased() ||
                     distanceBetween(existing.coordinate, poi.coordinate) < 50
                 }
                 if !isDuplicate {
-                    allResults.append(poi)
+                    mergedResults.append(poi)
                     appleAdded += 1
                 }
             }
-            print("🍎 APPLE MAPS - Added \(appleAdded) unique POIs (after dedup)")
             
-            // 🔄 START BACKGROUND SCAN for complete coverage
-            // This will update the cache with more POIs for future routes
-            let currentPOIs = allResults
-            Task.detached { [weak self] in
-                guard let self = self else { return }
-                print("🍎 📡 BACKGROUND: Starting full Apple Maps scan...")
-                let fullApplePOIs = await self.searchAppleMapsForPOIsComplete(location: location, radiusMeters: radiusMeters)
-                
-                // Merge with current POIs and update cache
-                var mergedPOIs = currentPOIs
-                var addedInBackground = 0
-                for poi in fullApplePOIs {
-                    let isDuplicate = mergedPOIs.contains { existing in
-                        existing.name.lowercased() == poi.name.lowercased() ||
-                        self.distanceBetween(existing.coordinate, poi.coordinate) < 50
-                    }
-                    if !isDuplicate {
-                        mergedPOIs.append(poi)
-                        addedInBackground += 1
-                    }
+            // Add OSM (check for duplicates by name/location)
+            var osmAdded = 0
+            for poi in osmPOIs {
+                let isDuplicate = mergedResults.contains { existing in
+                    existing.name.lowercased() == poi.name.lowercased() ||
+                    distanceBetween(existing.coordinate, poi.coordinate) < 50
                 }
-                
-                if addedInBackground > 0 {
-                    POICacheService.shared.cachePOIs(mergedPOIs, for: location)
-                    print("🍎 📡 BACKGROUND COMPLETE: Added \(addedInBackground) more POIs (total: \(mergedPOIs.count))")
-                } else {
-                    print("🍎 📡 BACKGROUND COMPLETE: No new POIs found")
+                if !isDuplicate {
+                    mergedResults.append(poi)
+                    osmAdded += 1
                 }
             }
             
-            // ═══════════════════════════════════════════════════════════════
-            // 🌐 PRIORITY 3: Google Places - SMART DYNAMIC PRIORITIZATION
-            // Call Google when OSM+Apple coverage is insufficient:
-            // - Low POI count (<50)
-            // - No nearby POIs (closest >400m = poor for short routes)
-            // - Rural/sparse area detection
-            // ═══════════════════════════════════════════════════════════════
-            
-            // Check if we need Google
-            var needsGoogle = false
-            var googleReason = ""
-            
-            // Reason 1: Low POI count
-            if allResults.count < 50 {
-                needsGoogle = true
-                googleReason = "low POI count (\(allResults.count) < 50)"
-            }
-            
-            // Reason 2: No nearby POIs (poor for short routes)
-            if !needsGoogle && !allResults.isEmpty {
-                let closestDistance = allResults.map { distanceBetween(location, $0.coordinate) }.min() ?? 9999
-                if closestDistance > 400 {  // Closest POI is >400m = 5min+ one-way walk
-                    needsGoogle = true
-                    googleReason = "no nearby POIs (closest: \(Int(closestDistance))m)"
-                }
-            }
-            
-            // Reason 3: Check 5-min viability - if no POI within 300m, short routes will fail
-            if !needsGoogle && !allResults.isEmpty {
-                let poisWithin300m = allResults.filter { distanceBetween(location, $0.coordinate) <= 300 }
-                if poisWithin300m.isEmpty {
-                    needsGoogle = true
-                    googleReason = "no POIs within 300m (5-min routes will fail)"
-                }
-            }
-            
-            if !apiKey.isEmpty && needsGoogle {
-                print("🌐 GOOGLE - DYNAMIC TRIGGER: \(googleReason)")
-                print("🌐 GOOGLE - Calling API to supplement...")
-                let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
-                var googleAdded = 0
-                for poi in googlePOIs {
-                    let isDuplicate = allResults.contains { existing in
-                        existing.name.lowercased() == poi.name.lowercased() ||
-                        distanceBetween(existing.coordinate, poi.coordinate) < 50
-                    }
-                    if !isDuplicate {
-                        allResults.append(poi)
-                        googleAdded += 1
-                    }
-                }
-                print("🌐 GOOGLE - Added \(googleAdded) unique POIs (total now: \(allResults.count))")
-                
-                // Log improvement
-                if !allResults.isEmpty {
-                    let newClosest = allResults.map { distanceBetween(location, $0.coordinate) }.min() ?? 9999
-                    let newWithin300m = allResults.filter { distanceBetween(location, $0.coordinate) <= 300 }.count
-                    print("🌐 GOOGLE - Improvement: closest=\(Int(newClosest))m, within 300m=\(newWithin300m)")
-                }
-            } else if apiKey.isEmpty {
-                print("⚠️ GOOGLE SKIPPED - No API key")
-            } else {
-                print("✅ GOOGLE SKIPPED - OSM+Apple sufficient (\(allResults.count) POIs, good coverage)")
-            }
+            allResults = mergedResults
+            print("📊 MERGED: \(googleCount) Google + \(appleAdded) Apple + \(osmAdded) OSM = \(allResults.count) total")
         }
         
         // 🚫 FILTER: Remove POIs that are unrealistically far away
