@@ -9,6 +9,13 @@ import SwiftUI
 import MapKit
 import CoreLocation
 
+// v1.6.45: Pending batch test type
+enum PendingBatchTest: Equatable {
+    case none
+    case allLocations
+    case singleLocation(name: String, lat: Double, lon: Double)
+}
+
 struct RouteSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var showLocalRoutePicker: Bool
@@ -19,6 +26,7 @@ struct RouteSelectionView: View {
     @State private var showHelpSheet = false
     @State private var localRouteDuration: Int = 10
     @State private var localRouteUseCustom = false
+    @State private var pendingBatchTest: PendingBatchTest = .none  // v1.6.45: Auto-run test when sheet opens
     
     init(viewModel: WaitingRoomViewModel, showLocalRoutePicker: Binding<Bool> = .constant(false)) {
         self.viewModel = viewModel
@@ -171,13 +179,16 @@ struct RouteSelectionView: View {
             .sheet(isPresented: $showHelpSheet) {
                 HelpView()
             }
-            .sheet(isPresented: $showLocalRoutePicker) {
+            .sheet(isPresented: $showLocalRoutePicker, onDismiss: {
+                pendingBatchTest = .none  // Clear pending test when sheet closes
+            }) {
                 LocalRoutePickerSheet(
                     viewModel: viewModel,
                     locationService: viewModel.locationService,
                     selectedDuration: $localRouteDuration,
                     useCustomTime: $localRouteUseCustom,
-                    isPresented: $showLocalRoutePicker
+                    isPresented: $showLocalRoutePicker,
+                    pendingBatchTest: $pendingBatchTest  // v1.6.45: Pass pending test
                 )
             }
             .onChange(of: showLocalRoutePicker) { _, isShowing in
@@ -248,21 +259,18 @@ struct RouteSelectionView: View {
             }
             // v1.6.45: Batch test listeners - moved here so they work even when sheet is closed
             .onReceive(NotificationCenter.default.publisher(for: .runBatchTest)) { _ in
-                print("📬 Received runBatchTest notification")
+                print("📬 Received runBatchTest notification - opening sheet and starting test")
+                pendingBatchTest = .allLocations
                 showLocalRoutePicker = true
-                // Delay to allow sheet to open, then run test
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    NotificationCenter.default.post(name: .runBatchTestInternal, object: nil)
-                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTest)) { notification in
                 print("📬 Received runSingleLocationTest notification")
-                if let userInfo = notification.userInfo {
+                if let userInfo = notification.userInfo,
+                   let lat = userInfo["latitude"] as? Double,
+                   let lon = userInfo["longitude"] as? Double {
+                    let name = userInfo["locationName"] as? String ?? userInfo["name"] as? String ?? "Test Location"
+                    pendingBatchTest = .singleLocation(name: name, lat: lat, lon: lon)
                     showLocalRoutePicker = true
-                    // Delay to allow sheet to open, then run test
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        NotificationCenter.default.post(name: .runSingleLocationTestInternal, object: nil, userInfo: userInfo)
-                    }
                 }
             }
         }
@@ -939,6 +947,7 @@ struct LocalRoutePickerSheet: View {
     @Binding var selectedDuration: Int
     @Binding var useCustomTime: Bool
     @Binding var isPresented: Bool
+    @Binding var pendingBatchTest: PendingBatchTest  // v1.6.45: Auto-run test when sheet opens
     @State private var isGenerating = false
     @State private var isShuffling = false  // Separate state for shuffle loading
     @State private var isStartingWalk = false  // v1.6.45: Loading state for Let's Go button
@@ -1305,17 +1314,33 @@ struct LocalRoutePickerSheet: View {
                 }
                 // Pre-fetch POIs while user selects duration (speeds up Generate)
                 prefetchPOIsIfNeeded()
+                
+                // v1.6.45: Auto-run pending batch test after short delay
+                if pendingBatchTest != .none {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        switch pendingBatchTest {
+                        case .allLocations:
+                            print("🧪 Auto-starting batch test (all locations)")
+                            runAllLocationTests()
+                        case .singleLocation(let name, let lat, let lon):
+                            print("🧪 Auto-starting single location test: \(name)")
+                            let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                            runSingleTest(at: coordinate, name: name)
+                        case .none:
+                            break
+                        }
+                        pendingBatchTest = .none
+                    }
+                }
             }
-            // v1.6.45: Listen for INTERNAL batch test trigger (after sheet is opened)
+            // Remove old notification listeners - now using pendingBatchTest binding
             .onReceive(NotificationCenter.default.publisher(for: .runBatchTestInternal)) { _ in
-                print("📬 Sheet received runBatchTestInternal - starting tests")
-                runAllLocationTests()
+                // Legacy - keeping for backwards compatibility but not used
             }
             .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTestInternal)) { notification in
-                // Handle single location test from Settings
-                print("📬 Sheet received runSingleLocationTestInternal")
+                // Legacy - keeping for backwards compatibility
                 if let userInfo = notification.userInfo,
-                   let name = userInfo["locationName"] as? String,
+                   let name = userInfo["locationName"] as? String ?? userInfo["name"] as? String,
                    let lat = userInfo["latitude"] as? Double,
                    let lon = userInfo["longitude"] as? Double {
                     
@@ -2856,6 +2881,20 @@ struct LocalRoutePickerSheet: View {
     @State private var routeTestResults: String = ""
     @State private var showRouteTestResults = false
     @State private var didCopyResults = false  // For "Copied!" feedback
+    
+    /// v1.6.45: Run test for a single location by coordinate
+    func runSingleTest(at coordinate: CLLocationCoordinate2D, name: String) {
+        // If lat/lon are 0, use current location
+        if coordinate.latitude == 0 && coordinate.longitude == 0 {
+            if let userLocation = locationService.currentLocation {
+                runRouteGenerationTest(at: userLocation.coordinate)
+            } else {
+                print("❌ No current location available for test")
+            }
+        } else {
+            runRouteGenerationTest(at: coordinate)
+        }
+    }
     
     /// Run tests for ALL CACHED locations (dynamic, not hardcoded)
     func runAllLocationTests() {
