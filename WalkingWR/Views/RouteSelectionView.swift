@@ -1247,44 +1247,6 @@ struct LocalRoutePickerSheet: View {
                                     }
                                     .buttonStyle(PrimaryButtonStyle(color: locationReady && !isGenerating ? .tealAccent : .gray))
                                     .disabled(!locationReady || isGenerating)
-                                    
-                                    // Debug test button with location picker
-                                    Menu {
-                                        Section("Individual Tests") {
-                                            Button("📍 Current Location") {
-                                                runRouteGenerationTest(at: nil)
-                                            }
-                                            Button("🏙️ S5 7AU (Firth Park)") {
-                                                runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4577))
-                                            }
-                                            Button("🏘️ S11 9BF (Ecclesall)") {
-                                                runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.3631, longitude: -1.4989))
-                                            }
-                                            Button("🏠 S12 4QN (Hackenthorpe)") {
-                                                runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.3447, longitude: -1.3633))
-                                            }
-                                            Button("🌳 S35 0JW (Chapeltown)") {
-                                                runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: 53.4633, longitude: -1.4667))
-                                            }
-                                        }
-                                        Section("Batch Test") {
-                                            Button("🧪 TEST ALL LOCATIONS") {
-                                                runAllLocationTests()
-                                            }
-                                        }
-                                    } label: {
-                                        if isRunningRouteTest {
-                                            ProgressView()
-                                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        } else {
-                                            Image(systemName: "testtube.2")
-                                        }
-                                    }
-                                    .frame(width: 50, height: 50)
-                                    .background(Color.purple.opacity(0.8))
-                                    .foregroundColor(.white)
-                                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                                    .disabled(isRunningRouteTest)
                                 }
                             }
                             
@@ -1311,6 +1273,10 @@ struct LocalRoutePickerSheet: View {
                 }
                 // Pre-fetch POIs while user selects duration (speeds up Generate)
                 prefetchPOIsIfNeeded()
+            }
+            // Listen for batch test trigger from Settings
+            .onReceive(NotificationCenter.default.publisher(for: .runBatchTest)) { _ in
+                runAllLocationTests()
             }
             .onChange(of: locationService.currentLocation) { _, newLocation in
                 // Re-fetch POIs if location significantly changed

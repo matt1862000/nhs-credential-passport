@@ -11,6 +11,11 @@ import CoreMotion
 import UIKit
 #endif
 
+// MARK: - Notification Names for Batch Testing
+extension Notification.Name {
+    static let runBatchTest = Notification.Name("runBatchTest")
+}
+
 struct ProfileView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @ObservedObject var healthKitService: HealthKitService
@@ -2961,9 +2966,58 @@ struct SavedBatchTestsSection: View {
     @State private var savedTests: [SavedBatchTest] = []
     @State private var selectedTest: SavedBatchTest?
     @State private var showClearConfirmation = false
+    @State private var didCopyAllHistory = false
+    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         Section {
+            // Run Batch Test button
+            Button {
+                // Close settings and trigger batch test
+                dismiss()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    NotificationCenter.default.post(name: .runBatchTest, object: nil)
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "play.fill")
+                        .foregroundColor(.green)
+                    Text("Run Batch Test (All Locations)")
+                        .foregroundColor(.primary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            // Copy All History button
+            if !savedTests.isEmpty {
+                Button {
+                    // Combine all test results into one string
+                    let allHistory = savedTests.map { test in
+                        "═══════════════════════════════════════════\n" +
+                        "📅 \(test.timestamp.formatted(date: .complete, time: .shortened))\n" +
+                        "═══════════════════════════════════════════\n" +
+                        test.results
+                    }.joined(separator: "\n\n")
+                    
+                    UIPasteboard.general.string = allHistory
+                    didCopyAllHistory = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        didCopyAllHistory = false
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: didCopyAllHistory ? "checkmark" : "doc.on.doc.fill")
+                            .foregroundColor(didCopyAllHistory ? .green : .blue)
+                        Text(didCopyAllHistory ? "Copied!" : "Copy All History (\(savedTests.count) tests)")
+                            .foregroundColor(didCopyAllHistory ? .green : .primary)
+                    }
+                }
+            }
+            
+            // Saved tests list
             if savedTests.isEmpty {
                 Text("No saved batch tests")
                     .font(.caption)
@@ -3014,7 +3068,7 @@ struct SavedBatchTestsSection: View {
                     .foregroundColor(.orange)
             }
         } footer: {
-            Text("Saved test results for debugging. Will be removed in final version.")
+            Text("Run tests from here. Results auto-save. Will be removed in final version.")
         }
         .onAppear {
             savedTests = BatchTestStorage.shared.getAllTests()
