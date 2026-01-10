@@ -259,33 +259,18 @@ struct RouteSelectionView: View {
             }
             // v1.6.45: Batch test listeners - moved here so they work even when sheet is closed
             .onReceive(NotificationCenter.default.publisher(for: .runBatchTest)) { _ in
-                print("📬 Received runBatchTest notification - requesting location first")
-                // Request location first, then open sheet
-                viewModel.locationService.requestFreshLocation()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    print("📬 Location ready, opening sheet for batch test")
-                    pendingBatchTest = .allLocations
-                    showLocalRoutePicker = true
-                }
+                print("📬 Received runBatchTest notification - opening sheet")
+                pendingBatchTest = .allLocations
+                showLocalRoutePicker = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTest)) { notification in
-                print("📬 Received runSingleLocationTest notification - requesting location first")
+                print("📬 Received runSingleLocationTest notification")
                 if let userInfo = notification.userInfo,
                    let lat = userInfo["latitude"] as? Double,
                    let lon = userInfo["longitude"] as? Double {
                     let name = userInfo["locationName"] as? String ?? userInfo["name"] as? String ?? "Test Location"
-                    // Request location first for "Current Location" tests
-                    if lat == 0 && lon == 0 {
-                        viewModel.locationService.requestFreshLocation()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            print("📬 Location ready, opening sheet for single test")
-                            pendingBatchTest = .singleLocation(name: name, lat: lat, lon: lon)
-                            showLocalRoutePicker = true
-                        }
-                    } else {
-                        pendingBatchTest = .singleLocation(name: name, lat: lat, lon: lon)
-                        showLocalRoutePicker = true
-                    }
+                    pendingBatchTest = .singleLocation(name: name, lat: lat, lon: lon)
+                    showLocalRoutePicker = true
                 }
             }
         }
@@ -2899,30 +2884,44 @@ struct LocalRoutePickerSheet: View {
     
     /// v1.6.45: Run test for a single location by coordinate
     func runSingleTest(at coordinate: CLLocationCoordinate2D, name: String) {
-        // If lat/lon are 0, use current location (with retry)
+        // If lat/lon are 0, use current location (with polling retry)
         if coordinate.latitude == 0 && coordinate.longitude == 0 {
-            if let userLocation = locationService.currentLocation {
-                print("🧪 Using current location: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
-                runRouteGenerationTest(at: userLocation.coordinate)
-            } else {
-                print("⏳ Waiting for current location...")
-                // Request fresh location and retry after delay
-                locationService.requestFreshLocation()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    if let userLocation = locationService.currentLocation {
-                        print("🧪 Got location after wait: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
-                        runRouteGenerationTest(at: userLocation.coordinate)
-                    } else {
-                        print("❌ Still no current location available for test")
-                        // Show error in results
-                        isRunningRouteTest = true
-                        routeTestResults = "❌ ERROR: Could not get current location.\n\nPlease ensure location permissions are granted and try again."
-                        showRouteTestResults = true
-                    }
-                }
-            }
+            waitForLocationAndRunTest()
         } else {
             runRouteGenerationTest(at: coordinate)
+        }
+    }
+    
+    /// Wait for location with polling (more reliable than fixed delay)
+    private func waitForLocationAndRunTest() {
+        print("⏳ Waiting for current location...")
+        locationService.requestCurrentLocation()  // Don't clear, just request
+        
+        // Poll for location every 0.5s for up to 5 seconds
+        var attempts = 0
+        let maxAttempts = 10
+        
+        func checkLocation() {
+            if let userLocation = locationService.currentLocation {
+                print("🧪 Got location: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+                runRouteGenerationTest(at: userLocation.coordinate)
+            } else if attempts < maxAttempts {
+                attempts += 1
+                print("⏳ Attempt \(attempts)/\(maxAttempts) - still waiting for location...")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    checkLocation()
+                }
+            } else {
+                print("❌ Could not get location after \(maxAttempts) attempts")
+                isRunningRouteTest = true
+                routeTestResults = "❌ ERROR: Could not get current location.\n\nPlease ensure:\n1. Location permissions are granted\n2. GPS signal is available\n\nTry going outside or near a window, then try again."
+                showRouteTestResults = true
+            }
+        }
+        
+        // Start polling
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            checkLocation()
         }
     }
     
