@@ -7,6 +7,7 @@
 
 import SwiftUI
 import CoreMotion
+import CoreLocation
 #if os(iOS)
 import UIKit
 #endif
@@ -2969,16 +2970,8 @@ struct SavedBatchTestsSection: View {
     @State private var showClearConfirmation = false
     @State private var didCopyAllHistory = false
     @State private var isTestRunning = false
+    @State private var cachedLocations: [POICacheService.CachedLocationInfo] = []
     @Environment(\.dismiss) private var dismiss
-    
-    /// Fixed test locations (same as RouteSelectionView)
-    private let testLocations: [(name: String, lat: Double, lon: Double)] = [
-        ("Current Location", 0, 0),  // Will be replaced with actual location
-        ("S5 7AU (Firth Park)", 53.4115, -1.4577),
-        ("S11 9BF (Ecclesall)", 53.3631, -1.4989),
-        ("S12 4QN (Hackenthorpe)", 53.3447, -1.3633),
-        ("S35 0JW (Chapeltown)", 53.4633, -1.4667)
-    ]
     
     var body: some View {
         Section {
@@ -2992,7 +2985,7 @@ struct SavedBatchTestsSection: View {
                 HStack {
                     Image(systemName: "play.fill")
                         .foregroundColor(.green)
-                    Text("Run Batch Test (All Locations)")
+                    Text("Run Batch Test (All \(cachedLocations.count) Cached)")
                         .foregroundColor(.primary)
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -3000,10 +2993,12 @@ struct SavedBatchTestsSection: View {
                         .foregroundColor(.secondary)
                 }
             }
+            .disabled(cachedLocations.isEmpty)
             
-            // Individual location tests
-            DisclosureGroup {
-                ForEach(testLocations, id: \.name) { location in
+            // Individual location tests from CACHED locations
+            if !cachedLocations.isEmpty {
+                DisclosureGroup {
+                    // Current location option
                     Button {
                         dismiss()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -3011,28 +3006,70 @@ struct SavedBatchTestsSection: View {
                                 name: .runSingleLocationTest,
                                 object: nil,
                                 userInfo: [
-                                    "name": location.name,
-                                    "latitude": location.lat,
-                                    "longitude": location.lon
+                                    "name": "Current Location",
+                                    "latitude": 0.0,
+                                    "longitude": 0.0
                                 ]
                             )
                         }
                     } label: {
                         HStack {
-                            Image(systemName: location.name == "Current Location" ? "location.fill" : "mappin")
-                                .foregroundColor(.orange)
+                            Image(systemName: "location.fill")
+                                .foregroundColor(.blue)
                                 .frame(width: 20)
-                            Text(location.name)
+                            Text("Current Location")
                                 .foregroundColor(.primary)
                         }
                     }
+                    
+                    Divider()
+                    
+                    // Cached locations
+                    ForEach(cachedLocations) { location in
+                        Button {
+                            dismiss()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                NotificationCenter.default.post(
+                                    name: .runSingleLocationTest,
+                                    object: nil,
+                                    userInfo: [
+                                        "name": location.locationName,
+                                        "latitude": location.coordinate.latitude,
+                                        "longitude": location.coordinate.longitude
+                                    ]
+                                )
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "mappin.circle.fill")
+                                    .foregroundColor(.orange)
+                                    .frame(width: 20)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(location.locationName)
+                                        .foregroundColor(.primary)
+                                        .lineLimit(1)
+                                    Text("\(location.poiCount) POIs")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "map")
+                            .foregroundColor(.orange)
+                        Text("Test Single Location (\(cachedLocations.count + 1))")
+                            .foregroundColor(.primary)
+                    }
                 }
-            } label: {
+            } else {
                 HStack {
-                    Image(systemName: "map")
-                        .foregroundColor(.orange)
-                    Text("Test Single Location")
-                        .foregroundColor(.primary)
+                    Image(systemName: "exclamationmark.triangle")
+                        .foregroundColor(.secondary)
+                    Text("No cached locations - generate a route first")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
             
@@ -3117,6 +3154,23 @@ struct SavedBatchTestsSection: View {
         }
         .onAppear {
             savedTests = BatchTestStorage.shared.getAllTests()
+            cachedLocations = POICacheService.shared.getCachedLocationsInfo()
+            
+            // Reverse geocode the cached locations to get readable names
+            Task {
+                for (index, location) in cachedLocations.enumerated() {
+                    let geocoder = CLGeocoder()
+                    let clLocation = CLLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
+                    if let placemark = try? await geocoder.reverseGeocodeLocation(clLocation).first {
+                        let name = [placemark.name, placemark.locality].compactMap { $0 }.joined(separator: ", ")
+                        await MainActor.run {
+                            if index < cachedLocations.count {
+                                cachedLocations[index].locationName = name.isEmpty ? "Unknown" : name
+                            }
+                        }
+                    }
+                }
+            }
         }
         .sheet(item: $selectedTest) { test in
             NavigationStack {

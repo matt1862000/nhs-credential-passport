@@ -2673,25 +2673,29 @@ struct LocalRoutePickerSheet: View {
     @State private var showRouteTestResults = false
     @State private var didCopyResults = false  // For "Copied!" feedback
     
-    /// Fixed test locations for batch testing
-    private let fixedTestLocations: [(name: String, coordinate: CLLocationCoordinate2D)] = [
-        ("S5 7AU (Firth Park)", CLLocationCoordinate2D(latitude: 53.4115, longitude: -1.4577)),
-        ("S11 9BF (Ecclesall)", CLLocationCoordinate2D(latitude: 53.3631, longitude: -1.4989)),
-        ("S12 4QN (Hackenthorpe)", CLLocationCoordinate2D(latitude: 53.3447, longitude: -1.3633)),
-        ("S35 0JW (Chapeltown)", CLLocationCoordinate2D(latitude: 53.4633, longitude: -1.4667))
-    ]
-    
-    /// Run tests for ALL locations sequentially (includes current location + fixed locations)
+    /// Run tests for ALL CACHED locations (dynamic, not hardcoded)
     func runAllLocationTests() {
         isRunningRouteTest = true
         
-        // Build test locations list - current location first if available
+        // Build test locations list from CACHED locations
         var allTestLocations: [(name: String, coordinate: CLLocationCoordinate2D)] = []
         
+        // Add current location first if available
         if let userLocation = locationService.currentLocation {
             allTestLocations.append(("📍 Current Location", userLocation.coordinate))
         }
-        allTestLocations.append(contentsOf: fixedTestLocations)
+        
+        // Add all cached locations
+        let cachedLocations = POICacheService.shared.getCachedLocationsInfo()
+        for (index, cached) in cachedLocations.enumerated() {
+            // Skip if too close to current location (already added)
+            if let userLocation = locationService.currentLocation {
+                let distance = CLLocation(latitude: cached.coordinate.latitude, longitude: cached.coordinate.longitude)
+                    .distance(from: CLLocation(latitude: userLocation.coordinate.latitude, longitude: userLocation.coordinate.longitude))
+                if distance < 100 { continue }  // Skip duplicates within 100m
+            }
+            allTestLocations.append(("📦 Cached #\(index + 1) (\(cached.poiCount) POIs)", cached.coordinate))
+        }
         
         // Get app version for batch test header
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
