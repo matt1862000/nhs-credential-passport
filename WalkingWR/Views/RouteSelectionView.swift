@@ -3717,55 +3717,98 @@ struct LocalRouteMapPreview: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Map - with explicit camera position to show full route
-            Map(initialPosition: mapCameraPosition) {
-                // User's starting location
-                if let userLoc = userLocation {
-                    Annotation("Start/End", coordinate: userLoc) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.blue)
-                                .frame(width: 24, height: 24)
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 10, height: 10)
+            // Map - with placeholder background while loading
+            ZStack {
+                // v1.6.45: Placeholder background that shows while map tiles load
+                ZStack {
+                    // Dark gradient simulating unloaded map
+                    LinearGradient(
+                        colors: [
+                            Color(.systemGray6),
+                            Color(.systemGray5),
+                            Color(.systemGray6)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    
+                    // Subtle grid pattern
+                    VStack(spacing: 40) {
+                        ForEach(0..<5, id: \.self) { _ in
+                            HStack(spacing: 40) {
+                                ForEach(0..<5, id: \.self) { _ in
+                                    Circle()
+                                        .fill(Color(.systemGray4).opacity(0.3))
+                                        .frame(width: 8, height: 8)
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Loading indicator
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                            .tint(.tealAccent)
+                        Text("Loading map...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding()
+                    .background(Color(.systemBackground).opacity(0.8))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                
+                // Actual map (renders on top when loaded)
+                Map(initialPosition: mapCameraPosition) {
+                    // User's starting location
+                    if let userLoc = userLocation {
+                        Annotation("Start/End", coordinate: userLoc) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.blue)
+                                    .frame(width: 24, height: 24)
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 10, height: 10)
+                            }
+                        }
+                    }
+                    
+                    // Route polyline (if available from Google Directions)
+                    // Split into outbound (teal) and return leg (orange)
+                    if hasRealPolyline, route.routePath.count >= 2 {
+                        let splitResult = splitRouteAtLastWaypoint()
+                        
+                        // Outbound leg (to waypoints) - teal
+                        if splitResult.outbound.count >= 2 {
+                            MapPolyline(coordinates: splitResult.outbound)
+                                .stroke(Color.tealAccent, lineWidth: 4)
+                        }
+                        
+                        // Return leg (back to start) - orange
+                        if splitResult.returnLeg.count >= 2 {
+                            MapPolyline(coordinates: splitResult.returnLeg)
+                                .stroke(Color.orange.opacity(0.8), lineWidth: 4)
+                        }
+                    }
+                    
+                    // Discovery markers (POIs)
+                    ForEach(route.qrMarkers) { marker in
+                        Annotation(marker.name, coordinate: marker.coordinate) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.mintGreen)
+                                    .frame(width: 32, height: 32)
+                                Image(systemName: "mappin")
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                            }
                         }
                     }
                 }
-                
-                // Route polyline (if available from Google Directions)
-                // Split into outbound (teal) and return leg (orange)
-                if hasRealPolyline, route.routePath.count >= 2 {
-                    let splitResult = splitRouteAtLastWaypoint()
-                    
-                    // Outbound leg (to waypoints) - teal
-                    if splitResult.outbound.count >= 2 {
-                        MapPolyline(coordinates: splitResult.outbound)
-                            .stroke(Color.tealAccent, lineWidth: 4)
-                    }
-                    
-                    // Return leg (back to start) - orange
-                    if splitResult.returnLeg.count >= 2 {
-                        MapPolyline(coordinates: splitResult.returnLeg)
-                            .stroke(Color.orange.opacity(0.8), lineWidth: 4)
-                    }
-                }
-                
-                // Discovery markers (POIs)
-                ForEach(route.qrMarkers) { marker in
-                    Annotation(marker.name, coordinate: marker.coordinate) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.mintGreen)
-                                .frame(width: 32, height: 32)
-                            Image(systemName: "mappin")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                        }
-                    }
-                }
+                .mapStyle(.standard)
             }
-            .mapStyle(.standard)
             
             // Warning banners
             VStack(spacing: 0) {
