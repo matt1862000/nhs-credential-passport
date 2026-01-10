@@ -43,24 +43,16 @@ struct WalkingWRApp: App {
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             if newPhase == .background {
-                // v1.7.13: Cancel walk notifications when app goes to background
-                // Only if there's no active walk (user just closed the app without ending walk)
-                print("📱 App entering background")
-                cancelWalkNotificationsIfNoActiveWalk()
+                // v1.7.14: ALWAYS cancel timed walk notifications when going to background
+                // If user force-closes during a walk, we can't track progress anyway
+                // If they return, notifications will be rescheduled
+                print("📱 App entering background - cancelling timed walk notifications")
+                NotificationService.shared.cancelAllWalkingNotifications()
+                
+                // Also clear the active walk flag since the walk can't continue
+                // without the app running
+                UserDefaults.standard.set(false, forKey: "hasActiveWalk")
             }
-        }
-    }
-    
-    /// Cancel walk notifications if no active walk (called when going to background)
-    private func cancelWalkNotificationsIfNoActiveWalk() {
-        // Check the flag - ViewModel sets this to true when walk is active
-        let hasActiveWalk = UserDefaults.standard.bool(forKey: "hasActiveWalk")
-        
-        if !hasActiveWalk {
-            print("📱 No active walk - cancelling walk notifications (keeping delay notifications)")
-            NotificationService.shared.cancelAllWalkingNotifications()
-        } else {
-            print("📱 Active walk detected - keeping walk notifications")
         }
     }
 }
