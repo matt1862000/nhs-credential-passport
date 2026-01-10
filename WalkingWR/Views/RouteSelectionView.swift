@@ -2627,7 +2627,12 @@ struct LocalRoutePickerSheet: View {
         }
         allTestLocations.append(contentsOf: fixedTestLocations)
         
+        // Get app version for batch test header
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        
         routeTestResults = "🧪🧪🧪 BATCH TEST - ALL LOCATIONS 🧪🧪🧪\n"
+        routeTestResults += "📱 Version: \(appVersion) (Build \(buildNumber))\n"
         routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         routeTestResults += "Testing \(allTestLocations.count) locations...\n\n"
         
@@ -2886,7 +2891,13 @@ struct LocalRoutePickerSheet: View {
         }
         
         isRunningRouteTest = true
+        
+        // Get app version for test header
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        
         routeTestResults = "🧪 FULL ROUTE GENERATION TEST\n"
+        routeTestResults += "📱 Version: \(appVersion) (Build \(buildNumber))\n"
         routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         
         Task {
