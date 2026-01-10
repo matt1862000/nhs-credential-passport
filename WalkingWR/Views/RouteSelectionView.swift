@@ -257,14 +257,14 @@ struct RouteSelectionView: View {
             } message: {
                 Text("Great job completing your walk! Head back to the waiting area when ready.")
             }
-            // v1.6.45: Batch test listeners - moved here so they work even when sheet is closed
-            .onReceive(NotificationCenter.default.publisher(for: .runBatchTest)) { _ in
-                print("📬 Received runBatchTest notification - opening sheet")
+            // v1.6.45: Listen for INTERNAL batch test notifications (after MainTabView switches tabs)
+            .onReceive(NotificationCenter.default.publisher(for: .runBatchTestInternal)) { _ in
+                print("📬 RouteSelectionView received runBatchTestInternal - opening sheet")
                 pendingBatchTest = .allLocations
                 showLocalRoutePicker = true
             }
-            .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTest)) { notification in
-                print("📬 Received runSingleLocationTest notification")
+            .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTestInternal)) { notification in
+                print("📬 RouteSelectionView received runSingleLocationTestInternal")
                 if let userInfo = notification.userInfo,
                    let lat = userInfo["latitude"] as? Double,
                    let lon = userInfo["longitude"] as? Double {
