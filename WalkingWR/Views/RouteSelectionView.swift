@@ -1548,63 +1548,78 @@ struct LocalRoutePickerSheet: View {
                 }
                 
                 if shouldUseCache, let cachedRoutes = RouteCacheService.shared.getCachedRoutes(near: userLocation.coordinate, durationMinutes: selectedDuration), !cachedRoutes.isEmpty {
-                    print("📦 Using cached route for \(selectedDuration)min (user hasn't moved significantly)")
-                    let cached = cachedRoutes[0]
+                    print("📦 Using \(cachedRoutes.count) cached routes for \(selectedDuration)min")
                     
-                    // Create route from cached data
-                    let markers = await MainActor.run {
-                        createMarkersFromPlaces(cached.route.places, origin: userLocation.coordinate)
-                    }
-                    var directions = await MainActor.run {
-                        extractWalkingDirections(from: cached.route.legs)
-                    }
+                    // v1.6.45: Load ALL cached routes, not just the first one
+                    var loadedRoutes: [(route: WalkingRoute, data: GeneratedRoute)] = []
+                    var loadedPlaceIdSets: [Set<String>] = []
                     
-                    // v1.6.14: If no directions in cache, get them from Apple MapKit
-                    if directions.isEmpty && !cached.route.places.isEmpty {
-                        print("🍎 Cached route has no directions - getting from MapKit...")
-                        let waypointCoords = cached.route.places.map { $0.coordinate }
-                        directions = await mapsService.getMapKitDirectionsForRoute(
-                            origin: userLocation.coordinate,
-                            waypoints: waypointCoords,
-                            destination: userLocation.coordinate
+                    for (index, cached) in cachedRoutes.enumerated() {
+                        let markers = await MainActor.run {
+                            createMarkersFromPlaces(cached.route.places, origin: userLocation.coordinate)
+                        }
+                        var directions = await MainActor.run {
+                            extractWalkingDirections(from: cached.route.legs)
+                        }
+                        
+                        // Get MapKit directions if not in cache (only for first route to save time)
+                        if directions.isEmpty && !cached.route.places.isEmpty && index == 0 {
+                            print("🍎 Cached route has no directions - getting from MapKit...")
+                            let waypointCoords = cached.route.places.map { $0.coordinate }
+                            directions = await mapsService.getMapKitDirectionsForRoute(
+                                origin: userLocation.coordinate,
+                                waypoints: waypointCoords,
+                                destination: userLocation.coordinate
+                            )
+                        }
+                        
+                        let routeDifficulty: RouteDifficulty = cached.route.durationMinutes <= 10 ? .easy : (cached.route.durationMinutes <= 20 ? .moderate : .challenging)
+                        
+                        let localRoute = WalkingRoute(
+                            name: cached.name ?? "Local Discovery",
+                            description: cached.description ?? "A \(cached.route.formattedDuration) walk passing \(cached.route.places.count) local points of interest.",
+                            durationMinutes: max(1, cached.route.durationMinutes),
+                            distanceMeters: cached.route.distanceMeters,
+                            difficulty: routeDifficulty,
+                            isIndoor: false,
+                            isAccessible: true,
+                            landmarks: ["Start"] + cached.route.places.map { $0.name } + ["Return"],
+                            icon: "location.fill",
+                            color: .tealAccent,
+                            qrMarkers: markers,
+                            routeType: .local,
+                            encodedPolyline: cached.route.polyline,
+                            walkingDirections: directions
                         )
+                        
+                        loadedRoutes.append((route: localRoute, data: cached.route))
+                        loadedPlaceIdSets.append(Set(cached.route.places.map { $0.placeId }))
                     }
                     
-                    let routeDifficulty: RouteDifficulty = cached.route.durationMinutes <= 10 ? .easy : (cached.route.durationMinutes <= 20 ? .moderate : .challenging)
-                    
-                    let localRoute = WalkingRoute(
-                        name: cached.name ?? "Local Discovery",
-                        description: cached.description ?? "A \(cached.route.formattedDuration) walk passing \(cached.route.places.count) local points of interest.",
-                        durationMinutes: max(1, cached.route.durationMinutes),
-                        distanceMeters: cached.route.distanceMeters,
-                        difficulty: routeDifficulty,
-                        isIndoor: false,
-                        isAccessible: true,
-                        landmarks: ["Start"] + cached.route.places.map { $0.name } + ["Return"],
-                        icon: "location.fill",
-                        color: .tealAccent,
-                        qrMarkers: markers,
-                        routeType: .local,
-                        encodedPolyline: cached.route.polyline,
-                        walkingDirections: directions
-                    )
+                    let firstRoute = loadedRoutes[0]
+                    let firstCached = cachedRoutes[0]
                     
                     await MainActor.run {
                         isGenerating = false
-                        generatedRoute = localRoute
-                        generatedRouteData = cached.route
-                        lastValidRoute = localRoute
-                        lastValidRouteData = cached.route
-                        allRoutes = [(route: localRoute, data: cached.route)]
+                        generatedRoute = firstRoute.route
+                        generatedRouteData = firstRoute.data
+                        lastValidRoute = firstRoute.route
+                        lastValidRouteData = firstRoute.data
+                        allRoutes = loadedRoutes
                         currentRouteIndex = 0
                         isRecycledRoute = false
-                        isDeadZoneFallback = cached.isDeadZoneFallback  // v1.6.39: Set from cache
+                        isDeadZoneFallback = firstCached.isDeadZoneFallback
                         viewedRouteIndices = [0]
-                        shownPlaceIdSets = [Set(cached.route.places.map { $0.placeId })]
+                        shownPlaceIdSets = loadedPlaceIdSets
+                        preGenerationComplete = loadedRoutes.count >= maxRoutesToGenerate
                         showMapPreview = true
                         
-                        // Still pre-generate more routes for this duration
-                        preGenerateRemainingRoutes()
+                        print("📦 Loaded \(loadedRoutes.count) cached routes - ready instantly!")
+                        
+                        // Only pre-generate more if we don't have enough
+                        if loadedRoutes.count < maxRoutesToGenerate {
+                            preGenerateRemainingRoutes()
+                        }
                     }
                     return
                 }
@@ -2308,6 +2323,19 @@ struct LocalRoutePickerSheet: View {
                                 print("🔄 Added permuted route (reversed waypoints) - now \(routesGenerated) routes")
                             }
                         }
+                        
+                        // v1.6.45: Cache all routes so they persist when user cancels and returns
+                        let allRouteData = allRoutes.map { $0.data }
+                        let allNames = allRoutes.map { $0.route.name as String? }
+                        let allDescriptions = allRoutes.map { $0.route.description as String? }
+                        RouteCacheService.shared.cacheRoutes(
+                            allRouteData,
+                            at: userLocation.coordinate,
+                            durationMinutes: selectedDuration,
+                            names: allNames,
+                            descriptions: allDescriptions
+                        )
+                        print("💾 Cached \(allRoutes.count) routes for \(selectedDuration)min")
                     }
                     
                 } catch {
@@ -2461,6 +2489,19 @@ struct LocalRoutePickerSheet: View {
                                         print("🔄 Added permuted Google route - now \(allRoutes.count) routes")
                                     }
                                 }
+                                
+                                // v1.6.45: Cache all routes (including Google) so they persist
+                                let allRouteData = allRoutes.map { $0.data }
+                                let allNames = allRoutes.map { $0.route.name as String? }
+                                let allDescriptions = allRoutes.map { $0.route.description as String? }
+                                RouteCacheService.shared.cacheRoutes(
+                                    allRouteData,
+                                    at: userLocation.coordinate,
+                                    durationMinutes: selectedDuration,
+                                    names: allNames,
+                                    descriptions: allDescriptions
+                                )
+                                print("💾 Cached \(allRoutes.count) routes for \(selectedDuration)min (incl. Google)")
                             }
                             
                         } catch {
