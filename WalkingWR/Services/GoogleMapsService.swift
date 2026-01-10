@@ -2151,13 +2151,16 @@ class GoogleMapsService: ObservableObject {
                 let samples = (UserDefaults.standard.array(forKey: osrmCalibrationSamplesKey) as? [Double])?.count ?? 0
                 print("🗺️ OSRM: \(allPoints.count - 1) legs, \(osrmResult.distance)m, \(rawMinutes)min → \(calibratedMinutes)min (×\(String(format: "%.2f", factor)) from \(samples) samples)")
                 
-                return DirectionsResult(
+                // v1.6.46: Mark result as OSRM-generated (driving polyline - needs MapKit refresh before navigation)
+                var result = DirectionsResult(
                     legs: [leg],
                     overviewPolyline: OverviewPolyline(points: encodedPolyline),
                     summary: nil,
                     warnings: nil,
                     waypointOrder: optimizedWaypointOrder
                 )
+                result.usedOSRM = true
+                return result
             } catch {
                 print("🗺️ OSRM failed, falling back to MapKit: \(error.localizedDescription)")
                 // Fall through to MapKit
@@ -5454,12 +5457,14 @@ struct DirectionsResult: Codable {
     let summary: String?
     let warnings: [String]?
     let waypointOrder: [Int]?  // Optimized order when using optimize:true
+    var usedOSRM: Bool = false  // v1.6.46: Track if polyline came from OSRM (not coded)
     
     enum CodingKeys: String, CodingKey {
         case legs
         case overviewPolyline = "overview_polyline"
         case summary, warnings
         case waypointOrder = "waypoint_order"
+        // Note: usedOSRM is NOT coded - it's only set internally
     }
 }
 
@@ -5513,6 +5518,9 @@ struct GeneratedRoute {
     // v1.6.10: Low POI warning - shown when route options are limited
     var hasLimitedPOIs: Bool = false
     var poiCount: Int = 0
+    
+    // v1.6.46: Track if polyline came from OSRM (driving profile - needs MapKit refresh)
+    var usedOSRM: Bool = false
     
     // Threshold for "limited" POIs (below this, variety is reduced)
     static let limitedPOIThreshold = 50

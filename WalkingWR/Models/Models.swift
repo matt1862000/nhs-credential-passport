@@ -377,13 +377,15 @@ struct WalkingRoute: Identifiable, Hashable {
     let routeType: RouteType
     let encodedPolyline: String?  // Google Maps encoded polyline for accurate route display
     let walkingDirections: [WalkingDirection]  // Turn-by-turn directions
+    let usedOSRMRouting: Bool  // v1.6.46: Track if polyline came from OSRM (driving profile)
     
     // Default initializer with backwards compatibility
     init(name: String, description: String, durationMinutes: Int, distanceMeters: Int,
          difficulty: RouteDifficulty, isIndoor: Bool, isAccessible: Bool,
          landmarks: [String], icon: String, color: Color, qrMarkers: [QRMarker],
          routeType: RouteType = .curated, encodedPolyline: String? = nil,
-         walkingDirections: [WalkingDirection] = []) {
+         walkingDirections: [WalkingDirection] = [],
+         usedOSRMRouting: Bool = false) {
         self.name = name
         self.description = description
         self.durationMinutes = durationMinutes
@@ -398,6 +400,7 @@ struct WalkingRoute: Identifiable, Hashable {
         self.routeType = routeType
         self.encodedPolyline = encodedPolyline
         self.walkingDirections = walkingDirections
+        self.usedOSRMRouting = usedOSRMRouting
     }
     
     /// Decoded route path coordinates for map display

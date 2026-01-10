@@ -2093,9 +2093,15 @@ struct LocalRoutePickerSheet: View {
     }
     
     private func handleStartWalk(route: WalkingRoute) {
-        // v1.6.45: Skip MapKit refresh if route already has directions (cached)
-        if !route.walkingDirections.isEmpty {
-            print("⚡ Let's Go: Using cached directions - instant start!")
+        // v1.6.46: Check if route used OSRM (driving profile) - needs MapKit refresh for proper walking route
+        // Detection: OSRM doesn't provide step-by-step directions, so legs have nil steps
+        let usedOSRM = generatedRouteData?.usedOSRM ?? false
+        let legsHaveNoSteps = generatedRouteData?.legs.allSatisfy { $0.steps == nil || $0.steps?.isEmpty == true } ?? false
+        let needsRefresh = usedOSRM || legsHaveNoSteps
+        
+        // Skip refresh ONLY if we have directions AND route was NOT generated with OSRM
+        if !route.walkingDirections.isEmpty && !needsRefresh {
+            print("⚡ Let's Go: Using cached MapKit directions - instant start!")
             viewModel.selectRoute(route)
             viewModel.startWalk()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -2104,10 +2110,14 @@ struct LocalRoutePickerSheet: View {
             return
         }
         
-        // Route has no directions (rare) - refresh via MapKit
+        // Route needs refresh: either no directions OR used OSRM (driving polyline)
         // v1.6.45: Show loading state on button
         isStartingWalk = true
-        print("🍎 Let's Go: No cached directions - refreshing via MapKit...")
+        if needsRefresh {
+            print("🍎 Let's Go: Route may have used OSRM (no steps) - refreshing with MapKit walking route...")
+        } else {
+            print("🍎 Let's Go: No cached directions - refreshing via MapKit...")
+        }
         
         Task {
             if let userLocation = locationService.currentLocation?.coordinate {
