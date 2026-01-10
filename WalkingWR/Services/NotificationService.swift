@@ -55,33 +55,61 @@ class NotificationService: ObservableObject {
             options: .destructive
         )
         
-        // Categories
+        // v1.7.4: "Stop Notifications" action - available on ALL notification types
+        // Shows in red, doesn't open app, runs in background
+        let stopNotificationsAction = UNNotificationAction(
+            identifier: "STOP_NOTIFICATIONS",
+            title: "Stop Notifications",
+            options: [.destructive]
+        )
+        
+        // "View Details" action for delay notifications
+        let viewDetailsAction = UNNotificationAction(
+            identifier: "VIEW_DETAILS",
+            title: "View Details",
+            options: [.foreground]
+        )
+        
+        // Walking alerts (halfway, marker arrival, etc.)
         let walkingCategory = UNNotificationCategory(
             identifier: "WALKING_ALERT",
-            actions: [openMapAction, dismissAction],
+            actions: [openMapAction, stopNotificationsAction],
             intentIdentifiers: [],
             options: .customDismissAction
         )
         
+        // Return alerts (time to head back)
         let returnCategory = UNNotificationCategory(
             identifier: "RETURN_ALERT",
-            actions: [openMapAction],
+            actions: [openMapAction, stopNotificationsAction],
             intentIdentifiers: [],
             options: .customDismissAction
         )
         
+        // Clinician ready alerts
         let clinicianCategory = UNNotificationCategory(
             identifier: "CLINICIAN_READY",
-            actions: [],
+            actions: [viewDetailsAction, stopNotificationsAction],
             intentIdentifiers: [],
             options: .customDismissAction
+        )
+        
+        // Delay change notifications (from FCM push)
+        let delayCategory = UNNotificationCategory(
+            identifier: "DELAY_NOTIFICATION",
+            actions: [viewDetailsAction, stopNotificationsAction],
+            intentIdentifiers: [],
+            options: []
         )
         
         UNUserNotificationCenter.current().setNotificationCategories([
             walkingCategory,
             returnCategory,
-            clinicianCategory
+            clinicianCategory,
+            delayCategory
         ])
+        
+        print("📱 Registered notification categories with 'Stop Notifications' action")
     }
     
     // MARK: - Walking Notifications

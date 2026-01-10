@@ -5,8 +5,8 @@ import UserNotifications
 
 class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNotificationCenterDelegate {
     
-    // Notification category identifier
-    static let delayNotificationCategory = "DELAY_UPDATE"
+    // Notification action identifiers (must match NotificationService)
+    static let delayNotificationCategory = "DELAY_NOTIFICATION"  // Updated to match NotificationService
     static let stopNotificationsAction = "STOP_NOTIFICATIONS"
     static let viewDetailsAction = "VIEW_DETAILS"
     
@@ -41,31 +41,11 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     }
     
     private func registerNotificationCategories() {
-        // "Stop Notifications" action - doesn't open app, runs in background
-        let stopAction = UNNotificationAction(
-            identifier: AppDelegate.stopNotificationsAction,
-            title: "Stop Notifications",
-            options: [.destructive]  // Shows in red
-        )
-        
-        // "View Details" action - opens app
-        let viewAction = UNNotificationAction(
-            identifier: AppDelegate.viewDetailsAction,
-            title: "View Details",
-            options: [.foreground]  // Opens the app
-        )
-        
-        // Create category with both actions
-        let delayCategory = UNNotificationCategory(
-            identifier: AppDelegate.delayNotificationCategory,
-            actions: [viewAction, stopAction],
-            intentIdentifiers: [],
-            options: []
-        )
-        
-        // Register the category
-        UNUserNotificationCenter.current().setNotificationCategories([delayCategory])
-        print("📱 Registered notification categories with actions")
+        // v1.7.4: Categories are now registered in NotificationService.registerNotificationCategories()
+        // which includes "Stop Notifications" action on ALL notification types.
+        // This avoids the issue where setNotificationCategories() would overwrite each other.
+        // The action handlers are still processed here in userNotificationCenter(didReceive:)
+        print("📱 Notification categories will be registered by NotificationService")
     }
     
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
