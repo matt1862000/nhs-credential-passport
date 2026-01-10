@@ -532,13 +532,15 @@ class GoogleMapsService: ObservableObject {
     /// Higher score = better candidate for route
     /// - Parameter googlePOICount: Number of Google POIs available (for source prioritization)
     /// - Parameter googlePOIs: List of Google POIs for verifying OSM/Apple POIs
+    /// - Parameter totalPOICount: Total POIs available (for density-aware distance bonus)
     func calculatePOIScore(
         poi: PlaceResult,
         origin: CLLocationCoordinate2D,
         idealDistance: Double,
         targetDurationMinutes: Int,
         googlePOICount: Int = 0,
-        googlePOIs: [PlaceResult] = []
+        googlePOIs: [PlaceResult] = [],
+        totalPOICount: Int = 200  // v1.6.42: For density-aware distance bonus
     ) -> Double {
         let distance = distanceBetween(origin, poi.coordinate)
         
@@ -558,10 +560,11 @@ class GoogleMapsService: ObservableObject {
         let sourceBonus = sourceQualityScore(for: poi, googlePOICount: googlePOICount, googlePOIs: googlePOIs) * 0.1
         
         // v1.6.41: Distance bonus for short walks - escape cluster trap
-        // Bell curve centered on idealDistance, penalizes POIs that are too close
+        // v1.6.42: Now POI-density-aware to prevent overshoot in sparse areas
         let shortWalkDistanceBonus = calculateShortWalkDistanceBonus(
             distance: distance,
-            targetDurationMinutes: targetDurationMinutes
+            targetDurationMinutes: targetDurationMinutes,
+            poiCount: totalPOICount
         )
         
         // Combined score
@@ -573,9 +576,11 @@ class GoogleMapsService: ObservableObject {
     /// v1.6.41: Calculate distance bonus for short walks to escape POI clusters
     /// Uses bell-shaped curve: peak at ideal distance, penalty for too close
     /// Effect tapers for longer walks (>25 min) since they self-correct
+    /// v1.6.42: POI-density-aware - reduced effect in sparse areas to prevent overshoot
     private func calculateShortWalkDistanceBonus(
         distance: Double,
-        targetDurationMinutes: Int
+        targetDurationMinutes: Int,
+        poiCount: Int = 200  // Default assumes medium-high density
     ) -> Double {
         // Constants based on analysis
         let idealDistance = Double(targetDurationMinutes) * 40.0  // meters
@@ -608,7 +613,18 @@ class GoogleMapsService: ObservableObject {
             durationWeight = 1.0 - Double(targetDurationMinutes - 25) / 35.0
         }
         
-        return baseBonus * durationWeight
+        // v1.6.42: POI-density weight - scale down in sparse areas
+        // Sparse areas don't have enough POIs at "ideal" distances, causing overshoot
+        let densityWeight: Double
+        if poiCount < 100 {
+            densityWeight = 0.35  // Minimal effect - just a hint, not a driver
+        } else if poiCount < 200 {
+            densityWeight = 0.7   // Moderate effect
+        } else {
+            densityWeight = 1.0   // Full effect - enough POIs to benefit
+        }
+        
+        return baseBonus * durationWeight * densityWeight
     }
     
     // MARK: - Adaptive Walking Speed
@@ -3645,10 +3661,12 @@ class GoogleMapsService: ObservableObject {
                     let corridorPenalty = max(0, distanceRatio - 1.0) * 100  // Penalty if ratio > 1.0
                     
                     // v1.6.41: Distance bonus for short walks - escape cluster trap
+                    // v1.6.42: Now POI-density-aware to prevent overshoot in sparse areas
                     // Negative bonus = penalty for POIs too close to origin
                     let shortWalkBonus = calculateShortWalkDistanceBonus(
                         distance: dist,
-                        targetDurationMinutes: targetDurationMinutes
+                        targetDurationMinutes: targetDurationMinutes,
+                        poiCount: places.count
                     )
                     // Convert bonus to score penalty (higher score = worse in this context)
                     // shortWalkBonus is positive for good distances, negative for bad
@@ -4875,7 +4893,8 @@ class GoogleMapsService: ObservableObject {
                     idealDistance: idealDistance,
                     targetDurationMinutes: targetDurationMinutes,
                     googlePOICount: googlePOICount,
-                    googlePOIs: googlePOIs
+                    googlePOIs: googlePOIs,
+                    totalPOICount: places.count  // v1.6.42: For density-aware distance bonus
                 )
                 return (item.place, combinedScore, item.angle)
             }

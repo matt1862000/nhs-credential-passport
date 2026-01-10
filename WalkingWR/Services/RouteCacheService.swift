@@ -15,7 +15,7 @@ import CoreLocation
 class RouteCacheService {
     static let shared = RouteCacheService()
     
-    private let cacheKey = "cachedRoutes_v29"  // v29: Distance bonus for short walks (escape cluster trap)
+    private let cacheKey = "cachedRoutes_v30"  // v30: POI-density-aware distance bonus (protect sparse areas)
     private let maxCachedRouteSets = 50
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
     private let cacheExpiryHours: Double = 24 // Routes expire after 24 hours
