@@ -579,6 +579,9 @@ class WaitingRoomViewModel: ObservableObject {
         walkSession.stepsThisSession = 0
         walkSession.markersScanned = []
         
+        // v1.7.5: Set flag so app knows walk is active (used to cancel notifications on app close)
+        UserDefaults.standard.set(true, forKey: "hasActiveWalk")
+        
         // v1.6.28: Reset step tracking flag for new walk
         stepTrackingWasEnabled = false
         
@@ -623,6 +626,9 @@ class WaitingRoomViewModel: ObservableObject {
     
     func endWalk(completed: Bool) {
         walkSession.isActive = false
+        
+        // v1.7.5: Clear flag so app knows walk has ended
+        UserDefaults.standard.set(false, forKey: "hasActiveWalk")
         
         // Record progress
         if completed {
