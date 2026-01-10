@@ -3531,6 +3531,10 @@ struct LocalRoutePickerSheet: View {
                 routeTestResults += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 routeTestResults += "🕐 Test completed: \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium))\n"
                 
+                // v1.6.45: Save single location test results too
+                BatchTestStorage.shared.saveTest(routeTestResults)
+                print("💾 Single location test saved to storage")
+                
                 isRunningRouteTest = false
                 showRouteTestResults = true
             }

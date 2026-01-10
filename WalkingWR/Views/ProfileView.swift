@@ -3012,29 +3012,27 @@ struct SavedBatchTestsSection: View {
             // Individual location tests from CACHED locations
             if !cachedLocations.isEmpty {
                 DisclosureGroup {
-                    // Current location option
+                    // Current location option - uses polling to get fresh GPS
                     Button {
-                        dismiss()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            NotificationCenter.default.post(
-                                name: .runSingleLocationTest,
-                                object: nil,
-                                userInfo: [
-                                    "name": "Current Location",
-                                    "latitude": 0.0,
-                                    "longitude": 0.0
-                                ]
-                            )
-                        }
+                        isRequestingLocation = true
+                        locationService.requestCurrentLocation()
+                        pollForLocationThenRunTest(testType: .singleCurrent)
                     } label: {
                         HStack {
-                            Image(systemName: "location.fill")
-                                .foregroundColor(.blue)
-                                .frame(width: 20)
-                            Text("Current Location")
+                            if isRequestingLocation {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                    .frame(width: 20)
+                            } else {
+                                Image(systemName: "location.fill")
+                                    .foregroundColor(.blue)
+                                    .frame(width: 20)
+                            }
+                            Text(isRequestingLocation ? "Getting location..." : "Current Location")
                                 .foregroundColor(.primary)
                         }
                     }
+                    .disabled(isRequestingLocation)
                     
                     Divider()
                     
