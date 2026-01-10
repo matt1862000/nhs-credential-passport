@@ -122,19 +122,25 @@ class WaitingRoomViewModel: ObservableObject {
             
             if notificationsEnabled {
                 print("📱 Attempting to subscribe to topic: \(topic)")
-                Messaging.messaging().subscribe(toTopic: topic) { error in
-                    if let error = error {
-                        print("❌ Error re-subscribing to topic: \(error)")
-                    } else {
-                        print("🔔 Re-subscribed to topic on launch: \(topic)")
+                // v1.7.12: Run on background thread to avoid main thread blocking
+                DispatchQueue.global(qos: .utility).async {
+                    Messaging.messaging().subscribe(toTopic: topic) { error in
+                        if let error = error {
+                            print("❌ Error re-subscribing to topic: \(error)")
+                        } else {
+                            print("🔔 Re-subscribed to topic on launch: \(topic)")
+                        }
                     }
                 }
             } else {
                 // Notifications disabled - ensure we're unsubscribed (in case previous unsubscription didn't complete)
+                // v1.7.12: Run on background thread to avoid main thread blocking
                 print("🔕 Notifications disabled - ensuring unsubscribed from: \(topic)")
-                Messaging.messaging().unsubscribe(fromTopic: topic) { error in
-                    if error == nil {
-                        print("✅ Confirmed unsubscribed on launch: \(topic)")
+                DispatchQueue.global(qos: .utility).async {
+                    Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+                        if error == nil {
+                            print("✅ Confirmed unsubscribed on launch: \(topic)")
+                        }
                     }
                 }
             }
@@ -232,9 +238,12 @@ class WaitingRoomViewModel: ObservableObject {
             // Skip the selected clinician
             if topic == selectedTopic { continue }
             
-            Messaging.messaging().unsubscribe(fromTopic: topic) { error in
-                if error == nil {
-                    print("🧹 Cleaned up old subscription: \(topic)")
+            // v1.7.12: Run on background thread
+            DispatchQueue.global(qos: .utility).async {
+                Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+                    if error == nil {
+                        print("🧹 Cleaned up old subscription: \(topic)")
+                    }
                 }
             }
         }
@@ -348,11 +357,14 @@ class WaitingRoomViewModel: ObservableObject {
                 waitTimeInfo = WaitTimeInfo(from: restoredClinician)
                 
                 // Re-subscribe if notifications are enabled
+                // v1.7.12: Run on background thread to avoid main thread blocking
                 if notificationsEnabled {
                     let topic = "clinician_" + restoredClinician.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
-                    Messaging.messaging().subscribe(toTopic: topic) { error in
-                        if error == nil {
-                            print("🔔 Re-subscribed to restored clinician: \(topic)")
+                    DispatchQueue.global(qos: .utility).async {
+                        Messaging.messaging().subscribe(toTopic: topic) { error in
+                            if error == nil {
+                                print("🔔 Re-subscribed to restored clinician: \(topic)")
+                            }
                         }
                     }
                 }
@@ -459,11 +471,14 @@ class WaitingRoomViewModel: ObservableObject {
                 waitTimeInfo.clinicianName = updatedData.fullName
                 
                 // Ensure we're subscribed to this clinician's topic
+                // v1.7.12: Run on background thread to avoid any main thread blocking
                 if notificationsEnabled {
                     let topic = "clinician_" + updatedData.fullName.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
-                    Messaging.messaging().subscribe(toTopic: topic) { error in
-                        if error == nil {
-                            print("🔔 Confirmed subscription to: \(topic)")
+                    DispatchQueue.global(qos: .utility).async {
+                        Messaging.messaging().subscribe(toTopic: topic) { error in
+                            if error == nil {
+                                print("🔔 Confirmed subscription to: \(topic)")
+                            }
                         }
                     }
                 }
@@ -475,10 +490,13 @@ class WaitingRoomViewModel: ObservableObject {
                 print("📋 Selected clinician '\(selected.fullTitle)' no longer in Firebase - clinic ended")
                 
                 // Unsubscribe from notifications since clinic is over
+                // v1.7.12: Run on background thread
                 let topic = "clinician_" + selected.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
-                Messaging.messaging().unsubscribe(fromTopic: topic) { error in
-                    if error == nil {
-                        print("🔕 Unsubscribed from ended clinic: \(topic)")
+                DispatchQueue.global(qos: .utility).async {
+                    Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+                        if error == nil {
+                            print("🔕 Unsubscribed from ended clinic: \(topic)")
+                        }
                     }
                 }
             }
@@ -904,13 +922,16 @@ class WaitingRoomViewModel: ObservableObject {
         let isSameClinician = selectedClinician?.fullTitle == clinician.fullTitle
         
         // Unsubscribe from old clinician topic (only if different)
+        // v1.7.12: Run on background thread
         if let old = selectedClinician, !isSameClinician {
             let oldTopic = "clinician_" + old.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
-            Messaging.messaging().unsubscribe(fromTopic: oldTopic) { error in
-                if let error = error {
-                    print("Error unsubscribing from topic: \(error)")
-                } else {
-                    print("Unsubscribed from topic: \(oldTopic)")
+            DispatchQueue.global(qos: .utility).async {
+                Messaging.messaging().unsubscribe(fromTopic: oldTopic) { error in
+                    if let error = error {
+                        print("Error unsubscribing from topic: \(error)")
+                    } else {
+                        print("Unsubscribed from topic: \(oldTopic)")
+                    }
                 }
             }
         }
@@ -922,11 +943,14 @@ class WaitingRoomViewModel: ObservableObject {
         
         if !isSameClinician || notificationsEnabled {
             print("🔔 Subscribing to topic: \(newTopic)")
-            Messaging.messaging().subscribe(toTopic: newTopic) { error in
-                if let error = error {
-                    print("❌ Subscription failed: \(error)")
-                } else {
-                    print("✅ Subscription success: \(newTopic)")
+            // v1.7.12: Run on background thread to avoid main thread blocking
+            DispatchQueue.global(qos: .utility).async {
+                Messaging.messaging().subscribe(toTopic: newTopic) { error in
+                    if let error = error {
+                        print("❌ Subscription failed: \(error)")
+                    } else {
+                        print("✅ Subscription success: \(newTopic)")
+                    }
                 }
             }
         } else {
@@ -981,9 +1005,12 @@ class WaitingRoomViewModel: ObservableObject {
             guard !seenTopics.contains(topic) else { continue }
             seenTopics.insert(topic)
             
-            Messaging.messaging().unsubscribe(fromTopic: topic) { error in
-                if error == nil {
-                    print("🔕 Unsubscribed from topic: \(topic)")
+            // v1.7.12: Run on background thread
+            DispatchQueue.global(qos: .utility).async {
+                Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+                    if error == nil {
+                        print("🔕 Unsubscribed from topic: \(topic)")
+                    }
                 }
             }
         }
@@ -1008,12 +1035,14 @@ class WaitingRoomViewModel: ObservableObject {
         UserDefaults.standard.set(false, forKey: "notificationsEnabled")
         print("🔕 Notifications disabled for: \(topic)")
         
-        // Then unsubscribe in background
-        Messaging.messaging().unsubscribe(fromTopic: topic) { error in
-            if let error = error {
-                print("❌ Error unsubscribing (preference already saved): \(error)")
-            } else {
-                print("✅ Unsubscription confirmed for: \(topic)")
+        // v1.7.12: Unsubscribe on background thread to avoid main thread blocking
+        DispatchQueue.global(qos: .utility).async {
+            Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+                if let error = error {
+                    print("❌ Error unsubscribing (preference already saved): \(error)")
+                } else {
+                    print("✅ Unsubscription confirmed for: \(topic)")
+                }
             }
         }
     }
@@ -1030,12 +1059,14 @@ class WaitingRoomViewModel: ObservableObject {
         UserDefaults.standard.set(Date(), forKey: "notificationsEnabledDate")
         print("🔔 Notifications enabled for: \(topic)")
         
-        // Then subscribe in background
-        Messaging.messaging().subscribe(toTopic: topic) { error in
-            if let error = error {
-                print("❌ Error subscribing: \(error)")
-            } else {
-                print("✅ Subscription confirmed for: \(topic)")
+        // v1.7.12: Subscribe on background thread to avoid main thread blocking
+        DispatchQueue.global(qos: .utility).async {
+            Messaging.messaging().subscribe(toTopic: topic) { error in
+                if let error = error {
+                    print("❌ Error subscribing: \(error)")
+                } else {
+                    print("✅ Subscription confirmed for: \(topic)")
+                }
             }
         }
     }
@@ -1058,13 +1089,16 @@ class WaitingRoomViewModel: ObservableObject {
             return
         }
         
-        Messaging.messaging().unsubscribe(fromTopic: topic) { [weak self] error in
-            if let error = error {
-                print("❌ Error unsubscribing: \(error)")
-            } else {
-                print("🔕 Notifications stopped via dialog for: \(topic)")
-                DispatchQueue.main.async {
-                    self?.notificationsEnabled = false
+        // v1.7.12: Run on background thread to avoid main thread blocking
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+                if let error = error {
+                    print("❌ Error unsubscribing: \(error)")
+                } else {
+                    print("🔕 Notifications stopped via dialog for: \(topic)")
+                    DispatchQueue.main.async {
+                        self?.notificationsEnabled = false
+                    }
                 }
             }
         }
