@@ -3772,39 +3772,23 @@ struct LocalRouteMapPreview: View {
                 }
                 .mapStyle(.standard)
                 
-                // v1.6.45: Loading overlay that fades out
+                // v1.6.45: Clean loading overlay
                 if isMapLoading {
                     ZStack {
-                        // Semi-transparent background
-                        Color(.systemBackground).opacity(0.9)
+                        // Soft gradient background
+                        LinearGradient(
+                            colors: [
+                                Color(.systemBackground),
+                                Color(.systemGray6)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
                         
-                        // Subtle grid pattern
-                        VStack(spacing: 40) {
-                            ForEach(0..<5, id: \.self) { row in
-                                HStack(spacing: 40) {
-                                    ForEach(0..<5, id: \.self) { col in
-                                        Circle()
-                                            .fill(Color.tealAccent.opacity(0.2))
-                                            .frame(width: 8, height: 8)
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Loading indicator
-                        VStack(spacing: 12) {
-                            ProgressView()
-                                .scaleEffect(1.2)
-                                .tint(.tealAccent)
-                            Text("Loading map...")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 16)
-                        .background(Color(.secondarySystemBackground))
-                        .clipShape(RoundedRectangle(cornerRadius: 16))
-                        .shadow(radius: 8)
+                        // Simple centered spinner
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.tealAccent)
                     }
                     .transition(.opacity)
                 }
