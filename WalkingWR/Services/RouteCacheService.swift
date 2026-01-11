@@ -15,7 +15,7 @@ import CoreLocation
 class RouteCacheService {
     static let shared = RouteCacheService()
     
-    private let cacheKey = "cachedRoutes_v34"  // v34: Detect OSRM polylines and refresh via MapKit on start
+    private let cacheKey = "cachedRoutes_v35"  // v35: Fix duplicate routes - register first route signature
     private let maxCachedRouteSets = 50
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
     private let cacheExpiryHours: Double = 24 // Routes expire after 24 hours

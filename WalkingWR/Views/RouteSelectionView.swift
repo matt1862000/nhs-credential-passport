@@ -1720,11 +1720,17 @@ struct LocalRoutePickerSheet: View {
                         isDeadZoneFallback = firstCached.isDeadZoneFallback
                         shownPlaceIdSets = loadedPlaceIdSets
                         preGenerationComplete = loadedRoutes.count >= maxRoutesToGenerate
+                        
+                        // v1.8.0: Register ALL cached route signatures to prevent duplicates!
+                        for cachedRoute in cachedRoutes {
+                            registerRouteSignature(places: cachedRoute.route.places, distanceMeters: cachedRoute.route.distanceMeters)
+                        }
+                        
                         showMapPreview = true
                         
                         let totalTime = Date().timeIntervalSince(generateStartTime)
                         print("═══════════════════════════════════════════════════════════")
-                        print("✅ CACHE LOADED - \(loadedRoutes.count) routes in \(String(format: "%.2f", totalTime))s")
+                        print("✅ CACHE LOADED - \(loadedRoutes.count) routes in \(String(format: "%.2f", totalTime))s (signatures: \(routeSignatures.count))")
                         print("   📍 Showing route \(currentRouteIndex + 1): \(generatedRouteData?.places.count ?? 0) POIs, \(generatedRouteData?.durationMinutes ?? 0)min")
                         print("═══════════════════════════════════════════════════════════")
                         
@@ -1869,6 +1875,10 @@ struct LocalRoutePickerSheet: View {
                         // Track place IDs for this route
                         let placeIds = Set(result.places.map { $0.placeId })
                         shownPlaceIdSets = [placeIds]
+                        
+                        // v1.8.0: Register first route's signature to prevent duplicates!
+                        registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
+                        
                         showMapPreview = true
                         
                         let totalTime = Date().timeIntervalSince(generateStartTime)
