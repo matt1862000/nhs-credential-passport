@@ -950,6 +950,7 @@ struct LocalRoutePickerSheet: View {
     @Binding var pendingBatchTest: PendingBatchTest  // v1.6.45: Auto-run test when sheet opens
     @State private var isGenerating = false  // Button shows spinner
     @State private var showLoadingScreen = false  // v1.8.3: Separate flag for loading screen transition
+    @State private var routeGenerationComplete = false  // v1.8.5: Signals route is ready (triggers stage animation completion)
     @State private var isShuffling = false  // Separate state for shuffle loading
     @State private var isStartingWalk = false  // v1.6.45: Loading state for Let's Go button
     @State private var generatedRoute: WalkingRoute?
@@ -1586,6 +1587,7 @@ struct LocalRoutePickerSheet: View {
         let generateStartTime = Date()
         
         isGenerating = true
+        routeGenerationComplete = false  // v1.8.5: Reset for new generation
         errorMessage = nil
         mapsService.resetRouteAttempts()
         
@@ -1599,7 +1601,8 @@ struct LocalRoutePickerSheet: View {
         guard let userLocation = locationService.currentLocation else {
             print("❌ No user location available")
             isGenerating = false
-                        showLoadingScreen = false
+            showLoadingScreen = false
+            routeGenerationComplete = false
             return
         }
         print("📍 Location: (\(String(format: "%.5f", userLocation.coordinate.latitude)), \(String(format: "%.5f", userLocation.coordinate.longitude)))")
@@ -1613,7 +1616,8 @@ struct LocalRoutePickerSheet: View {
                 showLocationLimitAlert = true
                 print("🔒 Location limit reached - showing upgrade prompt")
                 isGenerating = false
-                        showLoadingScreen = false
+                showLoadingScreen = false
+                routeGenerationComplete = false
                 return
             }
         } else {
@@ -1706,7 +1710,7 @@ struct LocalRoutePickerSheet: View {
                     
                     await MainActor.run {
                         isGenerating = false
-                        showLoadingScreen = false
+                        routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
                         allRoutes = loadedRoutes
                         
                         // v1.6.45: Auto-advance to route 2 if available (skip template Route 1)
@@ -1883,7 +1887,7 @@ struct LocalRoutePickerSheet: View {
                     
                     await MainActor.run {
                         isGenerating = false
-                        showLoadingScreen = false
+                        routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
                         generatedRoute = localRoute
                         generatedRouteData = result
                         // Save as last valid for recycling on shuffle
@@ -1917,7 +1921,8 @@ struct LocalRoutePickerSheet: View {
                 } catch {
                     await MainActor.run {
                         isGenerating = false
-                        showLoadingScreen = false
+                        showLoadingScreen = false  // Dismiss immediately on error
+                        routeGenerationComplete = false
                         errorMessage = "Could not find a route within time limit. Try different options."
                         print("❌ Smart routing error: \(error)")
                         print("⏱️ Failed after \(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s")
@@ -1935,11 +1940,17 @@ struct LocalRoutePickerSheet: View {
     @ViewBuilder
     private func firstTimeGenerationView() -> some View {
         // v1.8.2: Live map with animated route exploration
+        // v1.8.5: Added sequential stage animation with completion callback
         RouteExplorationLoadingView(
             userLocation: locationService.currentLocation?.coordinate,
             currentAttempt: mapsService.currentRouteAttempt,
             attemptCount: mapsService.routeAttemptCount,
-            statusText: mapsService.retryStatus ?? "Finding the best route..."
+            statusText: mapsService.retryStatus ?? "Finding the best route...",
+            isComplete: routeGenerationComplete,
+            onAnimationComplete: {
+                // Transition to preview after animation completes
+                showLoadingScreen = false
+            }
         )
     }
     
@@ -2921,7 +2932,8 @@ struct LocalRoutePickerSheet: View {
         guard !markers.isEmpty else {
             errorMessage = "Could not generate route. Please try again."
             isGenerating = false
-                        showLoadingScreen = false
+            showLoadingScreen = false
+            routeGenerationComplete = false
             return
         }
         
@@ -2943,7 +2955,7 @@ struct LocalRoutePickerSheet: View {
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             isGenerating = false
-                        showLoadingScreen = false
+            routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
             generatedRoute = localRoute
             generatedRouteData = nil
             showMapPreview = true
@@ -5845,17 +5857,26 @@ struct MarkerArrivalSheet: View {
     }
 }
 
-// MARK: - Route Exploration Loading View (v1.8.2)
+// MARK: - Route Exploration Loading View (v1.8.2, updated v1.8.5)
 /// Shows a live map with animated route attempts during generation
+/// v1.8.5: Stages complete sequentially with minimum display time for polished UX
 struct RouteExplorationLoadingView: View {
     let userLocation: CLLocationCoordinate2D?
     let currentAttempt: GoogleMapsService.RouteAttempt?
     let attemptCount: Int
     let statusText: String
+    let isComplete: Bool  // v1.8.5: Signal that route is ready
+    let onAnimationComplete: () -> Void  // v1.8.5: Callback when all stages animated
     
     // Animation state for polylines
     @State private var visiblePolylines: [(id: UUID, coordinates: [CLLocationCoordinate2D], opacity: Double, isValid: Bool)] = []
     @State private var mapCameraPosition: MapCameraPosition = .automatic
+    
+    // v1.8.5: Stage display state - advances sequentially with minimum delays
+    @State private var displayedStageIndex: Int = 0  // 0 = none complete, 1-4 = stages complete
+    @State private var animationTimer: Timer?
+    
+    private let stageDelay: TimeInterval = 0.35  // Minimum time per stage
     
     var body: some View {
         ZStack {
@@ -5914,65 +5935,46 @@ struct RouteExplorationLoadingView: View {
                 Spacer()
                 
                 VStack(spacing: 16) {
-                    // Stage progress card
+                    // Stage progress card - v1.8.5: Sequential stage animation
                     VStack(alignment: .leading, spacing: 12) {
                         // Stage 1: Finding places
-                        HStack(spacing: 12) {
-                            Image(systemName: attemptCount > 0 ? "checkmark.circle.fill" : "circle.dotted")
-                                .foregroundColor(attemptCount > 0 ? .green : .tealAccent)
-                                .font(.title3)
-                            Text("Finding places nearby")
-                                .font(.subheadline)
-                                .foregroundColor(attemptCount > 0 ? .secondary : .primary)
-                        }
+                        stageRow(
+                            index: 1,
+                            title: "Finding places nearby",
+                            isComplete: displayedStageIndex >= 1,
+                            isActive: displayedStageIndex == 0
+                        )
                         
                         // Stage 2: Calculating routes
-                        HStack(spacing: 12) {
-                            if attemptCount > 0 {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                    .tint(.tealAccent)
-                            } else {
-                                Image(systemName: "circle")
-                                    .foregroundColor(.secondary.opacity(0.5))
-                                    .font(.title3)
-                            }
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Calculating routes")
-                                    .font(.subheadline)
-                                    .foregroundColor(attemptCount > 0 ? .primary : .secondary)
-                                if attemptCount > 0 {
-                                    Text("Trying option \(attemptCount)...")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                        }
+                        stageRow(
+                            index: 2,
+                            title: "Calculating routes",
+                            isComplete: displayedStageIndex >= 2,
+                            isActive: displayedStageIndex == 1,
+                            subtitle: displayedStageIndex == 1 && attemptCount > 0 ? "Trying option \(attemptCount)..." : nil
+                        )
                         
                         // Stage 3: Getting directions
-                        HStack(spacing: 12) {
-                            Image(systemName: "circle")
-                                .foregroundColor(.secondary.opacity(0.5))
-                                .font(.title3)
-                            Text("Getting directions")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
+                        stageRow(
+                            index: 3,
+                            title: "Getting directions",
+                            isComplete: displayedStageIndex >= 3,
+                            isActive: displayedStageIndex == 2
+                        )
                         
                         // Stage 4: Naming route
-                        HStack(spacing: 12) {
-                            Image(systemName: "circle")
-                                .foregroundColor(.secondary.opacity(0.5))
-                                .font(.title3)
-                            Text("Naming your route")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
+                        stageRow(
+                            index: 4,
+                            title: "Naming your route",
+                            isComplete: displayedStageIndex >= 4,
+                            isActive: displayedStageIndex == 3
+                        )
                     }
                     .padding(20)
                     .background(Color(.systemBackground).opacity(0.95))
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
+                    .animation(.easeInOut(duration: 0.25), value: displayedStageIndex)
                     
                     // Current POI being tested
                     if let attempt = currentAttempt {
@@ -6001,14 +6003,106 @@ struct RouteExplorationLoadingView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 30)
-                .animation(.easeInOut(duration: 0.3), value: attemptCount)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            // v1.8.5: Start stage animation sequence
+            startStageAnimation()
+        }
+        .onDisappear {
+            // Clean up timer
+            animationTimer?.invalidate()
+            animationTimer = nil
+        }
         .onChange(of: currentAttempt?.poiName) { _, _ in
             // Add new polyline when attempt changes
             if let attempt = currentAttempt, !attempt.polylineCoordinates.isEmpty {
                 addAnimatedPolyline(coordinates: attempt.polylineCoordinates, isValid: attempt.isValid)
+            }
+        }
+        .onChange(of: isComplete) { _, newValue in
+            // v1.8.5: When route is ready, advance to stage 4 (if not already there)
+            // Then call completion callback after final stage displays
+            if newValue && displayedStageIndex < 4 {
+                // Accelerate to completion - ensure all stages show
+                advanceToCompletion()
+            }
+        }
+    }
+    
+    // MARK: - Stage Row Helper
+    
+    @ViewBuilder
+    private func stageRow(index: Int, title: String, isComplete: Bool, isActive: Bool, subtitle: String? = nil) -> some View {
+        HStack(spacing: 12) {
+            if isComplete {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                    .font(.title3)
+            } else if isActive {
+                ProgressView()
+                    .scaleEffect(0.8)
+                    .tint(.tealAccent)
+            } else {
+                Image(systemName: "circle")
+                    .foregroundColor(.secondary.opacity(0.5))
+                    .font(.title3)
+            }
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundColor(isComplete ? .secondary : (isActive ? .primary : .secondary))
+                
+                if let subtitle = subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+    
+    // MARK: - Stage Animation Logic
+    
+    private func startStageAnimation() {
+        // Start with stage 0 (no completion), immediately advance to stage 1 active
+        displayedStageIndex = 0
+        
+        // After a short delay, complete stage 1 (Finding places)
+        DispatchQueue.main.asyncAfter(deadline: .now() + stageDelay) {
+            withAnimation {
+                displayedStageIndex = 1
+            }
+        }
+    }
+    
+    /// Advance through remaining stages when route generation is complete
+    private func advanceToCompletion() {
+        let remainingStages = 4 - displayedStageIndex
+        guard remainingStages > 0 else {
+            // Already at stage 4, just call completion
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                onAnimationComplete()
+            }
+            return
+        }
+        
+        // Advance through each remaining stage with delays
+        for i in 1...remainingStages {
+            let delay = stageDelay * Double(i)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                withAnimation {
+                    displayedStageIndex = min(displayedStageIndex + 1, 4)
+                }
+                
+                // After final stage, call completion
+                if displayedStageIndex == 4 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        onAnimationComplete()
+                    }
+                }
             }
         }
     }
