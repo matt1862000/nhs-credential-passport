@@ -1306,6 +1306,7 @@ struct CompactStatusRing: View {
                     currentDate: context.date,
                     shouldAlternate: shouldAlternate,
                     showStepsOnly: showStepsOnly,  // v1.6.45
+                    isStepsEnabled: isStepTrackingEnabled,  // v1.8.6: For tap behavior
                     onTapSteps: {
                         showMotionExplainer = true
                     }
@@ -1322,6 +1323,7 @@ private struct CompactStatusPillContent: View {
     let currentDate: Date
     let shouldAlternate: Bool
     var showStepsOnly: Bool = false  // v1.6.45: When no clinic, only show steps prompt
+    var isStepsEnabled: Bool = false  // v1.8.6: Track if steps are enabled for tap behavior
     let onTapSteps: () -> Void
     
     /// Toggle between info and steps display (changes every 5 seconds)
@@ -1369,7 +1371,24 @@ private struct CompactStatusPillContent: View {
     }
     
     /// Main pill showing walk time remaining (delay shown in top banner)
+    /// v1.8.6: Tappable when steps not enabled - opens motion permission menu
     private var infoPillView: some View {
+        Group {
+            if isStepsEnabled {
+                // Steps enabled - pill is just informational, not tappable
+                infoPillContent
+            } else {
+                // Steps not enabled - tapping opens motion permission menu
+                Button(action: onTapSteps) {
+                    infoPillContent
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+    
+    /// The visual content of the info pill (shared between tappable and non-tappable versions)
+    private var infoPillContent: some View {
         HStack(spacing: 6) {
             // Walking icon
             Image(systemName: "figure.walk")
