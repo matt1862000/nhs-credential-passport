@@ -4018,13 +4018,25 @@ struct LocalRouteMapPreview: View {
         
         print("🗺️ Map preview: \(allPoints.count) total points to fit")
         
-        // Log POI source breakdown
+        // Log route POI sources
         if let data = generatedData {
             let googleCount = data.places.filter { !$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") }.count
             let appleCount = data.places.filter { $0.placeId.hasPrefix("apple_") }.count
             let osmCount = data.places.filter { $0.placeId.hasPrefix("osm_") }.count
-            print("🗺️ POI sources: 🌐 Google: \(googleCount), 🍎 Apple: \(appleCount), 🗺️ OSM: \(osmCount)")
+            print("🗺️ Route POIs: 🌐 Google: \(googleCount), 🍎 Apple: \(appleCount), 🗺️ OSM: \(osmCount)")
         }
+        
+        // Log TOTAL cached POIs for location
+        if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: userLoc) {
+            let totalGoogle = cachedPOIs.filter { !$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") }.count
+            let totalApple = cachedPOIs.filter { $0.placeId.hasPrefix("apple_") }.count
+            let totalOSM = cachedPOIs.filter { $0.placeId.hasPrefix("osm_") }.count
+            print("🗺️ TOTAL cached POIs: \(cachedPOIs.count) (🌐 Google: \(totalGoogle), 🍎 Apple: \(totalApple), 🗺️ OSM: \(totalOSM))")
+        }
+        
+        // Debug: Check if polyline exists
+        print("🗺️ Polyline: \(route.encodedPolyline != nil ? "✅ exists (\(route.routePath.count) points)" : "❌ missing")")
+        print("🗺️ QR Markers: \(route.qrMarkers.count) markers")
         
         guard allPoints.count > 1 else {
             return .region(MKCoordinateRegion(center: userLoc, latitudinalMeters: 800, longitudinalMeters: 800))
