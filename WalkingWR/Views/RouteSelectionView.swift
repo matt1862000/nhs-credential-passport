@@ -1583,12 +1583,19 @@ struct LocalRoutePickerSheet: View {
     
     func generateRoute() {
         let generateStartTime = Date()
+        
+        // v1.8.3: Set generating state IMMEDIATELY for instant UI feedback
+        isGenerating = true
+        errorMessage = nil
+        mapsService.resetRouteAttempts()
+        
         print("═══════════════════════════════════════════════════════════")
         print("🚀 GENERATE ROUTE START - \(selectedDuration)min")
         print("═══════════════════════════════════════════════════════════")
         
         guard let userLocation = locationService.currentLocation else {
             print("❌ No user location available")
+            isGenerating = false
             return
         }
         print("📍 Location: (\(String(format: "%.5f", userLocation.coordinate.latitude)), \(String(format: "%.5f", userLocation.coordinate.longitude)))")
@@ -1601,17 +1608,12 @@ struct LocalRoutePickerSheet: View {
             if !cacheService.canAddLocation(at: userLocation.coordinate) {
                 showLocationLimitAlert = true
                 print("🔒 Location limit reached - showing upgrade prompt")
+                isGenerating = false
                 return
             }
         } else {
             print("📦 POIs already cached for this location")
         }
-        
-        isGenerating = true
-        errorMessage = nil
-        
-        // v1.8.2: Reset route attempt counter for loading animation
-        mapsService.resetRouteAttempts()
         
         print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting generation...")
         
