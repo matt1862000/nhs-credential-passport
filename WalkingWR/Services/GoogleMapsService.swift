@@ -4415,7 +4415,8 @@ class GoogleMapsService: ObservableObject {
                     maxAcceptable: maxAcceptableDuration,
                     validRoutes: &validRoutes,
                     bestFallback: &bestFallbackRoute,
-                    bestFallbackDiff: &bestFallbackDiff
+                    bestFallbackDiff: &bestFallbackDiff,
+                    allPlaces: places  // Pass all POIs for potential extension
                 ) {
                     let routeMins = route.durationSeconds / 60
                     // Since we try DESCENDING (most waypoints first):
@@ -4804,6 +4805,7 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// Try a route and evaluate if it's within tolerance
+    /// v1.8.4: Added allPlaces parameter for "extend undershooting route" feature
     private func tryRouteAndEvaluate(
         origin: CLLocationCoordinate2D,
         waypoints: [PlaceResult],
@@ -4812,7 +4814,8 @@ class GoogleMapsService: ObservableObject {
         maxAcceptable: Int,
         validRoutes: inout [GeneratedRoute],
         bestFallback: inout GeneratedRoute?,
-        bestFallbackDiff: inout Int
+        bestFallbackDiff: inout Int,
+        allPlaces: [PlaceResult] = []  // All available POIs for extension
     ) async throws -> GeneratedRoute? {
         do {
             let waypointCoords = waypoints.map { $0.coordinate }
@@ -4866,7 +4869,96 @@ class GoogleMapsService: ObservableObject {
             
             if totalDuration >= minAcceptable && totalDuration <= maxAcceptable {
                 print("🗺️ ✓ VALID: \(durationMin)min, \(totalDistance)m, \(decodedCount) polyline points")
-                validRoutes.append(route)
+                
+                // v1.8.4: EXTEND UNDERSHOOTING ROUTE
+                // If route is 80-95% of target and we have time headroom, try adding an on-route POI
+                let targetDurationSeconds = targetDurationMinutes * 60
+                let percentOfTarget = Double(totalDuration) / Double(targetDurationSeconds) * 100
+                let timeHeadroomSeconds = targetDurationSeconds - totalDuration
+                let timeHeadroomMinutes = timeHeadroomSeconds / 60
+                
+                // Only try extension if:
+                // - Route is undershooting (80-95% of target)
+                // - We have at least 3 minutes of headroom
+                // - We have available POIs to check
+                if percentOfTarget >= 80 && percentOfTarget <= 95 && timeHeadroomMinutes >= 3 && !allPlaces.isEmpty {
+                    print("🗺️ 🔍 EXTENSION CHECK: \(Int(percentOfTarget))% of target (\(timeHeadroomMinutes)min headroom)")
+                    
+                    // Find POIs within 200m of the existing route polyline that aren't already in the route
+                    let existingPOIIds = Set(orderedWaypoints.map { $0.placeId })
+                    let poisNearRoute = allPlaces.filter { poi in
+                        guard !existingPOIIds.contains(poi.placeId) else { return false }
+                        // Check if POI is within 200m of any point on the route
+                        return decodedPolyline.contains { routePoint in
+                            distanceBetween(poi.coordinate, routePoint) < 200
+                        }
+                    }
+                    
+                    if !poisNearRoute.isEmpty {
+                        print("🗺️ 🔍 Found \(poisNearRoute.count) POIs on-route: \(poisNearRoute.prefix(3).map { $0.name }.joined(separator: ", "))")
+                        
+                        // Try adding the first suitable on-route POI
+                        // Sort by distance to a middle point of the route for better placement
+                        let midIndex = decodedPolyline.count / 2
+                        let midPoint = midIndex < decodedPolyline.count ? decodedPolyline[midIndex] : origin
+                        let sortedNearby = poisNearRoute.sorted { 
+                            distanceBetween($0.coordinate, midPoint) < distanceBetween($1.coordinate, midPoint)
+                        }
+                        
+                        // Try extending with the first on-route POI
+                        if let extensionPOI = sortedNearby.first {
+                            var extendedWaypoints = orderedWaypoints
+                            extendedWaypoints.append(extensionPOI)
+                            
+                            if let extendedDirections = try? await getWalkingDirections(
+                                origin: origin,
+                                destination: origin,
+                                waypoints: extendedWaypoints.map { $0.coordinate }
+                            ) {
+                                let extendedDuration = extendedDirections.legs.reduce(0) { $0 + $1.duration.value }
+                                let extendedDistance = extendedDirections.legs.reduce(0) { $0 + $1.distance.value }
+                                let extendedMins = extendedDuration / 60
+                                
+                                if extendedDuration >= minAcceptable && extendedDuration <= maxAcceptable {
+                                    print("🗺️ 🔍 ✅ EXTENDED route: \(durationMin)min → \(extendedMins)min (added '\(extensionPOI.name)')")
+                                    
+                                    // Reorder extended waypoints if Google provided an order
+                                    var orderedExtendedWaypoints = extendedWaypoints
+                                    if let order = extendedDirections.waypointOrder, order.count == extendedWaypoints.count {
+                                        orderedExtendedWaypoints = order.compactMap { idx in
+                                            idx < extendedWaypoints.count ? extendedWaypoints[idx] : nil
+                                        }
+                                    }
+                                    
+                                    let extendedRoute = GeneratedRoute(
+                                        places: orderedExtendedWaypoints,
+                                        polyline: extendedDirections.overviewPolyline.points,
+                                        distanceMeters: extendedDistance,
+                                        durationSeconds: extendedDuration,
+                                        legs: extendedDirections.legs
+                                    )
+                                    validRoutes.append(extendedRoute)
+                                    return extendedRoute
+                                } else {
+                                    print("🗺️ 🔍 ✗ Extended route outside tolerance: \(extendedMins)min")
+                                    // Fall back to original valid route
+                                    validRoutes.append(route)
+                                }
+                            } else {
+                                // Extension directions failed, use original route
+                                validRoutes.append(route)
+                            }
+                        } else {
+                            validRoutes.append(route)
+                        }
+                    } else {
+                        print("🗺️ 🔍 No on-route POIs found for extension")
+                        validRoutes.append(route)
+                    }
+                } else {
+                    // Route is not undershooting, or no headroom/POIs - use as-is
+                    validRoutes.append(route)
+                }
             } else {
                 print("🗺️ ✗ Outside tolerance: \(durationMin)min (diff: \(diff)min)")
                 
