@@ -5903,29 +5903,76 @@ struct RouteExplorationLoadingView: View {
                 .frame(height: 150)
             }
             
-            // Status overlay
+            // Status overlay with stage-based progress
             VStack {
                 Spacer()
                 
-                VStack(spacing: 12) {
-                    // Route attempt counter with animation
-                    if attemptCount > 0 {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.triangle.swap")
-                                .foregroundColor(.tealAccent)
-                                .symbolEffect(.pulse, options: .repeating)
-                            Text("Trying route \(attemptCount)...")
+                VStack(spacing: 16) {
+                    // Stage progress card
+                    VStack(alignment: .leading, spacing: 12) {
+                        // Stage 1: Finding places
+                        HStack(spacing: 12) {
+                            Image(systemName: attemptCount > 0 ? "checkmark.circle.fill" : "circle.dotted")
+                                .foregroundColor(attemptCount > 0 ? .green : .tealAccent)
+                                .font(.title3)
+                            Text("Finding places nearby")
+                                .font(.subheadline)
+                                .foregroundColor(attemptCount > 0 ? .secondary : .primary)
+                        }
+                        
+                        // Stage 2: Calculating routes
+                        HStack(spacing: 12) {
+                            if attemptCount > 0 {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .tint(.tealAccent)
+                            } else {
+                                Image(systemName: "circle")
+                                    .foregroundColor(.secondary.opacity(0.5))
+                                    .font(.title3)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Calculating routes")
+                                    .font(.subheadline)
+                                    .foregroundColor(attemptCount > 0 ? .primary : .secondary)
+                                if attemptCount > 0 {
+                                    Text("Trying option \(attemptCount)...")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        
+                        // Stage 3: Getting directions
+                        HStack(spacing: 12) {
+                            Image(systemName: "circle")
+                                .foregroundColor(.secondary.opacity(0.5))
+                                .font(.title3)
+                            Text("Getting directions")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                         }
-                        .transition(.scale.combined(with: .opacity))
+                        
+                        // Stage 4: Naming route
+                        HStack(spacing: 12) {
+                            Image(systemName: "circle")
+                                .foregroundColor(.secondary.opacity(0.5))
+                                .font(.title3)
+                            Text("Naming your route")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
                     }
+                    .padding(20)
+                    .background(Color(.systemBackground).opacity(0.95))
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
                     
                     // Current POI being tested
                     if let attempt = currentAttempt {
                         HStack(spacing: 6) {
-                            Image(systemName: attempt.isValid ? "checkmark.circle.fill" : "mappin.circle.fill")
-                                .foregroundColor(attempt.isValid ? .green : .orange)
+                            Image(systemName: "mappin.circle.fill")
+                                .foregroundColor(.orange)
                             Text(attempt.poiName)
                                 .font(.caption)
                                 .foregroundColor(.primary)
@@ -5939,31 +5986,16 @@ struct RouteExplorationLoadingView: View {
                         .background(Color(.systemBackground).opacity(0.95))
                         .clipShape(Capsule())
                         .shadow(radius: 2)
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .bottom).combined(with: .opacity),
-                            removal: .opacity
-                        ))
                     }
                     
-                    // Main status pill
-                    HStack(spacing: 10) {
-                        ProgressView()
-                            .scaleEffect(0.9)
-                            .tint(.tealAccent)
-                        
-                        Text(statusText)
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .background(Color(.systemBackground).opacity(0.95))
-                    .clipShape(Capsule())
-                    .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
+                    // Expectation setting
+                    Text("This may take up to a minute")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
+                .padding(.horizontal, 24)
                 .padding(.bottom, 30)
                 .animation(.easeInOut(duration: 0.3), value: attemptCount)
-                .animation(.easeInOut(duration: 0.3), value: currentAttempt?.poiName)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
