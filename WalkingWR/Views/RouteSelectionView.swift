@@ -1584,9 +1584,13 @@ struct LocalRoutePickerSheet: View {
     func generateRoute() {
         let generateStartTime = Date()
         
-        // v1.8.3: Set generating state IMMEDIATELY for instant UI feedback
-        isGenerating = true
-        errorMessage = nil
+        // v1.8.3: Set generating state IMMEDIATELY with NO animation for instant UI feedback
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isGenerating = true
+            errorMessage = nil
+        }
         mapsService.resetRouteAttempts()
         
         print("═══════════════════════════════════════════════════════════")
@@ -1915,59 +1919,13 @@ struct LocalRoutePickerSheet: View {
     
     @ViewBuilder
     private func firstTimeGenerationView() -> some View {
-        // v1.8.3: Show simple loading first, then map animation
-        // This gives instant feedback while the Map component initializes
-        ZStack {
-            // Background
-            Color(.systemBackground)
-            
-            // Simple centered loading (shows instantly)
-            VStack(spacing: 20) {
-                // Pulsing location icon
-                ZStack {
-                    Circle()
-                        .fill(Color.tealAccent.opacity(0.2))
-                        .frame(width: 100, height: 100)
-                    
-                    Circle()
-                        .fill(Color.tealAccent.opacity(0.3))
-                        .frame(width: 70, height: 70)
-                    
-                    Image(systemName: "location.fill")
-                        .font(.system(size: 32))
-                        .foregroundColor(.tealAccent)
-                }
-                .scaleEffect(mapsService.routeAttemptCount > 0 ? 1.0 : 1.1)
-                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: mapsService.routeAttemptCount)
-                
-                // Status text
-                VStack(spacing: 8) {
-                    if mapsService.routeAttemptCount > 0 {
-                        Text("Trying route \(mapsService.routeAttemptCount)...")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        
-                        if let attempt = mapsService.currentRouteAttempt {
-                            Text(attempt.poiName)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
-                    } else {
-                        Text(mapsService.retryStatus ?? "Finding the best route...")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                    }
-                }
-                .padding(.horizontal, 40)
-                .multilineTextAlignment(.center)
-                
-                ProgressView()
-                    .scaleEffect(1.2)
-                    .tint(.tealAccent)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // v1.8.2: Live map with animated route exploration
+        RouteExplorationLoadingView(
+            userLocation: locationService.currentLocation?.coordinate,
+            currentAttempt: mapsService.currentRouteAttempt,
+            attemptCount: mapsService.routeAttemptCount,
+            statusText: mapsService.retryStatus ?? "Finding the best route..."
+        )
     }
     
     /// v1.6.47: Live batch test progress overlay - shows on device during testing
