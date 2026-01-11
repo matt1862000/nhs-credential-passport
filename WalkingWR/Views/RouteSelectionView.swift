@@ -1589,10 +1589,8 @@ struct LocalRoutePickerSheet: View {
         errorMessage = nil
         mapsService.resetRouteAttempts()
         
-        // v1.8.3: Show loading screen after brief delay so button spinner is visible
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            showLoadingScreen = true
-        }
+        // v1.8.3: Don't set showLoadingScreen here - only set it on cache MISS
+        // This prevents showing loading screen when we have cached routes
         
         print("═══════════════════════════════════════════════════════════")
         print("🚀 GENERATE ROUTE START - \(selectedDuration)min")
@@ -1760,6 +1758,11 @@ struct LocalRoutePickerSheet: View {
                 }
                 
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE MISS - generating fresh route...")
+                
+                // v1.8.3: Only show loading screen on cache MISS (when we actually need to generate)
+                await MainActor.run {
+                    showLoadingScreen = true
+                }
                 
                 do {
                     // Use pre-fetched POIs if available (faster!)
