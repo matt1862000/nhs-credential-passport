@@ -1794,11 +1794,6 @@ struct SettingsView: View {
     @State private var showMotionUnavailable = false
     @State private var showHealthKitManageAlert = false
     
-    // Apple POI Diagnostic
-    @State private var isRunningAppleDiagnostic = false
-    @State private var appleDiagnosticResults = ""
-    @State private var showAppleDiagnosticResults = false
-    
     // Only show permissions that have been interacted with (not .notDetermined)
     var shouldShowNotifications: Bool {
         !notificationsNeverAsked
@@ -2982,6 +2977,11 @@ struct SavedBatchTestsSection: View {
     @State private var isRequestingLocation = false  // v1.6.45: Show loading state
     @State private var cachedLocations: [POICacheService.CachedLocationInfo] = []
     @Environment(\.dismiss) private var dismiss
+    
+    // Apple POI Diagnostic
+    @State private var isRunningAppleDiagnostic = false
+    @State private var appleDiagnosticResults = ""
+    @State private var showAppleDiagnosticResults = false
     
     var body: some View {
         Section {
