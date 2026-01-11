@@ -973,6 +973,15 @@ class WaitingRoomViewModel: ObservableObject {
         UserDefaults.standard.set(clinician.id.uuidString, forKey: "selectedClinicianId")
         UserDefaults.standard.set(clinician.fullTitle, forKey: "selectedClinicianName")
         
+        // v1.7.16: Mark first Firebase update as processed when user selects a clinician
+        // This fixes the bug where new users miss their first delay alert because
+        // isFirstFirebaseUpdate was never set to false (since they had no clinician during initial sync)
+        // The current delay becomes the "baseline" - any future changes will trigger alerts
+        if isFirstFirebaseUpdate {
+            isFirstFirebaseUpdate = false
+            print("📊 Established delay baseline for new user: \(clinician.currentWaitMinutes) min")
+        }
+        
         // Request notification permission AFTER clinician is selected
         // This follows the flow: Location → Clinician Selection → Notifications
         // Only request if not already authorized and selecting a new clinician
