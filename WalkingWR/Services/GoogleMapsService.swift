@@ -892,8 +892,10 @@ class GoogleMapsService: ObservableObject {
             let parallelStartTime = Date()
             
             // Launch all fetches in parallel
+            // v1.8.3: Use FAST mode for Apple (40 queries) instead of Complete (120+ queries)
+            // This reduces initial load from 2-3 minutes to ~10 seconds
             async let osmTask = searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
-            async let appleTask = searchAppleMapsForPOIsComplete(location: location, radiusMeters: radiusMeters)
+            async let appleTask = searchAppleMapsForPOIsFast(location: location, radiusMeters: radiusMeters)
             async let googleTask: [PlaceResult] = apiKey.isEmpty ? [] : fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
             
             // Await all results
