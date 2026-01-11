@@ -3901,6 +3901,9 @@ struct LocalRouteMapPreview: View {
     // v1.6.45: Track map loading state
     @State private var isMapLoading = true
     
+    // v1.8.3: Camera position that updates when route changes
+    @State private var cameraPosition: MapCameraPosition = .automatic
+    
     // v1.6.28: Removed permission callbacks - permissions now requested during/after walk
     let onStartWalk: () -> Void          // Start the walk immediately
     let onShuffle: () -> Void            // Quick regenerate with same settings
@@ -4079,8 +4082,8 @@ struct LocalRouteMapPreview: View {
         VStack(spacing: 0) {
             // Map - with loading overlay
             ZStack {
-                // Actual map
-                Map(initialPosition: mapCameraPosition) {
+                // Actual map - uses binding so camera updates when route changes
+                Map(position: $cameraPosition) {
                     // User's starting location
                     if let userLoc = userLocation {
                         Annotation("Start/End", coordinate: userLoc) {
@@ -4128,6 +4131,16 @@ struct LocalRouteMapPreview: View {
                     }
                 }
                 .mapStyle(.standard)
+                .onAppear {
+                    // Set initial camera position
+                    cameraPosition = mapCameraPosition
+                }
+                .onChange(of: route.id) { _, _ in
+                    // Update camera when route changes (swiping between routes)
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        cameraPosition = mapCameraPosition
+                    }
+                }
                 
                 // v1.6.45: Clean loading overlay
                 if isMapLoading {
