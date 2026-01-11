@@ -5874,11 +5874,13 @@ struct RouteExplorationLoadingView: View {
     @State private var visiblePolylines: [(id: UUID, coordinates: [CLLocationCoordinate2D], opacity: Double, isValid: Bool)] = []
     @State private var mapCameraPosition: MapCameraPosition = .automatic
     
-    // v1.8.5: Stage display state - advances sequentially with minimum delays
+    // v1.8.9: Stage display state - advances based on actual progress with minimum gaps
     @State private var displayedStageIndex: Int = 0  // 0 = none complete, 1-4 = stages complete
-    @State private var animationTimer: Timer?
+    @State private var lastStageAdvanceTime: Date = Date()
+    @State private var hasCompletedAllStages: Bool = false
     
-    private let stageDelay: TimeInterval = 0.5  // Minimum time per stage (increased for visibility)
+    private let minStageDisplayTime: TimeInterval = 0.4  // Minimum time to show each stage
+    private let postCompletionDelay: TimeInterval = 0.6  // Pause after stage 4 before preview
     
     var body: some View {
         ZStack {
@@ -6009,26 +6011,32 @@ struct RouteExplorationLoadingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            // v1.8.5: Start stage animation sequence
-            startStageAnimation()
+            // v1.8.9: Initialize stage tracking
+            displayedStageIndex = 0
+            lastStageAdvanceTime = Date()
+            hasCompletedAllStages = false
+            print("🎬 Loading view appeared - starting at stage 0")
+            
+            // After minimum time, advance to stage 1
+            advanceToStageWithMinDelay(1)
         }
-        .onDisappear {
-            // Clean up timer
-            animationTimer?.invalidate()
-            animationTimer = nil
-        }
-        .onChange(of: currentAttempt?.poiName) { _, _ in
-            // Add new polyline when attempt changes
+        .onChange(of: attemptCount) { oldValue, newValue in
+            // v1.8.9: When route attempts start, we know POI fetch is done → advance to stage 2
+            if newValue > 0 && oldValue == 0 && displayedStageIndex < 2 {
+                print("🎬 Route attempts started → advancing to stage 2")
+                advanceToStageWithMinDelay(2)
+            }
+            
+            // Add polyline animation
             if let attempt = currentAttempt, !attempt.polylineCoordinates.isEmpty {
                 addAnimatedPolyline(coordinates: attempt.polylineCoordinates, isValid: attempt.isValid)
             }
         }
         .onChange(of: isComplete) { _, newValue in
-            // v1.8.5: When route is ready, advance to stage 4 (if not already there)
-            // Then call completion callback after final stage displays
-            if newValue && displayedStageIndex < 4 {
-                // Accelerate to completion - ensure all stages show
-                advanceToCompletion()
+            // v1.8.9: When route is ready, advance through remaining stages with minimum gaps
+            if newValue && !hasCompletedAllStages {
+                print("🎬 Route complete → advancing through remaining stages")
+                advanceToCompletionWithMinGaps()
             }
         }
     }
@@ -6066,72 +6074,65 @@ struct RouteExplorationLoadingView: View {
         }
     }
     
-    // MARK: - Stage Animation Logic
+    // MARK: - Stage Animation Logic (v1.8.9)
     
-    private func startStageAnimation() {
-        // v1.8.8: Animate through ALL stages sequentially
-        // Each stage shows spinner briefly, then checkmark
-        displayedStageIndex = 0
-        print("🎬 Stage animation started - displayedStageIndex = 0")
+    /// Advance to a target stage, respecting minimum display time for current stage
+    private func advanceToStageWithMinDelay(_ targetStage: Int) {
+        guard targetStage > displayedStageIndex else { return }
         
-        // Advance through stages 1, 2, 3 automatically with delays
-        // Stage 4 only completes when route is ready (via advanceToCompletion)
-        for targetStage in 1...3 {
-            let delay = stageDelay * Double(targetStage)
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [targetStage] in
-                // Only advance if we haven't already been fast-forwarded by advanceToCompletion
-                if displayedStageIndex < targetStage {
-                    print("🎬 Auto-advancing to stage \(targetStage)")
-                    withAnimation {
-                        displayedStageIndex = targetStage
-                    }
-                } else {
-                    print("🎬 Stage \(targetStage) already passed (current: \(displayedStageIndex))")
-                }
+        let timeSinceLastAdvance = Date().timeIntervalSince(lastStageAdvanceTime)
+        let remainingDelay = max(0, minStageDisplayTime - timeSinceLastAdvance)
+        
+        print("🎬 Scheduling stage \(targetStage) in \(String(format: "%.2f", remainingDelay))s")
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + remainingDelay) { [targetStage] in
+            guard displayedStageIndex < targetStage else {
+                print("🎬 Stage \(targetStage) already passed")
+                return
             }
+            
+            print("🎬 → Stage \(targetStage)")
+            withAnimation(.easeInOut(duration: 0.25)) {
+                displayedStageIndex = targetStage
+            }
+            lastStageAdvanceTime = Date()
         }
     }
     
-    /// Advance through remaining stages when route generation is complete
-    private func advanceToCompletion() {
+    /// Advance through all remaining stages when route is complete
+    private func advanceToCompletionWithMinGaps() {
+        hasCompletedAllStages = true
         let currentStage = displayedStageIndex
-        print("🏁 advanceToCompletion called - currentStage = \(currentStage)")
+        print("🏁 Completing from stage \(currentStage)")
         
-        guard currentStage < 4 else {
-            // Already at stage 4, just call completion
-            print("🏁 Already at stage 4, calling completion in 0.5s")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                print("🏁 onAnimationComplete()")
-                onAnimationComplete()
-            }
-            return
-        }
+        // Calculate cumulative delays for remaining stages
+        var cumulativeDelay: TimeInterval = 0
         
-        // v1.8.7: Fixed closure capture issue - use explicit target values
-        // Advance through each remaining stage with delays
-        let stagesToShow = (currentStage + 1)...4
-        print("🏁 Will show stages: \(Array(stagesToShow))")
+        // First, respect the minimum time for current stage
+        let timeSinceLastAdvance = Date().timeIntervalSince(lastStageAdvanceTime)
+        cumulativeDelay = max(0, minStageDisplayTime - timeSinceLastAdvance)
         
-        for targetStage in stagesToShow {
-            let stagesFromNow = targetStage - currentStage
-            let delay = stageDelay * Double(stagesFromNow)
+        // Schedule each remaining stage
+        for targetStage in (currentStage + 1)...4 {
+            let delay = cumulativeDelay
             
-            print("🏁 Scheduling stage \(targetStage) in \(delay)s")
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [targetStage] in
-                print("🏁 Advancing to stage \(targetStage)")
-                withAnimation {
+                print("🏁 → Stage \(targetStage)")
+                withAnimation(.easeInOut(duration: 0.25)) {
                     displayedStageIndex = targetStage
                 }
-                
-                // After final stage (4), call completion with short delay
-                if targetStage == 4 {
-                    print("🏁 Stage 4 reached, calling completion in 0.5s")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        print("🏁 onAnimationComplete()")
-                        onAnimationComplete()
-                    }
-                }
             }
+            
+            cumulativeDelay += minStageDisplayTime
+        }
+        
+        // After stage 4, wait for postCompletionDelay then show preview
+        let finalDelay = cumulativeDelay + postCompletionDelay
+        print("🏁 Will show preview in \(String(format: "%.2f", finalDelay))s")
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + finalDelay) {
+            print("🏁 ✅ onAnimationComplete()")
+            onAnimationComplete()
         }
     }
     
