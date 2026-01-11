@@ -3983,44 +3983,50 @@ struct LocalRouteMapPreview: View {
     
     /// Calculate camera position to show entire route
     var mapCameraPosition: MapCameraPosition {
-        // v1.6.45: Center on user location (Start/End) since routes are circular
+        // v1.8.3: Use bounding box to ensure ENTIRE route is visible
         guard let userLoc = userLocation else {
             return .automatic
         }
         
-        // Collect all points to calculate required span
+        // Collect all points that must be visible
         var allPoints = route.routePath
         allPoints.append(userLoc)
         for marker in route.qrMarkers {
             allPoints.append(marker.coordinate)
         }
         
-        print("🗺️ Map preview: \(route.routePath.count) route points + \(route.qrMarkers.count) POIs, centered on Start/End")
-        
         guard allPoints.count > 1 else {
             return .region(MKCoordinateRegion(center: userLoc, latitudinalMeters: 500, longitudinalMeters: 500))
         }
         
-        // Calculate max distance from user location to any point
-        // This ensures all points fit when centered on user
-        var maxLatDelta: Double = 0.005
-        var maxLngDelta: Double = 0.005
+        // Calculate TRUE bounding box of all points
+        let latitudes = allPoints.map { $0.latitude }
+        let longitudes = allPoints.map { $0.longitude }
         
-        for point in allPoints {
-            let latDelta = abs(point.latitude - userLoc.latitude)
-            let lngDelta = abs(point.longitude - userLoc.longitude)
-            maxLatDelta = max(maxLatDelta, latDelta)
-            maxLngDelta = max(maxLngDelta, lngDelta)
-        }
+        let minLat = latitudes.min()!
+        let maxLat = latitudes.max()!
+        let minLng = longitudes.min()!
+        let maxLng = longitudes.max()!
         
-        // v1.6.45: Double the max delta to ensure symmetric view with padding
-        // Add extra for annotation labels
-        let latSpan = maxLatDelta * 2.5  // 2x for symmetry + 25% for labels
-        let lngSpan = maxLngDelta * 2.5
+        // Center of the bounding box (not user location)
+        let centerLat = (minLat + maxLat) / 2
+        let centerLng = (minLng + maxLng) / 2
+        let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLng)
+        
+        // Span with 40% padding for labels and visual breathing room
+        let latSpan = (maxLat - minLat) * 1.4
+        let lngSpan = (maxLng - minLng) * 1.4
+        
+        // Ensure minimum zoom level for very short routes
+        let finalLatSpan = max(0.008, latSpan)
+        let finalLngSpan = max(0.008, lngSpan)
+        
+        print("🗺️ Map preview: \(route.routePath.count) route points + \(route.qrMarkers.count) POIs")
+        print("🗺️ Bounds: lat[\(String(format: "%.4f", minLat))...\(String(format: "%.4f", maxLat))] lng[\(String(format: "%.4f", minLng))...\(String(format: "%.4f", maxLng))]")
         
         let region = MKCoordinateRegion(
-            center: userLoc,  // Center on Start/End
-            span: MKCoordinateSpan(latitudeDelta: max(0.008, latSpan), longitudeDelta: max(0.008, lngSpan))
+            center: center,  // Center on bounding box, not user
+            span: MKCoordinateSpan(latitudeDelta: finalLatSpan, longitudeDelta: finalLngSpan)
         )
         
         return .region(region)
