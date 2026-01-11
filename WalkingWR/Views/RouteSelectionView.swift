@@ -4018,6 +4018,14 @@ struct LocalRouteMapPreview: View {
         
         print("🗺️ Map preview: \(allPoints.count) total points to fit")
         
+        // Log POI source breakdown
+        if let data = generatedData {
+            let googleCount = data.places.filter { !$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") }.count
+            let appleCount = data.places.filter { $0.placeId.hasPrefix("apple_") }.count
+            let osmCount = data.places.filter { $0.placeId.hasPrefix("osm_") }.count
+            print("🗺️ POI sources: 🌐 Google: \(googleCount), 🍎 Apple: \(appleCount), 🗺️ OSM: \(osmCount)")
+        }
+        
         guard allPoints.count > 1 else {
             return .region(MKCoordinateRegion(center: userLoc, latitudinalMeters: 800, longitudinalMeters: 800))
         }
