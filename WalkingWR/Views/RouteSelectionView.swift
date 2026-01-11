@@ -5878,7 +5878,7 @@ struct RouteExplorationLoadingView: View {
     @State private var displayedStageIndex: Int = 0  // 0 = none complete, 1-4 = stages complete
     @State private var animationTimer: Timer?
     
-    private let stageDelay: TimeInterval = 0.35  // Minimum time per stage
+    private let stageDelay: TimeInterval = 0.5  // Minimum time per stage (increased for visibility)
     
     var body: some View {
         ZStack {
@@ -6072,6 +6072,7 @@ struct RouteExplorationLoadingView: View {
         // v1.8.8: Animate through ALL stages sequentially
         // Each stage shows spinner briefly, then checkmark
         displayedStageIndex = 0
+        print("🎬 Stage animation started - displayedStageIndex = 0")
         
         // Advance through stages 1, 2, 3 automatically with delays
         // Stage 4 only completes when route is ready (via advanceToCompletion)
@@ -6080,9 +6081,12 @@ struct RouteExplorationLoadingView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [targetStage] in
                 // Only advance if we haven't already been fast-forwarded by advanceToCompletion
                 if displayedStageIndex < targetStage {
+                    print("🎬 Auto-advancing to stage \(targetStage)")
                     withAnimation {
                         displayedStageIndex = targetStage
                     }
+                } else {
+                    print("🎬 Stage \(targetStage) already passed (current: \(displayedStageIndex))")
                 }
             }
         }
@@ -6091,9 +6095,13 @@ struct RouteExplorationLoadingView: View {
     /// Advance through remaining stages when route generation is complete
     private func advanceToCompletion() {
         let currentStage = displayedStageIndex
+        print("🏁 advanceToCompletion called - currentStage = \(currentStage)")
+        
         guard currentStage < 4 else {
             // Already at stage 4, just call completion
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            print("🏁 Already at stage 4, calling completion in 0.5s")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                print("🏁 onAnimationComplete()")
                 onAnimationComplete()
             }
             return
@@ -6102,19 +6110,24 @@ struct RouteExplorationLoadingView: View {
         // v1.8.7: Fixed closure capture issue - use explicit target values
         // Advance through each remaining stage with delays
         let stagesToShow = (currentStage + 1)...4
+        print("🏁 Will show stages: \(Array(stagesToShow))")
         
         for targetStage in stagesToShow {
             let stagesFromNow = targetStage - currentStage
             let delay = stageDelay * Double(stagesFromNow)
             
+            print("🏁 Scheduling stage \(targetStage) in \(delay)s")
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [targetStage] in
+                print("🏁 Advancing to stage \(targetStage)")
                 withAnimation {
                     displayedStageIndex = targetStage
                 }
                 
                 // After final stage (4), call completion with short delay
                 if targetStage == 4 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    print("🏁 Stage 4 reached, calling completion in 0.5s")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        print("🏁 onAnimationComplete()")
                         onAnimationComplete()
                     }
                 }
