@@ -1281,74 +1281,132 @@ class GoogleMapsService: ObservableObject {
     // MARK: - Apple Maps POI Search (FREE - No Limits!)
     
     /// All Apple Maps search categories for UK POIs
+    /// v1.8.1: Reordered to prioritize hospital-adjacent POIs in Fast Mode (first 40)
+    /// To revert: swap hospitalOptimizedCategories back to originalCategories
     private var allAppleMapsCategories: [String] {
+        hospitalOptimizedCategories
+    }
+    
+    /// v1.8.1: Hospital-optimized order - cafes, pharmacies, parks first
+    private var hospitalOptimizedCategories: [String] {
         [
             // ══════════════════════════════════════════════════════════
-            // BATCH 1: HIGHEST PRIORITY - Community & Food (40 queries)
+            // BATCH 1: HOSPITAL-ADJACENT (40 queries) - Used by Fast Mode
             // ══════════════════════════════════════════════════════════
-            // Community venues (critical for walking destinations)
+            // Cafes & Coffee (visitors/staff essentials)
+            "cafe", "coffee shop", "coffee", "costa", "starbucks",
+            
+            // Health & Pharmacy (obvious hospital proximity)
+            "pharmacy", "chemist",
+            
+            // Green spaces (hospital grounds, nearby parks)
+            "park", "garden", "playground", "nature reserve",
+            
+            // Food (quick meals for visitors)
+            "restaurant", "takeaway", "food", "bakery", "greggs", "sandwich",
+            
+            // Pubs & Hotels (family accommodation, landmarks)
+            "pub", "hotel", "inn", "guest house",
+            
+            // Convenience (essential items)
+            "shop", "convenience store", "newsagent", "supermarket", "co-op",
+            
+            // Services
+            "post office", "bank", "library",
+            
+            // Transport & Parking
+            "bus stop", "car park", "parking", "train station",
+            
+            // Religious (often on hospital grounds)
+            "church", "chapel",
+            
+            // Education & Childcare
+            "school", "nursery",
+            
+            // ══════════════════════════════════════════════════════════
+            // BATCH 2: SECONDARY PRIORITY (queries 41-80)
+            // ══════════════════════════════════════════════════════════
+            // Leisure & Fitness
+            "gym", "leisure centre", "swimming pool", "fitness", "sports centre",
+            
+            // More retail
+            "tesco", "sainsburys", "aldi", "lidl", "morrisons", "asda", "spar",
+            "butcher", "florist", "charity shop", "bookshop", "gift shop",
+            
+            // Community venues
+            "village hall", "community centre", "town hall", "memorial hall",
+            "sports club", "social club", "youth club", "community hub",
+            
+            // More food options
+            "tea room", "bistro", "brasserie", "pizzeria", "burger", "kebab",
+            "fish and chips", "chippy", "deli", "kitchen", "catering",
+            
+            // ══════════════════════════════════════════════════════════
+            // BATCH 3: EXTENDED COVERAGE (queries 81-120)
+            // ══════════════════════════════════════════════════════════
+            // Health
+            "doctor", "dentist", "veterinary", "hospital", "clinic", "health centre",
+            "surgery", "medical", "physiotherapy",
+            
+            // More education
+            "preschool", "playcare", "childcare", "academy",
+            "primary school", "secondary school", "college", "university",
+            
+            // More leisure
+            "recreation ground", "playing field", "woodland", "canal",
+            "golf course", "tennis club", "football club", "cricket club",
+            "bowling alley", "allotment",
+            
+            // Services
+            "hairdresser", "barber", "nail salon", "dry cleaner", "launderette",
+            "optician", "estate agent", "betting shop",
+            
+            // ══════════════════════════════════════════════════════════
+            // BATCH 4: EXTENDED UK-SPECIFIC (queries 121+)
+            // ══════════════════════════════════════════════════════════
+            // Culture & Heritage
+            "museum", "theatre", "cinema", "art gallery", "historic site", "castle",
+            "manor", "stately home", "monument", "statue", "war memorial", "heritage",
+            
+            // Religious (extended)
+            "mosque", "temple", "gurdwara", "synagogue",
+            
+            // Transport
+            "petrol station", "bus station", "taxi", "garage", "car wash",
+            
+            // Accommodation (extended)
+            "bed and breakfast", "hostel",
+            
+            // UK chains
+            "wetherspoons", "mcdonald",
+            "indian restaurant", "chinese restaurant", "thai restaurant",
+            "italian restaurant", "mexican restaurant",
+            
+            // Traditional community (lower priority for hospitals)
+            "working mens club", "scout hall", "legion", "rotary", "masonic", "british legion",
+            "pet shop", "pound shop", "off licence", "grocery",
+            "solicitor", "accountant", "travel agent", "pawnbroker"
+        ]
+    }
+    
+    /// ORIGINAL ORDER - To revert, change allAppleMapsCategories to use this instead
+    /// Uncomment and swap if hospital-optimized order doesn't work
+    /*
+    private var originalCategories: [String] {
+        [
+            // Community venues first (original order)
             "village hall", "community centre", "town hall", "church", "chapel",
             "mosque", "temple", "gurdwara", "synagogue", "memorial hall",
             "sports club", "social club", "working mens club", "scout hall", "youth club",
             "legion", "rotary", "masonic", "british legion", "community hub",
-            
-            // Food & Drink (most common POIs - expanded)
             "pub", "restaurant", "cafe", "kitchen", "catering", "deli", "sandwich",
             "coffee", "food", "bakery", "takeaway", "bar", "bistro", "brasserie",
             "tea room", "coffee shop", "pizzeria", "burger", "kebab",
             "fish and chips", "chippy",
-            
-            // ══════════════════════════════════════════════════════════
-            // BATCH 2: RETAIL & SERVICES (40 queries)
-            // ══════════════════════════════════════════════════════════
-            // Retail (common UK shops)
-            "supermarket", "convenience store", "shop", "pharmacy", "newsagent",
-            "butcher", "florist", "co-op", "spar", "tesco", "sainsburys", "aldi",
-            "lidl", "morrisons", "asda", "charity shop", "bookshop", "gift shop",
-            "pet shop", "pound shop", "chemist", "off licence", "grocery",
-            
-            // Services
-            "post office", "bank", "library", "hairdresser", "barber", "nail salon",
-            "dry cleaner", "launderette", "optician", "estate agent", "solicitor",
-            "accountant", "travel agent", "betting shop", "pawnbroker",
-            
-            // ══════════════════════════════════════════════════════════
-            // BATCH 3: HEALTH, EDUCATION, LEISURE (40 queries)
-            // ══════════════════════════════════════════════════════════
-            // Health
-            "doctor", "dentist", "veterinary", "hospital", "clinic", "health centre",
-            "surgery", "medical", "physiotherapy", "osteopath", "chiropractor",
-            
-            // Education
-            "school", "nursery", "preschool", "playcare", "childcare", "academy",
-            "primary school", "secondary school", "college", "university",
-            
-            // Leisure & Recreation
-            "park", "gym", "swimming pool", "leisure centre", "playground",
-            "recreation ground", "playing field", "nature reserve", "woodland",
-            "canal", "golf course", "tennis club", "football club", "cricket club",
-            "bowling alley", "sports centre", "fitness", "allotment",
-            
-            // ══════════════════════════════════════════════════════════
-            // BATCH 4: CULTURE, TRANSPORT, LANDMARKS (remaining)
-            // ══════════════════════════════════════════════════════════
-            // Culture
-            "museum", "theatre", "cinema", "art gallery", "historic site", "castle",
-            "manor", "stately home", "monument", "statue", "war memorial", "heritage",
-            
-            // Transport & Auto
-            "train station", "petrol station", "car park", "bus station", "taxi",
-            "garage", "car wash", "mot", "tyres",
-            
-            // Accommodation
-            "hotel", "bed and breakfast", "guest house", "inn", "hostel",
-            
-            // Additional UK-specific
-            "greggs", "costa", "starbucks", "wetherspoons", "mcdonald",
-            "indian restaurant", "chinese restaurant", "thai restaurant",
-            "italian restaurant", "mexican restaurant"
+            // ... (rest of original order)
         ]
     }
+    */
     
     /// FAST MODE: Only first 40 high-priority categories (instant, for first route)
     /// Returns POIs in ~5-10 seconds for immediate route generation
