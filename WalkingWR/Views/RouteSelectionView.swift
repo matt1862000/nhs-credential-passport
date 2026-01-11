@@ -1631,7 +1631,7 @@ struct LocalRoutePickerSheet: View {
             Task {
                 // v1.8.7: Start loading screen Task IMMEDIATELY (before cache check)
                 // This ensures loading screen shows even if cache check hangs
-                let loadingScreenTask = Task {
+                _ = Task {
                     try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
                     await MainActor.run {
                         if isGenerating && !showMapPreview {  // Only show if still generating and not already showing preview
@@ -1774,7 +1774,7 @@ struct LocalRoutePickerSheet: View {
                 
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE MISS - generating fresh route...")
                 
-                // v1.8.7: loadingScreenTask already started at the beginning of Task block
+                // v1.8.7: Loading screen Task already started at the beginning of Task block
                 
                 do {
                     // Use pre-fetched POIs if available (faster!)
