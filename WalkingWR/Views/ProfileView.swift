@@ -3261,6 +3261,7 @@ struct SavedBatchTestsSection: View {
                     }
                 }
             }
+            .interactiveDismissDisabled()  // Prevent accidental dismissal
             .presentationDetents([.large])
         }
     }
@@ -3269,7 +3270,10 @@ struct SavedBatchTestsSection: View {
     private func runApplePOIDiagnostic() {
         guard let location = locationService.currentLocation?.coordinate else {
             appleDiagnosticResults = "❌ No location available. Please enable location services."
-            showAppleDiagnosticResults = true
+            // Delay sheet presentation to avoid SwiftUI race conditions
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                showAppleDiagnosticResults = true
+            }
             return
         }
         
@@ -3284,7 +3288,10 @@ struct SavedBatchTestsSection: View {
             await MainActor.run {
                 appleDiagnosticResults = results
                 isRunningAppleDiagnostic = false
-                showAppleDiagnosticResults = true
+                // Delay sheet presentation to avoid SwiftUI race conditions
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    showAppleDiagnosticResults = true
+                }
             }
         }
     }
