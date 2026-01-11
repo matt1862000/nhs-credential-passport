@@ -950,7 +950,9 @@ class GoogleMapsService: ObservableObject {
             }
             
             allResults = mergedResults
-            print("📊 MERGED: \(googleCount) Google + \(appleAdded) Apple + \(osmAdded) OSM = \(allResults.count) total")
+            print("📊 RAW FETCHED: Google=\(googlePOIs.count), Apple=\(applePOIs.count), OSM=\(osmPOIs.count)")
+            print("📊 AFTER DEDUP: Google=\(googleCount), Apple=\(appleAdded)/\(applePOIs.count), OSM=\(osmAdded)/\(osmPOIs.count)")
+            print("📊 TOTAL: \(allResults.count) unique POIs")
         }
         
         // 🚫 FILTER: Remove POIs that are unrealistically far away
