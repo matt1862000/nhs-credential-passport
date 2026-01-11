@@ -6069,13 +6069,21 @@ struct RouteExplorationLoadingView: View {
     // MARK: - Stage Animation Logic
     
     private func startStageAnimation() {
-        // Start with stage 0 (no completion), immediately advance to stage 1 active
+        // v1.8.8: Animate through ALL stages sequentially
+        // Each stage shows spinner briefly, then checkmark
         displayedStageIndex = 0
         
-        // After a short delay, complete stage 1 (Finding places)
-        DispatchQueue.main.asyncAfter(deadline: .now() + stageDelay) {
-            withAnimation {
-                displayedStageIndex = 1
+        // Advance through stages 1, 2, 3 automatically with delays
+        // Stage 4 only completes when route is ready (via advanceToCompletion)
+        for targetStage in 1...3 {
+            let delay = stageDelay * Double(targetStage)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [targetStage] in
+                // Only advance if we haven't already been fast-forwarded by advanceToCompletion
+                if displayedStageIndex < targetStage {
+                    withAnimation {
+                        displayedStageIndex = targetStage
+                    }
+                }
             }
         }
     }
