@@ -8,6 +8,7 @@
 import Foundation
 import CoreLocation
 import MapKit
+import Combine
 
 // MARK: - MapKit Rate Limiter Actor (Thread-Safe)
 /// Actor to manage MapKit rate limiting with thread-safe access from concurrent tasks
@@ -60,6 +61,37 @@ class GoogleMapsService: ObservableObject {
     
     @Published var isLoading = false
     @Published var errorMessage: String?
+    
+    // v1.8.2: Route exploration animation - publishes route attempts for UI
+    struct RouteAttempt {
+        let polylineCoordinates: [CLLocationCoordinate2D]
+        let poiName: String
+        let isValid: Bool  // True if route passed validation
+        let durationMinutes: Int
+    }
+    @Published var currentRouteAttempt: RouteAttempt?
+    @Published var routeAttemptCount: Int = 0
+    
+    /// Publish a route attempt for the loading animation
+    func publishRouteAttempt(coordinates: [CLLocationCoordinate2D], poiName: String, isValid: Bool, durationMinutes: Int) {
+        DispatchQueue.main.async {
+            self.routeAttemptCount += 1
+            self.currentRouteAttempt = RouteAttempt(
+                polylineCoordinates: coordinates,
+                poiName: poiName,
+                isValid: isValid,
+                durationMinutes: durationMinutes
+            )
+        }
+    }
+    
+    /// Reset route attempts when starting new generation
+    func resetRouteAttempts() {
+        DispatchQueue.main.async {
+            self.routeAttemptCount = 0
+            self.currentRouteAttempt = nil
+        }
+    }
     
     // v1.6.10: Low POI warning for sparse areas
     @Published var hasLimitedPOIs = false
@@ -4798,7 +4830,18 @@ class GoogleMapsService: ObservableObject {
             }
             
             let polylinePoints = directions.overviewPolyline.points
-            let decodedCount = decodePolyline(polylinePoints).count
+            let decodedPolyline = decodePolyline(polylinePoints)
+            let decodedCount = decodedPolyline.count
+            
+            // v1.8.2: Publish route attempt for loading animation
+            let isWithinTolerance = totalDuration >= minAcceptable && totalDuration <= maxAcceptable
+            let poiNames = waypoints.prefix(2).map { $0.name }.joined(separator: " → ")
+            publishRouteAttempt(
+                coordinates: decodedPolyline,
+                poiName: poiNames,
+                isValid: isWithinTolerance,
+                durationMinutes: durationMin
+            )
             
             // Reorder waypoints based on Google's optimized order
             var orderedWaypoints = waypoints

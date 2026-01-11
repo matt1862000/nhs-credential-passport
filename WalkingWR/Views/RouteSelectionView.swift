@@ -1609,6 +1609,10 @@ struct LocalRoutePickerSheet: View {
         
         isGenerating = true
         errorMessage = nil
+        
+        // v1.8.2: Reset route attempt counter for loading animation
+        mapsService.resetRouteAttempts()
+        
         print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting generation...")
         
         if mapsService.hasAPIKey {
@@ -1909,98 +1913,13 @@ struct LocalRoutePickerSheet: View {
     
     @ViewBuilder
     private func firstTimeGenerationView() -> some View {
-        // v1.6.45: Enhanced skeleton view with pulsing map preview
-        ZStack {
-            // Background map skeleton
-            VStack(spacing: 0) {
-                // Map area with skeleton
-                ZStack {
-                    // Gradient background simulating map
-                    LinearGradient(
-                        colors: [
-                            Color(.systemGray5),
-                            Color(.systemGray6),
-                            Color(.systemGray5)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    
-                    // Fake route line
-                    Path { path in
-                        path.move(to: CGPoint(x: 100, y: 200))
-                        path.addCurve(
-                            to: CGPoint(x: 250, y: 150),
-                            control1: CGPoint(x: 150, y: 100),
-                            control2: CGPoint(x: 200, y: 180)
-                        )
-                        path.addCurve(
-                            to: CGPoint(x: 180, y: 300),
-                            control1: CGPoint(x: 300, y: 200),
-                            control2: CGPoint(x: 220, y: 280)
-                        )
-                        path.addCurve(
-                            to: CGPoint(x: 100, y: 200),
-                            control1: CGPoint(x: 140, y: 320),
-                            control2: CGPoint(x: 80, y: 250)
-                        )
-                    }
-                    .stroke(Color.tealAccent.opacity(0.3), style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [8, 8]))
-                    
-                    // Pulsing center indicator
-                    Circle()
-                        .fill(Color.tealAccent.opacity(0.3))
-                        .frame(width: 60, height: 60)
-                        .overlay(
-                            Circle()
-                                .stroke(Color.tealAccent, lineWidth: 2)
-                        )
-                        .scaleEffect(isGenerating ? 1.2 : 1.0)
-                        .opacity(isGenerating ? 0.5 : 1.0)
-                        .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: isGenerating)
-                }
-                .frame(height: 350)
-                
-                // Bottom card skeleton
-                VStack(spacing: 12) {
-                    // Route name skeleton
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(.systemGray5))
-                        .frame(height: 24)
-                        .frame(maxWidth: 200)
-                    
-                    // Duration/distance skeleton
-                    HStack(spacing: 20) {
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(.systemGray5))
-                            .frame(width: 80, height: 18)
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(.systemGray5))
-                            .frame(width: 60, height: 18)
-                    }
-                }
-                .padding()
-                .background(Color(.systemBackground))
-            }
-            
-            // Overlay with status
-            VStack(spacing: 16) {
-                ProgressView()
-                    .scaleEffect(1.3)
-                    .tint(.tealAccent)
-                
-                Text(mapsService.retryStatus ?? "Finding the best route...")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Color(.systemBackground).opacity(0.9))
-                    .clipShape(Capsule())
-                    .shadow(radius: 4)
-                    .animation(.easeInOut, value: mapsService.retryStatus)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // v1.8.2: Live map with animated route exploration
+        RouteExplorationLoadingView(
+            userLocation: locationService.currentLocation?.coordinate,
+            currentAttempt: mapsService.currentRouteAttempt,
+            attemptCount: mapsService.routeAttemptCount,
+            statusText: mapsService.retryStatus ?? "Finding the best route..."
+        )
     }
     
     /// v1.6.47: Live batch test progress overlay - shows on device during testing
@@ -5828,6 +5747,178 @@ struct MarkerArrivalSheet: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         viewModel.dismissMarkerPrompt()
                         dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Route Exploration Loading View (v1.8.2)
+/// Shows a live map with animated route attempts during generation
+struct RouteExplorationLoadingView: View {
+    let userLocation: CLLocationCoordinate2D?
+    let currentAttempt: GoogleMapsService.RouteAttempt?
+    let attemptCount: Int
+    let statusText: String
+    
+    // Animation state for polylines
+    @State private var visiblePolylines: [(id: UUID, coordinates: [CLLocationCoordinate2D], opacity: Double, isValid: Bool)] = []
+    @State private var mapCameraPosition: MapCameraPosition = .automatic
+    
+    var body: some View {
+        ZStack {
+            // Real map centered on user location
+            if let location = userLocation {
+                Map(position: $mapCameraPosition) {
+                    // User location marker
+                    Annotation("You", coordinate: location) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue.opacity(0.3))
+                                .frame(width: 40, height: 40)
+                            Circle()
+                                .fill(Color.blue)
+                                .frame(width: 16, height: 16)
+                                .overlay(Circle().stroke(Color.white, lineWidth: 3))
+                        }
+                    }
+                    
+                    // Animated route polylines
+                    ForEach(visiblePolylines, id: \.id) { polyline in
+                        MapPolyline(coordinates: polyline.coordinates)
+                            .stroke(
+                                polyline.isValid ? Color.green : Color.tealAccent,
+                                style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
+                            )
+                            .opacity(polyline.opacity)
+                    }
+                }
+                .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+                .onAppear {
+                    // Set initial camera position
+                    mapCameraPosition = .region(MKCoordinateRegion(
+                        center: location,
+                        latitudinalMeters: 1500,
+                        longitudinalMeters: 1500
+                    ))
+                }
+            } else {
+                // Fallback if no location
+                Color(.systemGray5)
+            }
+            
+            // Overlay gradient at bottom for text readability
+            VStack {
+                Spacer()
+                LinearGradient(
+                    colors: [.clear, Color(.systemBackground).opacity(0.9)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 150)
+            }
+            
+            // Status overlay
+            VStack {
+                Spacer()
+                
+                VStack(spacing: 12) {
+                    // Route attempt counter with animation
+                    if attemptCount > 0 {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.triangle.swap")
+                                .foregroundColor(.tealAccent)
+                                .symbolEffect(.pulse, options: .repeating)
+                            Text("Trying route \(attemptCount)...")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        .transition(.scale.combined(with: .opacity))
+                    }
+                    
+                    // Current POI being tested
+                    if let attempt = currentAttempt {
+                        HStack(spacing: 6) {
+                            Image(systemName: attempt.isValid ? "checkmark.circle.fill" : "mappin.circle.fill")
+                                .foregroundColor(attempt.isValid ? .green : .orange)
+                            Text(attempt.poiName)
+                                .font(.caption)
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                            Text("(\(attempt.durationMinutes)min)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color(.systemBackground).opacity(0.95))
+                        .clipShape(Capsule())
+                        .shadow(radius: 2)
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .bottom).combined(with: .opacity),
+                            removal: .opacity
+                        ))
+                    }
+                    
+                    // Main status pill
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .scaleEffect(0.9)
+                            .tint(.tealAccent)
+                        
+                        Text(statusText)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(Color(.systemBackground).opacity(0.95))
+                    .clipShape(Capsule())
+                    .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
+                }
+                .padding(.bottom, 30)
+                .animation(.easeInOut(duration: 0.3), value: attemptCount)
+                .animation(.easeInOut(duration: 0.3), value: currentAttempt?.poiName)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: currentAttempt?.poiName) { _, _ in
+            // Add new polyline when attempt changes
+            if let attempt = currentAttempt, !attempt.polylineCoordinates.isEmpty {
+                addAnimatedPolyline(coordinates: attempt.polylineCoordinates, isValid: attempt.isValid)
+            }
+        }
+    }
+    
+    /// Add a polyline that fades in and then fades out
+    private func addAnimatedPolyline(coordinates: [CLLocationCoordinate2D], isValid: Bool) {
+        let id = UUID()
+        let newPolyline = (id: id, coordinates: coordinates, opacity: 0.0, isValid: isValid)
+        
+        // Add polyline
+        withAnimation(.easeIn(duration: 0.3)) {
+            visiblePolylines.append(newPolyline)
+            // Update opacity to full
+            if let index = visiblePolylines.firstIndex(where: { $0.id == id }) {
+                visiblePolylines[index].opacity = isValid ? 1.0 : 0.7
+            }
+        }
+        
+        // Keep only last 3 polylines to avoid clutter
+        if visiblePolylines.count > 3 {
+            let oldId = visiblePolylines[0].id
+            withAnimation(.easeOut(duration: 0.3)) {
+                visiblePolylines.removeAll { $0.id == oldId }
+            }
+        }
+        
+        // Fade out non-valid polylines after delay
+        if !isValid {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                withAnimation(.easeOut(duration: 0.5)) {
+                    if let index = visiblePolylines.firstIndex(where: { $0.id == id }) {
+                        visiblePolylines[index].opacity = 0.2
                     }
                 }
             }
