@@ -5788,10 +5788,9 @@ struct RouteExplorationLoadingView: View {
                     ForEach(visiblePolylines, id: \.id) { polyline in
                         MapPolyline(coordinates: polyline.coordinates)
                             .stroke(
-                                polyline.isValid ? Color.green : Color.tealAccent,
+                                (polyline.isValid ? Color.green : Color.tealAccent).opacity(polyline.opacity),
                                 style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
                             )
-                            .opacity(polyline.opacity)
                     }
                 }
                 .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
