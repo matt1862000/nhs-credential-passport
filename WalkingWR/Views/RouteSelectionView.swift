@@ -6082,8 +6082,8 @@ struct RouteExplorationLoadingView: View {
     
     /// Advance through remaining stages when route generation is complete
     private func advanceToCompletion() {
-        let remainingStages = 4 - displayedStageIndex
-        guard remainingStages > 0 else {
+        let currentStage = displayedStageIndex
+        guard currentStage < 4 else {
             // Already at stage 4, just call completion
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 onAnimationComplete()
@@ -6091,17 +6091,22 @@ struct RouteExplorationLoadingView: View {
             return
         }
         
+        // v1.8.7: Fixed closure capture issue - use explicit target values
         // Advance through each remaining stage with delays
-        for i in 1...remainingStages {
-            let delay = stageDelay * Double(i)
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+        let stagesToShow = (currentStage + 1)...4
+        
+        for targetStage in stagesToShow {
+            let stagesFromNow = targetStage - currentStage
+            let delay = stageDelay * Double(stagesFromNow)
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [targetStage] in
                 withAnimation {
-                    displayedStageIndex = min(displayedStageIndex + 1, 4)
+                    displayedStageIndex = targetStage
                 }
                 
-                // After final stage, call completion
-                if displayedStageIndex == 4 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                // After final stage (4), call completion with short delay
+                if targetStage == 4 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                         onAnimationComplete()
                     }
                 }
