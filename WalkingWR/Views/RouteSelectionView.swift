@@ -4359,9 +4359,15 @@ struct LocalRouteMapPreview: View {
                         if isLoadingMoreRoutes {
                             ProgressView()
                                 .scaleEffect(0.6)
-                            Text("Pick any or wait for more...")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            if totalRoutes == 1 {
+                                Text("Finding more options...")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            } else {
+                                Text("Pick any or wait for more...")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                     
