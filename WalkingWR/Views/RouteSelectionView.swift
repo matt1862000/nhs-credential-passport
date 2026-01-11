@@ -1759,9 +1759,15 @@ struct LocalRoutePickerSheet: View {
                 
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE MISS - generating fresh route...")
                 
-                // v1.8.3: Only show loading screen on cache MISS (when we actually need to generate)
-                await MainActor.run {
-                    showLoadingScreen = true
+                // v1.8.3: Only show loading screen if generation takes > 300ms
+                // This prevents flash of loading screen for fast routes like "Local Discovery"
+                let loadingScreenTask = Task {
+                    try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
+                    await MainActor.run {
+                        if isGenerating {  // Only show if still generating
+                            showLoadingScreen = true
+                        }
+                    }
                 }
                 
                 do {
