@@ -3989,14 +3989,37 @@ struct LocalRouteMapPreview: View {
         }
         
         // Collect all points that must be visible
-        var allPoints = route.routePath
-        allPoints.append(userLoc)
+        // Start with user location (always required)
+        var allPoints: [CLLocationCoordinate2D] = [userLoc]
+        
+        // Add POI markers (these MUST be visible)
         for marker in route.qrMarkers {
             allPoints.append(marker.coordinate)
+            print("🗺️ Including POI: \(marker.name) at (\(String(format: "%.4f", marker.coordinate.latitude)), \(String(format: "%.4f", marker.coordinate.longitude)))")
         }
         
+        // Add route polyline points (if available)
+        let polylinePoints = route.routePath
+        if !polylinePoints.isEmpty {
+            allPoints.append(contentsOf: polylinePoints)
+            print("🗺️ Including \(polylinePoints.count) polyline points")
+        }
+        
+        // Also check generatedData for POI coordinates (backup)
+        if let data = generatedData {
+            for place in data.places {
+                let coord = place.coordinate
+                if !allPoints.contains(where: { abs($0.latitude - coord.latitude) < 0.0001 && abs($0.longitude - coord.longitude) < 0.0001 }) {
+                    allPoints.append(coord)
+                    print("🗺️ Including from generatedData: \(place.name)")
+                }
+            }
+        }
+        
+        print("🗺️ Map preview: \(allPoints.count) total points to fit")
+        
         guard allPoints.count > 1 else {
-            return .region(MKCoordinateRegion(center: userLoc, latitudinalMeters: 500, longitudinalMeters: 500))
+            return .region(MKCoordinateRegion(center: userLoc, latitudinalMeters: 800, longitudinalMeters: 800))
         }
         
         // Calculate TRUE bounding box of all points
@@ -4013,16 +4036,16 @@ struct LocalRouteMapPreview: View {
         let centerLng = (minLng + maxLng) / 2
         let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLng)
         
-        // Span with 40% padding for labels and visual breathing room
-        let latSpan = (maxLat - minLat) * 1.4
-        let lngSpan = (maxLng - minLng) * 1.4
+        // Span with 50% padding for labels and visual breathing room
+        let latSpan = (maxLat - minLat) * 1.5
+        let lngSpan = (maxLng - minLng) * 1.5
         
         // Ensure minimum zoom level for very short routes
-        let finalLatSpan = max(0.008, latSpan)
-        let finalLngSpan = max(0.008, lngSpan)
+        let finalLatSpan = max(0.01, latSpan)
+        let finalLngSpan = max(0.01, lngSpan)
         
-        print("🗺️ Map preview: \(route.routePath.count) route points + \(route.qrMarkers.count) POIs")
         print("🗺️ Bounds: lat[\(String(format: "%.4f", minLat))...\(String(format: "%.4f", maxLat))] lng[\(String(format: "%.4f", minLng))...\(String(format: "%.4f", maxLng))]")
+        print("🗺️ Center: (\(String(format: "%.4f", centerLat)), \(String(format: "%.4f", centerLng))), Span: \(String(format: "%.4f", finalLatSpan)) x \(String(format: "%.4f", finalLngSpan))")
         
         let region = MKCoordinateRegion(
             center: center,  // Center on bounding box, not user
