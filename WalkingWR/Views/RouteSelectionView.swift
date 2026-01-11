@@ -948,7 +948,8 @@ struct LocalRoutePickerSheet: View {
     @Binding var useCustomTime: Bool
     @Binding var isPresented: Bool
     @Binding var pendingBatchTest: PendingBatchTest  // v1.6.45: Auto-run test when sheet opens
-    @State private var isGenerating = false
+    @State private var isGenerating = false  // Button shows spinner
+    @State private var showLoadingScreen = false  // v1.8.3: Separate flag for loading screen transition
     @State private var isShuffling = false  // Separate state for shuffle loading
     @State private var isStartingWalk = false  // v1.6.45: Loading state for Let's Go button
     @State private var generatedRoute: WalkingRoute?
@@ -1006,8 +1007,8 @@ struct LocalRoutePickerSheet: View {
                 // Show map preview with optional shuffle overlay
                 else if let route = generatedRoute, showMapPreview {
                     mapPreviewSection(route: route)
-                } else if isGenerating || (isShuffling && generatedRoute == nil) {
-                    // v1.6.45: Show skeleton view during initial generation (not just shuffle)
+                } else if showLoadingScreen || (isShuffling && generatedRoute == nil) {
+                    // v1.8.3: Show loading view only after button has shown spinner
                     firstTimeGenerationView()
                 } else if let error = errorMessage, generatedRoute == nil, showMapPreview {
                     // Shuffle failed - show error with retry
@@ -1584,14 +1585,14 @@ struct LocalRoutePickerSheet: View {
     func generateRoute() {
         let generateStartTime = Date()
         
-        // v1.8.3: Set generating state IMMEDIATELY with NO animation for instant UI feedback
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            isGenerating = true
-            errorMessage = nil
-        }
+        isGenerating = true
+        errorMessage = nil
         mapsService.resetRouteAttempts()
+        
+        // v1.8.3: Show loading screen after brief delay so button spinner is visible
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            showLoadingScreen = true
+        }
         
         print("═══════════════════════════════════════════════════════════")
         print("🚀 GENERATE ROUTE START - \(selectedDuration)min")
@@ -1600,6 +1601,7 @@ struct LocalRoutePickerSheet: View {
         guard let userLocation = locationService.currentLocation else {
             print("❌ No user location available")
             isGenerating = false
+                        showLoadingScreen = false
             return
         }
         print("📍 Location: (\(String(format: "%.5f", userLocation.coordinate.latitude)), \(String(format: "%.5f", userLocation.coordinate.longitude)))")
@@ -1613,6 +1615,7 @@ struct LocalRoutePickerSheet: View {
                 showLocationLimitAlert = true
                 print("🔒 Location limit reached - showing upgrade prompt")
                 isGenerating = false
+                        showLoadingScreen = false
                 return
             }
         } else {
@@ -1705,6 +1708,7 @@ struct LocalRoutePickerSheet: View {
                     
                     await MainActor.run {
                         isGenerating = false
+                        showLoadingScreen = false
                         allRoutes = loadedRoutes
                         
                         // v1.6.45: Auto-advance to route 2 if available (skip template Route 1)
@@ -1870,6 +1874,7 @@ struct LocalRoutePickerSheet: View {
                     
                     await MainActor.run {
                         isGenerating = false
+                        showLoadingScreen = false
                         generatedRoute = localRoute
                         generatedRouteData = result
                         // Save as last valid for recycling on shuffle
@@ -1903,6 +1908,7 @@ struct LocalRoutePickerSheet: View {
                 } catch {
                     await MainActor.run {
                         isGenerating = false
+                        showLoadingScreen = false
                         errorMessage = "Could not find a route within time limit. Try different options."
                         print("❌ Smart routing error: \(error)")
                         print("⏱️ Failed after \(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s")
@@ -2906,6 +2912,7 @@ struct LocalRoutePickerSheet: View {
         guard !markers.isEmpty else {
             errorMessage = "Could not generate route. Please try again."
             isGenerating = false
+                        showLoadingScreen = false
             return
         }
         
@@ -2927,6 +2934,7 @@ struct LocalRoutePickerSheet: View {
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             isGenerating = false
+                        showLoadingScreen = false
             generatedRoute = localRoute
             generatedRouteData = nil
             showMapPreview = true
