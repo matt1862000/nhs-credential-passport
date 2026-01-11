@@ -1629,6 +1629,17 @@ struct LocalRoutePickerSheet: View {
         if mapsService.hasAPIKey {
             // Use Google APIs for smart routing
             Task {
+                // v1.8.7: Start loading screen Task IMMEDIATELY (before cache check)
+                // This ensures loading screen shows even if cache check hangs
+                let loadingScreenTask = Task {
+                    try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
+                    await MainActor.run {
+                        if isGenerating && !showMapPreview {  // Only show if still generating and not already showing preview
+                            showLoadingScreen = true
+                        }
+                    }
+                }
+                
                 // CHECK CACHE FIRST (with movement detection)
                 let shouldUseCache: Bool
                 if let preGenLocation = preGeneratedAtLocation {
@@ -1763,16 +1774,7 @@ struct LocalRoutePickerSheet: View {
                 
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE MISS - generating fresh route...")
                 
-                // v1.8.3: Only show loading screen if generation takes > 300ms
-                // This prevents flash of loading screen for fast routes like "Local Discovery"
-                let loadingScreenTask = Task {
-                    try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
-                    await MainActor.run {
-                        if isGenerating {  // Only show if still generating
-                            showLoadingScreen = true
-                        }
-                    }
-                }
+                // v1.8.7: loadingScreenTask already started at the beginning of Task block
                 
                 do {
                     // Use pre-fetched POIs if available (faster!)
