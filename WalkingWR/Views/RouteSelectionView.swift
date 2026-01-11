@@ -5879,8 +5879,8 @@ struct RouteExplorationLoadingView: View {
     @State private var lastStageAdvanceTime: Date = Date()
     @State private var hasCompletedAllStages: Bool = false
     
-    private let minStageDisplayTime: TimeInterval = 0.4  // Minimum time to show each stage
-    private let postCompletionDelay: TimeInterval = 0.6  // Pause after stage 4 before preview
+    private let minStageDisplayTime: TimeInterval = 0.5  // Minimum time to show each stage
+    private let postCompletionDelay: TimeInterval = 0.8  // Pause after stage 4 before preview
     
     var body: some View {
         ZStack {
@@ -6112,12 +6112,18 @@ struct RouteExplorationLoadingView: View {
         let timeSinceLastAdvance = Date().timeIntervalSince(lastStageAdvanceTime)
         cumulativeDelay = max(0, minStageDisplayTime - timeSinceLastAdvance)
         
-        // Schedule each remaining stage
-        for targetStage in (currentStage + 1)...4 {
+        // Schedule each remaining stage with explicit timing
+        let stagesToSchedule = Array((currentStage + 1)...4)
+        print("🏁 Scheduling stages: \(stagesToSchedule)")
+        
+        for targetStage in stagesToSchedule {
             let delay = cumulativeDelay
+            let stageName = ["", "Finding places", "Calculating routes", "Getting directions", "Naming your route"][targetStage]
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [targetStage] in
-                print("🏁 → Stage \(targetStage)")
+            print("🏁 Stage \(targetStage) (\(stageName)) scheduled at +\(String(format: "%.2f", delay))s")
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [targetStage, stageName] in
+                print("🏁 ✓ Stage \(targetStage) (\(stageName)) NOW VISIBLE")
                 withAnimation(.easeInOut(duration: 0.25)) {
                     displayedStageIndex = targetStage
                 }
@@ -6128,7 +6134,7 @@ struct RouteExplorationLoadingView: View {
         
         // After stage 4, wait for postCompletionDelay then show preview
         let finalDelay = cumulativeDelay + postCompletionDelay
-        print("🏁 Will show preview in \(String(format: "%.2f", finalDelay))s")
+        print("🏁 Preview scheduled at +\(String(format: "%.2f", finalDelay))s (stages done at +\(String(format: "%.2f", cumulativeDelay))s + \(postCompletionDelay)s pause)")
         
         DispatchQueue.main.asyncAfter(deadline: .now() + finalDelay) {
             print("🏁 ✅ onAnimationComplete()")
