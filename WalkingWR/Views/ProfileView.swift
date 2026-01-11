@@ -1794,6 +1794,11 @@ struct SettingsView: View {
     @State private var showMotionUnavailable = false
     @State private var showHealthKitManageAlert = false
     
+    // Apple POI Diagnostic
+    @State private var isRunningAppleDiagnostic = false
+    @State private var appleDiagnosticResults = ""
+    @State private var showAppleDiagnosticResults = false
+    
     // Only show permissions that have been interacted with (not .notDetermined)
     var shouldShowNotifications: Bool {
         !notificationsNeverAsked
@@ -3085,6 +3090,19 @@ struct SavedBatchTestsSection: View {
                 }
             }
             
+            // Apple POI Diagnostic button
+            Button {
+                runApplePOIDiagnostic()
+            } label: {
+                HStack {
+                    Image(systemName: isRunningAppleDiagnostic ? "hourglass" : "apple.logo")
+                        .foregroundColor(.pink)
+                    Text(isRunningAppleDiagnostic ? "Running Apple Diagnostic..." : "Test Apple Maps POIs")
+                        .foregroundColor(.primary)
+                }
+            }
+            .disabled(isRunningAppleDiagnostic)
+            
             // Copy All History button
             if !savedTests.isEmpty {
                 Button {
@@ -3216,6 +3234,58 @@ struct SavedBatchTestsSection: View {
                 savedTests = []
             }
             Button("Cancel", role: .cancel) { }
+        }
+        .sheet(isPresented: $showAppleDiagnosticResults) {
+            NavigationStack {
+                ScrollView {
+                    Text(appleDiagnosticResults)
+                        .font(.system(.caption2, design: .monospaced))
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .navigationTitle("Apple Maps POI Diagnostic")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Done") {
+                            showAppleDiagnosticResults = false
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            UIPasteboard.general.string = appleDiagnosticResults
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                    }
+                }
+            }
+            .presentationDetents([.large])
+        }
+    }
+    
+    // Run Apple Maps POI diagnostic test
+    private func runApplePOIDiagnostic() {
+        guard let location = locationService.currentLocation?.coordinate else {
+            appleDiagnosticResults = "❌ No location available. Please enable location services."
+            showAppleDiagnosticResults = true
+            return
+        }
+        
+        isRunningAppleDiagnostic = true
+        
+        Task {
+            let results = await GoogleMapsService.shared.runApplePOIDiagnostic(
+                location: location,
+                radiusMeters: 2000
+            )
+            
+            await MainActor.run {
+                appleDiagnosticResults = results
+                isRunningAppleDiagnostic = false
+                showAppleDiagnosticResults = true
+            }
         }
     }
     

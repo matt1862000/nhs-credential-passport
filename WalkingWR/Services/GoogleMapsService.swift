@@ -1532,6 +1532,101 @@ class GoogleMapsService: ObservableObject {
         return await searchAppleMapsForPOIsFast(location: location, radiusMeters: radiusMeters)
     }
     
+    // MARK: - Apple Maps POI Diagnostic Test
+    /// Comprehensive Apple Maps search to diagnose what POIs are available
+    /// Logs every single result found for debugging purposes
+    func runApplePOIDiagnostic(location: CLLocationCoordinate2D, radiusMeters: Int = 2000) async -> String {
+        var results = "🍎 APPLE MAPS POI DIAGNOSTIC\n"
+        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        results += "📍 Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))\n"
+        results += "📏 Radius: \(radiusMeters)m\n"
+        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        // Key search terms for rural UK areas
+        let diagnosticQueries = [
+            "school", "academy", "primary", "secondary",
+            "church", "chapel", "pub", "inn", "hotel",
+            "shop", "store", "post office", "village hall",
+            "farm", "playground", "park", "memorial",
+            "cafe", "restaurant", "takeaway", "fish",
+            "garage", "nursery", "surgery", "doctor"
+        ]
+        
+        var allPOIs: [String: (name: String, distance: Double, query: String)] = [:]
+        var queryResults: [(query: String, count: Int)] = []
+        
+        print("🍎 📊 DIAGNOSTIC: Testing \(diagnosticQueries.count) search queries...")
+        
+        for query in diagnosticQueries {
+            let request = MKLocalSearch.Request()
+            request.naturalLanguageQuery = query
+            request.region = MKCoordinateRegion(
+                center: location,
+                latitudinalMeters: Double(radiusMeters * 2),
+                longitudinalMeters: Double(radiusMeters * 2)
+            )
+            
+            let search = MKLocalSearch(request: request)
+            var foundCount = 0
+            
+            do {
+                let response = try await search.start()
+                
+                for item in response.mapItems {
+                    guard let name = item.name else { continue }
+                    
+                    let itemCoord = item.placemark.coordinate
+                    let distance = distanceBetween(location, itemCoord)
+                    
+                    // Only include POIs within radius
+                    guard distance <= Double(radiusMeters) else { continue }
+                    
+                    foundCount += 1
+                    
+                    // Deduplicate by name
+                    if allPOIs[name] == nil {
+                        allPOIs[name] = (name: name, distance: distance, query: query)
+                    }
+                }
+            } catch {
+                // Silently skip failed queries
+            }
+            
+            queryResults.append((query: query, count: foundCount))
+            
+            // Small delay to avoid rate limiting
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        }
+        
+        // Sort POIs by distance
+        let sortedPOIs = allPOIs.values.sorted { $0.distance < $1.distance }
+        
+        results += "📊 QUERY RESULTS\n"
+        results += "───────────────────────────────────────\n"
+        for qr in queryResults.sorted(by: { $0.count > $1.count }) {
+            let emoji = qr.count > 0 ? "✅" : "❌"
+            results += "\(emoji) \"\(qr.query)\": \(qr.count) POIs\n"
+        }
+        
+        results += "\n📍 ALL UNIQUE POIs FOUND (\(sortedPOIs.count))\n"
+        results += "───────────────────────────────────────\n"
+        
+        for (index, poi) in sortedPOIs.enumerated() {
+            let distanceStr = poi.distance < 1000 
+                ? "\(Int(poi.distance))m" 
+                : String(format: "%.1fkm", poi.distance / 1000)
+            results += "\(index + 1). \(poi.name) - \(distanceStr) [via \"\(poi.query)\"]\n"
+        }
+        
+        results += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        results += "📊 SUMMARY: \(sortedPOIs.count) unique POIs from Apple Maps\n"
+        
+        print("🍎 📊 DIAGNOSTIC COMPLETE: \(sortedPOIs.count) unique POIs")
+        print(results)
+        
+        return results
+    }
+    
     // MARK: - Search OpenStreetMap for POIs (Overpass API - FREE!)
     /// Searches OpenStreetMap using the Overpass API for POIs near a location
     /// This is completely FREE with no API key required!
