@@ -182,6 +182,7 @@ struct RouteSelectionView: View {
             }
             .sheet(isPresented: $showLocalRoutePicker, onDismiss: {
                 pendingBatchTest = .none  // Clear pending test when sheet closes
+                hasAutoOpenedPicker = false  // Reset so next tap on Walk tab re-opens picker
             }) {
                 LocalRoutePickerSheet(
                     viewModel: viewModel,
