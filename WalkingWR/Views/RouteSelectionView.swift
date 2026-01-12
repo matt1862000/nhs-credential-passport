@@ -5946,8 +5946,9 @@ struct RouteExplorationLoadingView: View {
     let isComplete: Bool  // v1.8.5: Signal that route is ready
     let onAnimationComplete: () -> Void  // v1.8.5: Callback when all stages animated
     
-    // Animation state for polylines
-    @State private var visiblePolylines: [(id: UUID, coordinates: [CLLocationCoordinate2D], opacity: Double, isValid: Bool)] = []
+    // Animation state for polylines and POI markers
+    @State private var visiblePolylines: [(id: UUID, coordinates: [CLLocationCoordinate2D], opacity: Double, isValid: Bool, poiName: String)] = []
+    @State private var visiblePOIMarkers: [(id: UUID, coordinate: CLLocationCoordinate2D, name: String, opacity: Double)] = []
     @State private var mapCameraPosition: MapCameraPosition = .automatic
     
     // v1.8.9: Stage display state - advances based on actual progress with minimum gaps
@@ -5994,6 +5995,27 @@ struct RouteExplorationLoadingView: View {
                                 (polyline.isValid ? Color.green : Color.tealAccent).opacity(polyline.opacity),
                                 style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)
                             )
+                    }
+                    
+                    // Animated POI markers
+                    ForEach(visiblePOIMarkers, id: \.id) { marker in
+                        Annotation("", coordinate: marker.coordinate) {
+                            VStack(spacing: 2) {
+                                Image(systemName: "mappin.circle.fill")
+                                    .font(.title2)
+                                    .foregroundColor(.orange)
+                                    .opacity(marker.opacity)
+                                Text(marker.name)
+                                    .font(.caption2)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.primary)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(Color(.systemBackground).opacity(0.9))
+                                    .clipShape(Capsule())
+                                    .opacity(marker.opacity)
+                            }
+                        }
                     }
                 }
                 .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
@@ -6087,10 +6109,11 @@ struct RouteExplorationLoadingView: View {
                         .shadow(radius: 2)
                     }
                     
-                    // Status text
-                    Text("Finding the best route for you...")
+                    // Dynamic status text per stage
+                    Text(loadingHelpText)
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .animation(.easeInOut(duration: 0.3), value: displayedStageIndex)
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 30)
@@ -6130,9 +6153,9 @@ struct RouteExplorationLoadingView: View {
                 advanceToStageWithMinDelay(2)
             }
             
-            // Add polyline animation
+            // Add polyline animation with POI marker
             if let attempt = currentAttempt, !attempt.polylineCoordinates.isEmpty {
-                addAnimatedPolyline(coordinates: attempt.polylineCoordinates, isValid: attempt.isValid)
+                addAnimatedPolyline(coordinates: attempt.polylineCoordinates, isValid: attempt.isValid, poiName: attempt.poiName)
             }
         }
         .onChange(of: isComplete) { _, newValue in
@@ -6254,10 +6277,10 @@ struct RouteExplorationLoadingView: View {
         }
     }
     
-    /// Add a polyline that fades in and then fades out
-    private func addAnimatedPolyline(coordinates: [CLLocationCoordinate2D], isValid: Bool) {
+    /// Add a polyline that fades in and then fades out, with POI marker
+    private func addAnimatedPolyline(coordinates: [CLLocationCoordinate2D], isValid: Bool, poiName: String = "") {
         let id = UUID()
-        let newPolyline = (id: id, coordinates: coordinates, opacity: 0.0, isValid: isValid)
+        let newPolyline = (id: id, coordinates: coordinates, opacity: 0.0, isValid: isValid, poiName: poiName)
         
         // Add polyline
         withAnimation(.easeIn(duration: 0.3)) {
@@ -6265,6 +6288,37 @@ struct RouteExplorationLoadingView: View {
             // Update opacity to full
             if let index = visiblePolylines.firstIndex(where: { $0.id == id }) {
                 visiblePolylines[index].opacity = isValid ? 1.0 : 0.7
+            }
+        }
+        
+        // Add POI marker at the furthest point from origin (approximate waypoint location)
+        if coordinates.count > 2, !poiName.isEmpty {
+            // Find the point furthest from origin (usually the main waypoint)
+            let midIndex = coordinates.count / 2
+            let markerCoord = coordinates[midIndex]
+            let markerId = UUID()
+            
+            withAnimation(.easeIn(duration: 0.3)) {
+                visiblePOIMarkers.append((id: markerId, coordinate: markerCoord, name: poiName, opacity: 1.0))
+            }
+            
+            // Keep only last 3 POI markers
+            if visiblePOIMarkers.count > 3 {
+                let oldMarkerId = visiblePOIMarkers[0].id
+                withAnimation(.easeOut(duration: 0.3)) {
+                    visiblePOIMarkers.removeAll { $0.id == oldMarkerId }
+                }
+            }
+            
+            // Fade out marker after delay if not valid
+            if !isValid {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    withAnimation(.easeOut(duration: 0.5)) {
+                        if let index = visiblePOIMarkers.firstIndex(where: { $0.id == markerId }) {
+                            visiblePOIMarkers[index].opacity = 0.3
+                        }
+                    }
+                }
             }
         }
         
