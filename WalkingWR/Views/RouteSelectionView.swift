@@ -6107,6 +6107,22 @@ struct RouteExplorationLoadingView: View {
             
             // After minimum time, advance to stage 1
             advanceToStageWithMinDelay(1)
+            
+            // v1.8.12: Time-based fallback progression (in case triggers don't fire)
+            // If still on stage 1 after 3s, advance to stage 2
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                if displayedStageIndex < 2 && !hasCompletedAllStages {
+                    print("🎬 Fallback: Advancing to stage 2 (timeout)")
+                    advanceToStageWithMinDelay(2)
+                }
+            }
+            // If still on stage 2 after 6s, advance to stage 3
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
+                if displayedStageIndex < 3 && !hasCompletedAllStages {
+                    print("🎬 Fallback: Advancing to stage 3 (timeout)")
+                    advanceToStageWithMinDelay(3)
+                }
+            }
         }
         .onChange(of: attemptCount) { oldValue, newValue in
             // v1.8.9: When route attempts start, we know POI fetch is done → advance to stage 2
