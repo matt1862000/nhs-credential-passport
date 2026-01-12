@@ -984,6 +984,9 @@ struct LocalRoutePickerSheet: View {
     @State private var routeSignatures: Set<String> = []  // Unique signatures: "sortedPOIIds|distanceBucket"
     @State private var varietyExhausted = false  // True when no more unique routes possible
     
+    // v1.8.8: Store rejected short routes - may add ONE at end if ≤2 acceptable routes
+    @State private var rejectedShortRoutes: [(route: WalkingRoute, data: GeneratedRoute)] = []
+    
     // Pre-fetched POIs for faster route generation
     @State private var prefetchedPOIs: [PlaceResult] = []
     @State private var isPrefetchingPOIs = false
@@ -1663,9 +1666,9 @@ struct LocalRoutePickerSheet: View {
                     var loadedPlaceIdSets: [Set<String>] = []
                     
                     for (index, cached) in cachedRoutes.enumerated() {
-                        let markers = await MainActor.run {
-                            createMarkersFromPlaces(cached.route.places, origin: userLocation.coordinate)
-                        }
+                    let markers = await MainActor.run {
+                        createMarkersFromPlaces(cached.route.places, origin: userLocation.coordinate)
+                    }
                         
                         // v1.6.45: Use cached directions if available (instant!)
                         var directions: [WalkingDirection] = []
@@ -1677,37 +1680,37 @@ struct LocalRoutePickerSheet: View {
                         } else {
                             // Fallback: extract from legs
                             directions = await MainActor.run {
-                                extractWalkingDirections(from: cached.route.legs)
-                            }
-                            
+                        extractWalkingDirections(from: cached.route.legs)
+                    }
+                    
                             // Get MapKit directions if not in cache (only for first route to save time)
                             if directions.isEmpty && !cached.route.places.isEmpty && index == 0 {
-                                print("🍎 Cached route has no directions - getting from MapKit...")
-                                let waypointCoords = cached.route.places.map { $0.coordinate }
-                                directions = await mapsService.getMapKitDirectionsForRoute(
-                                    origin: userLocation.coordinate,
-                                    waypoints: waypointCoords,
-                                    destination: userLocation.coordinate
-                                )
+                        print("🍎 Cached route has no directions - getting from MapKit...")
+                        let waypointCoords = cached.route.places.map { $0.coordinate }
+                        directions = await mapsService.getMapKitDirectionsForRoute(
+                            origin: userLocation.coordinate,
+                            waypoints: waypointCoords,
+                            destination: userLocation.coordinate
+                        )
                             }
-                        }
-                        
-                        let routeDifficulty: RouteDifficulty = cached.route.durationMinutes <= 10 ? .easy : (cached.route.durationMinutes <= 20 ? .moderate : .challenging)
-                        
-                        let localRoute = WalkingRoute(
-                            name: cached.name ?? "Local Discovery",
-                            description: cached.description ?? "A \(cached.route.formattedDuration) walk passing \(cached.route.places.count) local points of interest.",
-                            durationMinutes: max(1, cached.route.durationMinutes),
-                            distanceMeters: cached.route.distanceMeters,
-                            difficulty: routeDifficulty,
-                            isIndoor: false,
-                            isAccessible: true,
-                            landmarks: ["Start"] + cached.route.places.map { $0.name } + ["Return"],
-                            icon: "location.fill",
-                            color: .tealAccent,
-                            qrMarkers: markers,
-                            routeType: .local,
-                            encodedPolyline: cached.route.polyline,
+                    }
+                    
+                    let routeDifficulty: RouteDifficulty = cached.route.durationMinutes <= 10 ? .easy : (cached.route.durationMinutes <= 20 ? .moderate : .challenging)
+                    
+                    let localRoute = WalkingRoute(
+                        name: cached.name ?? "Local Discovery",
+                        description: cached.description ?? "A \(cached.route.formattedDuration) walk passing \(cached.route.places.count) local points of interest.",
+                        durationMinutes: max(1, cached.route.durationMinutes),
+                        distanceMeters: cached.route.distanceMeters,
+                        difficulty: routeDifficulty,
+                        isIndoor: false,
+                        isAccessible: true,
+                        landmarks: ["Start"] + cached.route.places.map { $0.name } + ["Return"],
+                        icon: "location.fill",
+                        color: .tealAccent,
+                        qrMarkers: markers,
+                        routeType: .local,
+                        encodedPolyline: cached.route.polyline,
                             walkingDirections: directions,
                             usedOSRMRouting: cached.route.usedOSRM  // v1.7.1: Track OSRM usage for polyline refresh
                         )
@@ -1735,12 +1738,12 @@ struct LocalRoutePickerSheet: View {
                             viewedRouteIndices = [1]
                             print("🚀 Auto-advanced to route 2 (skipped template Route 1)")
                         } else {
-                            currentRouteIndex = 0
+                        currentRouteIndex = 0
                             generatedRoute = firstRoute.route
                             generatedRouteData = firstRoute.data
                             lastValidRoute = firstRoute.route
                             lastValidRouteData = firstRoute.data
-                            viewedRouteIndices = [0]
+                        viewedRouteIndices = [0]
                         }
                         
                         isRecycledRoute = false
@@ -1764,7 +1767,7 @@ struct LocalRoutePickerSheet: View {
                         // Only pre-generate more if we don't have enough
                         if loadedRoutes.count < maxRoutesToGenerate {
                             print("📦 Only \(loadedRoutes.count)/\(maxRoutesToGenerate) routes cached - will pre-generate more")
-                            preGenerateRemainingRoutes()
+                        preGenerateRemainingRoutes()
                         } else {
                             print("📦 All \(loadedRoutes.count) routes loaded from cache - no pre-generation needed")
                         }
@@ -1895,12 +1898,22 @@ struct LocalRoutePickerSheet: View {
                         // Save as last valid for recycling on shuffle
                         lastValidRoute = localRoute
                         lastValidRouteData = result
+                        
+                        // v1.8.8: Check if initial route is too short (< 50% of target)
+                        let minAcceptablePercent = 0.50
+                        let minAcceptableDuration = Int(Double(selectedDuration) * minAcceptablePercent)
+                        let isShortRoute = result.durationMinutes < minAcceptableDuration
+                        if isShortRoute {
+                            print("⚠️ Initial route is short fallback (\(result.durationMinutes)min < \(minAcceptableDuration)min target 50%)")
+                        }
+                        
                         // Initialize route array with first route
                         allRoutes = [(route: localRoute, data: result)]
                         currentRouteIndex = 0
                         preGenerationComplete = false
                         isRecycledRoute = false  // First route is never recycled
-                        isDeadZoneFallback = false  // v1.6.39: Fresh routes are not fallbacks
+                        isDeadZoneFallback = isShortRoute  // v1.8.8: Mark if below 50%
+                        rejectedShortRoutes = []  // v1.8.8: Clear any previous rejected routes
                         viewedRouteIndices = [0]  // Mark first route as viewed
                         // Track place IDs for this route
                         let placeIds = Set(result.places.map { $0.placeId })
@@ -2201,7 +2214,8 @@ struct LocalRoutePickerSheet: View {
         
         Task {
             if let userLocation = locationService.currentLocation?.coordinate {
-                let refreshedRoute = await mapsService.refreshRouteWithMapKit(
+                // v1.8.9: Use Google Directions first (better quality), fallback to Apple
+                let refreshedRoute = await mapsService.refreshRouteWithGoogleThenMapKit(
                     route: route,
                     userLocation: userLocation
                 )
@@ -2237,6 +2251,7 @@ struct LocalRoutePickerSheet: View {
         showPremiumUpsell = false
         routeSignatures = []
         varietyExhausted = false
+        rejectedShortRoutes = []  // v1.8.8: Clear rejected routes
     }
     
     private func handleDeleteRoute() {
@@ -2258,6 +2273,7 @@ struct LocalRoutePickerSheet: View {
             showPremiumUpsell = false
             showMapPreview = false
             errorMessage = nil
+            rejectedShortRoutes = []  // v1.8.8: Clear rejected routes
             print("🗑️ Deleted last route - returning to options")
         } else {
             if currentRouteIndex >= allRoutes.count {
@@ -2450,6 +2466,10 @@ struct LocalRoutePickerSheet: View {
             return
         }
         
+        // v1.8.8: Helper to check if a route is a short fallback
+        let minAcceptablePercent = 0.50
+        let minAcceptableDuration = Int(Double(selectedDuration) * minAcceptablePercent)
+        
         // If we have more pre-generated routes to show, cycle to next
         if currentRouteIndex < allRoutes.count - 1 {
             // Show next pre-generated route instantly
@@ -2460,7 +2480,11 @@ struct LocalRoutePickerSheet: View {
             // Check if this route has been viewed before
             isRecycledRoute = viewedRouteIndices.contains(currentRouteIndex)
             viewedRouteIndices.insert(currentRouteIndex)  // Mark as viewed
-            print("🔀 Showing route \(currentRouteIndex + 1) of \(allRoutes.count) (recycled: \(isRecycledRoute))")
+            
+            // v1.8.8: Check if this is a short fallback route
+            isDeadZoneFallback = nextRoute.data.durationMinutes < minAcceptableDuration
+            
+            print("🔀 Showing route \(currentRouteIndex + 1) of \(allRoutes.count) (recycled: \(isRecycledRoute), fallback: \(isDeadZoneFallback))")
         } else {
             // v1.6.45: At last route - cycle back to route 1 (no dialog)
             currentRouteIndex = 0
@@ -2469,6 +2493,10 @@ struct LocalRoutePickerSheet: View {
             generatedRouteData = firstRoute.data
             isRecycledRoute = true  // Always recycled when cycling back
             showPremiumUpsell = true  // Show upgrade message when all routes viewed
+            
+            // v1.8.8: Check if first route is a short fallback
+            isDeadZoneFallback = firstRoute.data.durationMinutes < minAcceptableDuration
+            
             print("🔄 Cycling back to route 1 of \(allRoutes.count)")
         }
     }
@@ -2605,6 +2633,20 @@ struct LocalRoutePickerSheet: View {
                     )
                     
                     await MainActor.run {
+                        // v1.8.8: Check if route is too short (< 50% of target)
+                        // Short routes are stored but not added - may use ONE at end if needed
+                        let minAcceptablePercent = 0.50
+                        let minAcceptableDuration = Int(Double(selectedDuration) * minAcceptablePercent)
+                        let routeDuration = result.durationMinutes
+                        
+                        if routeDuration < minAcceptableDuration {
+                            // Store for potential use at end if we have ≤2 routes
+                            rejectedShortRoutes.append((route: route, data: result))
+                            print("📦 Stored short route (\(routeDuration)min < \(minAcceptableDuration)min) - may use later if needed")
+                            consecutiveFailures += 1  // Count as failure for loop control
+                            return
+                        }
+                        
                         allRoutes.append((route: route, data: result))
                         
                         // v1.6.25: Register route signature for deduplication
@@ -2775,6 +2817,19 @@ struct LocalRoutePickerSheet: View {
                             )
                             
                             await MainActor.run {
+                                // v1.8.8: Check if route is too short (< 50% of target)
+                                let minAcceptablePercent = 0.50
+                                let minAcceptableDuration = Int(Double(selectedDuration) * minAcceptablePercent)
+                                let routeDuration = result.durationMinutes
+                                
+                                if routeDuration < minAcceptableDuration {
+                                    // Store for potential use at end if we have ≤2 routes
+                                    rejectedShortRoutes.append((route: route, data: result))
+                                    print("📦 Stored short Google route (\(routeDuration)min < \(minAcceptableDuration)min) - may use later")
+                                    googleFailures += 1
+                                    return
+                                }
+                                
                                 allRoutes.append((route: route, data: result))
                                 
                                 // v1.6.25: Register route signature for deduplication
@@ -2836,6 +2891,18 @@ struct LocalRoutePickerSheet: View {
             await MainActor.run {
                 isPreGeneratingRoutes = false
                 preGenerationComplete = true
+                
+                // v1.8.8: Add ONE short fallback if we have ≤2 acceptable routes
+                if allRoutes.count <= 2 && !rejectedShortRoutes.isEmpty {
+                    // Pick the longest rejected route (closest to target)
+                    let bestFallback = rejectedShortRoutes.max(by: { $0.data.durationMinutes < $1.data.durationMinutes })
+                    if let fallback = bestFallback {
+                        allRoutes.append(fallback)
+                        isDeadZoneFallback = true  // Mark that we're showing a fallback
+                        print("⚠️ Added 1 short fallback (\(fallback.data.durationMinutes)min) - only \(allRoutes.count - 1) acceptable routes available")
+                    }
+                }
+                rejectedShortRoutes.removeAll()  // Clear the rejected list
                 
                 // v1.6.25: Log variety status
                 let uniqueCount = routeSignatures.count
@@ -3366,7 +3433,7 @@ struct LocalRoutePickerSheet: View {
                     if longForDuration > 0 { breakdown += " + \(longForDuration) long" }
                     routeTestResults += "  📊 \(acceptableForDuration)/\(routesForDuration.count) acceptable (\(breakdown))\n"
                 } else {
-                    routeTestResults += "  📊 \(validForDuration)/\(routesForDuration.count) valid\n"
+                routeTestResults += "  📊 \(validForDuration)/\(routesForDuration.count) valid\n"
                 }
             }
         }
@@ -3644,7 +3711,7 @@ struct LocalRoutePickerSheet: View {
                     if shortRoutes > 0 {
                         routeTestResults += "  📊 \(uniqueRoutesFound) unique / \(acceptableRoutes) acceptable (\(validRoutes)✅ + \(shortRoutes)⚡)\(exhaustedIndicator)\n"
                     } else {
-                        routeTestResults += "  📊 \(uniqueRoutesFound) unique / \(validRoutes) valid\(exhaustedIndicator)\n"
+                    routeTestResults += "  📊 \(uniqueRoutesFound) unique / \(validRoutes) valid\(exhaustedIndicator)\n"
                     }
                 }
             }
@@ -4121,53 +4188,53 @@ struct LocalRouteMapPreview: View {
             ZStack {
                 // Actual map - uses binding so camera updates when route changes
                 Map(position: $cameraPosition) {
-                    // User's starting location
-                    if let userLoc = userLocation {
-                        Annotation("Start/End", coordinate: userLoc) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.blue)
-                                    .frame(width: 24, height: 24)
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 10, height: 10)
-                            }
-                        }
-                    }
-                    
-                    // Route polyline (if available from Google Directions)
-                    // Split into outbound (teal) and return leg (orange)
-                    if hasRealPolyline, route.routePath.count >= 2 {
-                        let splitResult = splitRouteAtLastWaypoint()
-                        
-                        // Outbound leg (to waypoints) - teal
-                        if splitResult.outbound.count >= 2 {
-                            MapPolyline(coordinates: splitResult.outbound)
-                                .stroke(Color.tealAccent, lineWidth: 4)
-                        }
-                        
-                        // Return leg (back to start) - orange
-                        if splitResult.returnLeg.count >= 2 {
-                            MapPolyline(coordinates: splitResult.returnLeg)
-                                .stroke(Color.orange.opacity(0.8), lineWidth: 4)
-                        }
-                    }
-                    
-                    // Discovery markers (POIs)
-                    ForEach(route.qrMarkers) { marker in
-                        Annotation(marker.name, coordinate: marker.coordinate) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.mintGreen)
-                                    .frame(width: 32, height: 32)
-                                Image(systemName: "mappin")
-                                    .font(.caption)
-                                    .foregroundColor(.white)
-                            }
+                // User's starting location
+                if let userLoc = userLocation {
+                    Annotation("Start/End", coordinate: userLoc) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue)
+                                .frame(width: 24, height: 24)
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 10, height: 10)
                         }
                     }
                 }
-                .mapStyle(.standard)
+                
+                // Route polyline (if available from Google Directions)
+                // Split into outbound (teal) and return leg (orange)
+                if hasRealPolyline, route.routePath.count >= 2 {
+                    let splitResult = splitRouteAtLastWaypoint()
+                    
+                    // Outbound leg (to waypoints) - teal
+                    if splitResult.outbound.count >= 2 {
+                        MapPolyline(coordinates: splitResult.outbound)
+                            .stroke(Color.tealAccent, lineWidth: 4)
+                    }
+                    
+                    // Return leg (back to start) - orange
+                    if splitResult.returnLeg.count >= 2 {
+                        MapPolyline(coordinates: splitResult.returnLeg)
+                            .stroke(Color.orange.opacity(0.8), lineWidth: 4)
+                    }
+                }
+                
+                // Discovery markers (POIs)
+                ForEach(route.qrMarkers) { marker in
+                    Annotation(marker.name, coordinate: marker.coordinate) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.mintGreen)
+                                .frame(width: 32, height: 32)
+                            Image(systemName: "mappin")
+                                .font(.caption)
+                                .foregroundColor(.white)
+                        }
+                    }
+                }
+            }
+            .mapStyle(.standard)
                 .onAppear {
                     // Set initial camera position
                     cameraPosition = mapCameraPosition
@@ -4375,7 +4442,7 @@ struct LocalRouteMapPreview: View {
                                 .scaleEffect(0.6)
                             if totalRoutes == 1 {
                                 Text("Finding more options...")
-                                    .font(.caption)
+                                .font(.caption)
                                     .foregroundColor(.secondary)
                             } else {
                                 Text("Pick any or wait for more...")
@@ -4417,22 +4484,22 @@ struct LocalRouteMapPreview: View {
                 HStack(spacing: 10) {
                     // v1.6.45: Only show Next button if there's more than 1 route
                     if totalRoutes > 1 {
-                        Button(action: onShuffle) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "shuffle")
-                                    .font(.title3)
-                                    .fontWeight(.medium)
+                    Button(action: onShuffle) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "shuffle")
+                                .font(.title3)
+                                .fontWeight(.medium)
                                 Text("Next")
                                     .font(.subheadline)
                                     .fontWeight(.medium)
-                            }
-                            .foregroundColor(.tealAccent)
-                            .padding(.horizontal, 16)
-                            .frame(height: 48)
-                            .background(Color.tealAccent.opacity(0.15))
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-                        .buttonStyle(.plain)
+                        .foregroundColor(.tealAccent)
+                            .padding(.horizontal, 16)
+                        .frame(height: 48)
+                        .background(Color.tealAccent.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
                     }
                     
                     // Delete - remove current route (replaces settings button)
@@ -4457,7 +4524,7 @@ struct LocalRouteMapPreview: View {
                                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                     .scaleEffect(0.8)
                             } else {
-                                Image(systemName: primaryButtonIcon)
+                            Image(systemName: primaryButtonIcon)
                             }
                             Text(primaryButtonText)
                         }
@@ -5287,10 +5354,10 @@ struct ActiveWalkView: View {
                         VStack(alignment: .trailing, spacing: 1) {
                             if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
                                 Text("\(viewModel.waitTimeInfo.estimatedMinutes)")
-                                    .font(.title2)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.white)
-                                    .monospacedDigit()
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
+                                .monospacedDigit()
                                 Text("mins delay")
                                     .font(.caption2)
                                     .foregroundColor(.white.opacity(0.7))
@@ -5305,11 +5372,11 @@ struct ActiveWalkView: View {
                                     .foregroundColor(.white.opacity(0.7))
                             }
                         }
-                        
-                        if viewModel.walkSession.halfwayAlertSent {
+                            
+                            if viewModel.walkSession.halfwayAlertSent {
                             Text("↩︎")
                                 .font(.title2)
-                                .foregroundColor(.softAmber)
+                                    .foregroundColor(.softAmber)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -5477,10 +5544,10 @@ struct WalkingDirectionsBanner: View {
                     VStack(alignment: .trailing, spacing: 0) {
                         if hasClinicianSelected {
                             Text("\(delayMinutes)")
-                                .font(.title3)
-                                .fontWeight(.bold)
-                                .foregroundColor(.white)
-                                .monospacedDigit()
+                            .font(.title3)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .monospacedDigit()
                             Text("mins delay")
                                 .font(.caption2)
                                 .foregroundColor(.white.opacity(0.7))
@@ -5491,8 +5558,8 @@ struct WalkingDirectionsBanner: View {
                                 .foregroundColor(.white)
                                 .monospacedDigit()
                             Text("min walk")
-                                .font(.caption2)
-                                .foregroundColor(.white.opacity(0.7))
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.7))
                         }
                     }
                     
@@ -5882,6 +5949,17 @@ struct RouteExplorationLoadingView: View {
     private let minStageDisplayTime: TimeInterval = 0.5  // Minimum time to show each stage
     private let postCompletionDelay: TimeInterval = 0.8  // Pause after stage 4 before preview
     
+    // v1.8.10: Dynamic help text based on current stage
+    private var loadingHelpText: String {
+        switch displayedStageIndex {
+        case 0: return "Scanning the area around you..."
+        case 1: return "This may take up to a minute..."
+        case 2: return "Almost there! Getting walking directions..."
+        case 3: return "Adding the finishing touches..."
+        default: return "Your route is ready!"
+        }
+    }
+    
     var body: some View {
         ZStack {
             // Real map centered on user location
@@ -6000,10 +6078,11 @@ struct RouteExplorationLoadingView: View {
                         .shadow(radius: 2)
                     }
                     
-                    // Expectation setting
-                    Text("This may take up to a minute")
+                    // Expectation setting - v1.8.10: Dynamic text per stage
+                    Text(loadingHelpText)
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .animation(.easeInOut(duration: 0.25), value: displayedStageIndex)
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 30)

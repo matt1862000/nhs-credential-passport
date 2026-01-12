@@ -26,6 +26,13 @@ struct MainTabView: View {
         self.viewModel = viewModel
         // Only show onboarding if user hasn't completed it before
         _showOnboarding = State(initialValue: !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding"))
+        
+        // v1.8.10: Make bottom tab bar solid to prevent content overlap
+        let appearance = UITabBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor.systemBackground
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
     }
     
     var body: some View {

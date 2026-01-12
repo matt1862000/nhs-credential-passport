@@ -15,7 +15,7 @@ import CoreLocation
 class RouteCacheService {
     static let shared = RouteCacheService()
     
-    private let cacheKey = "cachedRoutes_v36"  // v36: Extend undershooting routes (80-95%) with on-route POIs
+    private let cacheKey = "cachedRoutes_v39"  // v39: Polyline regeneration on waypoint removal
     private let maxCachedRouteSets = 50
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
     private let cacheExpiryHours: Double = 24 // Routes expire after 24 hours

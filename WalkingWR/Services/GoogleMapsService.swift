@@ -133,6 +133,37 @@ class GoogleMapsService: ObservableObject {
         }
     }
     
+    // MARK: - Google Directions Quota Tracking (v1.8.9)
+    // Track daily usage to stay within free tier (100 calls/day safety limit)
+    private let googleDirectionsDailyCap = 100
+    private var googleDirectionsCallsToday = 0
+    private let googleDirectionsCountKey = "googleDirectionsCount"
+    private let googleDirectionsDateKey = "googleDirectionsDate"
+    
+    private var canUseGoogleDirectionsRefresh: Bool {
+        resetGoogleDirectionsCountIfNewDay()
+        return googleDirectionsCallsToday < googleDirectionsDailyCap
+    }
+    
+    private func resetGoogleDirectionsCountIfNewDay() {
+        let today = Calendar.current.startOfDay(for: Date())
+        let lastDate = UserDefaults.standard.object(forKey: googleDirectionsDateKey) as? Date ?? Date.distantPast
+        let lastDay = Calendar.current.startOfDay(for: lastDate)
+        
+        if today > lastDay {
+            googleDirectionsCallsToday = 0
+            UserDefaults.standard.set(today, forKey: googleDirectionsDateKey)
+            UserDefaults.standard.set(0, forKey: googleDirectionsCountKey)
+        } else {
+            googleDirectionsCallsToday = UserDefaults.standard.integer(forKey: googleDirectionsCountKey)
+        }
+    }
+    
+    private func recordGoogleDirectionsCall() {
+        googleDirectionsCallsToday += 1
+        UserDefaults.standard.set(googleDirectionsCallsToday, forKey: googleDirectionsCountKey)
+    }
+    
     /// Record a MapKit request (thread-safe via actor)
     private func recordMapKitRequest() {
         Task { await rateLimiter.recordRequest() }
@@ -2647,6 +2678,125 @@ class GoogleMapsService: ObservableObject {
         return refreshedRoute
     }
     
+    // MARK: - v1.8.9: Refresh Route with Google Directions (Apple fallback)
+    /// Tries Google Directions first for better quality, falls back to Apple MapKit if quota reached
+    func refreshRouteWithGoogleThenMapKit(
+        route: WalkingRoute,
+        userLocation: CLLocationCoordinate2D
+    ) async -> WalkingRoute {
+        // Check if we can use Google Directions
+        if canUseGoogleDirectionsRefresh {
+            print("🌐 REFRESH: Trying Google Directions first...")
+            
+            // Extract waypoint coordinates from QR markers
+            let waypoints = route.qrMarkers.map { $0.coordinate }
+            
+            guard !waypoints.isEmpty else {
+                print("🌐 REFRESH: No waypoints, using Apple MapKit")
+                return await refreshRouteWithMapKit(route: route, userLocation: userLocation)
+            }
+            
+            // Build waypoints string
+            let waypointsParam = waypoints.map { "\($0.latitude),\($0.longitude)" }.joined(separator: "|")
+            
+            // Google Directions API URL (no optimize:true to stay in free tier)
+            var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
+            urlString += "origin=\(userLocation.latitude),\(userLocation.longitude)"
+            urlString += "&destination=\(userLocation.latitude),\(userLocation.longitude)"
+            urlString += "&waypoints=\(waypointsParam)"
+            urlString += "&mode=walking"
+            urlString += "&key=\(apiKey)"
+            
+            if let url = URL(string: urlString) {
+                do {
+                    let (data, _) = try await URLSession.shared.data(from: url)
+                    recordGoogleDirectionsCall()
+                    print("📊 Google Directions refresh: \(googleDirectionsCallsToday)/\(googleDirectionsDailyCap) calls today")
+                    
+                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let status = json["status"] as? String,
+                       status == "OK",
+                       let routes = json["routes"] as? [[String: Any]],
+                       let firstRoute = routes.first {
+                        
+                        // Extract overview polyline
+                        var polyline = ""
+                        if let overviewPolyline = firstRoute["overview_polyline"] as? [String: Any],
+                           let points = overviewPolyline["points"] as? String {
+                            polyline = points
+                        }
+                        
+                        // Extract legs for directions
+                        var freshDirections: [WalkingDirection] = []
+                        var totalDistance = 0
+                        var totalDuration = 0
+                        
+                        if let legs = firstRoute["legs"] as? [[String: Any]] {
+                            for leg in legs {
+                                if let distance = leg["distance"] as? [String: Any],
+                                   let distValue = distance["value"] as? Int {
+                                    totalDistance += distValue
+                                }
+                                if let duration = leg["duration"] as? [String: Any],
+                                   let durValue = duration["value"] as? Int {
+                                    totalDuration += durValue
+                                }
+                                
+                                if let steps = leg["steps"] as? [[String: Any]] {
+                                    for step in steps {
+                                        let instruction = (step["html_instructions"] as? String)?
+                                            .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) ?? "Continue"
+                                        let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
+                                        let stepDistValue = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
+                                        let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
+                                        let stepDurValue = (step["duration"] as? [String: Any])?["value"] as? Int ?? 0
+                                        let maneuver = step["maneuver"] as? String ?? "straight"
+                                        
+                                        freshDirections.append(WalkingDirection(
+                                            instruction: instruction,
+                                            distance: stepDistText,
+                                            distanceMeters: stepDistValue,
+                                            duration: stepDurText,
+                                            maneuver: maneuver
+                                        ))
+                                    }
+                                }
+                            }
+                        }
+                        
+                        let durationMinutes = max(1, totalDuration / 60)
+                        print("🌐 REFRESH: ✅ Google route - \(durationMinutes)min, \(totalDistance)m, \(freshDirections.count) steps")
+                        
+                        // Create updated route with Google data
+                        return WalkingRoute(
+                            name: route.name,
+                            description: route.description,
+                            durationMinutes: durationMinutes,
+                            distanceMeters: totalDistance > 0 ? totalDistance : route.distanceMeters,
+                            difficulty: route.difficulty,
+                            isIndoor: route.isIndoor,
+                            isAccessible: route.isAccessible,
+                            landmarks: route.landmarks,
+                            icon: route.icon,
+                            color: route.color,
+                            qrMarkers: route.qrMarkers,
+                            routeType: route.routeType,
+                            encodedPolyline: polyline.isEmpty ? route.encodedPolyline : polyline,
+                            walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
+                        )
+                    }
+                } catch {
+                    print("🌐 REFRESH: Google failed - \(error.localizedDescription), using Apple MapKit")
+                }
+            }
+        } else {
+            print("🌐 REFRESH: Google quota reached (\(googleDirectionsCallsToday)/\(googleDirectionsDailyCap)) - using Apple MapKit")
+        }
+        
+        // Fallback to Apple MapKit
+        return await refreshRouteWithMapKit(route: route, userLocation: userLocation)
+    }
+    
     /// Extract maneuver type from instruction text
     private func extractManeuverType(from instruction: String) -> String {
         let lowercased = instruction.lowercased()
@@ -3187,7 +3337,7 @@ class GoogleMapsService: ObservableObject {
         // MINIMUM DISTANCE: Waypoints should be spaced ~3-4 min of walking apart
         // At ~80m/min walking speed, 3 min = 240m minimum spacing
         // Lowered from 350m to allow more POI options
-        let minWaypointDistance: Double = 200  // ~2.5 min walking, more flexible
+        let minWaypointDistance: Double = 100  // v1.8.9: Reduced from 200m to allow closer POIs
         
         // Start with the existing route and add waypoints ONE AT A TIME
         var currentRoute = existingRoute
@@ -4506,7 +4656,8 @@ class GoogleMapsService: ObservableObject {
             print("🗺️ Route backtracking score: \(String(format: "%.0f", selectedScore * 100))% (lower = more loop-like)")
             
             // Remove waypoints that are too close together (should be ~5 min / 300m+ apart)
-            selected = removeCloseWaypoints(from: selected, minDistance: 250)
+            // v1.8.10: Now async - regenerates polyline when waypoints removed
+            selected = await removeCloseWaypoints(from: selected, minDistance: 250, origin: location)
             
             let finalMins = selected.durationSeconds / 60
             print("🗺️ ✓ SUCCESS! Selected: \(finalMins)min, \(selected.places.count) POIs (target: \(targetDurationMinutes)min)")
@@ -4530,7 +4681,8 @@ class GoogleMapsService: ObservableObject {
                 // Don't return this route, fall through to guaranteed fallback
             } else {
                 // Remove waypoints that are too close together (should be ~5 min / 300m+ apart)
-                best = removeCloseWaypoints(from: best, minDistance: 250)
+                // v1.8.10: Now async - regenerates polyline when waypoints removed
+                best = await removeCloseWaypoints(from: best, minDistance: 250, origin: location)
                 
                 // Check if route is within 80-100% tolerance
                 let toleranceMin = Int(Double(targetDurationMinutes) * 0.80)
@@ -4759,7 +4911,8 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// Remove waypoints that are too close together (keeps first one in each cluster)
-    private func removeCloseWaypoints(from route: GeneratedRoute, minDistance: Double) -> GeneratedRoute {
+    /// v1.8.10: Now async - regenerates polyline when waypoints are removed to fix Star Inn bug
+    private func removeCloseWaypoints(from route: GeneratedRoute, minDistance: Double, origin: CLLocationCoordinate2D) async -> GeneratedRoute {
         guard route.places.count > 1 else { return route }
         
         var filteredPlaces: [PlaceResult] = []
@@ -4774,6 +4927,29 @@ class GoogleMapsService: ObservableObject {
                 filteredPlaces.append(place)
             } else {
                 print("🗺️ Removed '\(place.name)' - too close to another waypoint")
+            }
+        }
+        
+        // v1.8.10: Regenerate polyline if waypoints were removed
+        if filteredPlaces.count != route.places.count {
+            print("🗺️ Waypoints filtered: \(route.places.count) → \(filteredPlaces.count) - regenerating polyline...")
+            do {
+                let newDirections = try await getWalkingDirections(
+                    origin: origin,
+                    destination: origin,
+                    waypoints: filteredPlaces.map { $0.coordinate },
+                    preserveWaypointOrder: true
+                )
+                print("🗺️ ✅ Polyline regenerated after filtering")
+                return GeneratedRoute(
+                    places: filteredPlaces,
+                    polyline: newDirections.overviewPolyline.points,
+                    distanceMeters: newDirections.legs.reduce(0) { $0 + $1.distance.value },
+                    durationSeconds: newDirections.legs.reduce(0) { $0 + $1.duration.value },
+                    legs: newDirections.legs
+                )
+            } catch {
+                print("🗺️ ⚠️ Polyline regeneration failed: \(error.localizedDescription)")
             }
         }
         
@@ -5358,6 +5534,30 @@ class GoogleMapsService: ObservableObject {
         
         print("🗺️ Route now has \(allWaypoints.count) discovery spots (added \(additionalSpots.count))")
         
+        // v1.8.10: Regenerate polyline if waypoints changed to fix Star Inn bug
+        if allWaypoints.count != route.places.count {
+            print("🗺️ Regenerating polyline for \(allWaypoints.count) waypoints...")
+            do {
+                let newDirections = try await getWalkingDirections(
+                    origin: origin,
+                    destination: origin,
+                    waypoints: allWaypoints.map { $0.coordinate },
+                    preserveWaypointOrder: true
+                )
+                print("🗺️ ✅ Polyline regenerated - \(newDirections.legs.count) legs")
+                return GeneratedRoute(
+                    places: allWaypoints,
+                    polyline: newDirections.overviewPolyline.points,
+                    distanceMeters: newDirections.legs.reduce(0) { $0 + $1.distance.value },
+                    durationSeconds: newDirections.legs.reduce(0) { $0 + $1.duration.value },
+                    legs: newDirections.legs
+                )
+            } catch {
+                print("🗺️ ⚠️ Polyline regeneration failed: \(error.localizedDescription)")
+                // Fall back to original polyline
+            }
+        }
+        
         return GeneratedRoute(
             places: allWaypoints,
             polyline: route.polyline,
@@ -5469,7 +5669,7 @@ class GoogleMapsService: ObservableObject {
         var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
         urlString += "origin=\(origin.latitude),\(origin.longitude)"
         urlString += "&destination=\(origin.latitude),\(origin.longitude)"  // Round trip
-        urlString += "&waypoints=optimize:true|\(waypointsParam)"
+        urlString += "&waypoints=\(waypointsParam)"  // v1.8.9: Removed optimize:true to stay in free Essentials tier
         urlString += "&mode=walking"
         urlString += "&key=\(apiKey)"
         

@@ -15,8 +15,8 @@ import CoreLocation
 class POICacheService {
     static let shared = POICacheService()
     
-    // v1.8.0: Bump cache key to force refresh with parallel Google fetch
-    private let cacheKey = "cachedPOILocations_v2"
+    // v1.8.9: Bump cache key to force refresh
+    private let cacheKey = "cachedPOILocations_v3"
     private let maxCachedLocations = 10
     private let matchRadiusMeters: Double = 1000 // 1km
     

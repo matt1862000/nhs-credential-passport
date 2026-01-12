@@ -379,8 +379,10 @@ struct EmbeddedWalkMapView: View {
                     }
                 }
                 
-                // Fallback: MKRoute polyline (for calculated routes)
-                if let route = route {
+                // Fallback: MKRoute polyline (only if main route polyline is missing)
+                // v1.8.9: Added condition to prevent duplicate polylines
+                if let route = route,
+                   viewModel.walkSession.currentRoute?.routePath.count ?? 0 < 2 {
                     MapPolyline(route.polyline)
                         .stroke(Color.tealAccent.opacity(0.5), lineWidth: 3)
                 }

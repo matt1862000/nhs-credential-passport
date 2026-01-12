@@ -56,28 +56,38 @@ struct WellbeingView: View {
             ZStack {
                 AnimatedGradientBackground()
                 
-                ScrollView {
-                    VStack(spacing: 24) {
-                        // Category selector
-                        CategorySelector(selectedCategory: $selectedCategory)
-                        
-                        // Content based on category
-                        switch selectedCategory {
-                        case .breathing:
-                            BreathingSection { exercise in
-                                startExerciseWithCheck(exercise)
+                VStack(spacing: 0) {
+                    // Sticky category selector
+                    CategorySelector(selectedCategory: $selectedCategory)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
+                        .background(
+                            Color(.systemBackground)
+                                .opacity(0.95)
+                                .shadow(color: .black.opacity(0.05), radius: 2, y: 2)
+                        )
+                    
+                    ScrollView {
+                        VStack(spacing: 24) {
+                            // Content based on category
+                            switch selectedCategory {
+                            case .breathing:
+                                BreathingSection { exercise in
+                                    startExerciseWithCheck(exercise)
+                                }
+                            case .gratitude:
+                                GratitudeSection(savedEntries: $viewModel.userProgress.gratitudeEntries)
+                            case .nature:
+                                NatureSection(viewModel: viewModel)
+                            case .digital:
+                                DigitalSkillsSection(userProgress: viewModel.userProgress, viewModel: viewModel)
                             }
-                        case .gratitude:
-                            GratitudeSection(savedEntries: $viewModel.userProgress.gratitudeEntries)
-                        case .nature:
-                            NatureSection(viewModel: viewModel)
-                        case .digital:
-                            DigitalSkillsSection(userProgress: viewModel.userProgress, viewModel: viewModel)
+                            
+                            Spacer(minLength: 100)
                         }
-                        
-                        Spacer(minLength: 100)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 12)
                     }
-                    .padding(.horizontal, 20)
                 }
             }
             .navigationTitle("Wellbeing")
@@ -495,7 +505,27 @@ struct BreathingExerciseSheet: View {
     @State private var isActive = false
     @State private var cycleCount = 0
     @State private var hasRecordedCompletion = false
-    @State private var hasStartedExercise = false // Track if user started at all
+    @State private var hasStartedExercise = false
+    @State private var secondsRemaining = 0
+    @State private var phaseProgress: CGFloat = 0
+    @State private var customInstruction: String = ""
+    @State private var groundingStep = 0  // For Grounding Breath multi-step
+    
+    // Total cycles/steps for each exercise type
+    private var totalCycles: Int {
+        if exercise.title.contains("Grounding") {
+            return 8  // 8 mindfulness steps
+        }
+        return 4  // 4 breath cycles for Box and 4-7-8
+    }
+    
+    // Cycle label text
+    private var cycleLabel: String {
+        if exercise.title.contains("Grounding") {
+            return "Step \(cycleCount + 1) of \(totalCycles)"
+        }
+        return "Cycle \(cycleCount + 1) of \(totalCycles)"
+    }
     
     enum BreathPhase: String {
         case ready = "Tap to begin"
@@ -503,7 +533,38 @@ struct BreathingExerciseSheet: View {
         case hold = "Hold..."
         case breatheOut = "Breathe out..."
         case holdEmpty = "Hold empty..."
+        case exhaleFirst = "Exhale completely..."  // For 4-7-8
         case complete = "Well done!"
+    }
+    
+    // Dynamic instruction based on current phase and exercise type
+    private var currentInstruction: String {
+        if !customInstruction.isEmpty {
+            return customInstruction
+        }
+        
+        switch breathPhase {
+        case .ready:
+            return "Tap the circle to begin"
+        case .breatheIn:
+            if exercise.title.contains("4-7-8") {
+                return "Inhale through your nose"
+            }
+            return "Breathe in slowly..."
+        case .hold:
+            return "Hold your breath"
+        case .breatheOut:
+            if exercise.title.contains("4-7-8") {
+                return "Exhale through your mouth"
+            }
+            return "Breathe out slowly..."
+        case .holdEmpty:
+            return "Hold empty..."
+        case .exhaleFirst:
+            return "Exhale completely"
+        case .complete:
+            return "Exercise complete!"
+        }
     }
     
     var body: some View {
@@ -517,17 +578,54 @@ struct BreathingExerciseSheet: View {
                 )
                 .ignoresSafeArea()
                 
-                VStack(spacing: 40) {
+                VStack(spacing: 24) {
                     Spacer()
+                        .frame(height: 20)
                     
-                    // Breathing circle
+                    // Dynamic instruction text above circle (hidden in ready state)
+                    if breathPhase != .ready {
+                        VStack(spacing: 8) {
+                            Text(currentInstruction)
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(minHeight: 60)
+                                .padding(.horizontal, 20)
+                                .id(currentInstruction)
+                                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                                .animation(.easeInOut(duration: 0.3), value: currentInstruction)
+                        }
+                    } else {
+                        Spacer().frame(height: 60)
+                    }
+                    
+                    // Breathing circle with progress ring and countdown
                     ZStack {
-                        // Outer ring
+                        // Background ring
                         Circle()
-                            .stroke(Color.lavenderMist.opacity(0.2), lineWidth: 4)
-                            .frame(width: 250, height: 250)
+                            .stroke(Color.lavenderMist.opacity(0.2), lineWidth: 8)
+                            .frame(width: 240, height: 240)
                         
-                        // Animated circle
+                        // Progress ring
+                        if isActive && breathPhase != .complete && breathPhase != .ready {
+                            Circle()
+                                .trim(from: 0, to: phaseProgress)
+                                .stroke(
+                                    LinearGradient(
+                                        colors: [Color.lavenderMist, Color.lavenderMist.opacity(0.6)],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    ),
+                                    style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                                )
+                                .frame(width: 240, height: 240)
+                                .rotationEffect(.degrees(-90))
+                                .animation(.linear(duration: 0.1), value: phaseProgress)
+                        }
+                        
+                        // Animated breathing circle
                         Circle()
                             .fill(
                                 RadialGradient(
@@ -540,35 +638,55 @@ struct BreathingExerciseSheet: View {
                             .frame(width: 200, height: 200)
                             .scaleEffect(circleScale)
                         
-                        // Phase text
-                        VStack(spacing: 8) {
-                            Text(breathPhase.rawValue)
-                                .font(.titleMedium)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.primary)
-                            
-                            if isActive && breathPhase != .complete {
-                                Text("Cycle \(cycleCount + 1) of 4")
-                                    .font(.caption)
-                                    .foregroundColor(.primary)
+                        // Center content
+                        if breathPhase == .ready {
+                            // Tap hint
+                            VStack(spacing: 8) {
+                                Image(systemName: "hand.tap.fill")
+                                    .font(.system(size: 40))
+                                    .foregroundColor(.primary.opacity(0.6))
+                                Text("Tap to begin")
+                                    .font(.callout)
+                                    .foregroundColor(.primary.opacity(0.6))
                             }
+                        } else if breathPhase == .complete {
+                            // Completion checkmark
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 60))
+                                .foregroundColor(.green)
+                        } else if isActive {
+                            // Countdown timer
+                            Text("\(secondsRemaining)")
+                                .font(.system(size: 72, weight: .thin, design: .rounded))
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 2)
+                                .contentTransition(.numericText())
+                                .animation(.easeInOut(duration: 0.2), value: secondsRemaining)
                         }
                     }
                     .onTapGesture {
-                        if !isActive {
+                        if !isActive && breathPhase != .complete {
                             startExercise()
                         }
                     }
                     
-                    // Instructions
-                    if let steps = exercise.steps, !isActive {
+                    // Cycle/Step counter below circle
+                    if isActive && breathPhase != .complete && breathPhase != .ready {
+                        Text(cycleLabel)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 8)
+                    }
+                    
+                    // Instructions card (only when not active)
+                    if let steps = exercise.steps, !isActive && breathPhase == .ready {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Instructions")
                                 .font(.bodyMedium)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.primary)
                             
-                            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                            ForEach(Array(steps.prefix(4).enumerated()), id: \.offset) { index, step in
                                 HStack(alignment: .top, spacing: 12) {
                                     Text("\(index + 1)")
                                         .font(.caption)
@@ -591,22 +709,20 @@ struct BreathingExerciseSheet: View {
                     
                     Spacer()
                     
-                    // Start/Stop button
-                    Button(action: {
-                        if isActive {
-                            stopExercise()
-                        } else {
-                            startExercise()
+                    // Stop button (only when active)
+                    if isActive {
+                        Button(action: { stopExercise() }) {
+                            HStack {
+                                Image(systemName: "stop.fill")
+                                Text("Stop")
+                            }
                         }
-                    }) {
-                        HStack {
-                            Image(systemName: isActive ? "stop.fill" : "play.fill")
-                            Text(isActive ? "Stop" : "Begin Exercise")
-                        }
+                        .buttonStyle(PrimaryButtonStyle(color: .coralPink))
+                        .padding(.horizontal, 40)
+                        .padding(.bottom, 30)
+                    } else {
+                        Spacer().frame(height: 60)
                     }
-                    .buttonStyle(PrimaryButtonStyle(color: isActive ? .coralPink : .lavenderMist))
-                    .padding(.horizontal, 40)
-                    .padding(.bottom, 30)
                 }
             }
             .navigationTitle(exercise.title)
@@ -617,12 +733,10 @@ struct BreathingExerciseSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         stopExercise()
-                        // If user started the exercise but hasn't recorded completion, count it
                         if hasStartedExercise && !hasRecordedCompletion {
                             hasRecordedCompletion = true
                             onComplete?()
                         }
-                        // Call onDismiss to trigger post-check logic, then dismiss
                         onDismiss()
                     }
                 }
@@ -634,64 +748,259 @@ struct BreathingExerciseSheet: View {
         isActive = true
         hasStartedExercise = true
         cycleCount = 0
-        runBreathingCycle()
+        groundingStep = 0
+        
+        // Choose the right breathing pattern
+        if exercise.title.contains("4-7-8") {
+            run478BreathingCycle()
+        } else if exercise.title.contains("Grounding") {
+            runGroundingBreathCycle()
+        } else {
+            runBoxBreathingCycle()
+        }
     }
     
-    func runBreathingCycle() {
+    // MARK: - Box Breathing (4-4-4-4)
+    func runBoxBreathingCycle() {
         guard isActive else { return }
         
-        // Breathe in
-        breathPhase = .breatheIn
-        withAnimation(.easeInOut(duration: 4)) {
-            circleScale = 1.0
+        // Phase 1: Breathe in (4s)
+        withAnimation(.easeInOut(duration: 0.3)) {
+            breathPhase = .breatheIn
+            customInstruction = ""
+        }
+        startCountdown(seconds: 4) {
+            withAnimation(.easeInOut(duration: 4)) {
+                circleScale = 1.0
+            }
         }
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
             guard self.isActive else { return }
             
-            // Hold
-            self.breathPhase = .hold
+            // Phase 2: Hold (4s)
+            withAnimation(.easeInOut(duration: 0.3)) {
+                self.breathPhase = .hold
+            }
+            self.startCountdown(seconds: 4)
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
                 guard self.isActive else { return }
                 
-                // Breathe out
-                self.breathPhase = .breatheOut
-                withAnimation(.easeInOut(duration: 4)) {
-                    self.circleScale = 0.6
+                // Phase 3: Breathe out (4s)
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    self.breathPhase = .breatheOut
+                }
+                self.startCountdown(seconds: 4) {
+                    withAnimation(.easeInOut(duration: 4)) {
+                        self.circleScale = 0.6
+                    }
                 }
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
                     guard self.isActive else { return }
                     
-                    // Hold empty
-                    self.breathPhase = .holdEmpty
+                    // Phase 4: Hold empty (4s)
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        self.breathPhase = .holdEmpty
+                    }
+                    self.startCountdown(seconds: 4)
                     
                     DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
                         guard self.isActive else { return }
-                        
-                        self.cycleCount += 1
-                        
-                        if self.cycleCount >= 4 {
-                            self.breathPhase = .complete
-                            self.isActive = false
-                            // Record completion only once
-                            if !self.hasRecordedCompletion {
-                                self.hasRecordedCompletion = true
-                                self.onComplete?()
-                            }
-                        } else {
-                            self.runBreathingCycle()
-                        }
+                        self.completeCycle()
                     }
                 }
             }
         }
     }
     
+    // MARK: - 4-7-8 Relaxation
+    func run478BreathingCycle() {
+        guard isActive else { return }
+        
+        // First cycle starts with exhale
+        if cycleCount == 0 {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                breathPhase = .exhaleFirst
+                customInstruction = "Exhale completely"
+            }
+            startCountdown(seconds: 3) {
+                withAnimation(.easeInOut(duration: 3)) {
+                    circleScale = 0.5
+                }
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                guard self.isActive else { return }
+                self.run478MainCycle()
+            }
+        } else {
+            run478MainCycle()
+        }
+    }
+    
+    func run478MainCycle() {
+        guard isActive else { return }
+        
+        // Phase 1: Inhale through nose (4s)
+        withAnimation(.easeInOut(duration: 0.3)) {
+            breathPhase = .breatheIn
+            customInstruction = "Inhale through your nose"
+        }
+        startCountdown(seconds: 4) {
+            withAnimation(.easeInOut(duration: 4)) {
+                circleScale = 1.0
+            }
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+            guard self.isActive else { return }
+            
+            // Phase 2: Hold (7s)
+            withAnimation(.easeInOut(duration: 0.3)) {
+                self.breathPhase = .hold
+                self.customInstruction = "Hold your breath"
+            }
+            self.startCountdown(seconds: 7)
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
+                guard self.isActive else { return }
+                
+                // Phase 3: Exhale through mouth (8s)
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    self.breathPhase = .breatheOut
+                    self.customInstruction = "Exhale through your mouth"
+                }
+                self.startCountdown(seconds: 8) {
+                    withAnimation(.easeInOut(duration: 8)) {
+                        self.circleScale = 0.5
+                    }
+                }
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                    guard self.isActive else { return }
+                    self.completeCycle()
+                }
+            }
+        }
+    }
+    
+    // MARK: - Grounding Breath (Mindfulness steps)
+    func runGroundingBreathCycle() {
+        guard isActive else { return }
+        
+        let groundingSteps: [(instruction: String, duration: Int, scale: CGFloat)] = [
+            ("Feel your feet firmly on the ground", 5, 0.7),
+            ("Notice 3 things you can see", 6, 0.8),
+            ("Breathe in deeply...", 4, 1.0),
+            ("Hold gently...", 3, 1.0),
+            ("Breathe out slowly...", 5, 0.6),
+            ("Notice 2 things you can hear", 5, 0.7),
+            ("Take one more deep breath in", 4, 1.0),
+            ("Release and relax", 4, 0.6)
+        ]
+        
+        guard groundingStep < groundingSteps.count else {
+            // All steps complete
+            withAnimation(.easeInOut(duration: 0.3)) {
+                breathPhase = .complete
+                customInstruction = ""
+            }
+            isActive = false
+            if !hasRecordedCompletion {
+                hasRecordedCompletion = true
+                onComplete?()
+            }
+            return
+        }
+        
+        let step = groundingSteps[groundingStep]
+        cycleCount = groundingStep
+        
+        withAnimation(.easeInOut(duration: 0.3)) {
+            customInstruction = step.instruction
+            // Set appropriate phase for animation
+            if step.instruction.contains("Breathe in") || step.instruction.contains("breath in") {
+                breathPhase = .breatheIn
+            } else if step.instruction.contains("Breathe out") || step.instruction.contains("Release") {
+                breathPhase = .breatheOut
+            } else if step.instruction.contains("Hold") {
+                breathPhase = .hold
+            } else {
+                breathPhase = .hold  // Default for observation steps
+            }
+        }
+        
+        startCountdown(seconds: step.duration) {
+            withAnimation(.easeInOut(duration: Double(step.duration))) {
+                circleScale = step.scale
+            }
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(step.duration)) {
+            guard self.isActive else { return }
+            self.groundingStep += 1
+            self.runGroundingBreathCycle()
+        }
+    }
+    
+    // MARK: - Helpers
+    func completeCycle() {
+        cycleCount += 1
+        
+        if cycleCount >= totalCycles {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                breathPhase = .complete
+                customInstruction = ""
+            }
+            isActive = false
+            if !hasRecordedCompletion {
+                hasRecordedCompletion = true
+                onComplete?()
+            }
+        } else {
+            // Continue with next cycle
+            if exercise.title.contains("4-7-8") {
+                run478MainCycle()  // Skip initial exhale on subsequent cycles
+            } else {
+                runBoxBreathingCycle()
+            }
+        }
+    }
+    
+    func startCountdown(seconds: Int, onStart: (() -> Void)? = nil) {
+        secondsRemaining = seconds
+        phaseProgress = 0
+        onStart?()
+        
+        timer?.invalidate()
+        let totalSeconds = Double(seconds)
+        var elapsed = 0.0
+        
+        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { t in
+            elapsed += 0.1
+            phaseProgress = min(1.0, elapsed / totalSeconds)
+            
+            let newSeconds = max(0, seconds - Int(elapsed))
+            if newSeconds != secondsRemaining {
+                secondsRemaining = newSeconds
+            }
+            
+            if elapsed >= totalSeconds {
+                t.invalidate()
+            }
+        }
+    }
+    
     func stopExercise() {
+        timer?.invalidate()
+        timer = nil
         isActive = false
-        breathPhase = .ready
+        withAnimation(.easeInOut(duration: 0.3)) {
+            breathPhase = .ready
+            customInstruction = ""
+        }
         withAnimation {
             circleScale = 0.6
         }
