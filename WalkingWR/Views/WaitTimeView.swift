@@ -56,7 +56,8 @@ struct WaitTimeView: View {
                         if !viewModel.walkSession.isActive {
                             WalkingSuggestionCard(
                                 viewModel: viewModel,
-                                selectedTab: $selectedTab
+                                selectedTab: $selectedTab,
+                                showLocalRoutePicker: $showLocalRoutePicker
                             )
                         } else {
                             ActiveWalkCard(viewModel: viewModel)
@@ -498,6 +499,7 @@ struct QuickActionButton: View {
 struct WalkingSuggestionCard: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var selectedTab: Int
+    @Binding var showLocalRoutePicker: Bool
     
     // Check if we have an active clinic delay to base suggestion on
     private var hasActiveClinicDelay: Bool {
@@ -555,7 +557,10 @@ struct WalkingSuggestionCard: View {
                     Spacer()
                     
                     Button("Go") {
-                        selectedTab = 1 // Navigate to Walk tab to create local route
+                        selectedTab = 1 // Navigate to Walk tab
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            showLocalRoutePicker = true // Open the route picker
+                        }
                     }
                     .font(.bodyLarge)
                     .fontWeight(.semibold)
