@@ -285,15 +285,6 @@ struct RouteSelectionView: View {
                     }
                 }
             }
-            // Re-open picker when clinician changes (user returned to select different clinician)
-            .onChange(of: viewModel.selectedClinician?.id) { oldId, newId in
-                if oldId != nil && newId != nil && oldId != newId && !viewModel.walkSession.isActive {
-                    // Clinician changed - re-open picker with updated recommendation
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showLocalRoutePicker = true
-                    }
-                }
-            }
         }
     }
     
