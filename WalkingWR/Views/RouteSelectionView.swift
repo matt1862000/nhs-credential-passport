@@ -1032,30 +1032,53 @@ struct LocalRoutePickerSheet: View {
                 } else {
                     // Stage 1: Duration picker
                     ScrollView {
-                        VStack(spacing: 24) {
-                            // Header
-                            VStack(spacing: 12) {
+                        VStack(spacing: 20) {
+                            // Header - more prominent
+                            VStack(spacing: 16) {
                                 ZStack {
                                     Circle()
-                                        .fill(Color.tealAccent.opacity(0.2))
-                                        .frame(width: 80, height: 80)
+                                        .fill(
+                                            RadialGradient(
+                                                colors: [Color.tealAccent.opacity(0.4), Color.tealAccent.opacity(0.1)],
+                                                center: .center,
+                                                startRadius: 0,
+                                                endRadius: 60
+                                            )
+                                        )
+                                        .frame(width: 100, height: 100)
                                     
-                                    Image(systemName: "location.fill")
-                                        .font(.system(size: 36))
-                                        .foregroundColor(.tealAccent)
+                                    Image(systemName: "figure.walk.circle.fill")
+                                        .font(.system(size: 48))
+                                        .foregroundStyle(Color.tealAccent)
                                 }
                                 
                                 Text("Create Local Route")
-                                    .font(.titleLarge)
-                                    .fontWeight(.bold)
+                                    .font(.system(size: 28, weight: .bold, design: .rounded))
                                     .foregroundColor(.primary)
                                 
-                                Text("We'll find nearby points of interest and create a walking route")
-                                    .font(.bodyMedium)
-                                    .foregroundColor(.secondary)
+                                // Recommendation based on delay
+                                if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
+                                    let delayMinutes = viewModel.waitTimeInfo.estimatedMinutes
+                                    let recommendedWalk = max(10, delayMinutes - 5)
+                                    
+                                    VStack(spacing: 4) {
+                                        Text("Based on your **\(delayMinutes) min** wait")
+                                            .font(.subheadline)
+                                            .foregroundColor(.secondary)
+                                        
+                                        Text("We recommend a **\(recommendedWalk) min** walk")
+                                            .font(.headline)
+                                            .foregroundColor(.tealAccent)
+                                    }
                                     .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 20)
+                                } else {
+                                    Text("Choose a duration for your walk")
+                                        .font(.subheadline)
+                                        .foregroundColor(.secondary)
+                                }
                             }
-                            .padding(.top, 20)
+                            .padding(.top, 8)
                             
                             // Duration picker
                             VStack(alignment: .leading, spacing: 12) {
@@ -1292,7 +1315,6 @@ struct LocalRoutePickerSheet: View {
                     }
                 }
             }
-            .navigationTitle("Local Route")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
