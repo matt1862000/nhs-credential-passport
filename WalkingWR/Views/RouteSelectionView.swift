@@ -285,6 +285,15 @@ struct RouteSelectionView: View {
                     }
                 }
             }
+            // Re-open picker when clinician changes (user returned to select different clinician)
+            .onChange(of: viewModel.selectedClinician?.id) { oldId, newId in
+                if oldId != nil && newId != nil && oldId != newId && !viewModel.walkSession.isActive {
+                    // Clinician changed - re-open picker with updated recommendation
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        showLocalRoutePicker = true
+                    }
+                }
+            }
         }
     }
     
@@ -1033,45 +1042,45 @@ struct LocalRoutePickerSheet: View {
                     // Stage 1: Duration picker
                     ScrollView {
                         VStack(spacing: 20) {
-                            // Header - more prominent
+                            // Header - matching design
                             VStack(spacing: 16) {
                                 ZStack {
                                     Circle()
-                                        .fill(
-                                            RadialGradient(
-                                                colors: [Color.tealAccent.opacity(0.4), Color.tealAccent.opacity(0.1)],
-                                                center: .center,
-                                                startRadius: 0,
-                                                endRadius: 60
-                                            )
-                                        )
+                                        .fill(Color.tealAccent.opacity(0.2))
                                         .frame(width: 100, height: 100)
                                     
-                                    Image(systemName: "figure.walk.circle.fill")
-                                        .font(.system(size: 48))
+                                    Image(systemName: "location.north.fill")
+                                        .font(.system(size: 44))
                                         .foregroundStyle(Color.tealAccent)
+                                        .rotationEffect(.degrees(45))
                                 }
                                 
                                 Text("Create Local Route")
                                     .font(.system(size: 28, weight: .bold, design: .rounded))
                                     .foregroundColor(.primary)
                                 
-                                // Recommendation based on delay
+                                // Recommendation card based on delay
                                 if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
                                     let delayMinutes = viewModel.waitTimeInfo.estimatedMinutes
                                     let recommendedWalk = max(10, delayMinutes - 5)
                                     
-                                    VStack(spacing: 4) {
-                                        Text("Based on your **\(delayMinutes) min** wait")
-                                            .font(.subheadline)
-                                            .foregroundColor(.secondary)
-                                        
-                                        Text("We recommend a **\(recommendedWalk) min** walk")
-                                            .font(.headline)
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "clock.badge.checkmark")
+                                            .font(.title2)
                                             .foregroundColor(.tealAccent)
+                                        
+                                        Text("Based on your **\(delayMinutes) min** wait, we recommend a **\(recommendedWalk) min** walk to get you back in time.")
+                                            .font(.subheadline)
+                                            .foregroundColor(.primary)
+                                            .multilineTextAlignment(.leading)
                                     }
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal, 20)
+                                    .padding(16)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(Color.tealAccent.opacity(0.15))
+                                    )
+                                    .padding(.horizontal, 4)
                                 } else {
                                     Text("Choose a duration for your walk")
                                         .font(.subheadline)
