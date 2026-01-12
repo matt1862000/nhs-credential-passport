@@ -27,6 +27,7 @@ struct RouteSelectionView: View {
     @State private var localRouteDuration: Int = 10
     @State private var localRouteUseCustom = false
     @State private var pendingBatchTest: PendingBatchTest = .none  // v1.6.45: Auto-run test when sheet opens
+    @State private var hasAutoOpenedPicker = false  // v1.8.11: Auto-open local route picker
     
     init(viewModel: WaitingRoomViewModel, showLocalRoutePicker: Binding<Bool> = .constant(false)) {
         self.viewModel = viewModel
@@ -271,6 +272,17 @@ struct RouteSelectionView: View {
                     let name = userInfo["locationName"] as? String ?? userInfo["name"] as? String ?? "Test Location"
                     pendingBatchTest = .singleLocation(name: name, lat: lat, lon: lon)
                     showLocalRoutePicker = true
+                }
+            }
+            // v1.8.11: Auto-open local route picker when Walk tab is selected
+            .onAppear {
+                if !hasAutoOpenedPicker && !viewModel.walkSession.isActive {
+                    hasAutoOpenedPicker = true
+                    // Small delay to ensure view is fully loaded
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        viewModel.locationService.requestCurrentLocation()
+                        showLocalRoutePicker = true
+                    }
                 }
             }
         }
@@ -1166,33 +1178,7 @@ struct LocalRoutePickerSheet: View {
                             .padding(20)
                             .cardStyle()
                             
-                            // Route info preview
-                            VStack(alignment: .leading, spacing: 12) {
-                                HStack {
-                                    Image(systemName: "arrow.triangle.2.circlepath")
-                                        .foregroundColor(.mintGreen)
-                                    Text("Circular loop route")
-                                        .font(.caption)
-                                        .foregroundColor(.mintGreen)
-                                }
-                                
-                                Text("Your route will include approximately:")
-                                    .font(.bodyMedium)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
-                                
-                                HStack(spacing: 20) {
-                                    RouteInfoItem(icon: "figure.walk", value: "~\(estimatedSteps)", label: "steps")
-                                    RouteInfoItem(icon: "arrow.triangle.swap", value: "~\(estimatedDistance)m", label: "distance")
-                                }
-                                
-                                Text("Returns you to your starting point")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(20)
-                            .cardStyle()
-                            
+                            // v1.8.11: Removed circular loop route card with steps/distance
                             
                             // Error message
                             if let error = errorMessage {
