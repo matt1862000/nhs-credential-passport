@@ -27,7 +27,6 @@ struct RouteSelectionView: View {
     @State private var localRouteDuration: Int = 10
     @State private var localRouteUseCustom = false
     @State private var pendingBatchTest: PendingBatchTest = .none  // v1.6.45: Auto-run test when sheet opens
-    @State private var hasAutoOpenedPicker = false  // v1.8.11: Auto-open local route picker
     
     init(viewModel: WaitingRoomViewModel, showLocalRoutePicker: Binding<Bool> = .constant(false)) {
         self.viewModel = viewModel
@@ -182,7 +181,6 @@ struct RouteSelectionView: View {
             }
             .sheet(isPresented: $showLocalRoutePicker, onDismiss: {
                 pendingBatchTest = .none  // Clear pending test when sheet closes
-                hasAutoOpenedPicker = false  // Reset so next tap on Walk tab re-opens picker
             }) {
                 LocalRoutePickerSheet(
                     viewModel: viewModel,
@@ -275,18 +273,7 @@ struct RouteSelectionView: View {
                     showLocalRoutePicker = true
                 }
             }
-            // v1.8.11: Auto-open local route picker when Walk tab is selected
-            .onAppear {
-                if !hasAutoOpenedPicker && !viewModel.walkSession.isActive {
-                    hasAutoOpenedPicker = true
-                    // Small delay to ensure view is fully loaded
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        viewModel.locationService.requestCurrentLocation()
-                        showLocalRoutePicker = true
-                    }
-                }
             }
-        }
     }
     
     func isRecommended(_ route: WalkingRoute) -> Bool {
