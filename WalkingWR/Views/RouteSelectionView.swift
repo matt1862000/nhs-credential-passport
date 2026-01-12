@@ -6030,7 +6030,7 @@ struct RouteExplorationLoadingView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         // Stage 1: Finding places
                         stageRow(
-                            index: 1,
+                            icon: "mappin.and.ellipse",
                             title: "Finding places nearby",
                             isComplete: displayedStageIndex >= 1,
                             isActive: displayedStageIndex == 0
@@ -6038,7 +6038,7 @@ struct RouteExplorationLoadingView: View {
                         
                         // Stage 2: Calculating routes
                         stageRow(
-                            index: 2,
+                            icon: "point.topright.arrow.triangle.backward.to.point.bottomleft.scurvepath",
                             title: "Calculating routes",
                             isComplete: displayedStageIndex >= 2,
                             isActive: displayedStageIndex == 1,
@@ -6047,7 +6047,7 @@ struct RouteExplorationLoadingView: View {
                         
                         // Stage 3: Getting directions
                         stageRow(
-                            index: 3,
+                            icon: "arrow.triangle.turn.up.right.diamond",
                             title: "Getting directions",
                             isComplete: displayedStageIndex >= 3,
                             isActive: displayedStageIndex == 2
@@ -6055,7 +6055,7 @@ struct RouteExplorationLoadingView: View {
                         
                         // Stage 4: Naming route
                         stageRow(
-                            index: 4,
+                            icon: "sparkles",
                             title: "Naming your route",
                             isComplete: displayedStageIndex >= 4,
                             isActive: displayedStageIndex == 3
@@ -6087,11 +6087,10 @@ struct RouteExplorationLoadingView: View {
                         .shadow(radius: 2)
                     }
                     
-                    // Expectation setting - v1.8.10: Dynamic text per stage
-                    Text(loadingHelpText)
+                    // Status text
+                    Text("Finding the best route for you...")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                        .animation(.easeInOut(duration: 0.25), value: displayedStageIndex)
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 30)
@@ -6148,8 +6147,9 @@ struct RouteExplorationLoadingView: View {
     // MARK: - Stage Row Helper
     
     @ViewBuilder
-    private func stageRow(index: Int, title: String, isComplete: Bool, isActive: Bool, subtitle: String? = nil) -> some View {
+    private func stageRow(icon: String, title: String, isComplete: Bool, isActive: Bool, subtitle: String? = nil) -> some View {
         HStack(spacing: 12) {
+            // Status indicator (checkmark or spinner)
             if isComplete {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
@@ -6164,9 +6164,17 @@ struct RouteExplorationLoadingView: View {
                     .font(.title3)
             }
             
+            // Stage icon
+            Image(systemName: icon)
+                .foregroundColor(isComplete ? .green : (isActive ? .tealAccent : .secondary.opacity(0.5)))
+                .font(.subheadline)
+                .frame(width: 20)
+            
+            // Title and subtitle
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.subheadline)
+                    .fontWeight(isActive ? .semibold : .regular)
                     .foregroundColor(isComplete ? .secondary : (isActive ? .primary : .secondary))
                 
                 if let subtitle = subtitle {
