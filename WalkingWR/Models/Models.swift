@@ -1323,7 +1323,7 @@ extension WellbeingContent {
     static let breathingExercises: [WellbeingContent] = [
         WellbeingContent(
             title: "Box Breathing",
-            description: "A calming technique used by Navy SEALs to reduce stress.",
+            description: "A Navy SEAL technique for calm.",
             icon: "square",
             duration: 60,
             steps: [
@@ -1336,7 +1336,7 @@ extension WellbeingContent {
         ),
         WellbeingContent(
             title: "4-7-8 Relaxation",
-            description: "Dr. Andrew Weil's relaxation breath for anxiety relief.",
+            description: "Relaxation breath for anxiety relief.",
             icon: "wind",
             duration: 90,
             steps: [
@@ -1349,7 +1349,7 @@ extension WellbeingContent {
         ),
         WellbeingContent(
             title: "Grounding Breath",
-            description: "Connect with the present moment through mindful breathing.",
+            description: "Mindful breathing for presence.",
             icon: "leaf.fill",
             duration: 120,
             steps: [
