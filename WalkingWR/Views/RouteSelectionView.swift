@@ -1588,17 +1588,28 @@ struct LocalRoutePickerSheet: View {
     func generateRoute() {
         let generateStartTime = Date()
         
+        // Immediate logging to detect button tap
+        print("")
+        print("═══════════════════════════════════════════════════════════")
+        print("🔘 BUTTON TAPPED - generateRoute() called at \(Date())")
+        print("═══════════════════════════════════════════════════════════")
+        print("   isGenerating (before): \(isGenerating)")
+        print("   showLoadingScreen (before): \(showLoadingScreen)")
+        print("   showMapPreview (before): \(showMapPreview)")
+        print("   selectedDuration: \(selectedDuration)min")
+        print("   locationService.currentLocation: \(locationService.currentLocation != nil ? "available" : "nil")")
+        
         isGenerating = true
         routeGenerationComplete = false  // v1.8.5: Reset for new generation
         errorMessage = nil
         mapsService.resetRouteAttempts()
         
+        print("   isGenerating (after): \(isGenerating)")
+        
         // v1.8.3: Don't set showLoadingScreen here - only set it on cache MISS
         // This prevents showing loading screen when we have cached routes
         
-        print("═══════════════════════════════════════════════════════════")
         print("🚀 GENERATE ROUTE START - \(selectedDuration)min")
-        print("═══════════════════════════════════════════════════════════")
         
         guard let userLocation = locationService.currentLocation else {
             print("❌ No user location available")
@@ -1609,49 +1620,63 @@ struct LocalRoutePickerSheet: View {
         }
         print("📍 Location: (\(String(format: "%.5f", userLocation.coordinate.latitude)), \(String(format: "%.5f", userLocation.coordinate.longitude)))")
         
-        // Check location limit before generating (only if not already cached)
-        let cacheService = POICacheService.shared
-        if cacheService.getCachedPOIs(near: userLocation.coordinate) == nil {
-            print("📦 No cached POIs for this location")
-            // No cached POIs - would need a new slot
-            if !cacheService.canAddLocation(at: userLocation.coordinate) {
-                showLocationLimitAlert = true
-                print("🔒 Location limit reached - showing upgrade prompt")
-                isGenerating = false
-                showLoadingScreen = false
-                routeGenerationComplete = false
-                return
-            }
-        } else {
-            print("📦 POIs already cached for this location")
-        }
-        
-        print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting generation...")
-        
+        // v1.8.14: Move all cache checks into async Task to prevent main thread blocking
+        // This allows the button to show "Finding places..." immediately
         if mapsService.hasAPIKey {
             // Use Google APIs for smart routing
             Task {
+                // v1.8.14: Check location limit INSIDE Task to prevent main thread blocking
+                let cacheService = POICacheService.shared
+                let hasCachedPOIs = cacheService.getCachedPOIs(near: userLocation.coordinate) != nil
+                
+                if !hasCachedPOIs {
+                    print("📦 No cached POIs for this location")
+                    // No cached POIs - would need a new slot
+                    if !cacheService.canAddLocation(at: userLocation.coordinate) {
+                        await MainActor.run {
+                            showLocationLimitAlert = true
+                            print("🔒 Location limit reached - showing upgrade prompt")
+                            isGenerating = false
+                            showLoadingScreen = false
+                            routeGenerationComplete = false
+                        }
+                        return
+                    }
+                } else {
+                    print("📦 POIs already cached for this location")
+                }
+                
+                print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting generation...")
+                
                 // v1.8.7: Start loading screen Task IMMEDIATELY (before cache check)
                 // This ensures loading screen shows even if cache check hangs
                 _ = Task {
                     try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
                     await MainActor.run {
+                        print("⏳ 300ms delay complete - checking if should show loading screen...")
+                        print("   isGenerating: \(isGenerating), showMapPreview: \(showMapPreview)")
                         if isGenerating && !showMapPreview {  // Only show if still generating and not already showing preview
+                            print("📺 SHOWING LOADING SCREEN")
                             showLoadingScreen = true
+                        } else {
+                            print("📺 NOT showing loading screen (already done or preview visible)")
                         }
                     }
                 }
                 
                 // CHECK CACHE FIRST (with movement detection)
+                print("🔍 Checking for cached routes...")
                 let shouldUseCache: Bool
                 if let preGenLocation = preGeneratedAtLocation {
                     let distanceMoved = distanceBetweenCoordinates(userLocation.coordinate, preGenLocation)
                     shouldUseCache = distanceMoved <= movementThresholdMeters
+                    print("   preGeneratedAtLocation exists, distanceMoved: \(Int(distanceMoved))m")
                     if !shouldUseCache {
                         print("📍 User moved \(Int(distanceMoved))m (>\(Int(movementThresholdMeters))m) - skipping cache, regenerating fresh")
                     }
                 } else {
                     shouldUseCache = true  // No pre-gen location yet, check cache anyway
+                    print("   No preGeneratedAtLocation, will check cache")
                 }
                 
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Checking route cache...")
