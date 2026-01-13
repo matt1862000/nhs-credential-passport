@@ -956,15 +956,17 @@ class GoogleMapsService: ObservableObject {
             let googleCount = mergedResults.count
             
             // Add Apple (check for duplicates by name/location)
-            // v1.6.47: Fixed overly aggressive 50m dedup - distinct places can be close in village centers
-            // Only dedupe if: (a) exact same name, OR (b) very close (<20m) AND similar names
+            // v1.6.47: Correct deduplication rules:
+            // - Same name AND within 50m → dedupe (actual duplicate from different source)
+            // - Very close (<20m) regardless of name → dedupe (same physical location)
+            // - Otherwise → keep as distinct POI
             var appleAdded = 0
             for poi in applePOIs {
                 let isDuplicate = mergedResults.contains { existing in
-                    let exactNameMatch = existing.name.lowercased() == poi.name.lowercased()
-                    let veryClose = distanceBetween(existing.coordinate, poi.coordinate) < 20
-                    let similarNames = namesAreSimilar(existing.name, poi.name)
-                    return exactNameMatch || (veryClose && similarNames)
+                    let distance = distanceBetween(existing.coordinate, poi.coordinate)
+                    let sameNameAndClose = existing.name.lowercased() == poi.name.lowercased() && distance < 50
+                    let veryClose = distance < 20  // Same physical location regardless of name
+                    return sameNameAndClose || veryClose
                 }
                 if !isDuplicate {
                     mergedResults.append(poi)
@@ -976,10 +978,10 @@ class GoogleMapsService: ObservableObject {
             var osmAdded = 0
             for poi in osmPOIs {
                 let isDuplicate = mergedResults.contains { existing in
-                    let exactNameMatch = existing.name.lowercased() == poi.name.lowercased()
-                    let veryClose = distanceBetween(existing.coordinate, poi.coordinate) < 20
-                    let similarNames = namesAreSimilar(existing.name, poi.name)
-                    return exactNameMatch || (veryClose && similarNames)
+                    let distance = distanceBetween(existing.coordinate, poi.coordinate)
+                    let sameNameAndClose = existing.name.lowercased() == poi.name.lowercased() && distance < 50
+                    let veryClose = distance < 20  // Same physical location regardless of name
+                    return sameNameAndClose || veryClose
                 }
                 if !isDuplicate {
                     mergedResults.append(poi)
