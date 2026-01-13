@@ -5057,6 +5057,17 @@ class GoogleMapsService: ObservableObject {
                 }
             }
             
+            // v1.8.11: SHUFFLE top candidates for VARIETY across sessions
+            // Without this, the same "best" POIs are always selected first, producing identical routes
+            // We keep all candidates (quality maintained) but randomize order of top picks
+            if candidatesForCount.count > 5 {
+                let shuffleCount = min(12, candidatesForCount.count)  // Shuffle top 12 candidates
+                var topCandidates = Array(candidatesForCount.prefix(shuffleCount))
+                topCandidates.shuffle()
+                candidatesForCount = topCandidates + Array(candidatesForCount.dropFirst(shuffleCount))
+                print("🎲 Shuffled top \(shuffleCount) candidates for variety")
+            }
+            
             print("🗺️ --- Trying \(waypointCount) waypoint(s) (ideal segment: \(idealSegmentDistance)m) ---")
             
             guard candidatesForCount.count >= waypointCount else {

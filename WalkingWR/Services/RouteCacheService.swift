@@ -351,8 +351,11 @@ class RouteCacheService {
     
     /// Clear all cached routes
     func clearCache() {
+        let beforeStats = getCacheStats()
         UserDefaults.standard.removeObject(forKey: cacheKey)
-        print("📦 Route Cache: Cleared")
+        print("📦 ═══════════════════════════════════════════════════════════")
+        print("📦 CACHE CLEARED! Removed \(beforeStats.totalRoutes) routes from \(beforeStats.routeSets) sets")
+        print("📦 ═══════════════════════════════════════════════════════════")
     }
     
     /// Merge new routes into existing cache (smart quality-based update)
@@ -378,11 +381,22 @@ class RouteCacheService {
         var replaced = 0
         var skipped = 0
         
-        print("📦 Merging \(routes.count) new routes into cache (existing: \(existingRoutes.count), max: \(maxRoutesPerDuration))...")
+        print("📦 ═══════════════════════════════════════════════════════════")
+        print("📦 MERGE START: \(routes.count) new routes → cache (existing: \(existingRoutes.count), max: \(maxRoutesPerDuration))")
+        for (i, r) in routes.enumerated() {
+            let pois = r.places.map { $0.name }.joined(separator: " → ")
+            print("📦   New[\(i+1)]: \(r.durationSeconds/60)min - \(pois)")
+        }
+        for (i, r) in existingRoutes.enumerated() {
+            let pois = r.places.map { $0.name }.joined(separator: " → ")
+            print("📦   Existing[\(i+1)]: \(r.durationMinutes)min (skip:\(r.skipCount)) - \(pois)")
+        }
+        print("📦 ───────────────────────────────────────────────────────────")
         
         for (index, route) in routes.enumerated() {
             let newPlaceIds = Set(route.places.map { $0.placeId })
             let routeName = names.indices.contains(index) ? (names[index] ?? "Route \(index + 1)") : "Route \(index + 1)"
+            let poiNames = route.places.map { $0.name }.joined(separator: " → ")
             
             // Find existing route with highest overlap
             var highestOverlap = 0.0
@@ -434,17 +448,17 @@ class RouteCacheService {
                     let oldName = existingRoutes[replaceIdx].name ?? "Unnamed"
                     existingRoutes[replaceIdx] = newCachedRoute
                     replaced += 1
-                    print("   🔄 '\(routeName)' replaced '\(oldName)' (quality \(Int(newQuality)) > \(Int(existingQuality)), \(Int(highestOverlap * 100))% overlap)")
+                    print("📦   🔄 '\(routeName)' (\(poiNames)) REPLACED '\(oldName)' (quality \(Int(newQuality)) > \(Int(existingQuality)), \(Int(highestOverlap * 100))% overlap)")
                 } else {
                     skipped += 1
-                    print("   ⏭️ '\(routeName)' skipped (quality \(Int(newQuality)) ≤ \(Int(existingQuality)))")
+                    print("📦   ⏭️ '\(routeName)' (\(poiNames)) SKIPPED - lower quality (\(Int(newQuality)) ≤ \(Int(existingQuality)))")
                 }
             } else {
                 // Unique route - add if under limit, or replace worst if better
                 if existingRoutes.count < maxRoutesPerDuration {
                     existingRoutes.append(newCachedRoute)
                     added += 1
-                    print("   ➕ '\(routeName)' added (quality: \(Int(newQuality)), overlap: \(Int(highestOverlap * 100))%)")
+                    print("📦   ➕ '\(routeName)' (\(poiNames)) ADDED (quality: \(Int(newQuality)), overlap: \(Int(highestOverlap * 100))%)")
                 } else {
                     // At limit - find worst quality route and replace if new is better
                     var worstIndex = 0
@@ -462,10 +476,10 @@ class RouteCacheService {
                         let oldName = existingRoutes[worstIndex].name ?? "Unnamed"
                         existingRoutes[worstIndex] = newCachedRoute
                         replaced += 1
-                        print("   🔄 '\(routeName)' replaced worst '\(oldName)' (quality \(Int(newQuality)) > \(Int(worstQuality)))")
+                        print("📦   🔄 '\(routeName)' (\(poiNames)) REPLACED worst '\(oldName)' (quality \(Int(newQuality)) > \(Int(worstQuality)))")
                     } else {
                         skipped += 1
-                        print("   ⏭️ '\(routeName)' skipped (at limit, quality \(Int(newQuality)) ≤ worst \(Int(worstQuality)))")
+                        print("📦   ⏭️ '\(routeName)' (\(poiNames)) SKIPPED - at limit (quality \(Int(newQuality)) ≤ worst \(Int(worstQuality)))")
                     }
                 }
             }
@@ -494,7 +508,15 @@ class RouteCacheService {
         
         saveCache(cached)
         let skippedText = skipped > 0 ? ", \(skipped) skipped (lower quality)" : ""
-        print("📦 Route Cache: Merged \(routes.count) routes → \(added) added, \(replaced) replaced\(skippedText) (total: \(existingRoutes.count))")
+        print("📦 ───────────────────────────────────────────────────────────")
+        print("📦 MERGE COMPLETE: \(added) added, \(replaced) replaced\(skippedText)")
+        print("📦 Final cache (\(existingRoutes.count) routes):")
+        for (i, r) in existingRoutes.enumerated() {
+            let pois = r.places.map { $0.name }.joined(separator: " → ")
+            let quality = Int(r.qualityScore(targetDurationMinutes: roundedDuration))
+            print("📦   [\(i+1)] \(r.name ?? "Unnamed") - \(r.durationMinutes)min (quality:\(quality)) - \(pois)")
+        }
+        print("📦 ═══════════════════════════════════════════════════════════")
         
         return (added, replaced)
     }
