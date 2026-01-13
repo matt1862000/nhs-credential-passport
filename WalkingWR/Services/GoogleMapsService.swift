@@ -956,11 +956,15 @@ class GoogleMapsService: ObservableObject {
             let googleCount = mergedResults.count
             
             // Add Apple (check for duplicates by name/location)
+            // v1.6.47: Fixed overly aggressive 50m dedup - distinct places can be close in village centers
+            // Only dedupe if: (a) exact same name, OR (b) very close (<20m) AND similar names
             var appleAdded = 0
             for poi in applePOIs {
                 let isDuplicate = mergedResults.contains { existing in
-                    existing.name.lowercased() == poi.name.lowercased() ||
-                    distanceBetween(existing.coordinate, poi.coordinate) < 50
+                    let exactNameMatch = existing.name.lowercased() == poi.name.lowercased()
+                    let veryClose = distanceBetween(existing.coordinate, poi.coordinate) < 20
+                    let similarNames = namesAreSimilar(existing.name, poi.name)
+                    return exactNameMatch || (veryClose && similarNames)
                 }
                 if !isDuplicate {
                     mergedResults.append(poi)
@@ -972,8 +976,10 @@ class GoogleMapsService: ObservableObject {
             var osmAdded = 0
             for poi in osmPOIs {
                 let isDuplicate = mergedResults.contains { existing in
-                    existing.name.lowercased() == poi.name.lowercased() ||
-                    distanceBetween(existing.coordinate, poi.coordinate) < 50
+                    let exactNameMatch = existing.name.lowercased() == poi.name.lowercased()
+                    let veryClose = distanceBetween(existing.coordinate, poi.coordinate) < 20
+                    let similarNames = namesAreSimilar(existing.name, poi.name)
+                    return exactNameMatch || (veryClose && similarNames)
                 }
                 if !isDuplicate {
                     mergedResults.append(poi)
@@ -6282,6 +6288,32 @@ class GoogleMapsService: ObservableObject {
         let loc1 = CLLocation(latitude: c1.latitude, longitude: c1.longitude)
         let loc2 = CLLocation(latitude: c2.latitude, longitude: c2.longitude)
         return loc1.distance(from: loc2)
+    }
+    
+    /// Check if two POI names are similar (likely the same place, different naming)
+    /// v1.6.47: Used for deduplication - only dedupe very close POIs if names are similar
+    private func namesAreSimilar(_ name1: String, _ name2: String) -> Bool {
+        let n1 = name1.lowercased()
+        let n2 = name2.lowercased()
+        
+        // Exact match
+        if n1 == n2 { return true }
+        
+        // One contains the other (e.g., "The Star Inn" vs "Star Inn")
+        if n1.contains(n2) || n2.contains(n1) { return true }
+        
+        // Common prefix of at least 5 characters (e.g., "Kirkhamgate Fisheries" vs "Kirkhamgate Fish Shop")
+        let minPrefixLength = 5
+        let maxPrefixCheck = min(n1.count, n2.count, 15)
+        for length in stride(from: maxPrefixCheck, through: minPrefixLength, by: -1) {
+            let prefix1 = String(n1.prefix(length))
+            let prefix2 = String(n2.prefix(length))
+            if prefix1 == prefix2 {
+                return true
+            }
+        }
+        
+        return false
     }
     
     var hasAPIKey: Bool {
