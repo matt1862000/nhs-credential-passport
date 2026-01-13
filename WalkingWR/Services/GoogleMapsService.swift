@@ -4067,7 +4067,8 @@ class GoogleMapsService: ObservableObject {
         useSystematicSelection: Bool = false,
         expandedSearch: Bool = false,
         preferredDirection: RouteDirection? = nil,  // Try to generate route in this direction
-        useEndpointFirst: Bool = false  // NEW: Use single endpoint approach (better for Route 1)
+        useEndpointFirst: Bool = false,  // Use single endpoint approach (better for Route 1)
+        preferMultiWaypoint: Bool = false  // v1.6.49: Force 2+ waypoints for variety (routes 2-4)
     ) async throws -> GeneratedRoute {
         await MainActor.run { isLoading = true }
         defer { Task { @MainActor in isLoading = false } }
@@ -4919,7 +4920,15 @@ class GoogleMapsService: ObservableObject {
         // ENFORCE MINIMUM WAYPOINTS per tier to ensure distinct routes
         // This prevents 15min routes from using the same 1-waypoint as 10min
         // SAFETY: Never let minWaypoints exceed standardMaxWaypoints (prevents crash with few POIs)
-        let idealMinWaypoints = max(minWaypointsForTier, quickMode ? max(1, idealWaypoints / 2) : max(1, idealWaypoints - 2))
+        var idealMinWaypoints = max(minWaypointsForTier, quickMode ? max(1, idealWaypoints / 2) : max(1, idealWaypoints - 2))
+        
+        // v1.6.49: Force multi-waypoint for variety (applied to routes 2-4)
+        // For 20+min routes, require at least 2 waypoints to create more interesting multi-POI routes
+        if preferMultiWaypoint && targetDurationMinutes >= 20 {
+            idealMinWaypoints = max(idealMinWaypoints, 2)
+            print("🗺️ 📋 Multi-waypoint preference active: forcing min 2 waypoints")
+        }
+        
         let minWaypoints = min(idealMinWaypoints, standardMaxWaypoints)  // Clamp to available max
         print("🗺️ Waypoint range: \(minWaypoints) to \(standardMaxWaypoints) (extended: \(extendedMaxWaypoints))")
         
@@ -5242,7 +5251,13 @@ class GoogleMapsService: ObservableObject {
                 }
             }
             
-            print("🗺️ ✓ SUCCESS! Selected: \(finalMins)min, \(selected.places.count) POIs (target: \(targetDurationMinutes)min)")
+            // v1.6.49: Clear summary logging for easy copy/paste
+            let poiNames = selected.places.map { $0.name }.joined(separator: " → ")
+            let distanceKm = String(format: "%.1f", Double(selected.distanceMeters) / 1000.0)
+            print("═══════════════════════════════════════════════════════════")
+            print("📍 ROUTE GENERATED: \(finalMins)min | \(selected.places.count) waypoints | \(distanceKm)km")
+            print("📍 POIs: \(poiNames)")
+            print("═══════════════════════════════════════════════════════════")
             
             // Mark POIs as recently used for variety in future routes
             for place in selected.places {
