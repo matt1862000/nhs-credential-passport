@@ -4241,7 +4241,13 @@ class GoogleMapsService: ObservableObject {
         
         if let prefetched = prefetchedPOIs, !prefetched.isEmpty {
             // Use pre-fetched POIs - skip API call!
-            places = prefetched
+            // v1.6.48: Apply safety net filter to catch restricted POIs from old cache
+            let filtered = prefetched.filter { !isRestrictedPOI($0) }
+            let restrictedCount = prefetched.count - filtered.count
+            if restrictedCount > 0 {
+                print("🏫 Filtered \(restrictedCount) restricted POIs from prefetch (playcare/nursery/playground)")
+            }
+            places = filtered
             print("🗺️ ⚡ Using \(places.count) pre-fetched POIs (faster!)")
         } else {
             // Fetch POIs now
