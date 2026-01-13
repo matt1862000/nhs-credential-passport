@@ -4899,7 +4899,8 @@ class GoogleMapsService: ObservableObject {
         var bestFallbackDiff = Int.max
         
         // PRIORITY: 1) Timing within tolerance  2) Maximum POIs
-        let quickMode = !useSystematicSelection && !expandedSearch
+        // v1.8.11: preferMultiWaypoint disables quickMode to try more waypoint combinations
+        let quickMode = !useSystematicSelection && !expandedSearch && !preferMultiWaypoint
         
         // Calculate appropriate waypoint counts based on target duration
         // Waypoints should be SPACED ~5 mins of walking apart (user spends ~2 min at each, not counted in route time)
@@ -4964,6 +4965,9 @@ class GoogleMapsService: ObservableObject {
         } else if expandedSearch || useSystematicSelection {
             maxTotalAttempts = 20  // Retry mode: more thorough
             print("🗺️ Will try waypoint counts: \(waypointCountsToTry) (most first for max POIs)")
+        } else if preferMultiWaypoint {
+            maxTotalAttempts = 15  // v1.8.11: More attempts for multi-waypoint preference
+            print("🗺️ 🎯 MULTI-WAYPOINT MODE: Trying \(waypointCountsToTry) waypoints (max 15 attempts)")
         } else {
             maxTotalAttempts = 10
             print("🗺️ Will try waypoint counts: \(waypointCountsToTry)")
@@ -5239,9 +5243,10 @@ class GoogleMapsService: ObservableObject {
             
             var finalMins = selected.durationSeconds / 60
             
-            // v1.6.47: ROUTE EXTENSION - If route is 80-95% of target, try adding an on-route POI
+            // v1.6.47: ROUTE EXTENSION - If route is 70-95% of target, try adding an on-route POI
+            // v1.8.11: Widened from 80-95% to 70-95% to catch more routes
             let accuracy = Double(finalMins) / Double(targetDurationMinutes)
-            if accuracy >= 0.80 && accuracy <= 0.95 {
+            if accuracy >= 0.70 && accuracy <= 0.95 {
                 print("🔧 Route is \(Int(accuracy * 100))% of target (\(finalMins)/\(targetDurationMinutes)min) - trying to extend...")
                 if let extended = await tryExtendRoute(
                     route: selected,
@@ -5628,12 +5633,13 @@ class GoogleMapsService: ObservableObject {
             return nil
         }
         
-        // Calculate current shortfall - only extend if 3+ minutes headroom
+        // Calculate current shortfall - only extend if 1+ minutes headroom
+        // v1.8.11: Reduced from 3min to 1min to enable more route extensions
         let currentMins = route.durationSeconds / 60
         let shortfallMins = targetDurationMinutes - currentMins
         
-        guard shortfallMins >= 3 else {
-            print("🔧 Only \(shortfallMins)min headroom (need 3+) - skipping extension")
+        guard shortfallMins >= 1 else {
+            print("🔧 Only \(shortfallMins)min headroom (need 1+) - skipping extension")
             return nil
         }
         
@@ -5804,10 +5810,11 @@ class GoogleMapsService: ObservableObject {
                 let timeHeadroomMinutes = timeHeadroomSeconds / 60
                 
                 // Only try extension if:
-                // - Route is undershooting (80-95% of target)
-                // - We have at least 3 minutes of headroom
+                // - Route is undershooting (70-95% of target)
+                // - We have at least 1 minute of headroom
                 // - We have available POIs to check
-                if percentOfTarget >= 80 && percentOfTarget <= 95 && timeHeadroomMinutes >= 3 && !allPlaces.isEmpty {
+                // v1.8.11: Widened from 80-95%/3min to 70-95%/1min for more extensions
+                if percentOfTarget >= 70 && percentOfTarget <= 95 && timeHeadroomMinutes >= 1 && !allPlaces.isEmpty {
                     print("🗺️ 🔍 EXTENSION CHECK: \(Int(percentOfTarget))% of target (\(timeHeadroomMinutes)min headroom)")
                     
                     // Find POIs within 200m of the existing route polyline that aren't already in the route

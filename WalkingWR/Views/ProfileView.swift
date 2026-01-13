@@ -3028,6 +3028,8 @@ struct SavedBatchTestsSection: View {
     @State private var isRunningAppleDiagnostic = false
     @State private var isRunningOSMDiagnostic = false
     @State private var isRunningGoogleDiagnostic = false
+    @State private var isRunningBatchDurationTest = false  // v1.8.11: Batch test all durations
+    @State private var isRunningMultiSiteTest = false  // v1.8.15: Multi-site batch test
     
     // Cache clearing
     @State private var didClearRouteCache = false
@@ -3074,6 +3076,40 @@ struct SavedBatchTestsSection: View {
                 }
             }
             .disabled(isRunningAppleDiagnostic)
+            
+            // Batch Test All Durations button
+            Button {
+                runBatchDurationTest()
+            } label: {
+                HStack {
+                    Image(systemName: isRunningBatchDurationTest ? "hourglass" : "clock.arrow.2.circlepath")
+                        .foregroundColor(.purple)
+                    Text(isRunningBatchDurationTest ? "Testing All Durations..." : "Batch Test All Durations")
+                        .foregroundColor(.primary)
+                    Spacer()
+                    Text("10-60 min")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .disabled(isRunningBatchDurationTest)
+            
+            // Multi-Site Batch Test button (v1.8.15)
+            Button {
+                runMultiSiteBatchTest()
+            } label: {
+                HStack {
+                    Image(systemName: isRunningMultiSiteTest ? "hourglass" : "map.fill")
+                        .foregroundColor(.orange)
+                    Text(isRunningMultiSiteTest ? "Testing Multiple Sites..." : "Multi-Site Batch Test")
+                        .foregroundColor(.primary)
+                    Spacer()
+                    Text("3 locations")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .disabled(isRunningMultiSiteTest)
             
             // Clear Route Cache button
             Button {
@@ -3343,6 +3379,297 @@ struct SavedBatchTestsSection: View {
                 // Refresh and auto-show results
                 viewState.refresh()
                 // Auto-select the most recent test to show results
+                if let latestTest = viewState.savedTests.first {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        DiagnosticViewState.shared.selectTest(latestTest)
+                    }
+                }
+            }
+        }
+    }
+    
+    // v1.8.11: Batch test all durations to verify multi-waypoint changes work across all times
+    private func runBatchDurationTest() {
+        guard let location = locationService.currentLocation?.coordinate else {
+            let errorMsg = "🧪 BATCH DURATION TEST\n❌ No location available. Please enable location services."
+            BatchTestStorage.shared.saveTest(errorMsg)
+            viewState.refresh()
+            return
+        }
+        
+        isRunningBatchDurationTest = true
+        
+        Task {
+            // v1.8.11: Pre-fetch POIs ONCE with all filters applied
+            // This ensures restricted POIs (CJ's Playcare, etc.) are excluded
+            print("🧪 Pre-fetching POIs with filters...")
+            let allPOIs = try? await GoogleMapsService.shared.findNearbyPlaces(
+                location: location,
+                radiusMeters: 3000  // Large radius for all durations
+            )
+            let poiCount = allPOIs?.count ?? 0
+            print("🧪 Found \(poiCount) filtered POIs for batch test")
+            
+            var results = """
+            ═══════════════════════════════════════════════════════════
+            🧪 BATCH DURATION TEST - All Timings
+            📍 Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))
+            📅 \(Date().formatted(date: .complete, time: .shortened))
+            📦 POIs available: \(poiCount) (filters applied)
+            ═══════════════════════════════════════════════════════════
+            
+            """
+            
+            let durations = [10, 15, 20, 25, 30, 45, 60]
+            
+            for duration in durations {
+                print("🧪 Testing \(duration)min...")
+                results += "\n───────────────────────────────────────────────────────────\n"
+                results += "⏱️ TARGET: \(duration) MINUTES\n"
+                results += "───────────────────────────────────────────────────────────\n"
+                
+                do {
+                    // Generate route without multi-waypoint preference (Route 1 style)
+                    // Use prefetched POIs with filters already applied
+                    let route1 = try await GoogleMapsService.shared.generateLocalRoute(
+                        from: location,
+                        targetDurationMinutes: duration,
+                        difficulty: nil,
+                        excludePlaceIds: [],
+                        prefetchedPOIs: allPOIs,
+                        preferMultiWaypoint: false
+                    )
+                    
+                    let route1Mins = route1.durationSeconds / 60
+                    let route1Accuracy = Int(Double(route1Mins) / Double(duration) * 100)
+                    let route1POIs = route1.places.map { $0.name }.joined(separator: " → ")
+                    results += "Route 1 (fast): \(route1Mins)min (\(route1Accuracy)%) | \(route1.places.count) waypoints\n"
+                    results += "  POIs: \(route1POIs)\n"
+                    
+                    // Generate route WITH multi-waypoint preference (Route 2+ style)
+                    // v1.8.15: Only apply preferMultiWaypoint for 30+ min routes (where it helps)
+                    let useMultiWaypoint = duration >= 30
+                    let excludeIds = Set(route1.places.map { $0.placeId })
+                    let route2 = try await GoogleMapsService.shared.generateLocalRoute(
+                        from: location,
+                        targetDurationMinutes: duration,
+                        difficulty: nil,
+                        excludePlaceIds: excludeIds,
+                        prefetchedPOIs: allPOIs,
+                        preferMultiWaypoint: useMultiWaypoint
+                    )
+                    
+                    let route2Mins = route2.durationSeconds / 60
+                    let route2Accuracy = Int(Double(route2Mins) / Double(duration) * 100)
+                    let route2POIs = route2.places.map { $0.name }.joined(separator: " → ")
+                    results += "Route 2 (multi): \(route2Mins)min (\(route2Accuracy)%) | \(route2.places.count) waypoints\n"
+                    results += "  POIs: \(route2POIs)\n"
+                    
+                    // Summary
+                    let route1IsMulti = route1.places.count >= 2
+                    let route2IsMulti = route2.places.count >= 2
+                    if route2IsMulti && !route1IsMulti {
+                        results += "  ✅ Multi-waypoint preference worked!\n"
+                    } else if route2IsMulti && route1IsMulti {
+                        results += "  ✅ Both routes are multi-waypoint\n"
+                    } else if !route2IsMulti {
+                        results += "  ⚠️ Route 2 is still single-waypoint\n"
+                    }
+                    
+                } catch {
+                    results += "❌ Error: \(error.localizedDescription)\n"
+                }
+                
+                // Small delay between tests to avoid rate limiting
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            
+            results += "\n═══════════════════════════════════════════════════════════\n"
+            results += "🏁 BATCH TEST COMPLETE\n"
+            results += "═══════════════════════════════════════════════════════════\n"
+            
+            // Copy to clipboard automatically for easy sharing
+            await MainActor.run {
+                UIPasteboard.general.string = results
+            }
+            
+            print(results)
+            
+            await MainActor.run {
+                // Save results to persistent storage
+                BatchTestStorage.shared.saveTest(results)
+                isRunningBatchDurationTest = false
+                // Refresh and auto-show results
+                viewState.refresh()
+                // Auto-select the most recent test to show results
+                if let latestTest = viewState.savedTests.first {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        DiagnosticViewState.shared.selectTest(latestTest)
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Multi-Site Batch Test (v1.8.15)
+    // Tests route generation across multiple locations: Current, S5 7AU, S11 9BF
+    private func runMultiSiteBatchTest() {
+        isRunningMultiSiteTest = true
+        
+        Task {
+            var results = """
+            ═══════════════════════════════════════════════════════════
+            🌍 MULTI-SITE BATCH TEST
+            📅 \(Date().formatted(date: .complete, time: .shortened))
+            ═══════════════════════════════════════════════════════════
+            
+            Testing locations:
+            • Current Location (Kirkhamgate)
+            • S5 7AU (Sheffield - Shiregreen)
+            • S11 9BF (Sheffield - Ecclesall)
+            
+            """
+            
+            // Define test locations
+            struct TestLocation {
+                let name: String
+                let postcode: String?
+                let coordinate: CLLocationCoordinate2D?
+            }
+            
+            var testLocations: [TestLocation] = []
+            
+            // 1. Current location
+            if let currentLoc = locationService.currentLocation?.coordinate {
+                testLocations.append(TestLocation(name: "Current Location", postcode: nil, coordinate: currentLoc))
+            }
+            
+            // 2. Geocode S5 7AU
+            let geocoder = CLGeocoder()
+            do {
+                let placemarks = try await geocoder.geocodeAddressString("S5 7AU, UK")
+                if let location = placemarks.first?.location?.coordinate {
+                    testLocations.append(TestLocation(name: "S5 7AU (Shiregreen)", postcode: "S5 7AU", coordinate: location))
+                }
+            } catch {
+                results += "⚠️ Could not geocode S5 7AU: \(error.localizedDescription)\n"
+            }
+            
+            // Small delay between geocoding requests
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            
+            // 3. Geocode S11 9BF
+            do {
+                let placemarks = try await geocoder.geocodeAddressString("S11 9BF, UK")
+                if let location = placemarks.first?.location?.coordinate {
+                    testLocations.append(TestLocation(name: "S11 9BF (Ecclesall)", postcode: "S11 9BF", coordinate: location))
+                }
+            } catch {
+                results += "⚠️ Could not geocode S11 9BF: \(error.localizedDescription)\n"
+            }
+            
+            results += "\n📍 Testing \(testLocations.count) locations\n"
+            
+            // Test durations - use fewer for multi-site to save time
+            let durations = [15, 30, 45]
+            
+            // Test each location
+            for testLoc in testLocations {
+                guard let coordinate = testLoc.coordinate else { continue }
+                
+                results += "\n\n"
+                results += "╔══════════════════════════════════════════════════════════╗\n"
+                results += "║ 📍 \(testLoc.name)\n"
+                results += "║ 📌 (\(String(format: "%.5f", coordinate.latitude)), \(String(format: "%.5f", coordinate.longitude)))\n"
+                results += "╚══════════════════════════════════════════════════════════╝\n"
+                
+                // Fetch POIs for this location
+                print("🌍 Fetching POIs for \(testLoc.name)...")
+                let allPOIs = try? await GoogleMapsService.shared.findNearbyPlaces(
+                    location: coordinate,
+                    radiusMeters: 3000
+                )
+                let poiCount = allPOIs?.count ?? 0
+                results += "📦 POIs available: \(poiCount)\n"
+                
+                // Sample some POI names
+                if let pois = allPOIs, !pois.isEmpty {
+                    let samplePOIs = pois.prefix(5).map { $0.name }.joined(separator: ", ")
+                    results += "📋 Sample POIs: \(samplePOIs)\n"
+                }
+                
+                // Test each duration
+                for duration in durations {
+                    results += "\n───────────────────────────────────────────────────────────\n"
+                    results += "⏱️ TARGET: \(duration) MINUTES\n"
+                    results += "───────────────────────────────────────────────────────────\n"
+                    
+                    do {
+                        // Route 1 (fast)
+                        let route1 = try await GoogleMapsService.shared.generateLocalRoute(
+                            from: coordinate,
+                            targetDurationMinutes: duration,
+                            difficulty: nil,
+                            excludePlaceIds: [],
+                            prefetchedPOIs: allPOIs,
+                            preferMultiWaypoint: false
+                        )
+                        
+                        let route1Mins = route1.durationSeconds / 60
+                        let route1Accuracy = Int(Double(route1Mins) / Double(duration) * 100)
+                        let route1POIs = route1.places.map { $0.name }.joined(separator: " → ")
+                        results += "Route 1 (fast): \(route1Mins)min (\(route1Accuracy)%) | \(route1.places.count) WP\n"
+                        results += "  → \(route1POIs)\n"
+                        
+                        // Route 2 (multi-waypoint for 30+ min only)
+                        let useMultiWaypoint = duration >= 30
+                        let excludeIds = Set(route1.places.map { $0.placeId })
+                        let route2 = try await GoogleMapsService.shared.generateLocalRoute(
+                            from: coordinate,
+                            targetDurationMinutes: duration,
+                            difficulty: nil,
+                            excludePlaceIds: excludeIds,
+                            prefetchedPOIs: allPOIs,
+                            preferMultiWaypoint: useMultiWaypoint
+                        )
+                        
+                        let route2Mins = route2.durationSeconds / 60
+                        let route2Accuracy = Int(Double(route2Mins) / Double(duration) * 100)
+                        let route2POIs = route2.places.map { $0.name }.joined(separator: " → ")
+                        results += "Route 2 (multi): \(route2Mins)min (\(route2Accuracy)%) | \(route2.places.count) WP\n"
+                        results += "  → \(route2POIs)\n"
+                        
+                        // Quick summary
+                        if route1.places.count >= 2 && route2.places.count >= 2 {
+                            results += "  ✅ Both multi-waypoint\n"
+                        } else if route2.places.count < 2 {
+                            results += "  ⚠️ Route 2 single-waypoint\n"
+                        }
+                        
+                    } catch {
+                        results += "❌ Error: \(error.localizedDescription)\n"
+                    }
+                    
+                    // Small delay between tests
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                }
+            }
+            
+            results += "\n\n═══════════════════════════════════════════════════════════\n"
+            results += "🏁 MULTI-SITE BATCH TEST COMPLETE\n"
+            results += "═══════════════════════════════════════════════════════════\n"
+            
+            // Copy to clipboard
+            await MainActor.run {
+                UIPasteboard.general.string = results
+            }
+            
+            print(results)
+            
+            await MainActor.run {
+                BatchTestStorage.shared.saveTest(results)
+                isRunningMultiSiteTest = false
+                viewState.refresh()
                 if let latestTest = viewState.savedTests.first {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         DiagnosticViewState.shared.selectTest(latestTest)

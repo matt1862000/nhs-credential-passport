@@ -2628,10 +2628,11 @@ struct LocalRoutePickerSheet: View {
                         shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
                     }
                     
-                    // v1.6.49: Force multi-waypoint for routes 2-4 (more interesting multi-POI routes)
-                    // Routes 5+ can have single waypoints for variety
+                    // v1.8.15: Smart multi-waypoint - only for 30+ min routes where it helps
+                    // For shorter routes (10-25min), multi-waypoint mode often produces WORSE results
+                    // because the POI pool is smaller and falls back to suboptimal single-waypoint routes
                     let currentRouteCount = await MainActor.run { allRoutes.count }
-                    let preferMulti = currentRouteCount >= 1 && currentRouteCount <= 3  // Routes 2, 3, 4
+                    let preferMulti = currentRouteCount >= 1 && currentRouteCount <= 3 && selectedDuration >= 30  // Routes 2-4, 30+ min only
                     
                     let result = try await mapsService.generateLocalRoute(
                         from: userLocation.coordinate,
