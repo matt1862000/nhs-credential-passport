@@ -2970,7 +2970,7 @@ class BatchTestStorage {
 }
 
 struct SavedBatchTestsSection: View {
-    @ObservedObject var locationService: LocationService  // v1.6.45: Need location access
+    let locationService: LocationService  // v1.6.45: Need location access (not observed to prevent sheet dismissal)
     @State private var savedTests: [SavedBatchTest] = []
     @State private var selectedTest: SavedBatchTest?
     @State private var showClearConfirmation = false
@@ -2978,18 +2978,14 @@ struct SavedBatchTestsSection: View {
     @State private var isTestRunning = false
     @Environment(\.dismiss) private var dismiss
     
-    // POI Diagnostics
+    // POI Diagnostics - results saved to BatchTestStorage
     @State private var isRunningAppleDiagnostic = false
-    @State private var appleDiagnosticResults = ""
-    @State private var showAppleDiagnosticResults = false
-    
     @State private var isRunningOSMDiagnostic = false
-    @State private var osmDiagnosticResults = ""
-    @State private var showOSMDiagnosticResults = false
-    
     @State private var isRunningGoogleDiagnostic = false
-    @State private var googleDiagnosticResults = ""
-    @State private var showGoogleDiagnosticResults = false
+    
+    // Cache clearing
+    @State private var didClearRouteCache = false
+    @State private var showRouteCacheClearConfirmation = false
     
     var body: some View {
         Section {
@@ -3031,6 +3027,37 @@ struct SavedBatchTestsSection: View {
                 }
             }
             .disabled(isRunningAppleDiagnostic)
+            
+            // Clear Route Cache button
+            Button {
+                showRouteCacheClearConfirmation = true
+            } label: {
+                HStack {
+                    Image(systemName: didClearRouteCache ? "checkmark.circle.fill" : "trash.fill")
+                        .foregroundColor(didClearRouteCache ? .green : .red)
+                    Text(didClearRouteCache ? "Route Cache Cleared!" : "Clear Route Cache")
+                        .foregroundColor(didClearRouteCache ? .green : .primary)
+                    Spacer()
+                    // Show cache stats
+                    let stats = RouteCacheService.shared.getCacheStats()
+                    Text("\(stats.totalRoutes) routes")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .disabled(didClearRouteCache)
+            .confirmationDialog("Clear Route Cache?", isPresented: $showRouteCacheClearConfirmation, titleVisibility: .visible) {
+                Button("Clear All Cached Routes", role: .destructive) {
+                    RouteCacheService.shared.clearCache()
+                    didClearRouteCache = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        didClearRouteCache = false
+                    }
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("This will remove all cached walking routes. New routes will be generated on next use.")
+            }
             
             // Copy All History button
             if !savedTests.isEmpty {
@@ -3147,102 +3174,14 @@ struct SavedBatchTestsSection: View {
             }
             Button("Cancel", role: .cancel) { }
         }
-        .sheet(isPresented: $showAppleDiagnosticResults) {
-            NavigationStack {
-                ScrollView {
-                    Text(appleDiagnosticResults)
-                        .font(.system(.caption2, design: .monospaced))
-                        .padding()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .navigationTitle("Apple Maps POI Diagnostic")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Done") {
-                            showAppleDiagnosticResults = false
-                        }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            UIPasteboard.general.string = appleDiagnosticResults
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                    }
-                }
-            }
-            .interactiveDismissDisabled()  // Prevent accidental dismissal
-            .presentationDetents([.large])
-        }
-        .sheet(isPresented: $showOSMDiagnosticResults) {
-            NavigationStack {
-                ScrollView {
-                    Text(osmDiagnosticResults)
-                        .font(.system(.caption2, design: .monospaced))
-                        .padding()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .navigationTitle("OSM POI Diagnostic")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Done") {
-                            showOSMDiagnosticResults = false
-                        }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            UIPasteboard.general.string = osmDiagnosticResults
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                    }
-                }
-            }
-            .interactiveDismissDisabled()
-            .presentationDetents([.large])
-        }
-        .sheet(isPresented: $showGoogleDiagnosticResults) {
-            NavigationStack {
-                ScrollView {
-                    Text(googleDiagnosticResults)
-                        .font(.system(.caption2, design: .monospaced))
-                        .padding()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .navigationTitle("Google POI Diagnostic")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Done") {
-                            showGoogleDiagnosticResults = false
-                        }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            UIPasteboard.general.string = googleDiagnosticResults
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                    }
-                }
-            }
-            .interactiveDismissDisabled()
-            .presentationDetents([.large])
-        }
     }
     
     // Run OSM POI diagnostic test
     private func runOSMPOIDiagnostic() {
         guard let location = locationService.currentLocation?.coordinate else {
-            osmDiagnosticResults = "❌ No location available. Please enable location services."
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                showOSMDiagnosticResults = true
-            }
+            let errorMsg = "🗺️ OSM DIAGNOSTIC\n❌ No location available. Please enable location services."
+            BatchTestStorage.shared.saveTest(errorMsg)
+            savedTests = BatchTestStorage.shared.getAllTests()
             return
         }
         
@@ -3255,11 +3194,10 @@ struct SavedBatchTestsSection: View {
             )
             
             await MainActor.run {
-                osmDiagnosticResults = results
+                // Save results to persistent storage
+                BatchTestStorage.shared.saveTest(results)
+                savedTests = BatchTestStorage.shared.getAllTests()
                 isRunningOSMDiagnostic = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    showOSMDiagnosticResults = true
-                }
             }
         }
     }
@@ -3267,10 +3205,9 @@ struct SavedBatchTestsSection: View {
     // Run Google POI diagnostic test
     private func runGooglePOIDiagnostic() {
         guard let location = locationService.currentLocation?.coordinate else {
-            googleDiagnosticResults = "❌ No location available. Please enable location services."
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                showGoogleDiagnosticResults = true
-            }
+            let errorMsg = "🔷 GOOGLE DIAGNOSTIC\n❌ No location available. Please enable location services."
+            BatchTestStorage.shared.saveTest(errorMsg)
+            savedTests = BatchTestStorage.shared.getAllTests()
             return
         }
         
@@ -3283,11 +3220,10 @@ struct SavedBatchTestsSection: View {
             )
             
             await MainActor.run {
-                googleDiagnosticResults = results
+                // Save results to persistent storage
+                BatchTestStorage.shared.saveTest(results)
+                savedTests = BatchTestStorage.shared.getAllTests()
                 isRunningGoogleDiagnostic = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    showGoogleDiagnosticResults = true
-                }
             }
         }
     }
@@ -3295,10 +3231,9 @@ struct SavedBatchTestsSection: View {
     // Run Apple Maps POI diagnostic test
     private func runApplePOIDiagnostic() {
         guard let location = locationService.currentLocation?.coordinate else {
-            appleDiagnosticResults = "❌ No location available. Please enable location services."
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                showAppleDiagnosticResults = true
-            }
+            let errorMsg = "🍎 APPLE DIAGNOSTIC\n❌ No location available. Please enable location services."
+            BatchTestStorage.shared.saveTest(errorMsg)
+            savedTests = BatchTestStorage.shared.getAllTests()
             return
         }
         
@@ -3311,11 +3246,10 @@ struct SavedBatchTestsSection: View {
             )
             
             await MainActor.run {
-                appleDiagnosticResults = results
+                // Save results to persistent storage
+                BatchTestStorage.shared.saveTest(results)
+                savedTests = BatchTestStorage.shared.getAllTests()
                 isRunningAppleDiagnostic = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    showAppleDiagnosticResults = true
-                }
             }
         }
     }

@@ -1796,7 +1796,16 @@ class GoogleMapsService: ObservableObject {
         }
         
         results += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        results += "📊 SUMMARY: \(sortedPOIs.count) POIs from OpenStreetMap\n"
+        if sortedPOIs.isEmpty {
+            results += "⚠️ NO POIs FOUND!\n"
+            results += "This could mean:\n"
+            results += "• Network connectivity issue\n"
+            results += "• All Overpass API mirrors are down\n"
+            results += "• No POIs exist in this area on OSM\n"
+            results += "\nTry again or check your internet connection.\n"
+        } else {
+            results += "📊 SUMMARY: \(sortedPOIs.count) POIs from OpenStreetMap\n"
+        }
         
         print("🗺️ 📊 DIAGNOSTIC COMPLETE: \(sortedPOIs.count) POIs from OSM")
         
@@ -1958,8 +1967,6 @@ class GoogleMapsService: ObservableObject {
         out center tags;
         """
         
-        let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        
         // Try multiple Overpass API mirrors for reliability
         let mirrors = [
             "https://overpass.kumi.systems/api/interpreter",  // Often more reliable
@@ -1968,9 +1975,7 @@ class GoogleMapsService: ObservableObject {
         ]
         
         for (index, baseUrl) in mirrors.enumerated() {
-            let urlString = "\(baseUrl)?data=\(encodedQuery)"
-        
-        guard let url = URL(string: urlString) else {
+            guard let url = URL(string: baseUrl) else {
                 print("🗺️ OSM: Invalid URL for mirror \(index + 1)")
                 continue
             }
@@ -1978,13 +1983,20 @@ class GoogleMapsService: ObservableObject {
             print("🗺️ Searching OpenStreetMap (mirror \(index + 1)/\(mirrors.count))...")
             
             do {
-                // Use a custom URLSession with longer timeout
+                // Use POST request with query in body (more reliable than GET with URL encoding)
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                // Overpass API accepts raw query in body with text/plain content type
+                request.httpBody = query.data(using: .utf8)
+                request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
+                request.timeoutInterval = 30
+                
                 let config = URLSessionConfiguration.default
-                config.timeoutIntervalForRequest = 15
-                config.timeoutIntervalForResource = 30
+                config.timeoutIntervalForRequest = 30
+                config.timeoutIntervalForResource = 60
                 let session = URLSession(configuration: config)
         
-        let (data, response) = try await session.data(from: url)
+                let (data, response) = try await session.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                     print("🗺️ OSM: Bad response from mirror \(index + 1), trying next...")

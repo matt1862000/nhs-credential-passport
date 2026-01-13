@@ -31,7 +31,7 @@ class GeminiService {
     }
     
     /// Generate both a creative route name and personalized description using AI
-    /// Falls back to privacy-safe templates if API fails or quota exceeded
+    /// Falls back to privacy-safe templates if API fails, quota exceeded, or takes >1 second
     func generateRouteContent(
         waypoints: [WaypointInfo],
         durationMinutes: Int,
@@ -39,18 +39,39 @@ class GeminiService {
         difficulty: RouteDifficulty?,
         originCoordinate: (lat: Double, lon: Double)? = nil  // For privacy filtering
     ) async -> RouteContent {
-        // Try Gemini first if API key available
+        // Try Gemini first if API key available, with 1 second timeout
         if !apiKey.isEmpty {
-            if let geminiContent = await tryGeminiGeneration(
-                waypoints: waypoints,
-                durationMinutes: durationMinutes,
-                distanceMeters: distanceMeters,
-                difficulty: difficulty
-            ) {
-                print("🤖 Gemini generated: \(geminiContent.name)")
+            let startTime = Date()
+            
+            // Create a task with timeout
+            let geminiTask = Task {
+                await tryGeminiGeneration(
+                    waypoints: waypoints,
+                    durationMinutes: durationMinutes,
+                    distanceMeters: distanceMeters,
+                    difficulty: difficulty
+                )
+            }
+            
+            // Wait up to 1 second for Gemini response
+            let timeoutTask = Task {
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                geminiTask.cancel()
+            }
+            
+            if let geminiContent = await geminiTask.value {
+                timeoutTask.cancel()
+                let elapsed = Date().timeIntervalSince(startTime)
+                print("🤖 Gemini generated: \(geminiContent.name) (in \(String(format: "%.2f", elapsed))s)")
                 return geminiContent
             }
-            print("🤖 Gemini failed, falling back to template")
+            
+            let elapsed = Date().timeIntervalSince(startTime)
+            if elapsed >= 1.0 {
+                print("🤖 Gemini timed out after \(String(format: "%.2f", elapsed))s, using local template")
+            } else {
+                print("🤖 Gemini failed, falling back to template")
+            }
         } else {
             print("🤖 No Gemini API key, using template")
         }

@@ -1755,7 +1755,9 @@ struct LocalRoutePickerSheet: View {
                             registerRouteSignature(places: cachedRoute.route.places, distanceMeters: cachedRoute.route.distanceMeters)
                         }
                         
-                        showMapPreview = true
+                        // v1.8.13: Don't show map preview immediately - let stage animations complete first
+                        // showMapPreview will be set to true when onAnimationComplete() is called
+                        // showMapPreview = true  // REMOVED - this was causing stages to be skipped
                         
                         let totalTime = Date().timeIntervalSince(generateStartTime)
                         print("═══════════════════════════════════════════════════════════")
@@ -1921,7 +1923,8 @@ struct LocalRoutePickerSheet: View {
                         // v1.8.0: Register first route's signature to prevent duplicates!
                         registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
                         
-                        showMapPreview = true
+                        // v1.8.13: Don't show map preview immediately - let stage animations complete first
+                        // showMapPreview = true  // REMOVED - this was causing stages to be skipped
                         
                         let totalTime = Date().timeIntervalSince(generateStartTime)
                         print("═══════════════════════════════════════════════════════════")
@@ -1964,6 +1967,7 @@ struct LocalRoutePickerSheet: View {
             onAnimationComplete: {
                 // Transition to preview after animation completes
                 showLoadingScreen = false
+                showMapPreview = true  // v1.8.13: Now show the preview after stages complete
             }
         )
     }
@@ -3026,7 +3030,8 @@ struct LocalRoutePickerSheet: View {
             routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
             generatedRoute = localRoute
             generatedRouteData = nil
-            showMapPreview = true
+            // v1.8.13: Don't show map preview immediately - let stage animations complete first
+            // showMapPreview = true  // REMOVED - this was causing stages to be skipped
         }
     }
     
@@ -5948,18 +5953,34 @@ struct RouteExplorationLoadingView: View {
     
     // Stage-specific animation states
     @State private var radarPulseScale: CGFloat = 1.0  // Stage 0: Radar pulse
+    @State private var poiIconsVisible: [Int] = []      // Stage 0: POI icons popping in
+    @State private var footstepAngle: Double = 0        // Stage 2: Footstep walking angle
+    @State private var showFootsteps: Bool = false      // Stage 2: Footstep visibility
     @State private var showSparkles: Bool = false       // Stage 3: Sparkle burst
-    @State private var sparklePositions: [(id: UUID, offset: CGSize, opacity: Double)] = []
+    @State private var sparklePositions: [(id: UUID, offset: CGSize, opacity: Double, scale: CGFloat)] = []
+    @State private var sparkleOrbitAngle: Double = 0    // Stage 3: Orbiting sparkles
+    
+    // Countdown timer for stage 1
+    @State private var countdownSeconds: Int = 60
+    @State private var countdownExpired: Bool = false
+    
+    // POI icons for the "finding places" animation
+    private let poiIcons = ["☕", "🏪", "⛪", "🏛️", "🌳", "🎭"]
     
     private let minStageDisplayTime: TimeInterval = 1.2  // Minimum time to show each stage
     private let stageAdvanceDelay: TimeInterval = 0.5   // Delay between stage advances
-    private let postCompletionDelay: TimeInterval = 0.6  // Pause after stage 4 before preview
+    private let postCompletionDelay: TimeInterval = 0.3  // Reduced: Pause after stage 4 before preview
     
     // v1.8.10: Dynamic help text based on current stage
     private var loadingHelpText: String {
         switch displayedStageIndex {
         case 0: return "Scanning the area around you..."
-        case 1: return "This may take up to a minute..."
+        case 1: 
+            if countdownExpired {
+                return "Taking longer than expected. Please wait..."
+            } else {
+                return "This may take up to a minute..."
+            }
         case 2: return "Almost there! Getting walking directions..."
         case 3: return "Adding the finishing touches..."
         default: return "Your route is ready!"
@@ -5971,32 +5992,9 @@ struct RouteExplorationLoadingView: View {
             // Real map centered on user location
             if let location = userLocation {
                 Map(position: $mapCameraPosition) {
-                    // User location marker with radar pulse for Stage 0
+                    // User location marker with stage-specific animations
                     Annotation("You", coordinate: location) {
-                        ZStack {
-                            // Radar pulse rings (Stage 0: Finding places)
-                            if displayedStageIndex == 0 {
-                                Circle()
-                                    .stroke(Color.tealAccent.opacity(0.6), lineWidth: 2)
-                                    .frame(width: 80, height: 80)
-                                    .scaleEffect(radarPulseScale)
-                                    .opacity(2.0 - radarPulseScale)
-                                
-                                Circle()
-                                    .stroke(Color.tealAccent.opacity(0.4), lineWidth: 1.5)
-                                    .frame(width: 120, height: 120)
-                                    .scaleEffect(radarPulseScale * 0.8)
-                                    .opacity(2.0 - radarPulseScale)
-                            }
-                            
-                            Circle()
-                                .fill(Color.blue.opacity(0.3))
-                                .frame(width: 40, height: 40)
-                            Circle()
-                                .fill(Color.blue)
-                                .frame(width: 16, height: 16)
-                                .overlay(Circle().stroke(Color.white, lineWidth: 3))
-                        }
+                        userLocationMarkerView
                     }
                     
                     // Animated route polylines
@@ -6008,24 +6006,13 @@ struct RouteExplorationLoadingView: View {
                             )
                     }
                     
-                    // Animated POI markers
+                    // Animated POI markers (no labels - just icons)
                     ForEach(visiblePOIMarkers, id: \.id) { marker in
                         Annotation("", coordinate: marker.coordinate) {
-                            VStack(spacing: 2) {
-                                Image(systemName: "mappin.circle.fill")
-                                    .font(.title2)
-                                    .foregroundColor(.orange)
-                                    .opacity(marker.opacity)
-                                Text(marker.name)
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.primary)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 2)
-                                    .background(Color(.systemBackground).opacity(0.9))
-                                    .clipShape(Capsule())
-                                    .opacity(marker.opacity)
-                            }
+                            Image(systemName: "mappin.circle.fill")
+                                .font(.title2)
+                                .foregroundColor(.orange)
+                                .opacity(marker.opacity)
                         }
                     }
                 }
@@ -6044,15 +6031,7 @@ struct RouteExplorationLoadingView: View {
             }
             
             // Stage 3: Sparkle burst animation overlay
-            if showSparkles {
-                ForEach(sparklePositions, id: \.id) { sparkle in
-                    Image(systemName: "sparkle")
-                        .font(.system(size: 24))
-                        .foregroundColor(.yellow)
-                        .opacity(sparkle.opacity)
-                        .offset(sparkle.offset)
-                }
-            }
+            sparkleOverlayView
             
             // Overlay gradient at bottom for text readability
             VStack {
@@ -6086,7 +6065,7 @@ struct RouteExplorationLoadingView: View {
                             title: "Calculating routes",
                             isComplete: displayedStageIndex >= 2,
                             isActive: displayedStageIndex == 1,
-                            subtitle: displayedStageIndex == 1 && attemptCount > 0 ? "Trying option \(attemptCount)..." : nil
+                            subtitle: displayedStageIndex == 1 ? (countdownExpired ? "Sorry for the delay..." : "\(countdownSeconds)s remaining") : nil
                         )
                         
                         // Stage 3: Getting directions
@@ -6111,26 +6090,6 @@ struct RouteExplorationLoadingView: View {
                     .shadow(color: .black.opacity(0.1), radius: 8, y: 2)
                     .animation(.easeInOut(duration: 0.25), value: displayedStageIndex)
                     
-                    // Current POI being tested
-                    if let attempt = currentAttempt {
-                        HStack(spacing: 6) {
-                            Image(systemName: "mappin.circle.fill")
-                                .foregroundColor(.orange)
-                            Text(attempt.poiName)
-                                .font(.caption)
-                                .foregroundColor(.primary)
-                                .lineLimit(1)
-                            Text("(\(attempt.durationMinutes)min)")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color(.systemBackground).opacity(0.95))
-                        .clipShape(Capsule())
-                        .shadow(radius: 2)
-                    }
-                    
                     // Dynamic status text per stage
                     Text(loadingHelpText)
                         .font(.caption)
@@ -6147,45 +6106,63 @@ struct RouteExplorationLoadingView: View {
             displayedStageIndex = 0
             lastStageAdvanceTime = Date()
             hasCompletedAllStages = false
+            poiIconsVisible = []
+            showFootsteps = false
+            countdownSeconds = 60
+            countdownExpired = false
             print("🎬 Loading view appeared - starting at stage 0")
             
             // Start radar pulse animation for Stage 0
             startRadarPulseAnimation()
+            // Start POI icons popping in for Stage 0
+            startPOIIconsAnimation()
             
             // After minimum time, advance to stage 1
             advanceToStageWithMinDelay(1)
             
-            // v1.8.12: Time-based fallback progression (in case triggers don't fire)
-            // If still on stage 1 after 3s, advance to stage 2
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                if displayedStageIndex < 2 && !hasCompletedAllStages {
-                    print("🎬 Fallback: Advancing to stage 2 (timeout)")
-                    advanceToStageWithMinDelay(2)
-                }
-            }
-            // If still on stage 2 after 6s, advance to stage 3
-            DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
-                if displayedStageIndex < 3 && !hasCompletedAllStages {
-                    print("🎬 Fallback: Advancing to stage 3 (timeout)")
-                    advanceToStageWithMinDelay(3)
+            // Stages advance based on actual progress, not time
+            // Stage 0→1: After POI fetch (initial delay to show radar animation)
+            // Stage 1→2: When route attempts start (triggered by attemptCount change)
+            // Stage 2→3: When route is complete and directions fetched
+            // Stage 3→4: When naming is complete
+            
+            // Initial advance from stage 0 to 1 after radar animation
+            DispatchQueue.main.asyncAfter(deadline: .now() + minStageDisplayTime) {
+                if displayedStageIndex == 0 && !hasCompletedAllStages {
+                    print("🎬 Stage 0 → 1 (POI fetch assumed complete)")
+                    advanceToStageWithMinDelay(1)
                 }
             }
         }
         .onChange(of: displayedStageIndex) { oldValue, newValue in
+            let stageNames = ["Finding places", "Calculating routes", "Getting directions", "Naming your route", "Complete"]
+            let stageName = newValue < stageNames.count ? stageNames[newValue] : "Unknown"
+            print("🎬 Stage changed: \(oldValue) → \(newValue) (\(stageName))")
+            
             // Trigger stage-specific animations
+            if newValue == 0 {
+                // Stage 0: POI icons pop in
+                startPOIIconsAnimation()
+            }
+            if newValue == 1 {
+                // Stage 1: Route calculation spinning rings
+                startRouteCalculationAnimation()
+            }
+            if newValue == 2 {
+                // Stage 2: Footsteps walking
+                startFootstepAnimation()
+            }
             if newValue == 3 {
-                // Stage 3: Sparkle burst
+                // Stage 3: Sparkle burst with orbiting
                 triggerSparkleAnimation()
             }
         }
         .onChange(of: attemptCount) { oldValue, newValue in
-            // v1.8.9: When route attempts start, we know POI fetch is done → advance to stage 2
-            if newValue > 0 && oldValue == 0 && displayedStageIndex < 2 {
-                print("🎬 Route attempts started → advancing to stage 2")
-                advanceToStageWithMinDelay(2)
-            }
+            // When route attempts start, POI fetch is done → stay on stage 1 (Calculating routes)
+            // Stage 1 shows "This may take up to a minute..." during the long MapKit wait
+            // We DON'T advance to stage 2 here - that happens when route is complete
             
-            // Add polyline animation with POI marker
+            // Add polyline animation with POI marker (visual feedback during calculation)
             if let attempt = currentAttempt, !attempt.polylineCoordinates.isEmpty {
                 addAnimatedPolyline(coordinates: attempt.polylineCoordinates, isValid: attempt.isValid, poiName: attempt.poiName)
             }
@@ -6270,30 +6247,49 @@ struct RouteExplorationLoadingView: View {
     private func advanceToCompletionWithMinGaps() {
         hasCompletedAllStages = true
         let currentStage = displayedStageIndex
-        print("🏁 Completing from stage \(currentStage)")
+        let timeSinceLastAdvance = Date().timeIntervalSince(lastStageAdvanceTime)
+        
+        print("🏁 ═══════════════════════════════════════════════════")
+        print("🏁 ROUTE COMPLETE - Starting stage sequence")
+        print("🏁 Current stage: \(currentStage)")
+        print("🏁 Time since last advance: \(String(format: "%.2f", timeSinceLastAdvance))s")
+        print("🏁 Min stage display time: \(minStageDisplayTime)s")
+        print("🏁 Stage advance delay: \(stageAdvanceDelay)s")
         
         // Calculate cumulative delays for remaining stages
         var cumulativeDelay: TimeInterval = 0
         
         // First, respect the minimum time for current stage
-        let timeSinceLastAdvance = Date().timeIntervalSince(lastStageAdvanceTime)
         cumulativeDelay = max(0, minStageDisplayTime - timeSinceLastAdvance)
+        print("🏁 Initial delay (current stage remaining): \(String(format: "%.2f", cumulativeDelay))s")
         
         // Schedule each remaining stage with explicit timing
-        let stagesToSchedule = Array((currentStage + 1)...4)
-        print("🏁 Scheduling stages: \(stagesToSchedule)")
+        // Must go through stages 2, 3, 4 regardless of current stage
+        let stagesToSchedule: [Int]
+        if currentStage < 2 {
+            stagesToSchedule = [2, 3, 4]  // From stage 0 or 1, go through 2, 3, 4
+        } else if currentStage < 3 {
+            stagesToSchedule = [3, 4]      // From stage 2, go through 3, 4
+        } else if currentStage < 4 {
+            stagesToSchedule = [4]          // From stage 3, just show 4
+        } else {
+            stagesToSchedule = []           // Already at 4
+        }
+        print("🏁 Stages to schedule: \(stagesToSchedule) (from current stage \(currentStage))")
         
         for targetStage in stagesToSchedule {
             let delay = cumulativeDelay
-            let stageName = ["", "Finding places", "Calculating routes", "Getting directions", "Naming your route"][targetStage]
+            let stageNames = ["Finding places", "Calculating routes", "Getting directions", "Naming your route", "Complete"]
+            let stageName = targetStage < stageNames.count ? stageNames[targetStage] : "Unknown"
             
             print("🏁 Stage \(targetStage) (\(stageName)) scheduled at +\(String(format: "%.2f", delay))s")
             
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [targetStage, stageName] in
-                print("🏁 ✓ Stage \(targetStage) (\(stageName)) NOW VISIBLE")
+                print("🏁 ✓ Stage \(targetStage) (\(stageName)) NOW VISIBLE at \(Date())")
                 withAnimation(.easeInOut(duration: 0.25)) {
                     displayedStageIndex = targetStage
                 }
+                lastStageAdvanceTime = Date()  // Update time for next stage calculation
             }
             
             // Add minimum display time + stage advance delay between stages
@@ -6375,6 +6371,186 @@ struct RouteExplorationLoadingView: View {
         }
     }
     
+    // MARK: - Extracted Subviews (for compiler performance)
+    
+    /// User location marker with radar pulse and POI icons
+    @ViewBuilder
+    private var userLocationMarkerView: some View {
+        ZStack {
+            // Radar pulse rings (Stage 0: Finding places)
+            if displayedStageIndex == 0 {
+                radarPulseView
+                poiIconsView
+            }
+            
+            // Route calculation animation (Stage 1 - Calculating routes)
+            // Shows expanding/contracting rings to indicate processing
+            if displayedStageIndex == 1 {
+                routeCalculationView
+            }
+            
+            // Footstep animation (Stage 2 - Getting directions)
+            if displayedStageIndex == 2 && showFootsteps {
+                footstepsView
+            }
+            
+            // User location dot
+            Circle()
+                .fill(Color.blue.opacity(0.3))
+                .frame(width: 40, height: 40)
+            Circle()
+                .fill(Color.blue)
+                .frame(width: 16, height: 16)
+                .overlay(Circle().stroke(Color.white, lineWidth: 3))
+        }
+    }
+    
+    /// Route calculation animation - active scanning effect during MapKit wait
+    @ViewBuilder
+    private var routeCalculationView: some View {
+        // Multiple rotating dashed rings at different speeds
+        Circle()
+            .stroke(style: StrokeStyle(lineWidth: 3, dash: [12, 6]))
+            .foregroundColor(.tealAccent)
+            .frame(width: 80, height: 80)
+            .rotationEffect(.radians(footstepAngle))
+        
+        Circle()
+            .stroke(style: StrokeStyle(lineWidth: 2, dash: [8, 8]))
+            .foregroundColor(.orange.opacity(0.7))
+            .frame(width: 120, height: 120)
+            .rotationEffect(.radians(-footstepAngle * 1.3))
+        
+        Circle()
+            .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [6, 10]))
+            .foregroundColor(.tealAccent.opacity(0.5))
+            .frame(width: 160, height: 160)
+            .rotationEffect(.radians(footstepAngle * 0.7))
+        
+        // Pulsing center glow
+        Circle()
+            .fill(Color.tealAccent.opacity(0.2))
+            .frame(width: 60, height: 60)
+            .scaleEffect(1.0 + sin(footstepAngle * 2) * 0.15)
+        
+        // Scanning line that sweeps around
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [.clear, .tealAccent.opacity(0.6), .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .frame(width: 4, height: 80)
+            .offset(y: -40)
+            .rotationEffect(.radians(footstepAngle * 2))
+    }
+    
+    /// Radar pulse circles
+    @ViewBuilder
+    private var radarPulseView: some View {
+        Circle()
+            .stroke(Color.tealAccent.opacity(0.6), lineWidth: 2)
+            .frame(width: 80, height: 80)
+            .scaleEffect(radarPulseScale)
+            .opacity(2.0 - radarPulseScale)
+        
+        Circle()
+            .stroke(Color.tealAccent.opacity(0.4), lineWidth: 1.5)
+            .frame(width: 120, height: 120)
+            .scaleEffect(radarPulseScale * 0.8)
+            .opacity(2.0 - radarPulseScale)
+    }
+    
+    /// POI icons popping in around radar
+    @ViewBuilder
+    private var poiIconsView: some View {
+        ForEach(0..<6, id: \.self) { index in
+            poiIconAt(index: index)
+        }
+    }
+    
+    /// Single POI icon at index
+    @ViewBuilder
+    private func poiIconAt(index: Int) -> some View {
+        let iconAngle = Double(index) * (2.0 * .pi / 6.0) - .pi / 2.0
+        let iconRadius: CGFloat = 100
+        let icon = poiIcons[index]
+        let isVisible = poiIconsVisible.contains(index)
+        
+        Text(icon)
+            .font(.system(size: 22))
+            .offset(
+                x: CGFloat(cos(iconAngle)) * iconRadius,
+                y: CGFloat(sin(iconAngle)) * iconRadius
+            )
+            .scaleEffect(isVisible ? 1.0 : 0.0)
+            .opacity(isVisible ? 1.0 : 0.0)
+            .animation(.spring(response: 0.4, dampingFraction: 0.6), value: isVisible)
+    }
+    
+    /// Walking footsteps animation
+    @ViewBuilder
+    private var footstepsView: some View {
+        ForEach(0..<3, id: \.self) { index in
+            footstepAt(index: index)
+        }
+    }
+    
+    /// Single footstep at index
+    @ViewBuilder
+    private func footstepAt(index: Int) -> some View {
+        let stepAngle = footstepAngle + Double(index) * (2.0 * .pi / 3.0)
+        let stepRadius: CGFloat = 60
+        
+        Image(systemName: "shoeprints.fill")
+            .font(.system(size: 16))
+            .foregroundColor(.tealAccent)
+            .rotationEffect(.radians(stepAngle + .pi / 2.0))
+            .offset(
+                x: CGFloat(cos(stepAngle)) * stepRadius,
+                y: CGFloat(sin(stepAngle)) * stepRadius
+            )
+            .opacity(0.8)
+    }
+    
+    /// Sparkle overlay for stage 3
+    @ViewBuilder
+    private var sparkleOverlayView: some View {
+        if showSparkles {
+            // Central burst sparkles
+            ForEach(sparklePositions, id: \.id) { sparkle in
+                Image(systemName: "sparkle")
+                    .font(.system(size: 24))
+                    .foregroundColor(.yellow)
+                    .opacity(sparkle.opacity)
+                    .scaleEffect(sparkle.scale)
+                    .offset(sparkle.offset)
+            }
+            
+            // Orbiting sparkles
+            ForEach(0..<4, id: \.self) { index in
+                orbitingSparkleAt(index: index)
+            }
+        }
+    }
+    
+    /// Single orbiting sparkle
+    @ViewBuilder
+    private func orbitingSparkleAt(index: Int) -> some View {
+        let orbitAngle = sparkleOrbitAngle + Double(index) * (.pi / 2.0)
+        let orbitRadius: CGFloat = 50
+        
+        Image(systemName: "sparkle")
+            .font(.system(size: 16))
+            .foregroundColor(.yellow.opacity(0.8))
+            .offset(
+                x: CGFloat(cos(orbitAngle)) * orbitRadius,
+                y: CGFloat(sin(orbitAngle)) * orbitRadius - 100
+            )
+    }
+    
     // MARK: - Stage-Specific Animations
     
     /// Start the radar pulse animation for Stage 0 (Finding places)
@@ -6397,37 +6573,141 @@ struct RouteExplorationLoadingView: View {
         pulse()
     }
     
+    /// Start POI icons appearing one by one for Stage 0
+    private func startPOIIconsAnimation() {
+        poiIconsVisible = []
+        
+        // Pop in each icon with staggered delay
+        for index in 0..<poiIcons.count {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.2) {
+                guard displayedStageIndex == 0 else { return }
+                poiIconsVisible.append(index)
+            }
+        }
+    }
+    
+    /// Start route calculation animation for Stage 1 (Calculating routes)
+    private func startRouteCalculationAnimation() {
+        footstepAngle = 0  // Reusing footstepAngle for rotation
+        countdownSeconds = 60  // Reset countdown
+        countdownExpired = false
+        
+        // Continuous rotation animation - faster for more active feel
+        func rotate() {
+            guard displayedStageIndex == 1 else { return }
+            
+            withAnimation(.linear(duration: 2.0)) {
+                footstepAngle += 2 * .pi
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                rotate()
+            }
+        }
+        rotate()
+        
+        // Start countdown timer
+        startCountdownTimer()
+    }
+    
+    /// Countdown timer for stage 1
+    private func startCountdownTimer() {
+        func tick() {
+            guard displayedStageIndex == 1 && !hasCompletedAllStages else { return }
+            
+            if countdownSeconds > 0 {
+                countdownSeconds -= 1
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    tick()
+                }
+            } else {
+                // Countdown expired
+                countdownExpired = true
+            }
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            tick()
+        }
+    }
+    
+    /// Start footstep walking animation for Stage 2 (Getting directions)
+    private func startFootstepAnimation() {
+        showFootsteps = true
+        footstepAngle = 0
+        
+        // Continuous rotation animation
+        func rotate() {
+            guard displayedStageIndex == 2 else {
+                showFootsteps = false
+                return
+            }
+            
+            withAnimation(.linear(duration: 2.0)) {
+                footstepAngle += 2 * .pi
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                rotate()
+            }
+        }
+        rotate()
+    }
+    
     /// Trigger sparkle burst animation for Stage 3 (Naming your route)
     private func triggerSparkleAnimation() {
         showSparkles = true
         sparklePositions = []
+        sparkleOrbitAngle = 0
         
-        // Create sparkles at random positions around center
+        // Create central burst sparkles
         let sparkleCount = 8
         for _ in 0..<sparkleCount {
-            let angle = Double.random(in: 0...(2 * .pi))
-            let distance = CGFloat.random(in: 60...150)
-            let offset = CGSize(
-                width: cos(angle) * distance,
-                height: sin(angle) * distance - 100  // Offset upward on screen
-            )
-            sparklePositions.append((id: UUID(), offset: offset, opacity: 0.0))
+            let offset = CGSize(width: 0, height: -100)  // Start at center
+            sparklePositions.append((id: UUID(), offset: offset, opacity: 0.0, scale: 0.5))
         }
         
-        // Animate sparkles appearing
+        // Animate sparkles bursting outward with pulse
         for (index, _) in sparklePositions.enumerated() {
-            let delay = Double(index) * 0.08
+            let angle = Double(index) * (2 * .pi / Double(sparkleCount))
+            let delay = Double(index) * 0.05
+            
+            // Burst outward
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                withAnimation(.easeOut(duration: 0.4)) {
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) {
                     if index < sparklePositions.count {
+                        let distance: CGFloat = 80
+                        sparklePositions[index].offset = CGSize(
+                            width: cos(angle) * distance,
+                            height: sin(angle) * distance - 100
+                        )
                         sparklePositions[index].opacity = 1.0
+                        sparklePositions[index].scale = 1.2
                     }
                 }
             }
             
-            // Fade out after appearing
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay + 0.6) {
-                withAnimation(.easeIn(duration: 0.5)) {
+            // Pulse smaller
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay + 0.4) {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    if index < sparklePositions.count {
+                        sparklePositions[index].scale = 0.8
+                    }
+                }
+            }
+            
+            // Pulse larger again
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay + 0.7) {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    if index < sparklePositions.count {
+                        sparklePositions[index].scale = 1.0
+                    }
+                }
+            }
+            
+            // Fade out
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay + 1.2) {
+                withAnimation(.easeIn(duration: 0.4)) {
                     if index < sparklePositions.count {
                         sparklePositions[index].opacity = 0.0
                     }
@@ -6435,10 +6715,29 @@ struct RouteExplorationLoadingView: View {
             }
         }
         
+        // Start orbiting animation
+        startSparkleOrbit()
+        
         // Hide sparkles container after animation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
             showSparkles = false
         }
+    }
+    
+    /// Animate sparkles orbiting around center
+    private func startSparkleOrbit() {
+        func orbit() {
+            guard showSparkles else { return }
+            
+            withAnimation(.linear(duration: 3.0)) {
+                sparkleOrbitAngle += 2 * .pi
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                orbit()
+            }
+        }
+        orbit()
     }
 }
 
