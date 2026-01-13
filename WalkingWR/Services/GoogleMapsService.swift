@@ -135,8 +135,8 @@ class GoogleMapsService: ObservableObject {
     
     // MARK: - Google Directions Quota Tracking (v1.8.9)
     // Track daily usage to stay within budget (~$0.25/day max)
-    // v1.6.47: Reduced from 100 to 50 for cost control
-    private let googleDirectionsDailyCap = 50
+    // Free tier allows 333/day, 100 is conservative
+    private let googleDirectionsDailyCap = 100
     private var googleDirectionsCallsToday = 0
     private let googleDirectionsCountKey = "googleDirectionsCount"
     private let googleDirectionsDateKey = "googleDirectionsDate"
