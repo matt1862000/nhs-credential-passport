@@ -2976,121 +2976,48 @@ struct SavedBatchTestsSection: View {
     @State private var showClearConfirmation = false
     @State private var didCopyAllHistory = false
     @State private var isTestRunning = false
-    @State private var isRequestingLocation = false  // v1.6.45: Show loading state
-    @State private var cachedLocations: [POICacheService.CachedLocationInfo] = []
     @Environment(\.dismiss) private var dismiss
     
-    // Apple POI Diagnostic
+    // POI Diagnostics
     @State private var isRunningAppleDiagnostic = false
     @State private var appleDiagnosticResults = ""
     @State private var showAppleDiagnosticResults = false
     
+    @State private var isRunningOSMDiagnostic = false
+    @State private var osmDiagnosticResults = ""
+    @State private var showOSMDiagnosticResults = false
+    
+    @State private var isRunningGoogleDiagnostic = false
+    @State private var googleDiagnosticResults = ""
+    @State private var showGoogleDiagnosticResults = false
+    
     var body: some View {
         Section {
-            // Run ALL Locations Test button
+            // Test OSM POIs button
             Button {
-                // v1.6.45: Request location first, then run test
-                isRequestingLocation = true
-                locationService.requestCurrentLocation()
-                
-                // Poll for location, then dismiss and run
-                pollForLocationThenRunTest(testType: .batch)
+                runOSMPOIDiagnostic()
             } label: {
                 HStack {
-                    if isRequestingLocation {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    } else {
-                        Image(systemName: "play.fill")
-                            .foregroundColor(.green)
-                    }
-                    Text(isRequestingLocation ? "Getting location..." : "Run Batch Test (All \(cachedLocations.count) Cached)")
+                    Image(systemName: isRunningOSMDiagnostic ? "hourglass" : "map.fill")
+                        .foregroundColor(.green)
+                    Text(isRunningOSMDiagnostic ? "Running OSM Diagnostic..." : "Test OSM POIs")
                         .foregroundColor(.primary)
-                    Spacer()
-                    if !isRequestingLocation {
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
                 }
             }
-            .disabled(cachedLocations.isEmpty || isRequestingLocation)
+            .disabled(isRunningOSMDiagnostic)
             
-            // Individual location tests from CACHED locations
-            if !cachedLocations.isEmpty {
-                DisclosureGroup {
-                    // Current location option - uses polling to get fresh GPS
-                    Button {
-                        isRequestingLocation = true
-                        locationService.requestCurrentLocation()
-                        pollForLocationThenRunTest(testType: .singleCurrent)
-                    } label: {
-                        HStack {
-                            if isRequestingLocation {
-                                ProgressView()
-                                    .scaleEffect(0.7)
-                                    .frame(width: 20)
-                            } else {
-                                Image(systemName: "location.fill")
-                                    .foregroundColor(.blue)
-                                    .frame(width: 20)
-                            }
-                            Text(isRequestingLocation ? "Getting location..." : "Current Location")
-                                .foregroundColor(.primary)
-                        }
-                    }
-                    .disabled(isRequestingLocation)
-                    
-                    Divider()
-                    
-                    // Cached locations
-                    ForEach(cachedLocations) { location in
-                        Button {
-                            dismiss()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                NotificationCenter.default.post(
-                                    name: .runSingleLocationTest,
-                                    object: nil,
-                                    userInfo: [
-                                        "name": location.locationName,
-                                        "latitude": location.coordinate.latitude,
-                                        "longitude": location.coordinate.longitude
-                                    ]
-                                )
-                            }
-                        } label: {
-                            HStack {
-                                Image(systemName: "mappin.circle.fill")
-                                    .foregroundColor(.orange)
-                                    .frame(width: 20)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(location.locationName)
-                                        .foregroundColor(.primary)
-                                        .lineLimit(1)
-                                    Text("\(location.poiCount) POIs")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    HStack {
-                        Image(systemName: "map")
-                            .foregroundColor(.orange)
-                        Text("Test Single Location (\(cachedLocations.count + 1))")
-                            .foregroundColor(.primary)
-                    }
-                }
-            } else {
+            // Test Google POIs button
+            Button {
+                runGooglePOIDiagnostic()
+            } label: {
                 HStack {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundColor(.secondary)
-                    Text("No cached locations - generate a route first")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Image(systemName: isRunningGoogleDiagnostic ? "hourglass" : "g.circle.fill")
+                        .foregroundColor(.blue)
+                    Text(isRunningGoogleDiagnostic ? "Running Google Diagnostic..." : "Test Google POIs")
+                        .foregroundColor(.primary)
                 }
             }
+            .disabled(isRunningGoogleDiagnostic)
             
             // Apple POI Diagnostic button
             Button {
@@ -3186,23 +3113,6 @@ struct SavedBatchTestsSection: View {
         }
         .onAppear {
             savedTests = BatchTestStorage.shared.getAllTests()
-            cachedLocations = POICacheService.shared.getCachedLocationsInfo()
-            
-            // Reverse geocode the cached locations to get readable names
-            Task {
-                for (index, location) in cachedLocations.enumerated() {
-                    let geocoder = CLGeocoder()
-                    let clLocation = CLLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
-                    if let placemark = try? await geocoder.reverseGeocodeLocation(clLocation).first {
-                        let name = [placemark.name, placemark.locality].compactMap { $0 }.joined(separator: ", ")
-                        await MainActor.run {
-                            if index < cachedLocations.count {
-                                cachedLocations[index].locationName = name.isEmpty ? "Unknown" : name
-                            }
-                        }
-                    }
-                }
-            }
         }
         .sheet(item: $selectedTest) { test in
             NavigationStack {
@@ -3266,13 +3176,126 @@ struct SavedBatchTestsSection: View {
             .interactiveDismissDisabled()  // Prevent accidental dismissal
             .presentationDetents([.large])
         }
+        .sheet(isPresented: $showOSMDiagnosticResults) {
+            NavigationStack {
+                ScrollView {
+                    Text(osmDiagnosticResults)
+                        .font(.system(.caption2, design: .monospaced))
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .navigationTitle("OSM POI Diagnostic")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Done") {
+                            showOSMDiagnosticResults = false
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            UIPasteboard.general.string = osmDiagnosticResults
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                    }
+                }
+            }
+            .interactiveDismissDisabled()
+            .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showGoogleDiagnosticResults) {
+            NavigationStack {
+                ScrollView {
+                    Text(googleDiagnosticResults)
+                        .font(.system(.caption2, design: .monospaced))
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .navigationTitle("Google POI Diagnostic")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Done") {
+                            showGoogleDiagnosticResults = false
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            UIPasteboard.general.string = googleDiagnosticResults
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                    }
+                }
+            }
+            .interactiveDismissDisabled()
+            .presentationDetents([.large])
+        }
+    }
+    
+    // Run OSM POI diagnostic test
+    private func runOSMPOIDiagnostic() {
+        guard let location = locationService.currentLocation?.coordinate else {
+            osmDiagnosticResults = "❌ No location available. Please enable location services."
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                showOSMDiagnosticResults = true
+            }
+            return
+        }
+        
+        isRunningOSMDiagnostic = true
+        
+        Task {
+            let results = await GoogleMapsService.shared.runOSMPOIDiagnostic(
+                location: location,
+                radiusMeters: 2000
+            )
+            
+            await MainActor.run {
+                osmDiagnosticResults = results
+                isRunningOSMDiagnostic = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    showOSMDiagnosticResults = true
+                }
+            }
+        }
+    }
+    
+    // Run Google POI diagnostic test
+    private func runGooglePOIDiagnostic() {
+        guard let location = locationService.currentLocation?.coordinate else {
+            googleDiagnosticResults = "❌ No location available. Please enable location services."
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                showGoogleDiagnosticResults = true
+            }
+            return
+        }
+        
+        isRunningGoogleDiagnostic = true
+        
+        Task {
+            let results = await GoogleMapsService.shared.runGooglePOIDiagnostic(
+                location: location,
+                radiusMeters: 2000
+            )
+            
+            await MainActor.run {
+                googleDiagnosticResults = results
+                isRunningGoogleDiagnostic = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    showGoogleDiagnosticResults = true
+                }
+            }
+        }
     }
     
     // Run Apple Maps POI diagnostic test
     private func runApplePOIDiagnostic() {
         guard let location = locationService.currentLocation?.coordinate else {
             appleDiagnosticResults = "❌ No location available. Please enable location services."
-            // Delay sheet presentation to avoid SwiftUI race conditions
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 showAppleDiagnosticResults = true
             }
@@ -3290,84 +3313,10 @@ struct SavedBatchTestsSection: View {
             await MainActor.run {
                 appleDiagnosticResults = results
                 isRunningAppleDiagnostic = false
-                // Delay sheet presentation to avoid SwiftUI race conditions
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     showAppleDiagnosticResults = true
                 }
             }
-        }
-    }
-    
-    // v1.6.45: Poll for location then run the batch test
-    enum TestType {
-        case batch
-        case singleCurrent
-        case singleCached(lat: Double, lon: Double, name: String)
-    }
-    
-    private func pollForLocationThenRunTest(testType: TestType) {
-        var attempts = 0
-        let maxAttempts = 10  // 5 seconds total
-        
-        func check() {
-            if let location = locationService.currentLocation {
-                // Got location! Dismiss and run test
-                print("✅ Got location for batch test: \(location.coordinate.latitude), \(location.coordinate.longitude)")
-                isRequestingLocation = false
-                dismiss()
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    switch testType {
-                    case .batch:
-                        NotificationCenter.default.post(name: .runBatchTest, object: nil)
-                    case .singleCurrent:
-                        NotificationCenter.default.post(
-                            name: .runSingleLocationTest,
-                            object: nil,
-                            userInfo: [
-                                "locationName": "Current Location",
-                                "latitude": location.coordinate.latitude,
-                                "longitude": location.coordinate.longitude
-                            ]
-                        )
-                    case .singleCached(let lat, let lon, let name):
-                        NotificationCenter.default.post(
-                            name: .runSingleLocationTest,
-                            object: nil,
-                            userInfo: [
-                                "locationName": name,
-                                "latitude": lat,
-                                "longitude": lon
-                            ]
-                        )
-                    }
-                }
-            } else if attempts < maxAttempts {
-                attempts += 1
-                print("⏳ Waiting for location... attempt \(attempts)/\(maxAttempts)")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    check()
-                }
-            } else {
-                // Failed to get location - still run with cached location fallback
-                print("⚠️ Could not get location, running with fallback")
-                isRequestingLocation = false
-                dismiss()
-                
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    switch testType {
-                    case .batch:
-                        NotificationCenter.default.post(name: .runBatchTest, object: nil)
-                    case .singleCurrent, .singleCached:
-                        NotificationCenter.default.post(name: .runBatchTest, object: nil)  // Fall back to batch
-                    }
-                }
-            }
-        }
-        
-        // Start checking after initial request
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            check()
         }
     }
 }

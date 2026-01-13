@@ -1752,6 +1752,108 @@ class GoogleMapsService: ObservableObject {
         return results
     }
     
+    // MARK: - OSM POI Diagnostic
+    /// Runs a diagnostic test to fetch all available POIs from OpenStreetMap
+    func runOSMPOIDiagnostic(location: CLLocationCoordinate2D, radiusMeters: Int = 2000) async -> String {
+        var results = "🗺️ OPENSTREETMAP POI DIAGNOSTIC\n"
+        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        results += "📍 Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))\n"
+        results += "📏 Radius: \(radiusMeters)m\n"
+        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        print("🗺️ 📊 DIAGNOSTIC: Fetching OSM POIs...")
+        
+        let osmPOIs = await searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
+        
+        // Group by category
+        var categoryCount: [String: Int] = [:]
+        for poi in osmPOIs {
+            let category = poi.types.first ?? "unknown"
+            categoryCount[category, default: 0] += 1
+        }
+        
+        results += "📊 POI CATEGORIES\n"
+        results += "───────────────────────────────────────\n"
+        for (category, count) in categoryCount.sorted(by: { $0.value > $1.value }) {
+            results += "• \(category): \(count)\n"
+        }
+        
+        // Sort POIs by distance
+        let sortedPOIs = osmPOIs.sorted { 
+            distanceBetween(location, $0.coordinate) < distanceBetween(location, $1.coordinate)
+        }
+        
+        results += "\n📍 ALL POIs FOUND (\(sortedPOIs.count))\n"
+        results += "───────────────────────────────────────\n"
+        
+        for (index, poi) in sortedPOIs.enumerated() {
+            let distance = distanceBetween(location, poi.coordinate)
+            let distanceStr = distance < 1000 
+                ? "\(Int(distance))m" 
+                : String(format: "%.1fkm", distance / 1000)
+            let category = poi.types.first ?? "?"
+            results += "\(index + 1). \(poi.name) - \(distanceStr) [\(category)]\n"
+        }
+        
+        results += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        results += "📊 SUMMARY: \(sortedPOIs.count) POIs from OpenStreetMap\n"
+        
+        print("🗺️ 📊 DIAGNOSTIC COMPLETE: \(sortedPOIs.count) POIs from OSM")
+        
+        return results
+    }
+    
+    // MARK: - Google POI Diagnostic
+    /// Runs a diagnostic test to fetch all available POIs from Google Places API
+    func runGooglePOIDiagnostic(location: CLLocationCoordinate2D, radiusMeters: Int = 2000) async -> String {
+        var results = "🔷 GOOGLE PLACES POI DIAGNOSTIC\n"
+        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        results += "📍 Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))\n"
+        results += "📏 Radius: \(radiusMeters)m\n"
+        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        
+        print("🔷 📊 DIAGNOSTIC: Fetching Google POIs...")
+        
+        let googlePOIs = await fetchGooglePlacesNearby(location: location, radiusMeters: radiusMeters)
+        
+        // Group by category
+        var categoryCount: [String: Int] = [:]
+        for poi in googlePOIs {
+            let category = poi.types.first ?? "unknown"
+            categoryCount[category, default: 0] += 1
+        }
+        
+        results += "📊 POI CATEGORIES\n"
+        results += "───────────────────────────────────────\n"
+        for (category, count) in categoryCount.sorted(by: { $0.value > $1.value }) {
+            results += "• \(category): \(count)\n"
+        }
+        
+        // Sort POIs by distance
+        let sortedPOIs = googlePOIs.sorted { 
+            distanceBetween(location, $0.coordinate) < distanceBetween(location, $1.coordinate)
+        }
+        
+        results += "\n📍 ALL POIs FOUND (\(sortedPOIs.count))\n"
+        results += "───────────────────────────────────────\n"
+        
+        for (index, poi) in sortedPOIs.enumerated() {
+            let distance = distanceBetween(location, poi.coordinate)
+            let distanceStr = distance < 1000 
+                ? "\(Int(distance))m" 
+                : String(format: "%.1fkm", distance / 1000)
+            let category = poi.types.first ?? "?"
+            results += "\(index + 1). \(poi.name) - \(distanceStr) [\(category)]\n"
+        }
+        
+        results += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        results += "📊 SUMMARY: \(sortedPOIs.count) POIs from Google Places\n"
+        
+        print("🔷 📊 DIAGNOSTIC COMPLETE: \(sortedPOIs.count) POIs from Google")
+        
+        return results
+    }
+    
     // MARK: - Search OpenStreetMap for POIs (Overpass API - FREE!)
     /// Searches OpenStreetMap using the Overpass API for POIs near a location
     /// This is completely FREE with no API key required!
