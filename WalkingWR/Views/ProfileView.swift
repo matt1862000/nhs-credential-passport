@@ -3420,7 +3420,7 @@ struct SavedBatchTestsSection: View {
             
             """
             
-            let durations = [10, 15, 20, 25, 30, 45, 60]
+            let durations = [15, 30, 45, 60]  // v1.8.16: Focused on key durations
             
             for duration in durations {
                 print("🧪 Testing \(duration)min...")
@@ -3570,8 +3570,8 @@ struct SavedBatchTestsSection: View {
             
             results += "\n📍 Testing \(testLocations.count) locations\n"
             
-            // Test durations - use fewer for multi-site to save time
-            let durations = [15, 30, 45]
+            // Test durations - v1.8.16: Updated to match single-site test
+            let durations = [15, 30, 45, 60]
             
             // Test each location
             for testLoc in testLocations {
