@@ -366,6 +366,46 @@ class GoogleMapsService: ObservableObject {
         return false
     }
     
+    // MARK: - Angular Diversity Score (ADS) v1.8.17
+    /// Calculates how well POIs are distributed around the compass
+    /// Returns count of 45° sectors (8 total) that contain viable POIs
+    /// ADS ≥ 6 → Good for multi-waypoint circular routes
+    /// ADS 3-5 → Partial coverage, hybrid routes
+    /// ADS < 3 → Poor coverage, single-destination routes
+    private func calculateAngularDiversityScore(
+        pois: [PlaceResult],
+        origin: CLLocationCoordinate2D,
+        targetDurationMinutes: Int
+    ) -> (score: Int, sectors: [Int: Int]) {
+        // Define 8 sectors of 45° each (N, NE, E, SE, S, SW, W, NW)
+        var sectorCounts: [Int: Int] = [:]
+        for i in 0..<8 { sectorCounts[i] = 0 }
+        
+        // Calculate viable distance range for this duration
+        let walkingSpeed: Double = 80 // meters per minute
+        let minDist = walkingSpeed * Double(targetDurationMinutes) * 0.25 // ~25% of target as min
+        let maxDist = walkingSpeed * Double(targetDurationMinutes) * 0.55 // ~55% of target as max
+        
+        for poi in pois {
+            let bearing = bearingBetween(origin, poi.coordinate)
+            let distance = CLLocation(latitude: origin.latitude, longitude: origin.longitude)
+                .distance(from: CLLocation(latitude: poi.coordinate.latitude, longitude: poi.coordinate.longitude))
+            
+            // Only count POIs within viable distance range
+            guard distance >= minDist && distance <= maxDist else { continue }
+            
+            // Convert bearing (-180 to 180) to sector (0-7)
+            let normalizedBearing = bearing < 0 ? bearing + 360 : bearing
+            let sector = Int(normalizedBearing / 45.0) % 8
+            sectorCounts[sector, default: 0] += 1
+        }
+        
+        // Count sectors with at least one viable POI
+        let coveredSectors = sectorCounts.values.filter { $0 > 0 }.count
+        
+        return (score: coveredSectors, sectors: sectorCounts)
+    }
+    
     private func walkabilityScore(for poi: PlaceResult) -> Double {
         let types = Set(poi.types ?? [])
         let nameLower = poi.name.lowercased()
@@ -4899,8 +4939,24 @@ class GoogleMapsService: ObservableObject {
         var bestFallbackDiff = Int.max
         
         // PRIORITY: 1) Timing within tolerance  2) Maximum POIs
+        // v1.8.17: Calculate Angular Diversity Score to determine if multi-waypoint is feasible
+        let adsResult = calculateAngularDiversityScore(pois: places, origin: location, targetDurationMinutes: targetDurationMinutes)
+        let angularDiversityScore = adsResult.score
+        print("🧭 Angular Diversity Score: \(angularDiversityScore)/8 sectors covered")
+        if angularDiversityScore < 6 {
+            let sectorDetails = adsResult.sectors.sorted { $0.key < $1.key }.map { "S\($0.key):\($0.value)" }.joined(separator: " ")
+            print("🧭 Sector breakdown: \(sectorDetails)")
+        }
+        
+        // v1.8.17: Only use multi-waypoint mode if ADS >= 3 (enough angular diversity)
+        // If ADS < 3, POIs are too clustered for circular routes - skip to single-destination
+        let effectivePreferMultiWaypoint = preferMultiWaypoint && angularDiversityScore >= 3
+        if preferMultiWaypoint && !effectivePreferMultiWaypoint {
+            print("🧭 ⚠️ ADS too low (\(angularDiversityScore)) - skipping multi-waypoint attempt")
+        }
+        
         // v1.8.11: preferMultiWaypoint disables quickMode to try more waypoint combinations
-        let quickMode = !useSystematicSelection && !expandedSearch && !preferMultiWaypoint
+        let quickMode = !useSystematicSelection && !expandedSearch && !effectivePreferMultiWaypoint
         
         // Calculate appropriate waypoint counts based on target duration
         // Waypoints should be SPACED ~5 mins of walking apart (user spends ~2 min at each, not counted in route time)
@@ -4925,9 +4981,10 @@ class GoogleMapsService: ObservableObject {
         
         // v1.6.49: Force multi-waypoint for variety (applied to routes 2-4)
         // For 20+min routes, require at least 2 waypoints to create more interesting multi-POI routes
-        if preferMultiWaypoint && targetDurationMinutes >= 20 {
+        // v1.8.17: Only if ADS supports it (effectivePreferMultiWaypoint already checks ADS >= 3)
+        if effectivePreferMultiWaypoint && targetDurationMinutes >= 20 {
             idealMinWaypoints = max(idealMinWaypoints, 2)
-            print("🗺️ 📋 Multi-waypoint preference active: forcing min 2 waypoints")
+            print("🗺️ 📋 Multi-waypoint preference active: forcing min 2 waypoints (ADS: \(angularDiversityScore))")
         }
         
         let minWaypoints = min(idealMinWaypoints, standardMaxWaypoints)  // Clamp to available max

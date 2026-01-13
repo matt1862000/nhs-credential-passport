@@ -4714,6 +4714,21 @@ struct LocalRouteMapPreview: View {
                         .background(Color.tealAccent.opacity(0.1))
                         .clipShape(Capsule())
                     }
+                    
+                    // v1.8.17: Limited variety message - show when only 1-2 routes and not loading
+                    if totalRoutes <= 2 && !isLoadingMoreRoutes && !varietyExhausted && !isDeadZoneFallback {
+                        HStack(spacing: 4) {
+                            Image(systemName: "mappin.circle.fill")
+                                .font(.caption2)
+                            Text("Best route for your area")
+                                .font(.caption)
+                        }
+                        .foregroundColor(.mintGreen)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                        .background(Color.mintGreen.opacity(0.1))
+                        .clipShape(Capsule())
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 
