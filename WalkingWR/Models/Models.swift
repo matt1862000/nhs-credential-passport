@@ -1340,10 +1340,10 @@ extension WellbeingContent {
             icon: "wind",
             duration: 90,
             steps: [
-                "Exhale completely through your mouth",
-                "Inhale through your nose for 4 seconds",
-                "Hold your breath for 7 seconds",
-                "Exhale through your mouth for 8 seconds",
+                "Exhale completely",
+                "Inhale slowly for 4 seconds",
+                "Hold for 7 seconds",
+                "Exhale slowly for 8 seconds",
                 "Repeat 3 more times"
             ]
         ),
