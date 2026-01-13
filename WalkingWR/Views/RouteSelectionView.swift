@@ -2232,6 +2232,8 @@ struct LocalRoutePickerSheet: View {
                 onBack: { handleBackFromPreview() },
                 onDelete: { handleDeleteRoute() }
             )
+            // v1.6.47: Force re-render when route data changes - SwiftUI can optimize away re-renders
+            .id("preview-\(allRoutes.count)-\(currentRouteIndex)-\(isPreGeneratingRoutes)")
             .background(Color(.systemBackground))
             .disabled(isShuffling)
             
