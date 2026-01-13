@@ -79,6 +79,7 @@ struct WaitTimeView: View {
             .navigationTitle("Clinic Delay")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             #endif
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -514,11 +515,12 @@ struct WalkingSuggestionCard: View {
             return 30 // Default for free walk mode - best route reliability
         }
         let waitTime = viewModel.waitTimeInfo.estimatedMinutes
-        if waitTime >= 25 { return 20 }
-        if waitTime >= 20 { return 15 }
-        if waitTime >= 15 { return 10 }
-        if waitTime >= 10 { return 5 }
-        return 0 // Too short to walk
+        // Dynamic calculation: delay minus 5-minute buffer to return
+        let suggested = waitTime - 5
+        if suggested >= 5 {
+            return suggested
+        }
+        return 0 // Too short to walk (less than 10 min delay)
     }
     
     // Estimated steps for the duration

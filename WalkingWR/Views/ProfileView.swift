@@ -38,6 +38,7 @@ struct ProfileView: View {
                     VStack(spacing: 16) {
                         // Stats summary card
                         StatsSummaryCard(progress: viewModel.userProgress)
+                            .padding(.top, 20)
                         
                         // Activity History (scrollable)
                         ActivityHistorySection(
@@ -75,6 +76,7 @@ struct ProfileView: View {
             .navigationTitle("Your Progress")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

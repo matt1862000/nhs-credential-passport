@@ -108,9 +108,11 @@ struct RouteSelectionView: View {
                             // Time remaining banner - only show when clinician is selected
                             if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
                                 TimeRemainingBanner(minutes: viewModel.waitTimeInfo.estimatedMinutes)
+                                    .padding(.top, 20)
                             } else {
                                 // No clinician selected - show different message
                                 NoClinicianBanner()
+                                    .padding(.top, 20)
                             }
                             
                             // Featured: Local Route (most popular)
@@ -167,6 +169,7 @@ struct RouteSelectionView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(viewModel.walkSession.isActive ? .inline : .large)
             .navigationBarHidden(viewModel.walkSession.isActive)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -463,7 +466,7 @@ struct LocalRouteCard: View {
             .padding(20)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(.secondarySystemBackground))
+                    .fill(Color.darkCardBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
                             .stroke(
@@ -555,7 +558,7 @@ struct CollapsibleRouteSection: View {
                         .rotationEffect(.degrees(isExpanded ? 180 : 0))
                 }
                 .padding(14)
-                .background(Color(.secondarySystemBackground))
+                .background(Color.darkCardBackground)
                 .cornerRadius(12)
             }
             .buttonStyle(.plain)
@@ -684,7 +687,7 @@ struct CompactRouteCard: View {
                             .frame(height: 100)
                             Spacer()
                         }
-                        .background(Color(.quaternarySystemFill))
+                        .background(Color.darkCardBackground.opacity(0.6))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                     
@@ -738,7 +741,7 @@ struct CompactRouteCard: View {
                                         .foregroundColor(.secondary)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(Color(.quaternarySystemFill))
+                                        .background(Color.darkCardBackground.opacity(0.8))
                                         .clipShape(Capsule())
                                 }
                                 if route.landmarks.count > 5 {
@@ -747,7 +750,7 @@ struct CompactRouteCard: View {
                                         .foregroundColor(.secondary)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(Color(.quaternarySystemFill))
+                                        .background(Color.darkCardBackground.opacity(0.8))
                                         .clipShape(Capsule())
                                 }
                             }
@@ -792,7 +795,7 @@ struct CompactRouteCard: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(Color(.tertiarySystemBackground))
+        .background(Color.darkCardBackground)
         .cornerRadius(10)
     }
     
@@ -857,7 +860,7 @@ struct RouteMapPreview: View {
         .overlay(
             // Gradient overlay at bottom for better text readability if needed
             LinearGradient(
-                colors: [.clear, Color(.tertiarySystemBackground).opacity(0.3)],
+                colors: [.clear, Color.darkCardBackground.opacity(0.3)],
                 startPoint: .top,
                 endPoint: .bottom
             )

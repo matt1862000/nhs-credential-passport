@@ -61,11 +61,6 @@ struct WellbeingView: View {
                     CategorySelector(selectedCategory: $selectedCategory)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 12)
-                        .background(
-                            Color(.systemBackground)
-                                .opacity(0.95)
-                                .shadow(color: .black.opacity(0.05), radius: 2, y: 2)
-                        )
                     
                     ScrollView {
                         VStack(spacing: 24) {
@@ -86,13 +81,14 @@ struct WellbeingView: View {
                             Spacer(minLength: 100)
                         }
                         .padding(.horizontal, 20)
-                        .padding(.top, 12)
+                        .padding(.top, 20)
                     }
                 }
             }
             .navigationTitle("Wellbeing")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -686,7 +682,7 @@ struct BreathingExerciseSheet: View {
                                 .fontWeight(.semibold)
                                 .foregroundColor(.primary)
                             
-                            ForEach(Array(steps.prefix(4).enumerated()), id: \.offset) { index, step in
+                            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
                                 HStack(alignment: .top, spacing: 12) {
                                     Text("\(index + 1)")
                                         .font(.caption)

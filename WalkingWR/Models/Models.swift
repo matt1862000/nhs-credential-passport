@@ -1341,9 +1341,9 @@ extension WellbeingContent {
             duration: 90,
             steps: [
                 "Exhale completely through your mouth",
-                "Inhale quietly through your nose for 4 seconds",
+                "Inhale through your nose for 4 seconds",
                 "Hold your breath for 7 seconds",
-                "Exhale completely through mouth for 8 seconds",
+                "Exhale through your mouth for 8 seconds",
                 "Repeat 3 more times"
             ]
         ),
