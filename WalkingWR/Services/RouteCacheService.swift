@@ -563,6 +563,30 @@ class RouteCacheService {
         return (cached.count, totalRoutes, age)
     }
     
+    /// v1.6.48: Get detailed cache contents for debug viewer
+    /// Returns array of (duration, routes) grouped by duration
+    func getCacheDetails() -> [(duration: Int, location: CLLocationCoordinate2D, routes: [(name: String?, pois: [String], actualDuration: Int, distance: Int, skipCount: Int)])] {
+        let cached = loadCache().filter { !$0.isExpired }
+        
+        return cached.map { set in
+            let routeDetails = set.routes.map { route in
+                let poiNames = route.places.map { $0.name }
+                return (
+                    name: route.name,
+                    pois: poiNames,
+                    actualDuration: route.durationMinutes,
+                    distance: route.distanceMeters,
+                    skipCount: route.skipCount
+                )
+            }
+            return (
+                duration: set.durationMinutes,
+                location: set.coordinate,
+                routes: routeDetails
+            )
+        }.sorted { $0.duration < $1.duration }
+    }
+    
     // MARK: - Private Methods
     
     private func loadCache() -> [CachedRouteSet] {

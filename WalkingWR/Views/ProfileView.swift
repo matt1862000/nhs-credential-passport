@@ -3106,6 +3106,60 @@ struct SavedBatchTestsSection: View {
                 Text("This will remove all cached walking routes. New routes will be generated on next use.")
             }
             
+            // v1.6.48: View Route Cache details
+            DisclosureGroup("View Cached Routes") {
+                let cacheDetails = RouteCacheService.shared.getCacheDetails()
+                if cacheDetails.isEmpty {
+                    Text("No cached routes")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 4)
+                } else {
+                    ForEach(cacheDetails, id: \.duration) { set in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("\(set.duration) min")
+                                    .font(.headline)
+                                    .foregroundColor(.tealAccent)
+                                Spacer()
+                                Text("\(set.routes.count) routes")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            ForEach(Array(set.routes.enumerated()), id: \.offset) { index, route in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack {
+                                        Text("\(index + 1).")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                        Text(route.name ?? "Unnamed")
+                                            .font(.caption)
+                                            .fontWeight(.medium)
+                                        Spacer()
+                                        Text("\(route.actualDuration)min")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                        if route.skipCount > 0 {
+                                            Text("⏭️\(route.skipCount)")
+                                                .font(.caption2)
+                                                .foregroundColor(.orange)
+                                        }
+                                    }
+                                    Text(route.pois.joined(separator: " → "))
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+                                .padding(.leading, 8)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                        Divider()
+                    }
+                }
+            }
+            
             // Copy All History button
             if !viewState.savedTests.isEmpty {
                 Button {
