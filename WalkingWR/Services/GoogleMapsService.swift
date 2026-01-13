@@ -331,6 +331,41 @@ class GoogleMapsService: ObservableObject {
         return Double(intersection) / Double(union)
     }
     
+    // MARK: - v1.6.48: Restricted POI Filter (Safety Net)
+    
+    /// Check if POI should be excluded based on name/type patterns
+    /// This is a safety net that runs on cached POIs to catch items
+    /// that were cached before filters were implemented
+    private func isRestrictedPOI(_ poi: PlaceResult) -> Bool {
+        let nameLower = poi.name.lowercased()
+        let types = Set(poi.types ?? [])
+        
+        // Restricted name patterns (childcare facilities, playgrounds)
+        let restrictedNamePatterns = [
+            "playcare", "daycare", "preschool", "pre-school",
+            "nursery", "kindergarten", "childcare", "child care",
+            "playground", "play area", "playgroup"
+        ]
+        
+        for pattern in restrictedNamePatterns {
+            if nameLower.contains(pattern) {
+                return true
+            }
+        }
+        
+        // Restricted types
+        let restrictedTypes = Set([
+            "kindergarten", "nursery", "playground", 
+            "preschool", "daycare", "childcare"
+        ])
+        
+        if !types.isDisjoint(with: restrictedTypes) {
+            return true
+        }
+        
+        return false
+    }
+    
     private func walkabilityScore(for poi: PlaceResult) -> Double {
         let types = Set(poi.types ?? [])
         let nameLower = poi.name.lowercased()
@@ -918,14 +953,24 @@ class GoogleMapsService: ObservableObject {
             // Filter out any previously cached POIs that are too far away
             // This cleans up old caches that might have unrealistic distant POIs
             let maxRealisticDistance = Double(radiusMeters) * 2.0
-            let filteredPOIs = cachedPOIs.filter { poi in
+            let distanceFilteredPOIs = cachedPOIs.filter { poi in
                 let distance = distanceBetween(location, poi.coordinate)
                 return distance <= maxRealisticDistance
             }
             
-            let filteredCount = cachedPOIs.count - filteredPOIs.count
-            if filteredCount > 0 {
-                print("🚫 Filtered \(filteredCount) distant POIs from cache (>\(Int(maxRealisticDistance))m)")
+            let distanceFilteredCount = cachedPOIs.count - distanceFilteredPOIs.count
+            if distanceFilteredCount > 0 {
+                print("🚫 Filtered \(distanceFilteredCount) distant POIs from cache (>\(Int(maxRealisticDistance))m)")
+            }
+            
+            // v1.6.48: Safety net filter - catch restricted POIs that were cached before filters existed
+            let filteredPOIs = distanceFilteredPOIs.filter { poi in
+                !isRestrictedPOI(poi)
+            }
+            
+            let restrictedFilteredCount = distanceFilteredPOIs.count - filteredPOIs.count
+            if restrictedFilteredCount > 0 {
+                print("🏫 Filtered \(restrictedFilteredCount) restricted POIs from cache (playcare/nursery/playground)")
             }
             
             print("💰 Using \(filteredPOIs.count) valid cached POIs")
