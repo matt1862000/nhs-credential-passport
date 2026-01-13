@@ -1439,13 +1439,23 @@ struct LocalRoutePickerSheet: View {
     /// Generate a unique signature for a route based on its waypoints and distance
     /// This allows detecting "same route" even if POI order differs slightly
     func generateRouteSignature(places: [PlaceResult], distanceMeters: Int) -> String {
-        // Sort place IDs for consistent comparison regardless of visit order
-        let sortedIds = places.map { $0.placeId }.sorted().joined(separator: ",")
+        // v1.6.47: Use coordinates instead of placeIds for duplicate detection
+        // Same POI from different sources (Google/Apple/OSM) have different IDs but same location
+        // Round to ~10m precision (4 decimal places) to catch same location
         
-        // Distance bucket (100m granularity) to catch near-identical routes
-        let distanceBucket = (distanceMeters / 100) * 100
+        if places.isEmpty {
+            let distanceBucket = (distanceMeters / 500) * 500  // 500m buckets for empty routes
+            return "empty|\(distanceBucket)"
+        }
         
-        return "\(sortedIds)|\(distanceBucket)"
+        // Create coordinate-based signature (sorted for order-independence)
+        let coordStrings = places.map { place -> String in
+            let lat = String(format: "%.4f", place.coordinate.latitude)
+            let lon = String(format: "%.4f", place.coordinate.longitude)
+            return "\(lat),\(lon)"
+        }.sorted()
+        
+        return coordStrings.joined(separator: "|")
     }
     
     /// Check if a route is a duplicate based on its signature
@@ -2754,20 +2764,23 @@ struct LocalRoutePickerSheet: View {
                             }
                         }
                         
-                        // v1.6.46: Merge routes into cache (don't replace entire cache)
-                        let allRouteData = allRoutes.map { $0.data }
-                        let allNames = allRoutes.map { $0.route.name as String? }
-                        let allDescriptions = allRoutes.map { $0.route.description as String? }
-                        let allDirections = allRoutes.map { $0.route.walkingDirections }
-                        let mergeResult = RouteCacheService.shared.mergeRoutes(
-                            allRouteData,
-                            at: userLocation.coordinate,
-                            durationMinutes: selectedDuration,
-                            names: allNames,
-                            descriptions: allDescriptions,
-                            directions: allDirections
-                        )
-                        print("💾 Merged \(allRoutes.count) routes: \(mergeResult.added) added, \(mergeResult.replaced) replaced")
+                        // v1.6.47: Merge routes into cache - skip first (fast) route, only cache routes 2+
+                        let routesToCache = Array(allRoutes.dropFirst()) // Skip fast-generated route 1
+                        if !routesToCache.isEmpty {
+                            let routeData = routesToCache.map { $0.data }
+                            let routeNames = routesToCache.map { $0.route.name as String? }
+                            let routeDescriptions = routesToCache.map { $0.route.description as String? }
+                            let routeDirections = routesToCache.map { $0.route.walkingDirections }
+                            let mergeResult = RouteCacheService.shared.mergeRoutes(
+                                routeData,
+                                at: userLocation.coordinate,
+                                durationMinutes: selectedDuration,
+                                names: routeNames,
+                                descriptions: routeDescriptions,
+                                directions: routeDirections
+                            )
+                            print("💾 Merged \(routesToCache.count) routes (skipped fast route 1): \(mergeResult.added) added, \(mergeResult.replaced) replaced")
+                        }
                     }
                     
                 } catch {
@@ -2935,20 +2948,23 @@ struct LocalRoutePickerSheet: View {
                                     }
                                 }
                                 
-                                // v1.6.46: Merge routes into cache (including Google)
-                                let allRouteData = allRoutes.map { $0.data }
-                                let allNames = allRoutes.map { $0.route.name as String? }
-                                let allDescriptions = allRoutes.map { $0.route.description as String? }
-                                let allDirections = allRoutes.map { $0.route.walkingDirections }
-                                let mergeResult = RouteCacheService.shared.mergeRoutes(
-                                    allRouteData,
-                                    at: userLocation.coordinate,
-                                    durationMinutes: selectedDuration,
-                                    names: allNames,
-                                    descriptions: allDescriptions,
-                                    directions: allDirections
-                                )
-                                print("💾 Merged \(allRoutes.count) routes: \(mergeResult.added) added, \(mergeResult.replaced) replaced (incl. Google)")
+                                // v1.6.47: Merge routes into cache - skip first (fast) route, only cache routes 2+
+                                let routesToCache = Array(allRoutes.dropFirst())
+                                if !routesToCache.isEmpty {
+                                    let routeData = routesToCache.map { $0.data }
+                                    let routeNames = routesToCache.map { $0.route.name as String? }
+                                    let routeDescriptions = routesToCache.map { $0.route.description as String? }
+                                    let routeDirections = routesToCache.map { $0.route.walkingDirections }
+                                    let mergeResult = RouteCacheService.shared.mergeRoutes(
+                                        routeData,
+                                        at: userLocation.coordinate,
+                                        durationMinutes: selectedDuration,
+                                        names: routeNames,
+                                        descriptions: routeDescriptions,
+                                        directions: routeDirections
+                                    )
+                                    print("💾 Merged \(routesToCache.count) routes (skipped fast route 1): \(mergeResult.added) added, \(mergeResult.replaced) replaced (incl. Google)")
+                                }
                             }
                             
                         } catch {

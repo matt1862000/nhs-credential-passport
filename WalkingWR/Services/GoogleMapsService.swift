@@ -1971,9 +1971,12 @@ class GoogleMapsService: ObservableObject {
         // Overpass API mirrors - ordered by reliability
         // Note: kumi.systems has SSL issues, moved to last
         let mirrors = [
-            "https://lz4.overpass-api.de/api/interpreter",    // Fast mirror - usually works
-            "https://overpass-api.de/api/interpreter",        // Main server
-            "https://overpass.kumi.systems/api/interpreter"   // Has SSL issues, fallback only
+            "https://lz4.overpass-api.de/api/interpreter",           // Fast mirror - usually works
+            "https://overpass-api.de/api/interpreter",               // Main server
+            "https://overpass.private.coffee/api/interpreter",       // No rate limits, global
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter", // VK Maps, no limits, global
+            "https://overpass.osm.jp/api/interpreter",               // Japan mirror, global
+            "https://overpass.kumi.systems/api/interpreter"          // Has SSL issues, last resort
         ]
         
         for (index, baseUrl) in mirrors.enumerated() {
