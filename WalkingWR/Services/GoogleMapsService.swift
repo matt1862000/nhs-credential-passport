@@ -2263,20 +2263,26 @@ class GoogleMapsService: ObservableObject {
         return isInside
     }
     
-    /// Check if there's a road or footpath within specified meters of a POI
+    /// Check if there's a PUBLIC road within 20m of a POI (not internal paths)
+    /// v1.6.47: Fixed to exclude internal footpaths/paths that are inside school grounds
     private func checkRoadAccessNearPOI(poi: PlaceResult, radiusMeters: Int) async -> Bool {
-        // Query for roads/footpaths near the POI
+        // Query for PUBLIC roads only - exclude internal paths
+        // residential, primary, secondary, tertiary, unclassified, living_street = normal public roads
+        // service roads that are NOT private
+        // EXCLUDED: footway, path, cycleway, track (often internal to properties)
+        let searchRadius = min(radiusMeters, 20) // Max 20m for stricter check
         let query = """
         [out:json][timeout:10];
         (
-          way["highway"](around:\(radiusMeters),\(poi.coordinate.latitude),\(poi.coordinate.longitude));
+          way["highway"~"residential|primary|secondary|tertiary|unclassified|living_street"](around:\(searchRadius),\(poi.coordinate.latitude),\(poi.coordinate.longitude));
+          way["highway"="service"]["access"!="private"](around:\(searchRadius),\(poi.coordinate.latitude),\(poi.coordinate.longitude));
         );
         out count;
         """
         
         // Try just the fastest mirror
         guard let url = URL(string: "https://lz4.overpass-api.de/api/interpreter") else {
-            return true // Fail open - assume accessible
+            return false // Fail closed - assume NO access (safer)
         }
         
         var request = URLRequest(url: url)
@@ -2290,15 +2296,15 @@ class GoogleMapsService: ObservableObject {
             
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200 else {
-                return true // Fail open
+                return false // Fail closed - assume NO access
             }
             
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let elements = json["elements"] as? [[String: Any]] else {
-                return true // Fail open
+                return false // Fail closed
             }
             
-            // If any roads found, POI has road access
+            // If any public roads found, POI has road access
             if let countElement = elements.first,
                let tags = countElement["tags"] as? [String: Any],
                let total = tags["total"] as? Int {
@@ -2309,7 +2315,7 @@ class GoogleMapsService: ObservableObject {
             return !elements.isEmpty
             
         } catch {
-            return true // Fail open - assume accessible if query fails
+            return false // Fail closed - assume NO access if query fails (safer)
         }
     }
     
