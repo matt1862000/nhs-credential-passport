@@ -4293,7 +4293,10 @@ class GoogleMapsService: ObservableObject {
                     radiusMeters: 800
                 ) {
                     for place in morePlaces {
-                        if !places.contains(where: { $0.placeId == place.placeId }) {
+                        // v1.6.47: Check BOTH duplicate AND exclusion list to prevent excluded POIs sneaking back
+                        let isDuplicate = places.contains(where: { $0.placeId == place.placeId })
+                        let isExcluded = excludePlaceIds.contains(place.placeId)
+                        if !isDuplicate && !isExcluded {
                             places.append(place)
                         }
                     }
