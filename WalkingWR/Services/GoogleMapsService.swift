@@ -134,8 +134,9 @@ class GoogleMapsService: ObservableObject {
     }
     
     // MARK: - Google Directions Quota Tracking (v1.8.9)
-    // Track daily usage to stay within free tier (100 calls/day safety limit)
-    private let googleDirectionsDailyCap = 100
+    // Track daily usage to stay within budget (~$0.25/day max)
+    // v1.6.47: Reduced from 100 to 50 for cost control
+    private let googleDirectionsDailyCap = 50
     private var googleDirectionsCallsToday = 0
     private let googleDirectionsCountKey = "googleDirectionsCount"
     private let googleDirectionsDateKey = "googleDirectionsDate"
@@ -2743,6 +2744,9 @@ class GoogleMapsService: ObservableObject {
             let legOrigin = allPoints[i]
             let legDestination = allPoints[i + 1]
             
+            // Calculate straight-line distance for suspicion check
+            let straightLineDistance = distanceBetween(legOrigin, legDestination)
+            
             await checkMapKitRateLimit()
             
             let request = MKDirections.Request()
@@ -2756,14 +2760,87 @@ class GoogleMapsService: ObservableObject {
             do {
                 let response = try await directions.calculate()
                 if let mkRoute = response.routes.first {
-                    // Extract polyline points
+                    // v1.6.47: Check for suspicious segment (MapKit shortcut through fields)
+                    let routeDistance = mkRoute.distance
+                    let suspicionRatio = straightLineDistance > 0 ? routeDistance / straightLineDistance : 1.0
+                    
+                    var segmentPoints: [CLLocationCoordinate2D] = []
+                    var segmentDistance = Int(routeDistance)
+                    var segmentDuration = Int(mkRoute.expectedTravelTime)
+                    
+                    // Extract MapKit polyline points
                     let pointCount = mkRoute.polyline.pointCount
                     var points = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
                     mkRoute.polyline.getCoordinates(&points, range: NSRange(location: 0, length: pointCount))
-                    freshPolylinePoints.append(contentsOf: points)
+                    segmentPoints = points
                     
-                    totalDistance += Int(mkRoute.distance)
-                    totalDuration += Int(mkRoute.expectedTravelTime)
+                    // SUSPICIOUS CHECK: ratio < 1.10 means route is too direct (likely shortcut)
+                    if suspicionRatio < 1.10 && straightLineDistance > 50 {
+                        print("🚨 SUSPICIOUS Leg \(i): ratio=\(String(format: "%.2f", suspicionRatio)) (route: \(Int(routeDistance))m, straight: \(Int(straightLineDistance))m)")
+                        
+                        var foundBetterRoute = false
+                        
+                        // v1.6.47: Step 1 - Try OSRM first (FREE, uses OSM barrier data)
+                        do {
+                            let osrmResult = try await getOSRMWalkingDirections(
+                                origin: legOrigin,
+                                destination: legDestination,
+                                waypoints: []
+                            )
+                            
+                            let osrmRatio = straightLineDistance > 0 ? Double(osrmResult.distance) / straightLineDistance : 1.0
+                            
+                            if osrmRatio >= 1.15 {
+                                print("✅ OSRM segment BETTER: ratio=\(String(format: "%.2f", osrmRatio)) (route: \(osrmResult.distance)m) [FREE]")
+                                segmentPoints = osrmResult.polyline
+                                segmentDistance = osrmResult.distance
+                                segmentDuration = osrmResult.duration
+                                foundBetterRoute = true
+                            } else {
+                                print("⚠️ OSRM also suspicious: ratio=\(String(format: "%.2f", osrmRatio))")
+                            }
+                        } catch {
+                            print("⚠️ OSRM fallback failed: \(error.localizedDescription)")
+                        }
+                        
+                        // v1.6.47: Step 2 - If OSRM also suspicious, try Google (costs money)
+                        if !foundBetterRoute && hasAPIKey && canUseGoogleDirectionsRefresh {
+                            do {
+                                let googleDirs = try await getWalkingDirections(
+                                    origin: legOrigin,
+                                    destination: legDestination,
+                                    waypoints: [],
+                                    preserveWaypointOrder: true
+                                )
+                                
+                                let googleDistance = googleDirs.legs.reduce(0) { $0 + $1.distance.value }
+                                let googleRatio = straightLineDistance > 0 ? Double(googleDistance) / straightLineDistance : 1.0
+                                
+                                // Use Google if it gives a more realistic route (ratio ≥ 1.15)
+                                if googleRatio >= 1.15 {
+                                    print("✅ Google segment BETTER: ratio=\(String(format: "%.2f", googleRatio)) (route: \(googleDistance)m)")
+                                    segmentPoints = decodePolyline(googleDirs.overviewPolyline.points)
+                                    segmentDistance = googleDistance
+                                    segmentDuration = googleDirs.legs.reduce(0) { $0 + $1.duration.value }
+                                    foundBetterRoute = true
+                                } else {
+                                    print("⚠️ Google also suspicious: ratio=\(String(format: "%.2f", googleRatio))")
+                                }
+                            } catch {
+                                print("⚠️ Google fallback failed: \(error.localizedDescription)")
+                            }
+                        }
+                        
+                        if !foundBetterRoute {
+                            print("⚠️ All sources suspicious - keeping MapKit (best available)")
+                        }
+                    } else {
+                        print("🍎 Leg \(i) OK: ratio=\(String(format: "%.2f", suspicionRatio)) (\(Int(routeDistance))m)")
+                    }
+                    
+                    freshPolylinePoints.append(contentsOf: segmentPoints)
+                    totalDistance += segmentDistance
+                    totalDuration += segmentDuration
                 }
             } catch {
                 print("🍎 REFRESH: Leg \(i) failed: \(error.localizedDescription)")
