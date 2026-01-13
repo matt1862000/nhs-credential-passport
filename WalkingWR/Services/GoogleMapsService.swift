@@ -1007,6 +1007,14 @@ class GoogleMapsService: ObservableObject {
             print("🚫 Distance filter removed \(filteredCount) unrealistic POIs (>\(Int(maxRealisticDistance))m)")
         }
         
+        // v1.6.47: Filter POIs inside restricted areas (schools, hospitals, etc.) without road access
+        let beforeRestrictedFilter = allResults.count
+        allResults = await filterPOIsInRestrictedAreas(pois: allResults, location: location, radiusMeters: radiusMeters)
+        let restrictedFiltered = beforeRestrictedFilter - allResults.count
+        if restrictedFiltered > 0 {
+            print("🏫 Restricted area filter removed \(restrictedFiltered) inaccessible POIs")
+        }
+        
         // 💾 Cache combined results for next time
         if !allResults.isEmpty {
             POICacheService.shared.cachePOIs(allResults, for: location)
@@ -2072,6 +2080,271 @@ class GoogleMapsService: ObservableObject {
         // All mirrors failed
         print("🗺️ ⚠️ All OSM mirrors failed")
         return allResults
+    }
+    
+    // MARK: - Restricted Area Filter (v1.6.47)
+    
+    /// Structure to hold a restricted area polygon
+    private struct RestrictedPolygon {
+        let type: String  // school, hospital, etc.
+        let name: String
+        let coordinates: [CLLocationCoordinate2D]
+    }
+    
+    /// Filter POIs that are inside restricted areas without road access
+    /// 1. Query OSM for restricted area polygons (schools, hospitals, etc.)
+    /// 2. For each POI inside a restricted area, check if it has road access
+    /// 3. Keep POIs with road access (like hospital cafes), exclude others
+    private func filterPOIsInRestrictedAreas(
+        pois: [PlaceResult],
+        location: CLLocationCoordinate2D,
+        radiusMeters: Int
+    ) async -> [PlaceResult] {
+        // First, try to get restricted area polygons from Overpass
+        let polygons = await getRestrictedAreaPolygons(location: location, radiusMeters: radiusMeters)
+        
+        if polygons.isEmpty {
+            // Fallback: use name/type-based filter when Overpass fails
+            print("🏫 Using fallback name-based filter (Overpass unavailable)")
+            return fallbackRestrictedFilter(pois: pois)
+        }
+        
+        print("🏫 Checking \(pois.count) POIs against \(polygons.count) restricted areas...")
+        
+        var filteredPOIs: [PlaceResult] = []
+        var excludedCount = 0
+        
+        for poi in pois {
+            // Check if POI is inside any restricted polygon
+            var isInsideRestricted = false
+            var restrictedAreaName = ""
+            
+            for polygon in polygons {
+                if isPointInPolygon(point: poi.coordinate, polygon: polygon.coordinates) {
+                    isInsideRestricted = true
+                    restrictedAreaName = polygon.name.isEmpty ? polygon.type : polygon.name
+                    break
+                }
+            }
+            
+            if isInsideRestricted {
+                // POI is inside restricted area - check for road access
+                let hasRoadAccess = await checkRoadAccessNearPOI(poi: poi, radiusMeters: 30)
+                
+                if hasRoadAccess {
+                    filteredPOIs.append(poi)
+                    print("   ✅ '\(poi.name)' inside '\(restrictedAreaName)' but has road access - KEPT")
+                } else {
+                    excludedCount += 1
+                    print("   ❌ '\(poi.name)' inside '\(restrictedAreaName)' with NO road access - EXCLUDED")
+                }
+            } else {
+                // Not inside any restricted area - keep it
+                filteredPOIs.append(poi)
+            }
+        }
+        
+        if excludedCount > 0 {
+            print("🏫 Excluded \(excludedCount) POIs inside restricted areas without road access")
+        }
+        
+        return filteredPOIs
+    }
+    
+    /// Get restricted area polygons from OSM Overpass API
+    private func getRestrictedAreaPolygons(
+        location: CLLocationCoordinate2D,
+        radiusMeters: Int
+    ) async -> [RestrictedPolygon] {
+        // Query for restricted area polygons
+        let query = """
+        [out:json][timeout:15];
+        (
+          way["amenity"="school"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["amenity"="university"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["amenity"="hospital"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["leisure"="golf_course"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["landuse"="military"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["amenity"="kindergarten"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+          way["amenity"="prison"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
+        );
+        out body geom;
+        """
+        
+        // Use only 3 most reliable mirrors for this query
+        let mirrors = [
+            "https://lz4.overpass-api.de/api/interpreter",
+            "https://overpass-api.de/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter"
+        ]
+        
+        for (index, baseUrl) in mirrors.enumerated() {
+            guard let url = URL(string: baseUrl) else { continue }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.httpBody = "data=\(query)".data(using: .utf8)
+            request.timeoutInterval = 15
+            
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                
+                guard let httpResponse = response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200 else {
+                    continue
+                }
+                
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let elements = json["elements"] as? [[String: Any]] else {
+                    continue
+                }
+                
+                var polygons: [RestrictedPolygon] = []
+                
+                for element in elements {
+                    guard let geometry = element["geometry"] as? [[String: Any]],
+                          geometry.count >= 3 else { continue }
+                    
+                    let tags = element["tags"] as? [String: String] ?? [:]
+                    let name = tags["name"] ?? ""
+                    
+                    // Determine type
+                    var type = "unknown"
+                    if tags["amenity"] == "school" || tags["amenity"] == "kindergarten" { type = "school" }
+                    else if tags["amenity"] == "university" { type = "university" }
+                    else if tags["amenity"] == "hospital" { type = "hospital" }
+                    else if tags["leisure"] == "golf_course" { type = "golf_course" }
+                    else if tags["landuse"] == "military" { type = "military" }
+                    else if tags["amenity"] == "prison" { type = "prison" }
+                    
+                    // Extract coordinates
+                    let coordinates = geometry.compactMap { point -> CLLocationCoordinate2D? in
+                        guard let lat = point["lat"] as? Double,
+                              let lon = point["lon"] as? Double else { return nil }
+                        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                    }
+                    
+                    if coordinates.count >= 3 {
+                        polygons.append(RestrictedPolygon(type: type, name: name, coordinates: coordinates))
+                    }
+                }
+                
+                print("🏫 Found \(polygons.count) restricted area polygons (mirror \(index + 1))")
+                return polygons
+                
+            } catch {
+                print("🏫 Restricted area query failed (mirror \(index + 1)): \(error.localizedDescription)")
+                continue
+            }
+        }
+        
+        return []
+    }
+    
+    /// Check if a point is inside a polygon using ray casting algorithm
+    private func isPointInPolygon(point: CLLocationCoordinate2D, polygon: [CLLocationCoordinate2D]) -> Bool {
+        guard polygon.count >= 3 else { return false }
+        
+        var isInside = false
+        var j = polygon.count - 1
+        
+        for i in 0..<polygon.count {
+            let pi = polygon[i]
+            let pj = polygon[j]
+            
+            if ((pi.longitude > point.longitude) != (pj.longitude > point.longitude)) &&
+               (point.latitude < (pj.latitude - pi.latitude) * (point.longitude - pi.longitude) / (pj.longitude - pi.longitude) + pi.latitude) {
+                isInside = !isInside
+            }
+            j = i
+        }
+        
+        return isInside
+    }
+    
+    /// Check if there's a road or footpath within specified meters of a POI
+    private func checkRoadAccessNearPOI(poi: PlaceResult, radiusMeters: Int) async -> Bool {
+        // Query for roads/footpaths near the POI
+        let query = """
+        [out:json][timeout:10];
+        (
+          way["highway"](around:\(radiusMeters),\(poi.coordinate.latitude),\(poi.coordinate.longitude));
+        );
+        out count;
+        """
+        
+        // Try just the fastest mirror
+        guard let url = URL(string: "https://lz4.overpass-api.de/api/interpreter") else {
+            return true // Fail open - assume accessible
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = "data=\(query)".data(using: .utf8)
+        request.timeoutInterval = 10
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                return true // Fail open
+            }
+            
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let elements = json["elements"] as? [[String: Any]] else {
+                return true // Fail open
+            }
+            
+            // If any roads found, POI has road access
+            if let countElement = elements.first,
+               let tags = countElement["tags"] as? [String: Any],
+               let total = tags["total"] as? Int {
+                return total > 0
+            }
+            
+            // Check if elements array has any roads
+            return !elements.isEmpty
+            
+        } catch {
+            return true // Fail open - assume accessible if query fails
+        }
+    }
+    
+    /// Fallback filter when Overpass is unavailable - filter by suspicious names/types
+    /// Note: Schools and universities are ALLOWED (have public entrances)
+    /// Only filter out things typically INSIDE school grounds without public access
+    private func fallbackRestrictedFilter(pois: [PlaceResult]) -> [PlaceResult] {
+        // Suspicious name patterns (things inside school grounds)
+        let suspiciousNames = ["playcare", "nursery", "preschool", "daycare", "creche", "childcare"]
+        
+        // Suspicious types (NOT including school/university - those are allowed)
+        let suspiciousTypes = ["kindergarten", "nursery", "playground", "childcare", "preschool"]
+        
+        return pois.filter { poi in
+            let nameLower = poi.name.lowercased()
+            let types = poi.types ?? []
+            
+            // Check name
+            for pattern in suspiciousNames {
+                if nameLower.contains(pattern) {
+                    print("   ❌ Fallback filter: '\(poi.name)' excluded (name contains '\(pattern)')")
+                    return false
+                }
+            }
+            
+            // Check types
+            for type in types {
+                if suspiciousTypes.contains(type.lowercased()) {
+                    print("   ❌ Fallback filter: '\(poi.name)' excluded (type '\(type)')")
+                    return false
+                }
+            }
+            
+            return true
+        }
     }
     
     // MARK: - OSRM Walking Directions (OpenStreetMap - FREE, NO LIMITS!)
