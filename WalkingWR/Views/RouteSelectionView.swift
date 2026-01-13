@@ -1599,6 +1599,12 @@ struct LocalRoutePickerSheet: View {
         print("   selectedDuration: \(selectedDuration)min")
         print("   locationService.currentLocation: \(locationService.currentLocation != nil ? "available" : "nil")")
         
+        // v1.6.46: Guard against double-tap or rapid re-tap
+        guard !isGenerating else {
+            print("⚠️ Already generating - ignoring tap")
+            return
+        }
+        
         isGenerating = true
         routeGenerationComplete = false  // v1.8.5: Reset for new generation
         errorMessage = nil
@@ -1619,12 +1625,15 @@ struct LocalRoutePickerSheet: View {
             return
         }
         print("📍 Location: (\(String(format: "%.5f", userLocation.coordinate.latitude)), \(String(format: "%.5f", userLocation.coordinate.longitude)))")
+        print("🔑 mapsService.hasAPIKey: \(mapsService.hasAPIKey)")
         
         // v1.8.14: Move all cache checks into async Task to prevent main thread blocking
         // This allows the button to show "Finding places..." immediately
         if mapsService.hasAPIKey {
             // Use Google APIs for smart routing
+            print("🚀 Starting async Task for route generation...")
             Task {
+                print("📥 Task started on thread: \(Thread.isMainThread ? "MAIN" : "background")")
                 // v1.8.14: Check location limit INSIDE Task to prevent main thread blocking
                 let cacheService = POICacheService.shared
                 let hasCachedPOIs = cacheService.getCachedPOIs(near: userLocation.coordinate) != nil
@@ -1684,6 +1693,13 @@ struct LocalRoutePickerSheet: View {
                 if shouldUseCache, let cachedRoutes = RouteCacheService.shared.getCachedRoutes(near: userLocation.coordinate, durationMinutes: selectedDuration), !cachedRoutes.isEmpty {
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE HIT! Found \(cachedRoutes.count) cached routes")
                     print("📦 Using \(cachedRoutes.count) cached routes for \(selectedDuration)min")
+                    
+                    // v1.6.46: Show loading screen IMMEDIATELY for cache hits
+                    // This ensures the stage animation plays before showing map preview
+                    await MainActor.run {
+                        showLoadingScreen = true
+                        print("📺 SHOWING LOADING SCREEN (cache hit)")
+                    }
                     
                     // v1.6.45: Load ALL cached routes, not just the first one
                     var loadedRoutes: [(route: WalkingRoute, data: GeneratedRoute)] = []
@@ -1795,7 +1811,9 @@ struct LocalRoutePickerSheet: View {
                             print("📦 Only \(loadedRoutes.count)/\(maxRoutesToGenerate) routes cached - will pre-generate more")
                         preGenerateRemainingRoutes()
                         } else {
-                            print("📦 All \(loadedRoutes.count) routes loaded from cache - no pre-generation needed")
+                            print("📦 All \(loadedRoutes.count) routes loaded from cache")
+                            // v1.6.46: Background refresh - search for potentially better routes
+                            backgroundRefreshRoutes(at: userLocation.coordinate, duration: selectedDuration)
                         }
                     }
                     return
@@ -1973,8 +1991,11 @@ struct LocalRoutePickerSheet: View {
             }
         } else {
             // Use basic generation (fallback)
+            print("⚠️ No API key - using basic route generation")
             generateBasicRoute(from: userLocation.coordinate)
         }
+        
+        print("🏁 generateRoute() function completed (Task launched if applicable)")
     }
     
     // MARK: - View Builders (extracted to help compiler)
@@ -2270,7 +2291,21 @@ struct LocalRoutePickerSheet: View {
     }
     
     private func handleBackFromPreview() {
+        print("🔙 handleBackFromPreview - resetting all generation state")
+        
+        // Reset view state
         showMapPreview = false
+        showLoadingScreen = false
+        isGenerating = false
+        routeGenerationComplete = false
+        
+        // Reset route data
+        generatedRoute = nil
+        generatedRouteData = nil
+        lastValidRoute = nil
+        lastValidRouteData = nil
+        
+        // Reset pre-generation state
         allRoutes = []
         currentRouteIndex = 0
         preGenerationComplete = false
@@ -2280,6 +2315,10 @@ struct LocalRoutePickerSheet: View {
         routeSignatures = []
         varietyExhausted = false
         rejectedShortRoutes = []  // v1.8.8: Clear rejected routes
+        shownPlaceIdSets = []  // Reset shown place IDs
+        
+        // Reset error state
+        errorMessage = nil
     }
     
     private func handleDeleteRoute() {
@@ -2494,6 +2533,15 @@ struct LocalRoutePickerSheet: View {
             return
         }
         
+        // v1.6.46: Track that user skipped the current route (decreases its quality score)
+        if let currentRoute = generatedRoute, let userLocation = locationService.currentLocation {
+            RouteCacheService.shared.incrementSkipCount(
+                routeName: currentRoute.name,
+                at: userLocation.coordinate,
+                durationMinutes: selectedDuration
+            )
+        }
+        
         // v1.8.8: Helper to check if a route is a short fallback
         let minAcceptablePercent = 0.50
         let minAcceptableDuration = Int(Double(selectedDuration) * minAcceptablePercent)
@@ -2706,12 +2754,12 @@ struct LocalRoutePickerSheet: View {
                             }
                         }
                         
-                        // v1.6.45: Cache all routes WITH directions so they persist
+                        // v1.6.46: Merge routes into cache (don't replace entire cache)
                         let allRouteData = allRoutes.map { $0.data }
                         let allNames = allRoutes.map { $0.route.name as String? }
                         let allDescriptions = allRoutes.map { $0.route.description as String? }
                         let allDirections = allRoutes.map { $0.route.walkingDirections }
-                        RouteCacheService.shared.cacheRoutes(
+                        let mergeResult = RouteCacheService.shared.mergeRoutes(
                             allRouteData,
                             at: userLocation.coordinate,
                             durationMinutes: selectedDuration,
@@ -2719,7 +2767,7 @@ struct LocalRoutePickerSheet: View {
                             descriptions: allDescriptions,
                             directions: allDirections
                         )
-                        print("💾 Cached \(allRoutes.count) routes with directions for \(selectedDuration)min")
+                        print("💾 Merged \(allRoutes.count) routes: \(mergeResult.added) added, \(mergeResult.replaced) replaced")
                     }
                     
                 } catch {
@@ -2887,12 +2935,12 @@ struct LocalRoutePickerSheet: View {
                                     }
                                 }
                                 
-                                // v1.6.45: Cache all routes WITH directions (including Google)
+                                // v1.6.46: Merge routes into cache (including Google)
                                 let allRouteData = allRoutes.map { $0.data }
                                 let allNames = allRoutes.map { $0.route.name as String? }
                                 let allDescriptions = allRoutes.map { $0.route.description as String? }
                                 let allDirections = allRoutes.map { $0.route.walkingDirections }
-                                RouteCacheService.shared.cacheRoutes(
+                                let mergeResult = RouteCacheService.shared.mergeRoutes(
                                     allRouteData,
                                     at: userLocation.coordinate,
                                     durationMinutes: selectedDuration,
@@ -2900,7 +2948,7 @@ struct LocalRoutePickerSheet: View {
                                     descriptions: allDescriptions,
                                     directions: allDirections
                                 )
-                                print("💾 Cached \(allRoutes.count) routes with directions for \(selectedDuration)min (incl. Google)")
+                                print("💾 Merged \(allRoutes.count) routes: \(mergeResult.added) added, \(mergeResult.replaced) replaced (incl. Google)")
                             }
                             
                         } catch {
@@ -3015,6 +3063,133 @@ struct LocalRoutePickerSheet: View {
         }
         
         print("🏁 Other durations pre-generation complete!")
+    }
+    
+    /// v1.6.46: Background refresh - search for new routes while using cached ones
+    /// If a better route is found, it's merged into cache (replacing similar routes)
+    func backgroundRefreshRoutes(at coordinate: CLLocationCoordinate2D, duration: Int) {
+        Task {
+            // Wait a bit before starting background refresh (let UI settle)
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+            
+            print("🔄 Background refresh: searching for new routes at \(duration)min...")
+            
+            // Try to generate 1-2 new routes
+            var newRoutes: [(route: WalkingRoute, data: GeneratedRoute)] = []
+            
+            for attempt in 1...2 {
+                do {
+                    // v1.6.33: Check rate limit
+                    if await mapsService.shouldPauseBackgroundGeneration() {
+                        print("🔄 Background refresh: rate limited, stopping")
+                        break
+                    }
+                    
+                    let poisToUse = prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
+                    let excludedPlaceIds = shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
+                    
+                    let result = try await mapsService.generateLocalRoute(
+                        from: coordinate,
+                        targetDurationMinutes: duration,
+                        difficulty: nil,
+                        excludePlaceIds: excludedPlaceIds,
+                        prefetchedPOIs: poisToUse
+                    )
+                    
+                    guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
+                        continue
+                    }
+                    
+                    // Check if this route is truly unique
+                    let isUnique = await MainActor.run {
+                        isRouteUnique(places: result.places, distanceMeters: result.distanceMeters)
+                    }
+                    
+                    if isUnique {
+                        print("🔄 Background refresh: found unique route (attempt \(attempt))")
+                        
+                        // Create waypoint infos for Gemini
+                        let waypointInfos = result.places.map { place in
+                            GeminiService.WaypointInfo(
+                                name: place.name,
+                                types: place.types ?? [],
+                                vicinity: place.vicinity
+                            )
+                        }
+                        
+                        // Generate route name (always succeeds with template fallback)
+                        let aiContent = await GeminiService.shared.generateRouteContent(
+                            waypoints: waypointInfos,
+                            durationMinutes: result.durationMinutes,
+                            distanceMeters: result.distanceMeters,
+                            difficulty: nil
+                        )
+                        
+                        let directions = await mapsService.getMapKitDirectionsForRoute(
+                            origin: coordinate,
+                            waypoints: result.places.map { $0.coordinate },
+                            destination: coordinate
+                        )
+                        
+                        let markers = await MainActor.run {
+                            createMarkersFromPlaces(result.places, origin: coordinate)
+                        }
+                        let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                        
+                        let localRoute = WalkingRoute(
+                            name: aiContent.name,
+                            description: aiContent.description,
+                            durationMinutes: max(1, result.durationMinutes),
+                            distanceMeters: result.distanceMeters,
+                            difficulty: routeDifficulty,
+                            isIndoor: false,
+                            isAccessible: true,
+                            landmarks: ["Start"] + result.places.map { $0.name } + ["Return"],
+                            icon: "location.fill",
+                            color: .tealAccent,
+                            qrMarkers: markers,
+                            routeType: .local,
+                            encodedPolyline: result.polyline,
+                            walkingDirections: directions,
+                            usedOSRMRouting: result.usedOSRM
+                        )
+                        
+                        newRoutes.append((route: localRoute, data: result))
+                        await MainActor.run {
+                            registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
+                        }
+                    } else {
+                        print("🔄 Background refresh: route was duplicate (attempt \(attempt))")
+                    }
+                    
+                } catch {
+                    print("🔄 Background refresh error: \(error.localizedDescription)")
+                }
+                
+                // Small delay between attempts
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+            
+            // Merge any new routes into cache
+            if !newRoutes.isEmpty {
+                let allRouteData = newRoutes.map { $0.data }
+                let allNames = newRoutes.map { $0.route.name as String? }
+                let allDescriptions = newRoutes.map { $0.route.description as String? }
+                let allDirections = newRoutes.map { $0.route.walkingDirections }
+                
+                let mergeResult = RouteCacheService.shared.mergeRoutes(
+                    allRouteData,
+                    at: coordinate,
+                    durationMinutes: duration,
+                    names: allNames,
+                    descriptions: allDescriptions,
+                    directions: allDirections
+                )
+                print("🔄 Background refresh complete: \(mergeResult.added) added, \(mergeResult.replaced) replaced")
+            } else {
+                print("🔄 Background refresh complete: no new unique routes found")
+            }
+        }
     }
     
     func generateBasicRoute(from coordinate: CLLocationCoordinate2D) {

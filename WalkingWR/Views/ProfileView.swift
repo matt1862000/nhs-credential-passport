@@ -1783,7 +1783,7 @@ struct HelpResourcesCard: View {
 struct SettingsView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @ObservedObject var healthKitService: HealthKitService
-    @ObservedObject var locationService: LocationService
+    let locationService: LocationService  // v1.6.46: NOT observed - prevents sheet dismissal on location updates
     @Binding var showIntroduction: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -1795,6 +1795,7 @@ struct SettingsView: View {
     @State private var showHealthKitUnavailable = false
     @State private var showMotionUnavailable = false
     @State private var showHealthKitManageAlert = false
+    @ObservedObject private var diagnosticState = DiagnosticViewState.shared  // v1.6.47: For sheet binding
     
     // Only show permissions that have been interacted with (not .notDetermined)
     var shouldShowNotifications: Bool {
@@ -2149,6 +2150,13 @@ struct SettingsView: View {
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("To manage HealthKit access:\n\n1. Tap 'Open Health App' below\n2. Tap your profile icon (top right)\n3. Look for Apps or Apps & Services\n4. Find WaitWell\n5. Toggle Steps on or off")
+            }
+            // v1.6.47: Diagnostic sheet moved here from SavedBatchTestsSection to prevent multiple presentation attempts
+            .sheet(item: $diagnosticState.selectedTest, onDismiss: {
+                print("🔬 Sheet: onDismiss callback fired")
+                diagnosticState.refresh()
+            }) { test in
+                DiagnosticTestDetailSheet(test: test)
             }
             .preferredColorScheme(effectiveColorScheme)
             .id(appTheme) // Force view refresh when theme changes
@@ -2969,10 +2977,48 @@ class BatchTestStorage {
     }
 }
 
+// v1.6.46: SINGLETON state holder - survives view recreation
+class DiagnosticViewState: ObservableObject {
+    static let shared = DiagnosticViewState()
+    
+    @Published var selectedTest: SavedBatchTest? {
+        didSet {
+            if let test = selectedTest {
+                print("🔬 DiagnosticViewState: selectedTest SET to '\(test.summary)' (id: \(test.id))")
+            } else if oldValue != nil {
+                print("🔬 DiagnosticViewState: selectedTest SET to nil (was set)")
+                print("🔬 STACK TRACE:")
+                Thread.callStackSymbols.prefix(15).forEach { print("   \($0)") }
+            }
+        }
+    }
+    @Published var savedTests: [SavedBatchTest] = []
+    
+    private init() {
+        print("🔬 DiagnosticViewState: SINGLETON INIT")
+        refresh()
+    }
+    
+    func refresh() {
+        savedTests = BatchTestStorage.shared.getAllTests()
+        print("🔬 DiagnosticViewState: refreshed, \(savedTests.count) tests, selectedTest is \(selectedTest == nil ? "nil" : "set")")
+    }
+    
+    func selectTest(_ test: SavedBatchTest) {
+        print("🔬 DiagnosticViewState: selectTest() called for '\(test.summary)'")
+        selectedTest = test
+    }
+    
+    func dismissSheet() {
+        print("🔬 DiagnosticViewState: dismissSheet() called explicitly")
+        selectedTest = nil
+        refresh()
+    }
+}
+
 struct SavedBatchTestsSection: View {
     let locationService: LocationService  // v1.6.45: Need location access (not observed to prevent sheet dismissal)
-    @State private var savedTests: [SavedBatchTest] = []
-    @State private var selectedTest: SavedBatchTest?
+    @ObservedObject private var viewState = DiagnosticViewState.shared  // v1.6.46: SINGLETON - survives view recreation
     @State private var showClearConfirmation = false
     @State private var didCopyAllHistory = false
     @State private var isTestRunning = false
@@ -2988,6 +3034,7 @@ struct SavedBatchTestsSection: View {
     @State private var showRouteCacheClearConfirmation = false
     
     var body: some View {
+        let _ = print("🔬 SavedBatchTestsSection: body computed, viewState.selectedTest is \(viewState.selectedTest == nil ? "nil" : "set")")
         Section {
             // Test OSM POIs button
             Button {
@@ -3060,10 +3107,10 @@ struct SavedBatchTestsSection: View {
             }
             
             // Copy All History button
-            if !savedTests.isEmpty {
+            if !viewState.savedTests.isEmpty {
                 Button {
                     // Combine all test results into one string
-                    let allHistory = savedTests.map { test in
+                    let allHistory = viewState.savedTests.map { test in
                         "═══════════════════════════════════════════\n" +
                         "📅 \(test.timestamp.formatted(date: .complete, time: .shortened))\n" +
                         "═══════════════════════════════════════════\n" +
@@ -3079,21 +3126,21 @@ struct SavedBatchTestsSection: View {
                     HStack {
                         Image(systemName: didCopyAllHistory ? "checkmark" : "doc.on.doc.fill")
                             .foregroundColor(didCopyAllHistory ? .green : .blue)
-                        Text(didCopyAllHistory ? "Copied!" : "Copy All History (\(savedTests.count) tests)")
+                        Text(didCopyAllHistory ? "Copied!" : "Copy All History (\(viewState.savedTests.count) tests)")
                             .foregroundColor(didCopyAllHistory ? .green : .primary)
                     }
                 }
             }
             
             // Saved tests list
-            if savedTests.isEmpty {
+            if viewState.savedTests.isEmpty {
                 Text("No saved batch tests")
                     .font(.caption)
                     .foregroundColor(.secondary)
             } else {
-                ForEach(savedTests) { test in
+                ForEach(viewState.savedTests) { test in
                     Button {
-                        selectedTest = test
+                        viewState.selectTest(test)
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
@@ -3113,9 +3160,9 @@ struct SavedBatchTestsSection: View {
                 }
                 .onDelete { indexSet in
                     for index in indexSet {
-                        BatchTestStorage.shared.deleteTest(savedTests[index].id)
+                        BatchTestStorage.shared.deleteTest(viewState.savedTests[index].id)
                     }
-                    savedTests = BatchTestStorage.shared.getAllTests()
+                    viewState.refresh()
                 }
                 
                 Button(role: .destructive) {
@@ -3139,38 +3186,13 @@ struct SavedBatchTestsSection: View {
             Text("Run tests from here. Results auto-save. Will be removed in final version.")
         }
         .onAppear {
-            savedTests = BatchTestStorage.shared.getAllTests()
+            viewState.refresh()
         }
-        .sheet(item: $selectedTest) { test in
-            NavigationStack {
-                ScrollView {
-                    Text(test.results)
-                        .font(.system(.caption2, design: .monospaced))
-                        .padding()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .navigationTitle("Test: \(test.timestamp.formatted(date: .abbreviated, time: .shortened))")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") {
-                            selectedTest = nil
-                        }
-                    }
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button {
-                            UIPasteboard.general.string = test.results
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                    }
-                }
-            }
-        }
+        // v1.6.47: Sheet moved to SettingsView to prevent multiple presentation attempts
         .confirmationDialog("Clear All Tests?", isPresented: $showClearConfirmation) {
             Button("Clear All", role: .destructive) {
                 BatchTestStorage.shared.clearAllTests()
-                savedTests = []
+                viewState.refresh()
             }
             Button("Cancel", role: .cancel) { }
         }
@@ -3181,7 +3203,7 @@ struct SavedBatchTestsSection: View {
         guard let location = locationService.currentLocation?.coordinate else {
             let errorMsg = "🗺️ OSM DIAGNOSTIC\n❌ No location available. Please enable location services."
             BatchTestStorage.shared.saveTest(errorMsg)
-            savedTests = BatchTestStorage.shared.getAllTests()
+            viewState.refresh()
             return
         }
         
@@ -3196,8 +3218,16 @@ struct SavedBatchTestsSection: View {
             await MainActor.run {
                 // Save results to persistent storage
                 BatchTestStorage.shared.saveTest(results)
-                savedTests = BatchTestStorage.shared.getAllTests()
                 isRunningOSMDiagnostic = false
+                // Refresh and auto-show results
+                viewState.refresh()
+                // Auto-select the most recent test to show results
+                if let latestTest = viewState.savedTests.first {
+                    // Small delay to ensure UI has updated
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        DiagnosticViewState.shared.selectTest(latestTest)
+                    }
+                }
             }
         }
     }
@@ -3207,7 +3237,7 @@ struct SavedBatchTestsSection: View {
         guard let location = locationService.currentLocation?.coordinate else {
             let errorMsg = "🔷 GOOGLE DIAGNOSTIC\n❌ No location available. Please enable location services."
             BatchTestStorage.shared.saveTest(errorMsg)
-            savedTests = BatchTestStorage.shared.getAllTests()
+            viewState.refresh()
             return
         }
         
@@ -3222,8 +3252,15 @@ struct SavedBatchTestsSection: View {
             await MainActor.run {
                 // Save results to persistent storage
                 BatchTestStorage.shared.saveTest(results)
-                savedTests = BatchTestStorage.shared.getAllTests()
                 isRunningGoogleDiagnostic = false
+                // Refresh and auto-show results
+                viewState.refresh()
+                // Auto-select the most recent test to show results
+                if let latestTest = viewState.savedTests.first {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        DiagnosticViewState.shared.selectTest(latestTest)
+                    }
+                }
             }
         }
     }
@@ -3233,7 +3270,7 @@ struct SavedBatchTestsSection: View {
         guard let location = locationService.currentLocation?.coordinate else {
             let errorMsg = "🍎 APPLE DIAGNOSTIC\n❌ No location available. Please enable location services."
             BatchTestStorage.shared.saveTest(errorMsg)
-            savedTests = BatchTestStorage.shared.getAllTests()
+            viewState.refresh()
             return
         }
         
@@ -3248,8 +3285,49 @@ struct SavedBatchTestsSection: View {
             await MainActor.run {
                 // Save results to persistent storage
                 BatchTestStorage.shared.saveTest(results)
-                savedTests = BatchTestStorage.shared.getAllTests()
                 isRunningAppleDiagnostic = false
+                // Refresh and auto-show results
+                viewState.refresh()
+                // Auto-select the most recent test to show results
+                if let latestTest = viewState.savedTests.first {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        DiagnosticViewState.shared.selectTest(latestTest)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Diagnostic Test Detail Sheet
+// v1.6.47: Extracted from SavedBatchTestsSection to prevent complex expression error
+struct DiagnosticTestDetailSheet: View {
+    let test: SavedBatchTest
+    
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(test.results)
+                    .font(.system(.caption2, design: .monospaced))
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .navigationTitle("Test: \(test.timestamp.formatted(date: .abbreviated, time: .shortened))")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        print("🔬 Sheet: Done button tapped")
+                        DiagnosticViewState.shared.dismissSheet()
+                    }
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        UIPasteboard.general.string = test.results
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                }
             }
         }
     }

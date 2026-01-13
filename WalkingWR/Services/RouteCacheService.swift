@@ -15,8 +15,9 @@ import CoreLocation
 class RouteCacheService {
     static let shared = RouteCacheService()
     
-    private let cacheKey = "cachedRoutes_v39"  // v39: Polyline regeneration on waypoint removal
+    private let cacheKey = "cachedRoutes_v40"  // v40: Quality scoring + skip tracking
     private let maxCachedRouteSets = 50
+    private let maxRoutesPerDuration = 10  // v1.6.46: Limit routes per location/duration to prevent unbounded growth
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
     private let cacheExpiryHours: Double = 24 // Routes expire after 24 hours
     
@@ -57,9 +58,53 @@ class RouteCacheService {
         let name: String?
         let description: String?
         let directions: [CachedDirection]?  // v1.6.45: Cache directions for instant load
+        var skipCount: Int  // v1.6.46: Track how many times user shuffled past this route
+        var createdAt: Date  // v1.6.46: Track when route was created (for tie-breaking)
         
         var durationMinutes: Int {
             durationSeconds / 60
+        }
+        
+        /// v1.6.46: Calculate quality score for route comparison
+        /// Higher score = better route. Factors:
+        /// - Duration accuracy (closer to target = better)
+        /// - POI variety (more diverse types = better)
+        /// - Skip count (lower = better, users don't like this route)
+        func qualityScore(targetDurationMinutes: Int) -> Double {
+            // Duration accuracy: 0-40 points (perfect match = 40, 10min off = 0)
+            let durationDiff = abs(durationMinutes - targetDurationMinutes)
+            let durationScore = max(0, 40 - (durationDiff * 4))
+            
+            // POI variety: 0-30 points (unique type categories)
+            let uniqueTypes = Set(places.flatMap { $0.types }).count
+            let varietyScore = min(30, uniqueTypes * 5)
+            
+            // POI count: 0-15 points (more waypoints = more interesting, up to 5)
+            let poiScore = min(15, places.count * 3)
+            
+            // Skip penalty: -10 points per skip (users didn't like this route)
+            let skipPenalty = skipCount * 10
+            
+            // Freshness bonus: 0-5 points (routes less than 1 hour old get bonus)
+            let ageHours = Date().timeIntervalSince(createdAt) / 3600
+            let freshnessBonus = ageHours < 1 ? 5 : 0
+            
+            return Double(durationScore + varietyScore + poiScore - skipPenalty + freshnessBonus)
+        }
+        
+        // v1.6.46: Initializer with defaults for backward compatibility
+        init(places: [CachedPlace], polyline: String, distanceMeters: Int, durationSeconds: Int, 
+             name: String?, description: String?, directions: [CachedDirection]?,
+             skipCount: Int = 0, createdAt: Date = Date()) {
+            self.places = places
+            self.polyline = polyline
+            self.distanceMeters = distanceMeters
+            self.durationSeconds = durationSeconds
+            self.name = name
+            self.description = description
+            self.directions = directions
+            self.skipCount = skipCount
+            self.createdAt = createdAt
         }
     }
     
@@ -249,28 +294,10 @@ class RouteCacheService {
             return !(distance <= matchRadiusMeters && entry.durationMinutes == roundedDuration)
         }
         
-        // Convert routes to cached format, filtering out duplicates (>50% POI overlap)
+        // Convert routes to cached format (cache ALL routes - no duplicate filtering)
         var cachedRoutes: [CachedRoute] = []
-        var seenPlaceIdSets: [Set<String>] = []
         
         for (index, route) in routes.enumerated() {
-            let newPlaceIds = Set(route.places.map { $0.placeId })
-            
-            // Check for duplicate (>50% overlap with already-added routes)
-            var isDuplicate = false
-            for existingSet in seenPlaceIdSets {
-                let overlap = newPlaceIds.intersection(existingSet).count
-                let overlapPercent = Double(overlap) / Double(max(1, newPlaceIds.count))
-                if overlapPercent > 0.50 {
-                    isDuplicate = true
-                    break
-                }
-            }
-            
-            if isDuplicate { continue }
-            
-            seenPlaceIdSets.append(newPlaceIds)
-            
             // v1.6.45: Cache directions if provided
             let routeDirections: [CachedDirection]? = directions.indices.contains(index) && !directions[index].isEmpty
                 ? directions[index].map { CachedDirection.from($0) }
@@ -296,9 +323,9 @@ class RouteCacheService {
             ))
         }
         
-        // If all routes were duplicates, don't update cache
+        // If no routes to cache, skip
         guard !cachedRoutes.isEmpty else {
-            print("📦 Route Cache: No unique routes to cache (all duplicates)")
+            print("📦 Route Cache: No routes to cache")
             return
         }
         
@@ -319,13 +346,212 @@ class RouteCacheService {
         }
         
         saveCache(cached)
-        print("📦 Route Cache: Saved \(routes.count) routes for \(roundedDuration)min (requested \(durationMinutes)min) at (\(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude)))")
+        print("📦 Route Cache: Saved \(cachedRoutes.count) routes for \(roundedDuration)min (requested \(durationMinutes)min) at (\(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude)))")
     }
     
     /// Clear all cached routes
     func clearCache() {
         UserDefaults.standard.removeObject(forKey: cacheKey)
         print("📦 Route Cache: Cleared")
+    }
+    
+    /// Merge new routes into existing cache (smart quality-based update)
+    /// - If new route has >50% overlap with existing, replace ONLY if new route has better quality
+    /// - If new route is unique (<50% overlap with all), add it if under limit or better than worst
+    /// - Quality = duration accuracy + POI variety - skip penalty
+    /// Returns: (added: Int, replaced: Int) counts
+    func mergeRoutes(_ routes: [GeneratedRoute], at location: CLLocationCoordinate2D, durationMinutes: Int, names: [String?] = [], descriptions: [String?] = [], directions: [[WalkingDirection]] = []) -> (added: Int, replaced: Int) {
+        var cached = loadCache()
+        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
+        
+        // Remove expired entries
+        cached = cached.filter { !$0.isExpired }
+        
+        // Find existing entry for this location/duration
+        let existingIndex = cached.firstIndex { entry in
+            let distance = distanceBetween(entry.coordinate, location)
+            return distance <= matchRadiusMeters && entry.durationMinutes == roundedDuration
+        }
+        
+        var existingRoutes: [CachedRoute] = existingIndex != nil ? cached[existingIndex!].routes : []
+        var added = 0
+        var replaced = 0
+        var skipped = 0
+        
+        print("📦 Merging \(routes.count) new routes into cache (existing: \(existingRoutes.count), max: \(maxRoutesPerDuration))...")
+        
+        for (index, route) in routes.enumerated() {
+            let newPlaceIds = Set(route.places.map { $0.placeId })
+            let routeName = names.indices.contains(index) ? (names[index] ?? "Route \(index + 1)") : "Route \(index + 1)"
+            
+            // Find existing route with highest overlap
+            var highestOverlap = 0.0
+            var highestOverlapIndex: Int? = nil
+            
+            for (existingIdx, existing) in existingRoutes.enumerated() {
+                let existingPlaceIds = Set(existing.places.map { $0.placeId })
+                let overlap = newPlaceIds.intersection(existingPlaceIds).count
+                let overlapPercent = Double(overlap) / Double(max(1, newPlaceIds.count))
+                if overlapPercent > highestOverlap {
+                    highestOverlap = overlapPercent
+                    highestOverlapIndex = existingIdx
+                }
+            }
+            
+            // Create cached route
+            let routeDirections: [CachedDirection]? = directions.indices.contains(index) && !directions[index].isEmpty
+                ? directions[index].map { CachedDirection.from($0) }
+                : nil
+            
+            let newCachedRoute = CachedRoute(
+                places: route.places.map { place in
+                    CachedPlace(
+                        placeId: place.placeId,
+                        name: place.name,
+                        latitude: place.coordinate.latitude,
+                        longitude: place.coordinate.longitude,
+                        types: place.types ?? [],
+                        vicinity: place.vicinity
+                    )
+                },
+                polyline: route.polyline,
+                distanceMeters: route.distanceMeters,
+                durationSeconds: route.durationSeconds,
+                name: names.indices.contains(index) ? names[index] : nil,
+                description: descriptions.indices.contains(index) ? descriptions[index] : nil,
+                directions: routeDirections,
+                skipCount: 0,
+                createdAt: Date()
+            )
+            
+            let newQuality = newCachedRoute.qualityScore(targetDurationMinutes: roundedDuration)
+            
+            if highestOverlap > 0.50, let replaceIdx = highestOverlapIndex {
+                // Route has high overlap - only replace if new route is BETTER quality
+                let existingQuality = existingRoutes[replaceIdx].qualityScore(targetDurationMinutes: roundedDuration)
+                
+                if newQuality > existingQuality {
+                    let oldName = existingRoutes[replaceIdx].name ?? "Unnamed"
+                    existingRoutes[replaceIdx] = newCachedRoute
+                    replaced += 1
+                    print("   🔄 '\(routeName)' replaced '\(oldName)' (quality \(Int(newQuality)) > \(Int(existingQuality)), \(Int(highestOverlap * 100))% overlap)")
+                } else {
+                    skipped += 1
+                    print("   ⏭️ '\(routeName)' skipped (quality \(Int(newQuality)) ≤ \(Int(existingQuality)))")
+                }
+            } else {
+                // Unique route - add if under limit, or replace worst if better
+                if existingRoutes.count < maxRoutesPerDuration {
+                    existingRoutes.append(newCachedRoute)
+                    added += 1
+                    print("   ➕ '\(routeName)' added (quality: \(Int(newQuality)), overlap: \(Int(highestOverlap * 100))%)")
+                } else {
+                    // At limit - find worst quality route and replace if new is better
+                    var worstIndex = 0
+                    var worstQuality = existingRoutes[0].qualityScore(targetDurationMinutes: roundedDuration)
+                    
+                    for (idx, existing) in existingRoutes.enumerated() {
+                        let quality = existing.qualityScore(targetDurationMinutes: roundedDuration)
+                        if quality < worstQuality {
+                            worstQuality = quality
+                            worstIndex = idx
+                        }
+                    }
+                    
+                    if newQuality > worstQuality {
+                        let oldName = existingRoutes[worstIndex].name ?? "Unnamed"
+                        existingRoutes[worstIndex] = newCachedRoute
+                        replaced += 1
+                        print("   🔄 '\(routeName)' replaced worst '\(oldName)' (quality \(Int(newQuality)) > \(Int(worstQuality)))")
+                    } else {
+                        skipped += 1
+                        print("   ⏭️ '\(routeName)' skipped (at limit, quality \(Int(newQuality)) ≤ worst \(Int(worstQuality)))")
+                    }
+                }
+            }
+        }
+        
+        // Update or create cache entry
+        let newEntry = CachedRouteSet(
+            latitude: location.latitude,
+            longitude: location.longitude,
+            durationMinutes: roundedDuration,
+            routes: existingRoutes,
+            createdAt: Date()
+        )
+        
+        if let idx = existingIndex {
+            cached[idx] = newEntry
+        } else {
+            cached.append(newEntry)
+        }
+        
+        // Trim to max size
+        if cached.count > maxCachedRouteSets {
+            cached.sort { $0.createdAt > $1.createdAt }
+            cached = Array(cached.prefix(maxCachedRouteSets))
+        }
+        
+        saveCache(cached)
+        let skippedText = skipped > 0 ? ", \(skipped) skipped (lower quality)" : ""
+        print("📦 Route Cache: Merged \(routes.count) routes → \(added) added, \(replaced) replaced\(skippedText) (total: \(existingRoutes.count))")
+        
+        return (added, replaced)
+    }
+    
+    /// v1.6.46: Increment skip count for a route (user shuffled past it)
+    /// This decreases the route's quality score, making it more likely to be replaced
+    /// - Parameters:
+    ///   - routeName: Name of the route that was skipped
+    ///   - location: User's location when skip happened
+    ///   - durationMinutes: Duration of the route set
+    func incrementSkipCount(routeName: String?, at location: CLLocationCoordinate2D, durationMinutes: Int) {
+        var cached = loadCache()
+        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
+        
+        // Find the cache entry for this location/duration
+        guard let entryIndex = cached.firstIndex(where: { entry in
+            let distance = distanceBetween(entry.coordinate, location)
+            return distance <= matchRadiusMeters && entry.durationMinutes == roundedDuration
+        }) else {
+            return // No matching cache entry
+        }
+        
+        var routes = cached[entryIndex].routes
+        
+        // Find route by name and increment skip count
+        for (routeIndex, route) in routes.enumerated() {
+            if route.name == routeName {
+                // Create new route with incremented skip count
+                let updatedRoute = CachedRoute(
+                    places: route.places,
+                    polyline: route.polyline,
+                    distanceMeters: route.distanceMeters,
+                    durationSeconds: route.durationSeconds,
+                    name: route.name,
+                    description: route.description,
+                    directions: route.directions,
+                    skipCount: route.skipCount + 1,
+                    createdAt: route.createdAt
+                )
+                routes[routeIndex] = updatedRoute
+                
+                let newQuality = updatedRoute.qualityScore(targetDurationMinutes: roundedDuration)
+                print("📦 Skip tracked: '\(routeName ?? "Unnamed")' now has \(updatedRoute.skipCount) skips (quality: \(Int(newQuality)))")
+                break
+            }
+        }
+        
+        // Update cache entry
+        let updatedEntry = CachedRouteSet(
+            latitude: cached[entryIndex].latitude,
+            longitude: cached[entryIndex].longitude,
+            durationMinutes: roundedDuration,
+            routes: routes,
+            createdAt: cached[entryIndex].createdAt
+        )
+        cached[entryIndex] = updatedEntry
+        saveCache(cached)
     }
     
     /// Get cache statistics
