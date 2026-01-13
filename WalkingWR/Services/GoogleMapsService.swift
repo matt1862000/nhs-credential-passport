@@ -4778,7 +4778,31 @@ class GoogleMapsService: ObservableObject {
             // v1.8.10: Now async - regenerates polyline when waypoints removed
             selected = await removeCloseWaypoints(from: selected, minDistance: 250, origin: location)
             
-            let finalMins = selected.durationSeconds / 60
+            var finalMins = selected.durationSeconds / 60
+            
+            // v1.6.47: ROUTE EXTENSION - If route is 80-95% of target, try adding an on-route POI
+            let accuracy = Double(finalMins) / Double(targetDurationMinutes)
+            if accuracy >= 0.80 && accuracy <= 0.95 {
+                print("🔧 Route is \(Int(accuracy * 100))% of target (\(finalMins)/\(targetDurationMinutes)min) - trying to extend...")
+                if let extended = await tryExtendRoute(
+                    route: selected,
+                    origin: location,
+                    targetDurationMinutes: targetDurationMinutes,
+                    availablePOIs: places,
+                    excludePlaceIds: excludePlaceIds
+                ) {
+                    let extendedMins = extended.durationSeconds / 60
+                    let newAccuracy = Double(extendedMins) / Double(targetDurationMinutes)
+                    if newAccuracy >= 0.95 && newAccuracy <= 1.10 {
+                        print("🔧 ✅ Extended route: \(finalMins)min → \(extendedMins)min (\(Int(newAccuracy * 100))%)")
+                        selected = extended
+                        finalMins = extendedMins
+                    } else {
+                        print("🔧 ⏭️ Extension would be \(extendedMins)min (\(Int(newAccuracy * 100))%) - keeping original")
+                    }
+                }
+            }
+            
             print("🗺️ ✓ SUCCESS! Selected: \(finalMins)min, \(selected.places.count) POIs (target: \(targetDurationMinutes)min)")
             
             // Mark POIs as recently used for variety in future routes
@@ -5079,6 +5103,148 @@ class GoogleMapsService: ObservableObject {
             durationSeconds: route.durationSeconds,
             legs: route.legs
         )
+    }
+    
+    // MARK: - Route Extension (v1.6.47)
+    
+    /// Try to extend a route that's 80-95% of target by adding an "on-route" POI
+    /// Looks for POIs within 100m of the existing route polyline
+    /// Returns extended route if successful, nil otherwise
+    private func tryExtendRoute(
+        route: GeneratedRoute,
+        origin: CLLocationCoordinate2D,
+        targetDurationMinutes: Int,
+        availablePOIs: [PlaceResult],
+        excludePlaceIds: Set<String>
+    ) async -> GeneratedRoute? {
+        guard !route.polyline.isEmpty else {
+            print("🔧 No polyline available for route extension")
+            return nil
+        }
+        
+        // Decode polyline to get route coordinates
+        let routePoints = decodePolyline(route.polyline)
+        guard routePoints.count > 1 else {
+            print("🔧 Polyline has insufficient points")
+            return nil
+        }
+        
+        // Get existing POI IDs in this route
+        let existingPOIIds = Set(route.places.map { $0.placeId })
+        
+        // Find POIs within 100m of the route that aren't already included
+        let searchRadius: Double = 100  // meters
+        var onRoutePOIs: [(poi: PlaceResult, minDistance: Double, nearestPointIndex: Int)] = []
+        
+        for poi in availablePOIs {
+            // Skip if already in route or excluded
+            guard !existingPOIIds.contains(poi.placeId) else { continue }
+            guard !excludePlaceIds.contains(poi.placeId) else { continue }
+            
+            // Find minimum distance from this POI to any point on the route
+            var minDist = Double.infinity
+            var nearestIdx = 0
+            
+            for (idx, routePoint) in routePoints.enumerated() {
+                let dist = distanceBetween(poi.coordinate, routePoint)
+                if dist < minDist {
+                    minDist = dist
+                    nearestIdx = idx
+                }
+            }
+            
+            if minDist <= searchRadius {
+                onRoutePOIs.append((poi: poi, minDistance: minDist, nearestPointIndex: nearestIdx))
+            }
+        }
+        
+        guard !onRoutePOIs.isEmpty else {
+            print("🔧 No on-route POIs found within \(Int(searchRadius))m")
+            return nil
+        }
+        
+        // Calculate current shortfall - only extend if 3+ minutes headroom
+        let currentMins = route.durationSeconds / 60
+        let shortfallMins = targetDurationMinutes - currentMins
+        
+        guard shortfallMins >= 3 else {
+            print("🔧 Only \(shortfallMins)min headroom (need 3+) - skipping extension")
+            return nil
+        }
+        
+        print("🔧 Found \(onRoutePOIs.count) on-route POIs within \(Int(searchRadius))m (\(shortfallMins)min headroom)")
+        
+        // Sort by proximity to route MIDPOINT (prefer POIs in the middle of the walk)
+        // This ensures we add POIs that are truly "on the way", not at the very start/end
+        let midpointIndex = routePoints.count / 2
+        onRoutePOIs.sort { poi1, poi2 in
+            let dist1 = abs(poi1.nearestPointIndex - midpointIndex)
+            let dist2 = abs(poi2.nearestPointIndex - midpointIndex)
+            // Primary: closer to midpoint is better
+            // Secondary: if equally close to midpoint, prefer closer to route
+            if dist1 != dist2 {
+                return dist1 < dist2
+            }
+            return poi1.minDistance < poi2.minDistance
+        }
+        
+        // Try adding the closest POI(s) - estimate ~2-3 min detour per nearby POI
+        for candidate in onRoutePOIs.prefix(3) {
+            // Estimate detour time (distance to POI and back, at ~80m/min walking)
+            let detourMeters = candidate.minDistance * 2  // There and back
+            let estimatedDetourMins = Int(detourMeters / 80) + 1  // +1 for stopping time
+            
+            // Would this bring us closer to target?
+            let projectedMins = currentMins + estimatedDetourMins
+            let projectedAccuracy = Double(projectedMins) / Double(targetDurationMinutes)
+            
+            if projectedAccuracy >= 0.90 && projectedAccuracy <= 1.15 {
+                print("🔧 Trying to add '\(candidate.poi.name)' (\(Int(candidate.minDistance))m from route, ~+\(estimatedDetourMins)min)")
+                
+                // Insert POI at the appropriate position in the route
+                // Find where in the places array to insert based on nearestPointIndex
+                var newPlaces = route.places
+                
+                // Simple heuristic: if nearest point is in first half of route, insert after first POI
+                // Otherwise insert before last POI
+                let insertPosition: Int
+                if candidate.nearestPointIndex < routePoints.count / 2 {
+                    insertPosition = min(1, newPlaces.count)
+                } else {
+                    insertPosition = max(0, newPlaces.count - 1)
+                }
+                
+                newPlaces.insert(candidate.poi, at: insertPosition)
+                
+                // Generate new route with this POI
+                do {
+                    let newDirections = try await getWalkingDirections(
+                        origin: origin,
+                        destination: origin,
+                        waypoints: newPlaces.map { $0.coordinate },
+                        preserveWaypointOrder: true
+                    )
+                    
+                    let newDurationSeconds = newDirections.legs.reduce(0) { $0 + $1.duration.value }
+                    let newDistanceMeters = newDirections.legs.reduce(0) { $0 + $1.distance.value }
+                    
+                    return GeneratedRoute(
+                        places: newPlaces,
+                        polyline: newDirections.overviewPolyline.points,
+                        distanceMeters: newDistanceMeters,
+                        durationSeconds: newDurationSeconds,
+                        legs: newDirections.legs
+                    )
+                } catch {
+                    print("🔧 Failed to generate extended route: \(error.localizedDescription)")
+                    continue
+                }
+            } else {
+                print("🔧 '\(candidate.poi.name)' would give \(projectedMins)min (\(Int(projectedAccuracy * 100))%) - skipping")
+            }
+        }
+        
+        return nil
     }
     
     /// Generate waypoint counts to try, starting from estimated and branching out
