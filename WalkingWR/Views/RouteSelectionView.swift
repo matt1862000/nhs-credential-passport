@@ -5946,6 +5946,11 @@ struct RouteExplorationLoadingView: View {
     @State private var lastStageAdvanceTime: Date = Date()
     @State private var hasCompletedAllStages: Bool = false
     
+    // Stage-specific animation states
+    @State private var radarPulseScale: CGFloat = 1.0  // Stage 0: Radar pulse
+    @State private var showSparkles: Bool = false       // Stage 3: Sparkle burst
+    @State private var sparklePositions: [(id: UUID, offset: CGSize, opacity: Double)] = []
+    
     private let minStageDisplayTime: TimeInterval = 1.2  // Minimum time to show each stage
     private let stageAdvanceDelay: TimeInterval = 0.5   // Delay between stage advances
     private let postCompletionDelay: TimeInterval = 0.6  // Pause after stage 4 before preview
@@ -5966,9 +5971,24 @@ struct RouteExplorationLoadingView: View {
             // Real map centered on user location
             if let location = userLocation {
                 Map(position: $mapCameraPosition) {
-                    // User location marker
+                    // User location marker with radar pulse for Stage 0
                     Annotation("You", coordinate: location) {
                         ZStack {
+                            // Radar pulse rings (Stage 0: Finding places)
+                            if displayedStageIndex == 0 {
+                                Circle()
+                                    .stroke(Color.tealAccent.opacity(0.6), lineWidth: 2)
+                                    .frame(width: 80, height: 80)
+                                    .scaleEffect(radarPulseScale)
+                                    .opacity(2.0 - radarPulseScale)
+                                
+                                Circle()
+                                    .stroke(Color.tealAccent.opacity(0.4), lineWidth: 1.5)
+                                    .frame(width: 120, height: 120)
+                                    .scaleEffect(radarPulseScale * 0.8)
+                                    .opacity(2.0 - radarPulseScale)
+                            }
+                            
                             Circle()
                                 .fill(Color.blue.opacity(0.3))
                                 .frame(width: 40, height: 40)
@@ -6021,6 +6041,17 @@ struct RouteExplorationLoadingView: View {
             } else {
                 // Fallback if no location
                 Color(.systemGray5)
+            }
+            
+            // Stage 3: Sparkle burst animation overlay
+            if showSparkles {
+                ForEach(sparklePositions, id: \.id) { sparkle in
+                    Image(systemName: "sparkle")
+                        .font(.system(size: 24))
+                        .foregroundColor(.yellow)
+                        .opacity(sparkle.opacity)
+                        .offset(sparkle.offset)
+                }
             }
             
             // Overlay gradient at bottom for text readability
@@ -6118,6 +6149,9 @@ struct RouteExplorationLoadingView: View {
             hasCompletedAllStages = false
             print("🎬 Loading view appeared - starting at stage 0")
             
+            // Start radar pulse animation for Stage 0
+            startRadarPulseAnimation()
+            
             // After minimum time, advance to stage 1
             advanceToStageWithMinDelay(1)
             
@@ -6135,6 +6169,13 @@ struct RouteExplorationLoadingView: View {
                     print("🎬 Fallback: Advancing to stage 3 (timeout)")
                     advanceToStageWithMinDelay(3)
                 }
+            }
+        }
+        .onChange(of: displayedStageIndex) { oldValue, newValue in
+            // Trigger stage-specific animations
+            if newValue == 3 {
+                // Stage 3: Sparkle burst
+                triggerSparkleAnimation()
             }
         }
         .onChange(of: attemptCount) { oldValue, newValue in
@@ -6331,6 +6372,72 @@ struct RouteExplorationLoadingView: View {
                     }
                 }
             }
+        }
+    }
+    
+    // MARK: - Stage-Specific Animations
+    
+    /// Start the radar pulse animation for Stage 0 (Finding places)
+    private func startRadarPulseAnimation() {
+        // Repeating pulse animation
+        func pulse() {
+            guard displayedStageIndex == 0 else { return }
+            
+            withAnimation(.easeOut(duration: 1.5)) {
+                radarPulseScale = 2.0
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                radarPulseScale = 1.0
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    pulse()
+                }
+            }
+        }
+        pulse()
+    }
+    
+    /// Trigger sparkle burst animation for Stage 3 (Naming your route)
+    private func triggerSparkleAnimation() {
+        showSparkles = true
+        sparklePositions = []
+        
+        // Create sparkles at random positions around center
+        let sparkleCount = 8
+        for _ in 0..<sparkleCount {
+            let angle = Double.random(in: 0...(2 * .pi))
+            let distance = CGFloat.random(in: 60...150)
+            let offset = CGSize(
+                width: cos(angle) * distance,
+                height: sin(angle) * distance - 100  // Offset upward on screen
+            )
+            sparklePositions.append((id: UUID(), offset: offset, opacity: 0.0))
+        }
+        
+        // Animate sparkles appearing
+        for (index, _) in sparklePositions.enumerated() {
+            let delay = Double(index) * 0.08
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    if index < sparklePositions.count {
+                        sparklePositions[index].opacity = 1.0
+                    }
+                }
+            }
+            
+            // Fade out after appearing
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay + 0.6) {
+                withAnimation(.easeIn(duration: 0.5)) {
+                    if index < sparklePositions.count {
+                        sparklePositions[index].opacity = 0.0
+                    }
+                }
+            }
+        }
+        
+        // Hide sparkles container after animation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            showSparkles = false
         }
     }
 }
