@@ -975,7 +975,8 @@ struct LocalRoutePickerSheet: View {
     @State private var routeDataBeforeShuffle: GeneratedRoute?
     
     // Pre-generated routes for instant shuffling
-    @State private var allRoutes: [(route: WalkingRoute, data: GeneratedRoute)] = []
+    // v1.6.47: Added isDeadZoneFallback per-route so warning only shows for actual fallback routes
+    @State private var allRoutes: [(route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool)] = []
     @State private var currentRouteIndex: Int = 0
     @State private var isPreGeneratingRoutes = false
     @State private var preGenerationComplete = false
@@ -1495,7 +1496,8 @@ struct LocalRoutePickerSheet: View {
     
     /// Generate a permuted (reversed waypoint order) version of a route
     /// Returns nil if permutation wouldn't create a unique route
-    func createPermutedRoute(from route: WalkingRoute, data: GeneratedRoute) -> (route: WalkingRoute, data: GeneratedRoute)? {
+    /// v1.6.47: Now includes isDeadZoneFallback - inherits from original route
+    func createPermutedRoute(from route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool = false) -> (route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool)? {
         guard data.places.count >= 2 else { return nil }
         guard canPermuteRoute(data.places, distanceMeters: data.distanceMeters) else { return nil }
         
@@ -1532,7 +1534,8 @@ struct LocalRoutePickerSheet: View {
             poiCount: data.poiCount
         )
         
-        return (permutedRoute, permutedData)
+        // v1.6.47: Permuted route inherits fallback status from original
+        return (permutedRoute, permutedData, isDeadZoneFallback)
     }
     
     /// Pre-fetch POIs in background while user selects duration
@@ -1712,7 +1715,8 @@ struct LocalRoutePickerSheet: View {
                     }
                     
                     // v1.6.45: Load ALL cached routes, not just the first one
-                    var loadedRoutes: [(route: WalkingRoute, data: GeneratedRoute)] = []
+                    // v1.6.47: Include isDeadZoneFallback per-route for accurate warning display
+                    var loadedRoutes: [(route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool)] = []
                     var loadedPlaceIdSets: [Set<String>] = []
                     
                     for (index, cached) in cachedRoutes.enumerated() {
@@ -1765,7 +1769,7 @@ struct LocalRoutePickerSheet: View {
                             usedOSRMRouting: cached.route.usedOSRM  // v1.7.1: Track OSRM usage for polyline refresh
                         )
                         
-                        loadedRoutes.append((route: localRoute, data: cached.route))
+                        loadedRoutes.append((route: localRoute, data: cached.route, isDeadZoneFallback: cached.isDeadZoneFallback))
                         loadedPlaceIdSets.append(Set(cached.route.places.map { $0.placeId }))
                     }
                     
@@ -1962,7 +1966,8 @@ struct LocalRoutePickerSheet: View {
                         }
                         
                         // Initialize route array with first route
-                        allRoutes = [(route: localRoute, data: result)]
+                        // v1.6.47: Include isDeadZoneFallback per-route
+                        allRoutes = [(route: localRoute, data: result, isDeadZoneFallback: isShortRoute)]
                         currentRouteIndex = 0
                         preGenerationComplete = false
                         isRecycledRoute = false  // First route is never recycled
@@ -2569,8 +2574,8 @@ struct LocalRoutePickerSheet: View {
             isRecycledRoute = viewedRouteIndices.contains(currentRouteIndex)
             viewedRouteIndices.insert(currentRouteIndex)  // Mark as viewed
             
-            // v1.8.8: Check if this is a short fallback route
-            isDeadZoneFallback = nextRoute.data.durationMinutes < minAcceptableDuration
+            // v1.6.47: Use per-route flag instead of calculating (more accurate)
+            isDeadZoneFallback = nextRoute.isDeadZoneFallback
             
             print("🔀 Showing route \(currentRouteIndex + 1) of \(allRoutes.count) (recycled: \(isRecycledRoute), fallback: \(isDeadZoneFallback))")
         } else {
@@ -2582,8 +2587,8 @@ struct LocalRoutePickerSheet: View {
             isRecycledRoute = true  // Always recycled when cycling back
             showPremiumUpsell = true  // Show upgrade message when all routes viewed
             
-            // v1.8.8: Check if first route is a short fallback
-            isDeadZoneFallback = firstRoute.data.durationMinutes < minAcceptableDuration
+            // v1.6.47: Use per-route flag instead of calculating
+            isDeadZoneFallback = firstRoute.isDeadZoneFallback
             
             print("🔄 Cycling back to route 1 of \(allRoutes.count)")
         }
@@ -2735,7 +2740,8 @@ struct LocalRoutePickerSheet: View {
                             return
                         }
                         
-                        allRoutes.append((route: route, data: result))
+                        // v1.6.47: Freshly generated routes are not dead zone fallbacks
+                        allRoutes.append((route: route, data: result, isDeadZoneFallback: false))
                         
                         // v1.6.25: Register route signature for deduplication
                         registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
@@ -2921,7 +2927,8 @@ struct LocalRoutePickerSheet: View {
                                     return
                                 }
                                 
-                                allRoutes.append((route: route, data: result))
+                                // v1.6.47: Google fallback routes are not dead zone fallbacks
+                                allRoutes.append((route: route, data: result, isDeadZoneFallback: false))
                                 
                                 // v1.6.25: Register route signature for deduplication
                                 registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
@@ -2991,8 +2998,9 @@ struct LocalRoutePickerSheet: View {
                     // Pick the longest rejected route (closest to target)
                     let bestFallback = rejectedShortRoutes.max(by: { $0.data.durationMinutes < $1.data.durationMinutes })
                     if let fallback = bestFallback {
-                        allRoutes.append(fallback)
-                        isDeadZoneFallback = true  // Mark that we're showing a fallback
+                        // v1.6.47: Mark this specific route as a dead zone fallback
+                        allRoutes.append((route: fallback.route, data: fallback.data, isDeadZoneFallback: true))
+                        isDeadZoneFallback = true  // Also update global state for current display
                         print("⚠️ Added 1 short fallback (\(fallback.data.durationMinutes)min) - only \(allRoutes.count - 1) acceptable routes available")
                     }
                 }

@@ -333,6 +333,7 @@ class GoogleMapsService: ObservableObject {
     
     private func walkabilityScore(for poi: PlaceResult) -> Double {
         let types = Set(poi.types ?? [])
+        let nameLower = poi.name.lowercased()
         
         // Excellent walking destinations (+2)
         let excellent = Set(["park", "playground", "nature_reserve", "garden", "trail",
@@ -344,6 +345,26 @@ class GoogleMapsService: ObservableObject {
                        "art_gallery", "church", "historic_site", "monument",
                        "library", "community_center", "sports_club", "pub"])
         if !types.isDisjoint(with: good) { return 1.0 }
+        
+        // v1.6.47: OSM-specific name bonus for POIs without good type tags
+        // These are landmarks that OSM tags differently or sparsely
+        // Moderate +0.5 score so they compete with but don't dominate Google POIs
+        let osmExcellentNames = ["war memorial", "memorial", "monument", "village hall", 
+                                 "community hall", "village green", "recreation ground"]
+        for pattern in osmExcellentNames {
+            if nameLower.contains(pattern) { return 0.5 }
+        }
+        
+        let osmGoodNames = ["church", "chapel", "hall", "inn", "pub", "fisheries", 
+                           "tavern", "farm", "cottage", "stores", "post office"]
+        for pattern in osmGoodNames {
+            if nameLower.contains(pattern) { return 0.5 }
+        }
+        
+        // v1.6.47: OSM-specific type tags that might not be in the good list
+        let osmGoodTypes = Set(["memorial", "village_hall", "recreation_ground", 
+                               "community_centre", "historic", "place_of_worship"])
+        if !types.isDisjoint(with: osmGoodTypes) { return 0.5 }
         
         // Avoid for walking (-1)
         let avoid = Set(["gas_station", "car_wash", "car_repair", "car_dealer",
