@@ -5946,8 +5946,9 @@ struct RouteExplorationLoadingView: View {
     @State private var lastStageAdvanceTime: Date = Date()
     @State private var hasCompletedAllStages: Bool = false
     
-    private let minStageDisplayTime: TimeInterval = 0.5  // Minimum time to show each stage
-    private let postCompletionDelay: TimeInterval = 0.8  // Pause after stage 4 before preview
+    private let minStageDisplayTime: TimeInterval = 1.2  // Minimum time to show each stage
+    private let stageAdvanceDelay: TimeInterval = 0.5   // Delay between stage advances
+    private let postCompletionDelay: TimeInterval = 0.6  // Pause after stage 4 before preview
     
     // v1.8.10: Dynamic help text based on current stage
     private var loadingHelpText: String {
@@ -6254,7 +6255,8 @@ struct RouteExplorationLoadingView: View {
                 }
             }
             
-            cumulativeDelay += minStageDisplayTime
+            // Add minimum display time + stage advance delay between stages
+            cumulativeDelay += minStageDisplayTime + stageAdvanceDelay
         }
         
         // After stage 4, wait for postCompletionDelay then show preview
