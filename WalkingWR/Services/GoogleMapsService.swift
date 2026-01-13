@@ -1768,7 +1768,7 @@ class GoogleMapsService: ObservableObject {
         // Group by category
         var categoryCount: [String: Int] = [:]
         for poi in osmPOIs {
-            let category = poi.types.first ?? "unknown"
+            let category = poi.types?.first ?? "unknown"
             categoryCount[category, default: 0] += 1
         }
         
@@ -1791,7 +1791,7 @@ class GoogleMapsService: ObservableObject {
             let distanceStr = distance < 1000 
                 ? "\(Int(distance))m" 
                 : String(format: "%.1fkm", distance / 1000)
-            let category = poi.types.first ?? "?"
+            let category = poi.types?.first ?? "?"
             results += "\(index + 1). \(poi.name) - \(distanceStr) [\(category)]\n"
         }
         
@@ -1814,12 +1814,12 @@ class GoogleMapsService: ObservableObject {
         
         print("🔷 📊 DIAGNOSTIC: Fetching Google POIs...")
         
-        let googlePOIs = await fetchGooglePlacesNearby(location: location, radiusMeters: radiusMeters)
+        let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
         
         // Group by category
         var categoryCount: [String: Int] = [:]
         for poi in googlePOIs {
-            let category = poi.types.first ?? "unknown"
+            let category = poi.types?.first ?? "unknown"
             categoryCount[category, default: 0] += 1
         }
         
@@ -1842,7 +1842,7 @@ class GoogleMapsService: ObservableObject {
             let distanceStr = distance < 1000 
                 ? "\(Int(distance))m" 
                 : String(format: "%.1fkm", distance / 1000)
-            let category = poi.types.first ?? "?"
+            let category = poi.types?.first ?? "?"
             results += "\(index + 1). \(poi.name) - \(distanceStr) [\(category)]\n"
         }
         
