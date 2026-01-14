@@ -3338,7 +3338,6 @@ class GoogleMapsService: ObservableObject {
                                         let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
                                         let stepDistValue = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
                                         let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
-                                        let stepDurValue = (step["duration"] as? [String: Any])?["value"] as? Int ?? 0
                                         let maneuver = step["maneuver"] as? String ?? "straight"
                                         
                                         freshDirections.append(WalkingDirection(

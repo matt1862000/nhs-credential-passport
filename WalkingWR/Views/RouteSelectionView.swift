@@ -1654,7 +1654,7 @@ struct LocalRoutePickerSheet: View {
             // Use Google APIs for smart routing
             print("🚀 Starting async Task for route generation...")
             Task {
-                print("📥 Task started on thread: \(Thread.isMainThread ? "MAIN" : "background")")
+                print("📥 Task started")
                 // v1.8.14: Check location limit INSIDE Task to prevent main thread blocking
                 let cacheService = POICacheService.shared
                 let hasCachedPOIs = cacheService.getCachedPOIs(near: userLocation.coordinate) != nil
@@ -2566,10 +2566,6 @@ struct LocalRoutePickerSheet: View {
                 durationMinutes: selectedDuration
             )
         }
-        
-        // v1.8.8: Helper to check if a route is a short fallback
-        let minAcceptablePercent = 0.50
-        let minAcceptableDuration = Int(Double(selectedDuration) * minAcceptablePercent)
         
         // If we have more pre-generated routes to show, cycle to next
         if currentRouteIndex < allRoutes.count - 1 {
