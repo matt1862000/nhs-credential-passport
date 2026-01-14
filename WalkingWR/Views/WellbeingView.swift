@@ -566,6 +566,7 @@ struct BreathingExerciseSheet: View {
 struct SingleBreathingExerciseView: View {
     let exercise: WellbeingContent
     var onComplete: (() -> Void)? = nil
+    @Environment(\.colorScheme) var colorScheme
     
     @State private var currentStep = 0
     @State private var breathPhase: BreathPhase = .ready
@@ -638,9 +639,11 @@ struct SingleBreathingExerciseView: View {
     
     var body: some View {
         ZStack {
-            // Gradient background
+            // Gradient background - adapts to color scheme
             LinearGradient(
-                colors: [Color.lavenderMist.opacity(0.3), Color.calmGradientEnd],
+                colors: colorScheme == .dark
+                    ? [Color.lavenderMist.opacity(0.15), Color.darkCardBackground]
+                    : [Color.lavenderMist.opacity(0.3), Color.calmGradientEnd],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -746,7 +749,7 @@ struct SingleBreathingExerciseView: View {
                         .padding(.top, 8)
                 }
                 
-                // Instructions card (only when not active)
+                // Instructions card (only when not active) - adapts to color scheme
                 if let steps = exercise.steps, !isActive && breathPhase == .ready {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Instructions")
@@ -759,7 +762,7 @@ struct SingleBreathingExerciseView: View {
                                 Text("\(index + 1)")
                                     .font(.caption)
                                     .fontWeight(.bold)
-                                    .foregroundColor(.primary)
+                                    .foregroundColor(colorScheme == .dark ? .white : .primary)
                                     .frame(width: 22, height: 22)
                                     .background(Color.lavenderMist)
                                     .clipShape(Circle())
@@ -771,7 +774,8 @@ struct SingleBreathingExerciseView: View {
                         }
                     }
                     .padding(20)
-                    .cardStyle()
+                    .background(colorScheme == .dark ? Color.darkCardBackground : Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .padding(.horizontal, 20)
                 }
                 
