@@ -19,6 +19,7 @@ enum PendingBatchTest: Equatable {
 struct RouteSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var showLocalRoutePicker: Bool
+    @Environment(\.colorScheme) var colorScheme  // v1.9.0: Adaptive colors for light/dark mode
     @State private var selectedDifficulty: RouteDifficulty? = nil
     @State private var showIndoorOnly = false
     @State private var showAccessibleOnly = false
@@ -359,6 +360,7 @@ struct NoClinicianBanner: View {
 struct LocalRouteCard: View {
     let onTap: () -> Void
     @ObservedObject var locationService: LocationService
+    @Environment(\.colorScheme) var colorScheme  // v1.9.0: Adaptive colors
     
     var body: some View {
         Button(action: {
@@ -466,7 +468,7 @@ struct LocalRouteCard: View {
             .padding(20)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.darkCardBackground)
+                    .fill(colorScheme == .dark ? Color.darkCardBackground : Color.white)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
                             .stroke(
@@ -475,9 +477,10 @@ struct LocalRouteCard: View {
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 ),
-                                lineWidth: 2
+                                lineWidth: colorScheme == .dark ? 2 : 1
                             )
                     )
+                    .shadow(color: colorScheme == .dark ? .clear : .black.opacity(0.05), radius: 8, x: 0, y: 2)
             )
         }
         .buttonStyle(.plain)
@@ -511,6 +514,7 @@ struct CollapsibleRouteSection: View {
     let isRecommended: (WalkingRoute) -> Bool
     let isTooLong: (WalkingRoute) -> Bool
     
+    @Environment(\.colorScheme) var colorScheme  // v1.9.0: Adaptive colors
     @State private var isExpanded = false
     
     var body: some View {
@@ -558,8 +562,9 @@ struct CollapsibleRouteSection: View {
                         .rotationEffect(.degrees(isExpanded ? 180 : 0))
                 }
                 .padding(14)
-                .background(Color.darkCardBackground)
+                .background(colorScheme == .dark ? Color.darkCardBackground : Color.white)
                 .cornerRadius(12)
+                .shadow(color: colorScheme == .dark ? .clear : .black.opacity(0.05), radius: 6, x: 0, y: 2)
             }
             .buttonStyle(.plain)
             
@@ -592,6 +597,7 @@ struct CompactRouteCard: View {
     let isTooLong: Bool
     let onSelect: () -> Void
     
+    @Environment(\.colorScheme) var colorScheme  // v1.9.0: Adaptive colors
     @State private var isExpanded = false
     
     var body: some View {
@@ -687,7 +693,7 @@ struct CompactRouteCard: View {
                             .frame(height: 100)
                             Spacer()
                         }
-                        .background(Color.darkCardBackground.opacity(0.6))
+                        .background(colorScheme == .dark ? Color.darkCardBackground.opacity(0.6) : Color.gray.opacity(0.1))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                     
@@ -741,7 +747,7 @@ struct CompactRouteCard: View {
                                         .foregroundColor(.secondary)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(Color.darkCardBackground.opacity(0.8))
+                                        .background(colorScheme == .dark ? Color.darkCardBackground.opacity(0.8) : Color.gray.opacity(0.1))
                                         .clipShape(Capsule())
                                 }
                                 if route.landmarks.count > 5 {
@@ -750,7 +756,7 @@ struct CompactRouteCard: View {
                                         .foregroundColor(.secondary)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
-                                        .background(Color.darkCardBackground.opacity(0.8))
+                                        .background(colorScheme == .dark ? Color.darkCardBackground.opacity(0.8) : Color.gray.opacity(0.1))
                                         .clipShape(Capsule())
                                 }
                             }
@@ -795,8 +801,9 @@ struct CompactRouteCard: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(Color.darkCardBackground)
+        .background(colorScheme == .dark ? Color.darkCardBackground : Color.white)
         .cornerRadius(10)
+        .shadow(color: colorScheme == .dark ? .clear : .black.opacity(0.05), radius: 4, x: 0, y: 2)
     }
     
     var difficultyIcon: String {
@@ -819,6 +826,7 @@ struct CompactRouteCard: View {
 // MARK: - Route Map Preview
 struct RouteMapPreview: View {
     let route: WalkingRoute
+    @Environment(\.colorScheme) var colorScheme  // v1.9.0: Adaptive colors
     
     var body: some View {
         Map {
@@ -860,7 +868,7 @@ struct RouteMapPreview: View {
         .overlay(
             // Gradient overlay at bottom for better text readability if needed
             LinearGradient(
-                colors: [.clear, Color.darkCardBackground.opacity(0.3)],
+                colors: [.clear, (colorScheme == .dark ? Color.darkCardBackground : Color.white).opacity(0.3)],
                 startPoint: .top,
                 endPoint: .bottom
             )
