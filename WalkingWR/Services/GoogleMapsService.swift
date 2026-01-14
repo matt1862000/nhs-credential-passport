@@ -3275,7 +3275,9 @@ class GoogleMapsService: ObservableObject {
     ) async -> WalkingRoute {
         // Check if we can use Google Directions
         if canUseGoogleDirectionsRefresh {
-            print("🌐 REFRESH: Trying Google Directions first...")
+            print("🌐 ═══════════════════════════════════════════════════════")
+            print("🌐 REFRESH: Starting Google Directions API call...")
+            print("🌐   📍 Origin: (\(String(format: "%.5f", userLocation.latitude)), \(String(format: "%.5f", userLocation.longitude)))")
             
             // Extract waypoint coordinates from QR markers
             let waypoints = route.qrMarkers.map { $0.coordinate }
@@ -3283,6 +3285,11 @@ class GoogleMapsService: ObservableObject {
             guard !waypoints.isEmpty else {
                 print("🌐 REFRESH: No waypoints, using Apple MapKit")
                 return await refreshRouteWithMapKit(route: route, userLocation: userLocation)
+            }
+            
+            print("🌐   🎯 Waypoints: \(waypoints.count)")
+            for (index, waypoint) in waypoints.enumerated() {
+                print("🌐      [\(index + 1)] (\(String(format: "%.5f", waypoint.latitude)), \(String(format: "%.5f", waypoint.longitude)))")
             }
             
             // Build waypoints string
@@ -3296,18 +3303,47 @@ class GoogleMapsService: ObservableObject {
             urlString += "&mode=walking"
             urlString += "&key=\(apiKey)"
             
+            // Log URL without API key for security
+            let safeUrlString = urlString.replacingOccurrences(of: "&key=\(apiKey)", with: "&key=***")
+            print("🌐   🔗 URL: \(safeUrlString)")
+            print("🌐   🔑 API Key present: \(!apiKey.isEmpty), prefix: \(String(apiKey.prefix(10)))...")
+            
             if let url = URL(string: urlString) {
+                let startTime = Date()
                 do {
-                    let (data, _) = try await URLSession.shared.data(from: url)
+                    print("🌐   ⏱️  Making HTTP request...")
+                    let (data, response) = try await URLSession.shared.data(from: url)
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    
+                    // Log HTTP response details
+                    if let httpResponse = response as? HTTPURLResponse {
+                        print("🌐   📡 HTTP Status: \(httpResponse.statusCode)")
+                        print("🌐   📦 Response size: \(data.count) bytes")
+                        print("🌐   ⏱️  Response time: \(String(format: "%.2f", elapsed))s")
+                    }
+                    
                     recordGoogleDirectionsCall()
-                    print("📊 Google Directions refresh: \(googleDirectionsCallsToday)/\(googleDirectionsDailyCap) calls today")
+                    print("🌐   📊 Google Directions refresh: \(googleDirectionsCallsToday)/\(googleDirectionsDailyCap) calls today")
                     
                     if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let status = json["status"] as? String {
+                        print("🌐   📋 API Status: '\(status)'")
+                        
                         // Log the status for debugging
                         if status != "OK" {
                             let errorMessage = json["error_message"] as? String ?? "Unknown error"
+                            print("🌐   ❌ ERROR: \(errorMessage)")
+                            
+                            // Log full error details if available
+                            if let errorDetails = json["error_message"] as? String {
+                                print("🌐   📄 Full error message: \(errorDetails)")
+                            }
+                            if let rawResponse = String(data: data, encoding: .utf8) {
+                                print("🌐   📄 Raw response (first 500 chars): \(String(rawResponse.prefix(500)))")
+                            }
+                            
                             print("🌐 REFRESH: Google API returned status '\(status)': \(errorMessage) - falling back to MapKit")
+                            print("🌐 ═══════════════════════════════════════════════════════")
                         } else if let routes = json["routes"] as? [[String: Any]],
                                   let firstRoute = routes.first {
                         
@@ -3356,7 +3392,14 @@ class GoogleMapsService: ObservableObject {
                         }
                         
                         let durationMinutes = max(1, totalDuration / 60)
+                        let legsCount = firstRoute["legs"] as? [[String: Any]] ?? []
+                        print("🌐   ✅ SUCCESS: Parsed Google route")
+                        print("🌐      ⏱️  Duration: \(durationMinutes)min")
+                        print("🌐      📏 Distance: \(totalDistance)m")
+                        print("🌐      🧭 Directions: \(freshDirections.count) steps")
+                        print("🌐      📍 Legs: \(legsCount.count)")
                         print("🌐 REFRESH: ✅ Google route - \(durationMinutes)min, \(totalDistance)m, \(freshDirections.count) steps")
+                        print("🌐 ═══════════════════════════════════════════════════════")
                         
                         // Create updated route with Google data
                         return WalkingRoute(
@@ -3376,14 +3419,35 @@ class GoogleMapsService: ObservableObject {
                             walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
                         )
                         } else {
+                            print("🌐   ⚠️  WARNING: Status OK but no routes array or empty routes")
+                            if let rawResponse = String(data: data, encoding: .utf8) {
+                                print("🌐   📄 Raw response (first 500 chars): \(String(rawResponse.prefix(500)))")
+                            }
                             print("🌐 REFRESH: Google returned OK but no routes found - falling back to MapKit")
+                            print("🌐 ═══════════════════════════════════════════════════════")
                         }
                     } else {
+                        print("🌐   ❌ ERROR: Failed to parse JSON or missing status field")
+                        if let rawResponse = String(data: data, encoding: .utf8) {
+                            print("🌐   📄 Raw response (first 500 chars): \(String(rawResponse.prefix(500)))")
+                        }
                         print("🌐 REFRESH: Failed to parse Google Directions response - falling back to MapKit")
+                        print("🌐 ═══════════════════════════════════════════════════════")
                     }
                 } catch {
+                    print("🌐   ❌ EXCEPTION: \(error.localizedDescription)")
+                    print("🌐   📄 Error type: \(type(of: error))")
+                    if let urlError = error as? URLError {
+                        print("🌐   📄 URL Error code: \(urlError.code.rawValue)")
+                        print("🌐   📄 URL Error description: \(urlError.localizedDescription)")
+                    }
                     print("🌐 REFRESH: Google API call failed - \(error.localizedDescription), using Apple MapKit")
+                    print("🌐 ═══════════════════════════════════════════════════════")
                 }
+            } else {
+                print("🌐   ❌ ERROR: Failed to create URL from string")
+                print("🌐 ═══════════════════════════════════════════════════════")
+            }
             }
         } else {
             print("🌐 REFRESH: Google quota reached (\(googleDirectionsCallsToday)/\(googleDirectionsDailyCap)) - using Apple MapKit")
