@@ -445,9 +445,17 @@ struct EmbeddedWalkMapView: View {
                 }
                 
                 // Return route polyline (directions back to start)
-                if isShowingReturnRoute, let returnRoute = returnRoute {
-                    MapPolyline(returnRoute.polyline)
-                        .stroke(Color.blue, lineWidth: 5)
+                // v1.9.16: Show cached polyline if available, otherwise show calculated route
+                if isShowingReturnRoute {
+                    if let returnRoute = returnRoute {
+                        // Fresh calculated route (more accurate)
+                        MapPolyline(returnRoute.polyline)
+                            .stroke(Color.blue, lineWidth: 5)
+                    } else if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
+                        // Cached route (offline fallback)
+                        MapPolyline(coordinates: viewModel.cachedReturnRoutePolyline)
+                            .stroke(Color.blue, lineWidth: 5)
+                    }
                 }
                 
                 // v1.9.5: Removed turn arrow annotations - current leg polyline makes direction clear
@@ -1158,18 +1166,19 @@ struct EmbeddedWalkMapView: View {
             let timeSinceLastInteraction = Date().timeIntervalSince(lastInteraction)
             if timeSinceLastInteraction >= 2.0 {
                 // Check if user has physically moved (not just turned around)
-                guard let currentLocation = self.viewModel.locationService.currentLocation,
-                      let lastLocation = self.lastLocationWhenInteracted else {
-                    timer.invalidate()
-                    return
-                }
-                
-                // User must have moved at least 5 meters to resume (indicates walking, not just turning)
-                let distanceMoved = currentLocation.distance(from: lastLocation)
-                if distanceMoved >= 5.0 {
-                    // User has stopped interacting for 2 seconds AND moved - resume auto-follow
-                    timer.invalidate()
-                    DispatchQueue.main.async {
+                // Access MainActor-isolated property on main thread
+                DispatchQueue.main.async {
+                    guard let currentLocation = self.viewModel.locationService.currentLocation,
+                          let lastLocation = self.lastLocationWhenInteracted else {
+                        timer.invalidate()
+                        return
+                    }
+                    
+                    // User must have moved at least 5 meters to resume (indicates walking, not just turning)
+                    let distanceMoved = currentLocation.distance(from: lastLocation)
+                    if distanceMoved >= 5.0 {
+                        // User has stopped interacting for 2 seconds AND moved - resume auto-follow
+                        timer.invalidate()
                         self.resumeAutoFollow()
                     }
                 }
@@ -1249,7 +1258,8 @@ struct EmbeddedWalkMapView: View {
     }
     
     /// Calculate walking directions from current location back to starting point
-    /// v1.9.13: Only calculate once to prevent multiple route recalculations
+    /// v1.9.16: Calculate return route with offline fallback
+    /// Strategy: Show cached route immediately, then try fresh calculation if online
     private func calculateReturnRoute() {
         // Don't recalculate if we already have a return route
         guard returnRoute == nil else {
@@ -1264,9 +1274,17 @@ struct EmbeddedWalkMapView: View {
             return
         }
         
-        print("📍 Calculating return directions to start point...")
+        print("📍 Calculating return route to start point...")
         isShowingReturnRoute = true
         
+        // STEP 1: If we have a cached return route, show it immediately (works offline)
+        if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
+            print("📍 Using cached return route (showing immediately)")
+            applyCachedReturnRoute()
+        }
+        
+        // STEP 2: Try to recalculate from actual location (if online, more accurate)
+        print("📍 Attempting fresh return route calculation from actual location...")
         let request = MKDirections.Request()
         request.source = MKMapItem(placemark: MKPlacemark(coordinate: currentLocation.coordinate))
         request.destination = MKMapItem(placemark: MKPlacemark(coordinate: startPoint))
@@ -1274,25 +1292,37 @@ struct EmbeddedWalkMapView: View {
         
         let directions = MKDirections(request: request)
         directions.calculate { response, error in
+            
             if let error = error {
-                print("❌ Return directions error: \(error.localizedDescription)")
+                print("⚠️ Fresh return route calculation failed: \(error.localizedDescription)")
+                // If we don't have cached route, show error
+                if !self.viewModel.hasCachedReturnRoute {
+                    print("❌ No cached route available - return route unavailable")
+                } else {
+                    print("✅ Falling back to cached return route (offline mode)")
+                }
                 return
             }
             
             if let route = response?.routes.first {
                 DispatchQueue.main.async {
-                    self.returnRoute = route
-                    print("✅ Return route calculated: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
+                    print("✅ Fresh return route calculated: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
                     
-                    // v1.9.15: Extract directions from return route and cache them
+                    // Use the fresh route (more accurate from actual location)
+                    self.returnRoute = route
+                    
+                    // Extract directions and polyline
                     let returnDirections = self.extractDirectionsFromMKRoute(route)
                     self.viewModel.cachedReturnDirections = returnDirections
                     
-                    // Extract polyline for route path
                     let polyline = route.polyline
                     let pointCount = polyline.pointCount
                     var returnPath = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
                     polyline.getCoordinates(&returnPath, range: NSRange(location: 0, length: pointCount))
+                    
+                    // Update cache with fresh route
+                    self.viewModel.cachedReturnRoutePolyline = returnPath
+                    self.viewModel.hasCachedReturnRoute = true
                     
                     // Switch to return route directions
                     if !returnDirections.isEmpty {
@@ -1301,11 +1331,33 @@ struct EmbeddedWalkMapView: View {
                             directions: returnDirections,
                             routePath: returnPath
                         )
-                        print("📍 Switched to return route directions: \(returnDirections.count) steps")
+                        print("📍 Switched to fresh return route directions: \(returnDirections.count) steps")
                     }
                 }
             }
         }
+    }
+    
+    /// v1.9.16: Apply cached return route (for immediate display)
+    private func applyCachedReturnRoute() {
+        guard viewModel.hasCachedReturnRoute,
+              !viewModel.cachedReturnRoutePolyline.isEmpty,
+              !viewModel.cachedReturnDirections.isEmpty else {
+            print("⚠️ Cannot apply cached return route - cache incomplete")
+            return
+        }
+        
+        // Apply cached directions and start monitoring
+        viewModel.isUsingReturnDirections = true
+        viewModel.locationService.startDirectionMonitoring(
+            directions: viewModel.cachedReturnDirections,
+            routePath: viewModel.cachedReturnRoutePolyline
+        )
+        
+        print("✅ Applied cached return route: \(viewModel.cachedReturnDirections.count) steps, \(viewModel.cachedReturnRoutePolyline.count) points")
+        
+        // Note: The polyline will be rendered from cachedReturnRoutePolyline in the map view
+        // When a fresh route is calculated, it will replace this cached display
     }
     
     /// v1.9.15: Extract walking directions from MKRoute steps

@@ -5791,10 +5791,53 @@ struct WalkingDirectionsBanner: View {
     // Darker forest green color
     private let bannerColor = Color(red: 0.13, green: 0.55, blue: 0.45)
     
+    // v1.9.15: Split instruction into main and destination parts
+    private func splitInstruction(_ instruction: String) -> (main: String, destination: String?) {
+        // Look for common patterns that indicate destination info
+        let destinationPatterns = [
+            "Destination will be",
+            "Destination is",
+            "Your destination",
+            "The destination"
+        ]
+        
+        // Check if instruction contains destination info
+        for pattern in destinationPatterns {
+            if let range = instruction.range(of: pattern, options: .caseInsensitive) {
+                let mainPart = String(instruction[..<range.lowerBound])
+                    .trimmingCharacters(in: CharacterSet(charactersIn: ", "))
+                let destinationPart = String(instruction[range.lowerBound...])
+                    .trimmingCharacters(in: CharacterSet(charactersIn: ", "))
+                
+                return (mainPart, destinationPart)
+            }
+        }
+        
+        // Also check for comma-separated instructions (common pattern)
+        if let commaIndex = instruction.firstIndex(of: ",") {
+            let beforeComma = String(instruction[..<commaIndex]).trimmingCharacters(in: .whitespaces)
+            let afterComma = String(instruction[instruction.index(after: commaIndex)...])
+                .trimmingCharacters(in: .whitespaces)
+            
+            // If the part after comma looks like destination info, split it
+            let lowercasedAfter = afterComma.lowercased()
+            if lowercasedAfter.contains("destination") || 
+               lowercasedAfter.contains("will be") ||
+               lowercasedAfter.contains("on your") ||
+               lowercasedAfter.contains("on the") {
+                return (beforeComma, afterComma)
+            }
+        }
+        
+        // No split needed - return full instruction
+        return (instruction, nil)
+    }
+    
     var body: some View {
         // Single compact banner with direction + timer (always visible at same position)
         if currentIndex < directions.count {
             let direction = directions[currentIndex]
+            let instructionParts = splitInstruction(direction.instruction) // v1.9.15: Compute outside view builder
             
             Button(action: { 
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -5816,12 +5859,23 @@ struct WalkingDirectionsBanner: View {
                     
                     // Direction text - more room for full instruction
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(direction.instruction)
+                        // Main instruction (turn/continue/etc)
+                        Text(instructionParts.main)
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .foregroundColor(.white)
-                            .lineLimit(2)
+                            .lineLimit(1)
                             .multilineTextAlignment(.leading)
+                        
+                        // v1.9.15: Destination info on separate line if present (expands banner)
+                        if let destinationInfo = instructionParts.destination {
+                            Text(destinationInfo)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.white.opacity(0.95))
+                                .lineLimit(1)
+                                .multilineTextAlignment(.leading)
+                        }
                         
                         // Compact info row
                         HStack(spacing: 6) {
@@ -5911,6 +5965,48 @@ struct ExpandedDirectionsList: View {
     // Darker forest green color
     private let accentColor = Color(red: 0.13, green: 0.55, blue: 0.45)
     
+    // v1.9.15: Split instruction into main and destination parts
+    private func splitInstruction(_ instruction: String) -> (main: String, destination: String?) {
+        // Look for common patterns that indicate destination info
+        let destinationPatterns = [
+            "Destination will be",
+            "Destination is",
+            "Your destination",
+            "The destination"
+        ]
+        
+        // Check if instruction contains destination info
+        for pattern in destinationPatterns {
+            if let range = instruction.range(of: pattern, options: .caseInsensitive) {
+                let mainPart = String(instruction[..<range.lowerBound])
+                    .trimmingCharacters(in: CharacterSet(charactersIn: ", "))
+                let destinationPart = String(instruction[range.lowerBound...])
+                    .trimmingCharacters(in: CharacterSet(charactersIn: ", "))
+                
+                return (mainPart, destinationPart)
+            }
+        }
+        
+        // Also check for comma-separated instructions (common pattern)
+        if let commaIndex = instruction.firstIndex(of: ",") {
+            let beforeComma = String(instruction[..<commaIndex]).trimmingCharacters(in: .whitespaces)
+            let afterComma = String(instruction[instruction.index(after: commaIndex)...])
+                .trimmingCharacters(in: .whitespaces)
+            
+            // If the part after comma looks like destination info, split it
+            let lowercasedAfter = afterComma.lowercased()
+            if lowercasedAfter.contains("destination") || 
+               lowercasedAfter.contains("will be") ||
+               lowercasedAfter.contains("on your") ||
+               lowercasedAfter.contains("on the") {
+                return (beforeComma, afterComma)
+            }
+        }
+        
+        // No split needed - return full instruction
+        return (instruction, nil)
+    }
+    
     var body: some View {
         VStack(spacing: 0) {
             // Close button header
@@ -5940,6 +6036,9 @@ struct ExpandedDirectionsList: View {
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(Array(directions.enumerated()), id: \.element.id) { index, direction in
+                        // v1.9.15: Compute instruction split outside view builder
+                        let instructionParts = splitInstruction(direction.instruction)
+                        
                         Button(action: {
                             currentIndex = index
                             withAnimation(.easeInOut(duration: 0.2)) {
@@ -5975,11 +6074,22 @@ struct ExpandedDirectionsList: View {
                                 
                                 // Instruction
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(direction.instruction)
+                                    // Main instruction
+                                    Text(instructionParts.main)
                                         .font(.subheadline)
                                         .foregroundColor(index == currentIndex ? .primary : .secondary)
-                                        .lineLimit(2)
+                                        .lineLimit(1)
                                         .multilineTextAlignment(.leading)
+                                    
+                                    // v1.9.15: Destination info on separate line if present
+                                    if let destinationInfo = instructionParts.destination {
+                                        Text(destinationInfo)
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                            .foregroundColor(index == currentIndex ? .primary.opacity(0.9) : .secondary.opacity(0.9))
+                                            .lineLimit(1)
+                                            .multilineTextAlignment(.leading)
+                                    }
                                     
                                     Text(direction.distance)
                                         .font(.caption)

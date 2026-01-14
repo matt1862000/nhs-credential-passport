@@ -9,6 +9,7 @@ import Foundation
 import SwiftUI
 import Combine
 import CoreLocation
+import MapKit
 import FirebaseMessaging
 
 @MainActor
@@ -48,6 +49,10 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var cachedOriginalDirections: [WalkingDirection] = []
     @Published var cachedReturnDirections: [WalkingDirection] = []
     @Published var isUsingReturnDirections: Bool = false
+    
+    // v1.9.16: Cached return route for offline fallback
+    @Published var cachedReturnRoutePolyline: [CLLocationCoordinate2D] = []
+    @Published var hasCachedReturnRoute: Bool = false
     
     // Clinician selection
     @Published var availableClinicians: [Clinician] = []
@@ -635,6 +640,9 @@ class WaitingRoomViewModel: ObservableObject {
         cachedReturnDirections = []
         isUsingReturnDirections = false
         
+        // v1.9.16: Pre-calculate return route from last waypoint to start (for offline fallback)
+        preCalculateReturnRoute(route: route)
+        
         // Start direction monitoring for turn-by-turn notifications (non-indoor routes only)
         if !route.isIndoor && !route.walkingDirections.isEmpty {
             locationService.startDirectionMonitoring(
@@ -695,10 +703,119 @@ class WaitingRoomViewModel: ObservableObject {
         cachedReturnDirections = []
         isUsingReturnDirections = false
         
+        // v1.9.16: Reset cached return route
+        cachedReturnRoutePolyline = []
+        hasCachedReturnRoute = false
+        
         // v1.6.28: Reset step tracking flag for next walk
         // (stepTrackingWasEnabled is used to determine if HealthKit offer should be shown)
         // Note: We don't reset it here because we need it for the post-walk flow
         // It will be reset at the start of the next walk
+    }
+    
+    // v1.9.16: Pre-calculate return route from last waypoint to start (for offline fallback)
+    private func preCalculateReturnRoute(route: WalkingRoute) {
+        guard let lastWaypoint = route.qrMarkers.last,
+              let startPoint = route.routePath.first else {
+            print("📍 Cannot pre-calculate return route - missing waypoint or start point")
+            return
+        }
+        
+        print("📍 Pre-calculating return route from last waypoint to start...")
+        
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: lastWaypoint.coordinate))
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: startPoint))
+        request.transportType = .walking
+        
+        let directions = MKDirections(request: request)
+        directions.calculate { [weak self] response, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                print("⚠️ Pre-calculate return route error: \(error.localizedDescription) - will try fresh calculation when needed")
+                return
+            }
+            
+            if let route = response?.routes.first {
+                DispatchQueue.main.async {
+                    // Extract polyline
+                    let polyline = route.polyline
+                    let pointCount = polyline.pointCount
+                    var returnPath = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
+                    polyline.getCoordinates(&returnPath, range: NSRange(location: 0, length: pointCount))
+                    
+                    // Cache polyline and directions
+                    self.cachedReturnRoutePolyline = returnPath
+                    
+                    let returnDirections = self.extractDirectionsFromMKRoute(route)
+                    self.cachedReturnDirections = returnDirections
+                    self.hasCachedReturnRoute = true
+                    
+                    print("✅ Pre-calculated return route cached: \(route.expectedTravelTime / 60) min, \(route.distance) meters, \(returnDirections.count) steps")
+                }
+            }
+        }
+    }
+    
+    // v1.9.16: Extract walking directions from MKRoute steps (helper for pre-calculation)
+    private func extractDirectionsFromMKRoute(_ route: MKRoute) -> [WalkingDirection] {
+        var directions: [WalkingDirection] = []
+        let lastStepWithInstructions = route.steps.lastIndex(where: { !$0.instructions.isEmpty })
+        
+        for (index, step) in route.steps.enumerated() {
+            guard !step.instructions.isEmpty else { continue }
+            
+            let stepDistance = Int(step.distance)
+            let stepDurationSeconds = max(60, stepDistance / 80 * 60)
+            let durationText = stepDurationSeconds >= 60 ? "\(stepDurationSeconds / 60) min" : "\(stepDurationSeconds) sec"
+            
+            let distanceText: String
+            if stepDistance < 1000 {
+                distanceText = "\(stepDistance) m"
+            } else {
+                distanceText = String(format: "%.1f km", Double(stepDistance) / 1000.0)
+            }
+            
+            let maneuver = self.extractManeuverType(from: step.instructions)
+            let isLastStep = index == lastStepWithInstructions
+            
+            let direction = WalkingDirection(
+                instruction: step.instructions,
+                distance: distanceText,
+                distanceMeters: stepDistance,
+                duration: durationText,
+                maneuver: isLastStep ? "arrive" : maneuver
+            )
+            directions.append(direction)
+        }
+        
+        return directions
+    }
+    
+    // v1.9.16: Extract maneuver type from instruction text
+    private func extractManeuverType(from instruction: String) -> String {
+        let lowercased = instruction.lowercased()
+        if lowercased.contains("turn left") || lowercased.contains("left turn") {
+            return "turn-left"
+        } else if lowercased.contains("turn right") || lowercased.contains("right turn") {
+            return "turn-right"
+        } else if lowercased.contains("turn sharp left") {
+            return "turn-sharp-left"
+        } else if lowercased.contains("turn sharp right") {
+            return "turn-sharp-right"
+        } else if lowercased.contains("slight left") {
+            return "turn-slight-left"
+        } else if lowercased.contains("slight right") {
+            return "turn-slight-right"
+        } else if lowercased.contains("continue") || lowercased.contains("straight") {
+            return "straight"
+        } else if lowercased.contains("u-turn") || lowercased.contains("u turn") {
+            return "uturn"
+        } else if lowercased.contains("arrive") {
+            return "arrive"
+        }
+        return "straight"
     }
     
     private func startSessionTimer() {
