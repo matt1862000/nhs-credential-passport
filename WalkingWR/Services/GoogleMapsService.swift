@@ -1427,8 +1427,12 @@ class GoogleMapsService: ObservableObject {
         print("🌐 GOOGLE COMPLETE: \(allResults.count) unique POIs from \(placeTypesToSearch.count) categories")
         
         // Record success if we got results (Places API worked)
+        // Only record if we haven't already recorded a failure
         if !allResults.isEmpty {
-            recordAPITest(apiName: "Places API (New)", success: true)
+            let hasFailure = apiTestResults.contains { $0.apiName == "Places API (New)" && !$0.success }
+            if !hasFailure {
+                recordAPITest(apiName: "Places API (New)", success: true)
+            }
         }
         
         return allResults
