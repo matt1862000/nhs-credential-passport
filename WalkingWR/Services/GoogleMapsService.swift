@@ -3358,8 +3358,10 @@ class GoogleMapsService: ObservableObject {
                         var freshDirections: [WalkingDirection] = []
                         var totalDistance = 0
                         var totalDuration = 0
+                        var legsCount = 0
                         
                         if let legs = firstRoute["legs"] as? [[String: Any]] {
+                            legsCount = legs.count
                             for leg in legs {
                                 if let distance = leg["distance"] as? [String: Any],
                                    let distValue = distance["value"] as? Int {
@@ -3392,12 +3394,11 @@ class GoogleMapsService: ObservableObject {
                         }
                         
                         let durationMinutes = max(1, totalDuration / 60)
-                        let legsCount = firstRoute["legs"] as? [[String: Any]] ?? []
                         print("🌐   ✅ SUCCESS: Parsed Google route")
                         print("🌐      ⏱️  Duration: \(durationMinutes)min")
                         print("🌐      📏 Distance: \(totalDistance)m")
                         print("🌐      🧭 Directions: \(freshDirections.count) steps")
-                        print("🌐      📍 Legs: \(legsCount.count)")
+                        print("🌐      📍 Legs: \(legsCount)")
                         print("🌐 REFRESH: ✅ Google route - \(durationMinutes)min, \(totalDistance)m, \(freshDirections.count) steps")
                         print("🌐 ═══════════════════════════════════════════════════════")
                         
