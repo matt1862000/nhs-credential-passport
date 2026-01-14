@@ -441,10 +441,9 @@ struct EmbeddedWalkMapView: View {
                     Spacer()
                     
                     // Location button (top-right)
+                    // v1.9.10: Shows full route overview first, then returns to following
                     Button(action: {
-                        withAnimation {
-                            cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
-                        }
+                        showFullRouteThenFollow()
                     }) {
                         Image(systemName: "location.fill")
                             .font(.system(size: 16, weight: .semibold))
@@ -717,6 +716,44 @@ struct EmbeddedWalkMapView: View {
                 latitudinalMeters: 150,
                 longitudinalMeters: 150
             ))
+        }
+    }
+    
+    /// v1.9.10: Show full route overview briefly, then return to camera-following mode
+    private func showFullRouteThenFollow() {
+        guard let currentRoute = viewModel.walkSession.currentRoute else {
+            // No route, just follow user
+            withAnimation {
+                cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
+            }
+            return
+        }
+        
+        // Step 1: Zoom out to show full route
+        let allPoints = currentRoute.routePath
+        if allPoints.count >= 2 {
+            let lats = allPoints.map { $0.latitude }
+            let lngs = allPoints.map { $0.longitude }
+            let center = CLLocationCoordinate2D(
+                latitude: (lats.min()! + lats.max()!) / 2,
+                longitude: (lngs.min()! + lngs.max()!) / 2
+            )
+            let latSpan = (lats.max()! - lats.min()!) * 1.5
+            let lngSpan = (lngs.max()! - lngs.min()!) * 1.5
+            
+            withAnimation(.easeInOut(duration: 1.0)) {
+                cameraPosition = .region(MKCoordinateRegion(
+                    center: center,
+                    span: MKCoordinateSpan(latitudeDelta: max(0.01, latSpan), longitudeDelta: max(0.01, lngSpan))
+                ))
+            }
+        }
+        
+        // Step 2: After 2.5 seconds, return to following user
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            withAnimation(.easeInOut(duration: 1.5)) {
+                cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
+            }
         }
     }
     
