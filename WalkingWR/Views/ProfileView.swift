@@ -2092,8 +2092,10 @@ struct SettingsView: View {
                     }
                 }
                 
-                // DEBUG: Saved Batch Test Results (remove in final version)
+                // DEBUG: Batch Testing Tools (only visible in debug builds)
+                #if DEBUG
                 SavedBatchTestsSection(locationService: locationService)
+                #endif
             }
             .navigationTitle("Settings")
             #if os(iOS)
