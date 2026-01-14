@@ -453,7 +453,15 @@ class GeminiService {
         // Gemini API endpoint - using gemini-2.0-flash model
         let urlString = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
         
+        print("🤖 ═══════════════════════════════════════════════════════")
+        print("🤖 GEMINI API: Starting request...")
+        print("🤖   🔗 Endpoint: generativelanguage.googleapis.com")
+        print("🤖   🔑 API Key present: \(!apiKey.isEmpty), prefix: \(String(apiKey.prefix(10)))...")
+        print("🤖   📝 Prompt length: \(prompt.count) characters")
+        
         guard let url = URL(string: urlString) else {
+            print("🤖   ❌ ERROR: Invalid URL")
+            print("🤖 ═══════════════════════════════════════════════════════")
             throw GeminiError.invalidURL
         }
         
@@ -474,16 +482,27 @@ class GeminiService {
         request.setValue(apiKey, forHTTPHeaderField: "X-goog-api-key")
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
+        let startTime = Date()
+        print("🤖   ⏱️  Making HTTP request...")
         let (data, response) = try await session.data(for: request)
+        let elapsed = Date().timeIntervalSince(startTime)
         
         guard let httpResponse = response as? HTTPURLResponse else {
+            print("🤖   ❌ ERROR: No HTTP response")
+            print("🤖 ═══════════════════════════════════════════════════════")
             throw GeminiError.serverError
         }
         
+        print("🤖   📡 HTTP Status: \(httpResponse.statusCode)")
+        print("🤖   📦 Response size: \(data.count) bytes")
+        print("🤖   ⏱️  Response time: \(String(format: "%.2f", elapsed))s")
+        
         if httpResponse.statusCode != 200 {
             if let errorString = String(data: data, encoding: .utf8) {
-                print("🤖 Gemini API error (\(httpResponse.statusCode)): \(errorString)")
+                print("🤖   ❌ ERROR: \(errorString)")
+                print("🤖   📄 Full error response (first 500 chars): \(String(errorString.prefix(500)))")
             }
+            print("🤖 ═══════════════════════════════════════════════════════")
             throw GeminiError.apiError("Status \(httpResponse.statusCode)")
         }
         
@@ -495,10 +514,19 @@ class GeminiService {
               let parts = content["parts"] as? [[String: Any]],
               let firstPart = parts.first,
               let text = firstPart["text"] as? String else {
+            print("🤖   ❌ ERROR: Failed to parse response")
+            if let rawResponse = String(data: data, encoding: .utf8) {
+                print("🤖   📄 Raw response (first 500 chars): \(String(rawResponse.prefix(500)))")
+            }
+            print("🤖 ═══════════════════════════════════════════════════════")
             throw GeminiError.parseError
         }
         
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let result = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        print("🤖   ✅ SUCCESS: Generated \(result.count) characters")
+        print("🤖   📄 Response preview: \(String(result.prefix(100)))...")
+        print("🤖 ═══════════════════════════════════════════════════════")
+        return result
     }
 }
 
