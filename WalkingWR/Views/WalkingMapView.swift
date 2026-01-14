@@ -750,10 +750,12 @@ struct EmbeddedWalkMapView: View {
         }
         
         // Step 2: After 2.5 seconds, return to following user
+        // v1.9.12: Set directly without animation to ensure heading following re-enables properly
+        // ROLLBACK OPTIONS:
+        // Option 1 (restore animation): withAnimation(.easeInOut(duration: 1.5)) { cameraPosition = .userLocation(followsHeading: true, fallback: .automatic) }
+        // Option 2 (force reset): cameraPosition = .automatic; DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { cameraPosition = .userLocation(followsHeading: true, fallback: .automatic) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            withAnimation(.easeInOut(duration: 1.5)) {
-                cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
-            }
+            cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
         }
     }
     
