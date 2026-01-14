@@ -2092,10 +2092,14 @@ struct SettingsView: View {
                     }
                 }
                 
-                // DEBUG: Batch Testing Tools (only visible in debug builds)
-                #if DEBUG
-                SavedBatchTestsSection(locationService: locationService)
-                #endif
+                // DEBUG: Batch Testing Tools - HIDDEN FOR RELEASE/TESTFLIGHT
+                // Set showDebugTools = true only for local development
+                let showDebugTools = false  // v1.9.0: Hidden for TestFlight
+                if showDebugTools {
+                    #if DEBUG
+                    SavedBatchTestsSection(locationService: locationService)
+                    #endif
+                }
             }
             .navigationTitle("Settings")
             #if os(iOS)
