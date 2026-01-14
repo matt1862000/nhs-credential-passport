@@ -397,13 +397,15 @@ struct EmbeddedWalkMapView: View {
                         .stroke(Color.blue, lineWidth: 5)
                 }
                 
-                // v1.9.0: Turn arrow annotation at next turn point
-                if let nextTurnCoord = viewModel.locationService.nextTurnCoordinate,
+                // v1.9.1: Turn arrow annotation at ambiguous intersection (where uncertainty exists)
+                // Shows arrow at uncertain intersections (50-150m away) rather than immediate next turn
+                if let currentLocation = viewModel.locationService.currentLocation,
+                   let ambiguousTurn = viewModel.locationService.nextAmbiguousTurn(from: currentLocation),
                    let currentRoute = viewModel.walkSession.currentRoute,
-                   viewModel.locationService.currentDirectionIndex < currentRoute.walkingDirections.count {
-                    let currentDirection = currentRoute.walkingDirections[viewModel.locationService.currentDirectionIndex]
-                    Annotation("Turn", coordinate: nextTurnCoord) {
-                        TurnArrowView(maneuver: currentDirection.maneuver)
+                   ambiguousTurn.directionIndex < currentRoute.walkingDirections.count {
+                    let direction = currentRoute.walkingDirections[ambiguousTurn.directionIndex]
+                    Annotation("Turn", coordinate: ambiguousTurn.coordinate) {
+                        TurnArrowView(maneuver: direction.maneuver)
                     }
                 }
             }
