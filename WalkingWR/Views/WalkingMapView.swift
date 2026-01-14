@@ -632,7 +632,7 @@ struct EmbeddedWalkMapView: View {
     private func playIntroAnimation() {
         guard let currentRoute = viewModel.walkSession.currentRoute,
               let firstWaypoint = currentRoute.qrMarkers.first?.coordinate,
-              let userLocation = viewModel.locationService.currentLocation?.coordinate else {
+              viewModel.locationService.currentLocation != nil else {
             // No waypoints or location, skip intro
             hasPlayedIntro = true
             cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
@@ -682,18 +682,14 @@ struct EmbeddedWalkMapView: View {
             }
         }
         
-        // Phase 3: Slowly ZOOM IN to user's current location (after 8 seconds)
+        // Phase 3: Switch to auto-follow user location (after 8 seconds)
         DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
             guard !userInteractedWithMap else { return }  // Skip if user interacted
             introPhase = .followingUser
             
-            // ZOOMED IN view of current location (100m x 100m area)
+            // v1.9.8: Use auto-follow mode to keep user centered during walk
             withAnimation(verySlowAnimation) {
-                cameraPosition = .region(MKCoordinateRegion(
-                    center: userLocation,
-                    latitudinalMeters: 100,
-                    longitudinalMeters: 100
-                ))
+                cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
             }
         }
         
