@@ -356,7 +356,7 @@ struct EmbeddedWalkMapView: View {
                     }
                 }
                 
-                // Route polyline from Google Directions
+                // Route polyline from Google Directions (primary)
                 if let currentRoute = viewModel.walkSession.currentRoute,
                    currentRoute.routePath.count >= 2 {
                     MapPolyline(coordinates: currentRoute.routePath)
@@ -383,12 +383,15 @@ struct EmbeddedWalkMapView: View {
                     }
                 }
                 
-                // Fallback: MKRoute polyline (only if main route polyline is missing)
-                // v1.8.9: Added condition to prevent duplicate polylines
-                if let route = route,
-                   viewModel.walkSession.currentRoute?.routePath.count ?? 0 < 2 {
-                    MapPolyline(route.polyline)
-                        .stroke(Color.tealAccent.opacity(0.5), lineWidth: 3)
+                // Fallback: MKRoute polyline (ONLY if Google Directions routePath is NOT available)
+                // v1.9.1: Fixed to prevent duplicate polylines when Google Directions is used
+                // Only show MKRoute if we don't have Google Directions data
+                if let route = route {
+                    let hasGoogleDirections = viewModel.walkSession.currentRoute?.routePath.count ?? 0 >= 2
+                    if !hasGoogleDirections {
+                        MapPolyline(route.polyline)
+                            .stroke(Color.tealAccent.opacity(0.5), lineWidth: 3)
+                    }
                 }
                 
                 // Return route polyline (directions back to start)
