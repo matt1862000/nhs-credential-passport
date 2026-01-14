@@ -81,25 +81,28 @@ class GoogleMapsService: ObservableObject {
     }
     
     func printAPITestSummary() {
-        guard !apiTestResults.isEmpty else { return }
-        
         print("")
         print("═══════════════════════════════════════════════════════════")
         print("📊 API BUNDLE ID RESTRICTION TEST SUMMARY")
         print("═══════════════════════════════════════════════════════════")
-        for result in apiTestResults {
-            let status = result.success ? "✅ WORKS" : "❌ FAILED"
-            print("   \(status) - \(result.apiName)")
-            if let error = result.errorMessage, !result.success {
-                let shortError = error.count > 80 ? String(error.prefix(80)) + "..." : error
-                print("      Error: \(shortError)")
+        
+        if apiTestResults.isEmpty {
+            print("   ⚠️  No API calls recorded yet")
+            print("   (Places API may be using cache, Directions API called on 'Let's Go')")
+        } else {
+            for result in apiTestResults {
+                let status = result.success ? "✅ WORKS" : "❌ FAILED"
+                print("   \(status) - \(result.apiName)")
+                if let error = result.errorMessage, !result.success {
+                    let shortError = error.count > 80 ? String(error.prefix(80)) + "..." : error
+                    print("      Error: \(shortError)")
+                }
             }
         }
         print("═══════════════════════════════════════════════════════════")
         print("")
         
-        // Clear results after printing
-        apiTestResults.removeAll()
+        // Don't clear results - keep them for later summary
     }
     
     // v1.8.2: Route exploration animation - publishes route attempts for UI

@@ -2277,6 +2277,11 @@ struct LocalRoutePickerSheet: View {
                 )
                 await MainActor.run {
                     isStartingWalk = false
+                    
+                    // Print API test summary after Directions API call
+                    mapsService.printAPITestSummary()
+                    GeminiService.shared.printAPITestSummary()
+                    
                     viewModel.selectRoute(refreshedRoute)
                     viewModel.startWalk()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
