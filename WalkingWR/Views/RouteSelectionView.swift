@@ -2295,7 +2295,7 @@ struct LocalRoutePickerSheet: View {
                     print("║ Directions: \(refreshedRoute.walkingDirections.count) steps")
                     
                     // Polyline quality
-                    let polylinePoints = mapsService.decodePolyline(refreshedRoute.encodedPolyline)
+                    let polylinePoints = mapsService.decodePolyline(refreshedRoute.encodedPolyline ?? "")
                     let pointsPerKm = refreshedRoute.distanceMeters > 0 
                         ? Double(polylinePoints.count) / (Double(refreshedRoute.distanceMeters) / 1000.0) 
                         : 0
