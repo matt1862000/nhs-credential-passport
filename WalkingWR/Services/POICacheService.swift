@@ -15,8 +15,8 @@ import CoreLocation
 class POICacheService {
     static let shared = POICacheService()
     
-    // v1.9.2: Bump cache key to force refresh (clear cache for API testing)
-    private let cacheKey = "cachedPOILocations_v4"
+    // v1.9.3: Bump cache key to force refresh (clear cache for API testing)
+    private let cacheKey = "cachedPOILocations_v5"
     private let maxCachedLocations = 10
     private let matchRadiusMeters: Double = 1000 // 1km
     

@@ -17,6 +17,36 @@ class GeminiService {
     
     private let session = URLSession.shared
     
+    // v1.9.3: API restriction test tracking
+    private struct APITestResult {
+        var success: Bool
+        var errorMessage: String?
+        var timestamp: Date
+    }
+    private var apiTestResult: APITestResult?
+    
+    private func recordAPITest(success: Bool, errorMessage: String? = nil) {
+        apiTestResult = APITestResult(
+            success: success,
+            errorMessage: errorMessage,
+            timestamp: Date()
+        )
+    }
+    
+    func printAPITestSummary() {
+        guard let result = apiTestResult else { return }
+        
+        let status = result.success ? "✅ WORKS" : "❌ FAILED"
+        print("   \(status) - Generative Language API (Gemini)")
+        if let error = result.errorMessage, !result.success {
+            let shortError = error.count > 80 ? String(error.prefix(80)) + "..." : error
+            print("      Error: \(shortError)")
+        }
+        
+        // Clear result after printing
+        apiTestResult = nil
+    }
+    
     /// Waypoint info for AI description generation
     struct WaypointInfo {
         let name: String
@@ -498,9 +528,26 @@ class GeminiService {
         print("🤖   ⏱️  Response time: \(String(format: "%.2f", elapsed))s")
         
         if httpResponse.statusCode != 200 {
+            var errorMessage: String?
             if let errorString = String(data: data, encoding: .utf8) {
                 print("🤖   ❌ ERROR: \(errorString)")
                 print("🤖   📄 Full error response (first 500 chars): \(String(errorString.prefix(500)))")
+                
+                // Check if it's a bundle ID restriction error
+                if httpResponse.statusCode == 403,
+                   let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let error = errorJson["error"] as? [String: Any],
+                   let details = error["details"] as? [[String: Any]],
+                   details.contains(where: { ($0["reason"] as? String) == "API_KEY_IOS_APP_BLOCKED" }) {
+                    errorMessage = error["message"] as? String ?? "iOS app blocked"
+                    recordAPITest(success: false, errorMessage: errorMessage)
+                } else {
+                    errorMessage = "HTTP \(httpResponse.statusCode)"
+                    recordAPITest(success: false, errorMessage: errorMessage)
+                }
+            } else {
+                errorMessage = "HTTP \(httpResponse.statusCode) - Unknown error"
+                recordAPITest(success: false, errorMessage: errorMessage)
             }
             print("🤖 ═══════════════════════════════════════════════════════")
             throw GeminiError.apiError("Status \(httpResponse.statusCode)")
@@ -526,6 +573,10 @@ class GeminiService {
         print("🤖   ✅ SUCCESS: Generated \(result.count) characters")
         print("🤖   📄 Response preview: \(String(result.prefix(100)))...")
         print("🤖 ═══════════════════════════════════════════════════════")
+        
+        // Record success
+        recordAPITest(success: true)
+        
         return result
     }
 }

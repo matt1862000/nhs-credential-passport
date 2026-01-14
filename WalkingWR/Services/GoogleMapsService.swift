@@ -62,6 +62,46 @@ class GoogleMapsService: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     
+    // v1.9.3: API restriction test tracking
+    private struct APITestResult {
+        var apiName: String
+        var success: Bool
+        var errorMessage: String?
+        var timestamp: Date
+    }
+    private var apiTestResults: [APITestResult] = []
+    
+    private func recordAPITest(apiName: String, success: Bool, errorMessage: String? = nil) {
+        apiTestResults.append(APITestResult(
+            apiName: apiName,
+            success: success,
+            errorMessage: errorMessage,
+            timestamp: Date()
+        ))
+    }
+    
+    func printAPITestSummary() {
+        guard !apiTestResults.isEmpty else { return }
+        
+        print("")
+        print("═══════════════════════════════════════════════════════════")
+        print("📊 API BUNDLE ID RESTRICTION TEST SUMMARY")
+        print("═══════════════════════════════════════════════════════════")
+        for result in apiTestResults {
+            let status = result.success ? "✅ WORKS" : "❌ FAILED"
+            print("   \(status) - \(result.apiName)")
+            if let error = result.errorMessage, !result.success {
+                let shortError = error.count > 80 ? String(error.prefix(80)) + "..." : error
+                print("      Error: \(shortError)")
+            }
+        }
+        print("═══════════════════════════════════════════════════════════")
+        print("")
+        
+        // Clear results after printing
+        apiTestResults.removeAll()
+    }
+    
     // v1.8.2: Route exploration animation - publishes route attempts for UI
     struct RouteAttempt {
         let polylineCoordinates: [CLLocationCoordinate2D]
@@ -1385,6 +1425,12 @@ class GoogleMapsService: ObservableObject {
         }
         
         print("🌐 GOOGLE COMPLETE: \(allResults.count) unique POIs from \(placeTypesToSearch.count) categories")
+        
+        // Record success if we got results (Places API worked)
+        if !allResults.isEmpty {
+            recordAPITest(apiName: "Places API (New)", success: true)
+        }
+        
         return allResults
     }
     
@@ -1432,13 +1478,23 @@ class GoogleMapsService: ObservableObject {
         
         if httpResponse.statusCode != 200 {
             // Try to parse error message
+            var errorMessage: String?
             if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let error = errorJson["error"] as? [String: Any],
                let message = error["message"] as? String,
                let code = error["code"] as? Int {
-                print("   ❌ [\(type)] HTTP \(httpResponse.statusCode) - Code \(code): \(message)")
+                errorMessage = "HTTP \(httpResponse.statusCode) - Code \(code): \(message)"
+                print("   ❌ [\(type)] \(errorMessage!)")
+                
+                // Check if it's a bundle ID restriction error
+                if httpResponse.statusCode == 403,
+                   let details = error["details"] as? [[String: Any]],
+                   details.contains(where: { ($0["reason"] as? String) == "API_KEY_IOS_APP_BLOCKED" }) {
+                    recordAPITest(apiName: "Places API (New)", success: false, errorMessage: message)
+                }
             } else {
-                print("   ❌ [\(type)] HTTP \(httpResponse.statusCode) - Unknown error")
+                errorMessage = "HTTP \(httpResponse.statusCode) - Unknown error"
+                print("   ❌ [\(type)] \(errorMessage!)")
             }
             throw GoogleMapsError.serverError
         }
@@ -3334,6 +3390,15 @@ class GoogleMapsService: ObservableObject {
                             let errorMessage = json["error_message"] as? String ?? "Unknown error"
                             print("🌐   ❌ ERROR: \(errorMessage)")
                             
+                            // Check if it's a bundle ID restriction error
+                            if let errorDetails = json["error"] as? [String: Any],
+                               let details = errorDetails["details"] as? [[String: Any]],
+                               details.contains(where: { ($0["reason"] as? String) == "API_KEY_IOS_APP_BLOCKED" }) {
+                                recordAPITest(apiName: "Directions API", success: false, errorMessage: errorMessage)
+                            } else {
+                                recordAPITest(apiName: "Directions API", success: false, errorMessage: "Status: \(status)")
+                            }
+                            
                             // Log full error details if available
                             if let errorDetails = json["error_message"] as? String {
                                 print("🌐   📄 Full error message: \(errorDetails)")
@@ -3401,6 +3466,9 @@ class GoogleMapsService: ObservableObject {
                         print("🌐      📍 Legs: \(legsCount)")
                         print("🌐 REFRESH: ✅ Google route - \(durationMinutes)min, \(totalDistance)m, \(freshDirections.count) steps")
                         print("🌐 ═══════════════════════════════════════════════════════")
+                        
+                        // Record success
+                        recordAPITest(apiName: "Directions API", success: true)
                         
                         // Create updated route with Google data
                         return WalkingRoute(

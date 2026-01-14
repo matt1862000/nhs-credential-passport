@@ -1998,6 +1998,10 @@ struct LocalRoutePickerSheet: View {
                         print("   📍 \(result.places.count) POIs, \(result.durationMinutes)min, \(result.distanceMeters)m")
                         print("═══════════════════════════════════════════════════════════")
                         
+                        // Print API test summary
+                        mapsService.printAPITestSummary()
+                        GeminiService.shared.printAPITestSummary()
+                        
                         // Start pre-generating more routes in background
                         preGenerateRemainingRoutes()
                     }
