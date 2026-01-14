@@ -17,34 +17,89 @@ class GeminiService {
     
     private let session = URLSession.shared
     
-    // v1.9.3: API restriction test tracking
-    private struct APITestResult {
+    // v1.9.3: Comprehensive API call tracking
+    private struct APICallRecord {
         var success: Bool
+        var httpStatus: Int?
+        var responseTime: TimeInterval?
         var errorMessage: String?
+        var bundleIdSent: Bool
         var timestamp: Date
+        var details: String?  // Additional context (e.g., "route name generation")
     }
-    private var apiTestResult: APITestResult?
+    private var apiCallRecords: [APICallRecord] = []
     
-    private func recordAPITest(success: Bool, errorMessage: String? = nil) {
-        apiTestResult = APITestResult(
+    private func recordAPICall(
+        success: Bool,
+        httpStatus: Int? = nil,
+        responseTime: TimeInterval? = nil,
+        errorMessage: String? = nil,
+        bundleIdSent: Bool = false,
+        details: String? = nil
+    ) {
+        apiCallRecords.append(APICallRecord(
             success: success,
+            httpStatus: httpStatus,
+            responseTime: responseTime,
             errorMessage: errorMessage,
-            timestamp: Date()
-        )
+            bundleIdSent: bundleIdSent,
+            timestamp: Date(),
+            details: details
+        ))
     }
     
-    func printAPITestSummary() {
-        guard let result = apiTestResult else { return }
+    func printAPICallSummary() {
+        guard !apiCallRecords.isEmpty else { return }
         
-        let status = result.success ? "✅ WORKS" : "❌ FAILED"
-        print("   \(status) - Generative Language API (Gemini)")
-        if let error = result.errorMessage, !result.success {
-            let shortError = error.count > 80 ? String(error.prefix(80)) + "..." : error
-            print("      Error: \(shortError)")
+        let successCount = apiCallRecords.filter { $0.success }.count
+        let failCount = apiCallRecords.filter { !$0.success }.count
+        let totalCount = apiCallRecords.count
+        
+        let status = failCount == 0 ? "✅" : (successCount == 0 ? "❌" : "⚠️")
+        print("")
+        print("\(status) Generative Language API (Gemini)")
+        print("   Calls: \(totalCount) total (\(successCount) success, \(failCount) failed)")
+        
+        // Show bundle ID status
+        let bundleIdSentCount = apiCallRecords.filter { $0.bundleIdSent }.count
+        if bundleIdSentCount > 0 {
+            print("   📱 Bundle ID: Sent in \(bundleIdSentCount)/\(totalCount) calls")
+        } else {
+            print("   ⚠️  Bundle ID: NOT sent (may cause restrictions)")
         }
         
-        // Clear result after printing
-        apiTestResult = nil
+        // Show response times
+        let successfulCalls = apiCallRecords.filter { $0.success && $0.responseTime != nil }
+        if !successfulCalls.isEmpty {
+            let avgTime = successfulCalls.compactMap { $0.responseTime }.reduce(0, +) / Double(successfulCalls.count)
+            let minTime = successfulCalls.compactMap { $0.responseTime }.min() ?? 0
+            let maxTime = successfulCalls.compactMap { $0.responseTime }.max() ?? 0
+            print("   ⏱️  Response time: avg \(String(format: "%.2f", avgTime))s (min: \(String(format: "%.2f", minTime))s, max: \(String(format: "%.2f", maxTime))s)")
+        }
+        
+        // Show recent failures
+        let recentFailures = apiCallRecords.filter { !$0.success }.suffix(3)
+        if !recentFailures.isEmpty {
+            print("   ❌ Recent failures:")
+            for failure in recentFailures {
+                if let status = failure.httpStatus {
+                    print("      • HTTP \(status)", terminator: "")
+                }
+                if let error = failure.errorMessage {
+                    let shortError = error.count > 60 ? String(error.prefix(60)) + "..." : error
+                    print(": \(shortError)")
+                } else {
+                    print("")
+                }
+            }
+        }
+        
+        // Don't clear results - keep them for later summary
+    }
+    
+    // Legacy function name for compatibility
+    func printAPITestSummary() {
+        printAPICallSummary()
     }
     
     /// Waypoint info for AI description generation
@@ -510,6 +565,15 @@ class GeminiService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "X-goog-api-key")
+        // Add iOS bundle ID for API key restrictions
+        let bundleIdSent: Bool
+        if let bundleId = Bundle.main.bundleIdentifier {
+            request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+            bundleIdSent = true
+            print("🤖   📱 Bundle ID: \(bundleId)")
+        } else {
+            bundleIdSent = false
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
         let startTime = Date()
@@ -520,6 +584,13 @@ class GeminiService {
         guard let httpResponse = response as? HTTPURLResponse else {
             print("🤖   ❌ ERROR: No HTTP response")
             print("🤖 ═══════════════════════════════════════════════════════")
+            recordAPICall(
+                success: false,
+                responseTime: elapsed,
+                errorMessage: "No HTTP response",
+                bundleIdSent: bundleIdSent,
+                details: "route name generation"
+            )
             throw GeminiError.serverError
         }
         
@@ -536,19 +607,24 @@ class GeminiService {
                 // Check if it's a bundle ID restriction error
                 if httpResponse.statusCode == 403,
                    let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let error = errorJson["error"] as? [String: Any],
-                   let details = error["details"] as? [[String: Any]],
-                   details.contains(where: { ($0["reason"] as? String) == "API_KEY_IOS_APP_BLOCKED" }) {
+                   let error = errorJson["error"] as? [String: Any] {
                     errorMessage = error["message"] as? String ?? "iOS app blocked"
-                    recordAPITest(success: false, errorMessage: errorMessage)
                 } else {
                     errorMessage = "HTTP \(httpResponse.statusCode)"
-                    recordAPITest(success: false, errorMessage: errorMessage)
                 }
             } else {
                 errorMessage = "HTTP \(httpResponse.statusCode) - Unknown error"
-                recordAPITest(success: false, errorMessage: errorMessage)
             }
+            
+            recordAPICall(
+                success: false,
+                httpStatus: httpResponse.statusCode,
+                responseTime: elapsed,
+                errorMessage: errorMessage,
+                bundleIdSent: bundleIdSent,
+                details: "route name generation"
+            )
+            
             print("🤖 ═══════════════════════════════════════════════════════")
             throw GeminiError.apiError("Status \(httpResponse.statusCode)")
         }
@@ -566,6 +642,14 @@ class GeminiService {
                 print("🤖   📄 Raw response (first 500 chars): \(String(rawResponse.prefix(500)))")
             }
             print("🤖 ═══════════════════════════════════════════════════════")
+            recordAPICall(
+                success: false,
+                httpStatus: httpResponse.statusCode,
+                responseTime: elapsed,
+                errorMessage: "Failed to parse response",
+                bundleIdSent: bundleIdSent,
+                details: "route name generation"
+            )
             throw GeminiError.parseError
         }
         
@@ -575,7 +659,13 @@ class GeminiService {
         print("🤖 ═══════════════════════════════════════════════════════")
         
         // Record success
-        recordAPITest(success: true)
+        recordAPICall(
+            success: true,
+            httpStatus: httpResponse.statusCode,
+            responseTime: elapsed,
+            bundleIdSent: bundleIdSent,
+            details: "route name generation, \(result.count) chars"
+        )
         
         return result
     }

@@ -1998,9 +1998,15 @@ struct LocalRoutePickerSheet: View {
                         print("   📍 \(result.places.count) POIs, \(result.durationMinutes)min, \(result.distanceMeters)m")
                         print("═══════════════════════════════════════════════════════════")
                         
-                        // Print API test summary
-                        mapsService.printAPITestSummary()
-                        GeminiService.shared.printAPITestSummary()
+                        // Print comprehensive API call summary
+                        print("")
+                        print("═══════════════════════════════════════════════════════════")
+                        print("📊 COMPREHENSIVE API CALL SUMMARY")
+                        print("═══════════════════════════════════════════════════════════")
+                        mapsService.printAPICallSummary()
+                        GeminiService.shared.printAPICallSummary()
+                        print("═══════════════════════════════════════════════════════════")
+                        print("")
                         
                         // Start pre-generating more routes in background
                         preGenerateRemainingRoutes()
@@ -2278,9 +2284,15 @@ struct LocalRoutePickerSheet: View {
                 await MainActor.run {
                     isStartingWalk = false
                     
-                    // Print API test summary after Directions API call
-                    mapsService.printAPITestSummary()
-                    GeminiService.shared.printAPITestSummary()
+                    // Print comprehensive API call summary
+                    print("")
+                    print("═══════════════════════════════════════════════════════════")
+                    print("📊 COMPREHENSIVE API CALL SUMMARY")
+                    print("═══════════════════════════════════════════════════════════")
+                    mapsService.printAPICallSummary()
+                    GeminiService.shared.printAPICallSummary()
+                    print("═══════════════════════════════════════════════════════════")
+                    print("")
                     
                     viewModel.selectRoute(refreshedRoute)
                     viewModel.startWalk()

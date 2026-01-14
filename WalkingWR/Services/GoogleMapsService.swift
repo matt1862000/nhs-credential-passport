@@ -62,47 +62,117 @@ class GoogleMapsService: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     
-    // v1.9.3: API restriction test tracking
-    private struct APITestResult {
+    // v1.9.3: Comprehensive API call tracking
+    private struct APICallRecord {
         var apiName: String
         var success: Bool
+        var httpStatus: Int?
+        var responseTime: TimeInterval?
         var errorMessage: String?
+        var bundleIdSent: Bool
         var timestamp: Date
+        var details: String?  // Additional context (e.g., "43 categories", "3 waypoints")
     }
-    private var apiTestResults: [APITestResult] = []
+    private var apiCallRecords: [APICallRecord] = []
     
-    private func recordAPITest(apiName: String, success: Bool, errorMessage: String? = nil) {
-        apiTestResults.append(APITestResult(
+    private func recordAPICall(
+        apiName: String,
+        success: Bool,
+        httpStatus: Int? = nil,
+        responseTime: TimeInterval? = nil,
+        errorMessage: String? = nil,
+        bundleIdSent: Bool = false,
+        details: String? = nil
+    ) {
+        apiCallRecords.append(APICallRecord(
             apiName: apiName,
             success: success,
+            httpStatus: httpStatus,
+            responseTime: responseTime,
             errorMessage: errorMessage,
-            timestamp: Date()
+            bundleIdSent: bundleIdSent,
+            timestamp: Date(),
+            details: details
         ))
     }
     
-    func printAPITestSummary() {
+    func printAPICallSummary() {
         print("")
         print("═══════════════════════════════════════════════════════════")
-        print("📊 API BUNDLE ID RESTRICTION TEST SUMMARY")
+        print("📊 API CALL SUMMARY")
         print("═══════════════════════════════════════════════════════════")
         
-        if apiTestResults.isEmpty {
+        if apiCallRecords.isEmpty {
             print("   ⚠️  No API calls recorded yet")
             print("   (Places API may be using cache, Directions API called on 'Let's Go')")
         } else {
-            for result in apiTestResults {
-                let status = result.success ? "✅ WORKS" : "❌ FAILED"
-                print("   \(status) - \(result.apiName)")
-                if let error = result.errorMessage, !result.success {
-                    let shortError = error.count > 80 ? String(error.prefix(80)) + "..." : error
-                    print("      Error: \(shortError)")
+            // Group by API name
+            let grouped = Dictionary(grouping: apiCallRecords) { $0.apiName }
+            
+            for (apiName, calls) in grouped.sorted(by: { $0.key < $1.key }) {
+                let successCount = calls.filter { $0.success }.count
+                let failCount = calls.filter { !$0.success }.count
+                let totalCount = calls.count
+                
+                let status = failCount == 0 ? "✅" : (successCount == 0 ? "❌" : "⚠️")
+                print("")
+                print("\(status) \(apiName)")
+                print("   Calls: \(totalCount) total (\(successCount) success, \(failCount) failed)")
+                
+                // Show bundle ID status
+                let bundleIdSentCount = calls.filter { $0.bundleIdSent }.count
+                if bundleIdSentCount > 0 {
+                    print("   📱 Bundle ID: Sent in \(bundleIdSentCount)/\(totalCount) calls")
+                } else {
+                    print("   ⚠️  Bundle ID: NOT sent (may cause restrictions)")
+                }
+                
+                // Show response times
+                let successfulCalls = calls.filter { $0.success && $0.responseTime != nil }
+                if !successfulCalls.isEmpty {
+                    let avgTime = successfulCalls.compactMap { $0.responseTime }.reduce(0, +) / Double(successfulCalls.count)
+                    let minTime = successfulCalls.compactMap { $0.responseTime }.min() ?? 0
+                    let maxTime = successfulCalls.compactMap { $0.responseTime }.max() ?? 0
+                    print("   ⏱️  Response time: avg \(String(format: "%.2f", avgTime))s (min: \(String(format: "%.2f", minTime))s, max: \(String(format: "%.2f", maxTime))s)")
+                }
+                
+                // Show recent failures
+                let recentFailures = calls.filter { !$0.success }.suffix(3)
+                if !recentFailures.isEmpty {
+                    print("   ❌ Recent failures:")
+                    for failure in recentFailures {
+                        if let status = failure.httpStatus {
+                            print("      • HTTP \(status)", terminator: "")
+                        }
+                        if let error = failure.errorMessage {
+                            let shortError = error.count > 60 ? String(error.prefix(60)) + "..." : error
+                            print(": \(shortError)")
+                        } else {
+                            print("")
+                        }
+                        if let details = failure.details {
+                            print("        (\(details))")
+                        }
+                    }
+                }
+                
+                // Show details for successful calls
+                if let lastSuccess = calls.filter({ $0.success }).last, let details = lastSuccess.details {
+                    print("   ℹ️  Last success: \(details)")
                 }
             }
         }
+        
+        print("")
         print("═══════════════════════════════════════════════════════════")
         print("")
         
         // Don't clear results - keep them for later summary
+    }
+    
+    // Legacy function name for compatibility
+    func printAPITestSummary() {
+        printAPICallSummary()
     }
     
     // v1.8.2: Route exploration animation - publishes route attempts for UI
@@ -1429,14 +1499,7 @@ class GoogleMapsService: ObservableObject {
         
         print("🌐 GOOGLE COMPLETE: \(allResults.count) unique POIs from \(placeTypesToSearch.count) categories")
         
-        // Record success if we got results (Places API worked)
-        // Only record if we haven't already recorded a failure
-        if !allResults.isEmpty {
-            let hasFailure = apiTestResults.contains { $0.apiName == "Places API (New)" && !$0.success }
-            if !hasFailure {
-                recordAPITest(apiName: "Places API (New)", success: true)
-            }
-        }
+        // API calls are now recorded individually in searchSingleType
         
         return allResults
     }
@@ -1472,14 +1535,32 @@ class GoogleMapsService: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "X-Goog-Api-Key")
+        // Add iOS bundle ID for API key restrictions
+        let bundleIdSent: Bool
+        if let bundleId = Bundle.main.bundleIdentifier {
+            request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+            bundleIdSent = true
+        } else {
+            bundleIdSent = false
+        }
         // Request only Basic Data fields (FREE tier!) - no rating, no contact info
         request.setValue("places.id,places.displayName,places.location,places.formattedAddress,places.types", forHTTPHeaderField: "X-Goog-FieldMask")
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
+        let startTime = Date()
         let (data, response) = try await session.data(for: request)
+        let responseTime = Date().timeIntervalSince(startTime)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             print("   ❌ [\(type)] No HTTP response")
+            recordAPICall(
+                apiName: "Places API (New)",
+                success: false,
+                responseTime: responseTime,
+                errorMessage: "No HTTP response",
+                bundleIdSent: bundleIdSent,
+                details: "type: \(type)"
+            )
             throw GoogleMapsError.serverError
         }
         
@@ -1488,21 +1569,23 @@ class GoogleMapsService: ObservableObject {
             var errorMessage: String?
             if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let error = errorJson["error"] as? [String: Any],
-               let message = error["message"] as? String,
-               let code = error["code"] as? Int {
-                errorMessage = "HTTP \(httpResponse.statusCode) - Code \(code): \(message)"
-                print("   ❌ [\(type)] \(errorMessage!)")
-                
-                // Check if it's a bundle ID restriction error
-                if httpResponse.statusCode == 403,
-                   let details = error["details"] as? [[String: Any]],
-                   details.contains(where: { ($0["reason"] as? String) == "API_KEY_IOS_APP_BLOCKED" }) {
-                    recordAPITest(apiName: "Places API (New)", success: false, errorMessage: message)
-                }
+               let message = error["message"] as? String {
+                errorMessage = message
+                print("   ❌ [\(type)] HTTP \(httpResponse.statusCode) - \(message)")
             } else {
                 errorMessage = "HTTP \(httpResponse.statusCode) - Unknown error"
                 print("   ❌ [\(type)] \(errorMessage!)")
             }
+            
+            recordAPICall(
+                apiName: "Places API (New)",
+                success: false,
+                httpStatus: httpResponse.statusCode,
+                responseTime: responseTime,
+                errorMessage: errorMessage,
+                bundleIdSent: bundleIdSent,
+                details: "type: \(type)"
+            )
             throw GoogleMapsError.serverError
         }
         
@@ -1513,6 +1596,16 @@ class GoogleMapsService: ObservableObject {
         if count > 0 {
             print("   ✓ [\(type)] → \(count) POIs")
         }
+        
+        // Record successful call
+        recordAPICall(
+            apiName: "Places API (New)",
+            success: true,
+            httpStatus: httpResponse.statusCode,
+            responseTime: responseTime,
+            bundleIdSent: bundleIdSent,
+            details: "type: \(type), \(count) POIs"
+        )
         
         // Convert to PlaceResult format
         return newPlacesResponse.places?.map { place in
@@ -3375,14 +3468,28 @@ class GoogleMapsService: ObservableObject {
                 let startTime = Date()
                 do {
                     print("🌐   ⏱️  Making HTTP request...")
-                    let (data, response) = try await URLSession.shared.data(from: url)
+                    var request = URLRequest(url: url)
+                    // Add iOS bundle ID for API key restrictions
+                    let bundleIdSent: Bool
+                    if let bundleId = Bundle.main.bundleIdentifier {
+                        request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+                        bundleIdSent = true
+                        print("🌐   📱 Bundle ID: \(bundleId)")
+                    } else {
+                        bundleIdSent = false
+                    }
+                    let (data, response) = try await URLSession.shared.data(for: request)
                     let elapsed = Date().timeIntervalSince(startTime)
                     
                     // Log HTTP response details
+                    let httpStatus: Int?
                     if let httpResponse = response as? HTTPURLResponse {
+                        httpStatus = httpResponse.statusCode
                         print("🌐   📡 HTTP Status: \(httpResponse.statusCode)")
                         print("🌐   📦 Response size: \(data.count) bytes")
                         print("🌐   ⏱️  Response time: \(String(format: "%.2f", elapsed))s")
+                    } else {
+                        httpStatus = nil
                     }
                     
                     recordGoogleDirectionsCall()
@@ -3397,14 +3504,15 @@ class GoogleMapsService: ObservableObject {
                             let errorMessage = json["error_message"] as? String ?? "Unknown error"
                             print("🌐   ❌ ERROR: \(errorMessage)")
                             
-                            // Check if it's a bundle ID restriction error
-                            if let errorDetails = json["error"] as? [String: Any],
-                               let details = errorDetails["details"] as? [[String: Any]],
-                               details.contains(where: { ($0["reason"] as? String) == "API_KEY_IOS_APP_BLOCKED" }) {
-                                recordAPITest(apiName: "Directions API", success: false, errorMessage: errorMessage)
-                            } else {
-                                recordAPITest(apiName: "Directions API", success: false, errorMessage: "Status: \(status)")
-                            }
+                            recordAPICall(
+                                apiName: "Directions API",
+                                success: false,
+                                httpStatus: httpStatus,
+                                responseTime: elapsed,
+                                errorMessage: errorMessage,
+                                bundleIdSent: bundleIdSent,
+                                details: "\(waypoints.count) waypoints, status: \(status)"
+                            )
                             
                             // Log full error details if available
                             if let errorDetails = json["error_message"] as? String {
@@ -3417,7 +3525,7 @@ class GoogleMapsService: ObservableObject {
                             print("🌐 REFRESH: Google API returned status '\(status)': \(errorMessage) - falling back to MapKit")
                             print("🌐 ═══════════════════════════════════════════════════════")
                         } else if let routes = json["routes"] as? [[String: Any]],
-                                  let firstRoute = routes.first {
+                       let firstRoute = routes.first {
                         
                         // Extract overview polyline
                         var polyline = ""
@@ -3475,7 +3583,14 @@ class GoogleMapsService: ObservableObject {
                         print("🌐 ═══════════════════════════════════════════════════════")
                         
                         // Record success
-                        recordAPITest(apiName: "Directions API", success: true)
+                        recordAPICall(
+                            apiName: "Directions API",
+                            success: true,
+                            httpStatus: httpStatus,
+                            responseTime: elapsed,
+                            bundleIdSent: bundleIdSent,
+                            details: "\(waypoints.count) waypoints, \(legsCount) legs, \(durationMinutes)min"
+                        )
                         
                         // Create updated route with Google data
                         return WalkingRoute(
@@ -6665,7 +6780,15 @@ class GoogleMapsService: ObservableObject {
         }
         
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            var request = URLRequest(url: url)
+            // Add iOS bundle ID for API key restrictions
+            if let bundleId = Bundle.main.bundleIdentifier {
+                request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+                print("🌐 Google Directions: Bundle ID: \(bundleId)")
+            } else {
+                print("🌐 Google Directions: ⚠️  WARNING: No bundle ID found!")
+            }
+            let (data, response) = try await URLSession.shared.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 print("🌐 Google Directions: HTTP error")
