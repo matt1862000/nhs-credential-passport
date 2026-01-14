@@ -2257,34 +2257,12 @@ struct LocalRoutePickerSheet: View {
     }
     
     private func handleStartWalk(route: WalkingRoute) {
-        // v1.7.1: ALWAYS refresh polyline with MapKit for proper walking route display
-        // The cached walkingDirections might be correct, but the POLYLINE could still be from OSRM (driving)
-        // This ensures the map shows actual walking paths, not driving routes through private land
+        // v1.9.1: ALWAYS refresh route with Google Directions first (quality assurance)
+        // Then fallback to Apple MapKit if Google quota is reached
+        // This ensures best route quality and proper walking paths
         
-        let generatedDataUsedOSRM = generatedRouteData?.usedOSRM ?? false
-        let routeUsedOSRM = route.usedOSRMRouting
-        
-        // v1.7.1: Only skip refresh if we have a verified MapKit polyline (not OSRM)
-        // A route is safe if: has directions AND was NOT generated with OSRM
-        let hasVerifiedMapKitRoute = !route.walkingDirections.isEmpty && !generatedDataUsedOSRM && !routeUsedOSRM
-        
-        if hasVerifiedMapKitRoute {
-            print("⚡ Let's Go: Route has verified MapKit polyline - instant start!")
-            viewModel.selectRoute(route)
-            viewModel.startWalk()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                isPresented = false
-            }
-            return
-        }
-        
-        // Route needs MapKit polyline refresh
         isStartingWalk = true
-        if generatedDataUsedOSRM || routeUsedOSRM {
-            print("🍎 Let's Go: Route used OSRM (driving profile) - refreshing polyline with MapKit walking route...")
-        } else {
-            print("🍎 Let's Go: Getting fresh MapKit walking route for display...")
-        }
+        print("🌐 Let's Go: Refreshing route with Google Directions first (quality assurance)...")
         
         Task {
             if let userLocation = locationService.currentLocation?.coordinate {
