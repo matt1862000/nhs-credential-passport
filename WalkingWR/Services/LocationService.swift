@@ -231,43 +231,27 @@ class LocationService: NSObject, ObservableObject {
     }
     
     // v1.9.1: Get next ambiguous turn coordinate and index (where arrow should appear)
-    // Shows arrow at uncertain intersections (50-150m away) rather than immediate next turn
+    // Shows arrow only at the turn currently displayed in the banner, but only if it's in the uncertainty zone (50-150m)
+    // This ensures the arrow appears when the directions change to that turn (e.g., "Turn right onto Brandy Carr Road")
     func nextAmbiguousTurn(from currentLocation: CLLocation?) -> (coordinate: CLLocationCoordinate2D, directionIndex: Int)? {
         guard isMonitoringDirections, 
               let location = currentLocation,
               currentDirectionIndex < directionWaypoints.count else { return nil }
         
-        // Find the next turn that's in the "uncertainty zone" (50-150m away)
-        // This is where the arrow is most useful - when you can see the intersection but aren't sure which way to go
-        for i in currentDirectionIndex..<directionWaypoints.count {
-            let waypoint = directionWaypoints[i]
-            let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
-            let distance = location.distance(from: waypointLocation)
-            
-            // If this turn is in the uncertainty zone (50-150m), show arrow here
-            if distance >= 50 && distance <= 150 {
-                return (waypoint.coordinate, i)
-            }
-            
-            // If we've passed the uncertainty zone, use the immediate next turn
-            if distance < 50 && i == currentDirectionIndex {
-                // Look ahead to the next turn after this one
-                if i + 1 < directionWaypoints.count {
-                    let nextWaypoint = directionWaypoints[i + 1]
-                    let nextLocation = CLLocation(latitude: nextWaypoint.coordinate.latitude, longitude: nextWaypoint.coordinate.longitude)
-                    let nextDistance = location.distance(from: nextLocation)
-                    // If next turn is also close, just use it
-                    if nextDistance >= 30 {
-                        return (nextWaypoint.coordinate, i + 1)
-                    }
-                }
-                // Otherwise use current turn even if close (better than nothing)
-                return (waypoint.coordinate, i)
-            }
+        // Get the turn that's currently displayed in the banner (currentDirectionIndex)
+        let currentTurn = directionWaypoints[currentDirectionIndex]
+        let turnLocation = CLLocation(latitude: currentTurn.coordinate.latitude, longitude: currentTurn.coordinate.longitude)
+        let distance = location.distance(from: turnLocation)
+        
+        // Only show arrow if the current turn (shown in banner) is in the uncertainty zone (50-150m)
+        // This way the arrow appears when the banner changes to show that turn
+        if distance >= 50 && distance <= 150 {
+            return (currentTurn.coordinate, currentDirectionIndex)
         }
         
-        // Fallback: use immediate next turn
-        return (directionWaypoints[currentDirectionIndex].coordinate, currentDirectionIndex)
+        // Don't show arrow if too close (<50m) or too far (>150m)
+        // The arrow will appear when the banner updates to the next turn that's in the uncertainty zone
+        return nil
     }
     
     // v1.9.0: Get distance to next turn for auto-zoom
