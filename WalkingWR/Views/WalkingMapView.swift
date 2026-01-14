@@ -357,9 +357,26 @@ struct EmbeddedWalkMapView: View {
                 }
                 
                 // Route polyline from Google Directions (primary)
+                // v1.9.5: Show only current leg segment once walk has truly started
                 if let currentRoute = viewModel.walkSession.currentRoute,
                    currentRoute.routePath.count >= 2 {
-                    MapPolyline(coordinates: currentRoute.routePath)
+                    // Show full route during intro phases, current leg when actively walking
+                    let polylineToShow: [CLLocationCoordinate2D] = {
+                        if introPhase == .followingUser,
+                           let currentLocation = viewModel.locationService.currentLocation {
+                            return currentLegPolyline(
+                                fullPath: currentRoute.routePath,
+                                currentLocation: currentLocation.coordinate,
+                                markers: currentRoute.qrMarkers,
+                                visitedIds: viewModel.visitedMarkerIds,
+                                startLocation: viewModel.walkSession.startLocation
+                            )
+                        } else {
+                            return currentRoute.routePath
+                        }
+                    }()
+                    
+                    MapPolyline(coordinates: polylineToShow)
                         .stroke(currentRoute.color, lineWidth: 4)
                 }
                 
@@ -791,6 +808,77 @@ struct EmbeddedWalkMapView: View {
                 print("✅ Return route calculated: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
             }
         }
+    }
+    
+    /// v1.9.5: Extract polyline segment for current leg only
+    /// Shows path from current location to the next unvisited waypoint (or back to start if all visited)
+    private func currentLegPolyline(
+        fullPath: [CLLocationCoordinate2D],
+        currentLocation: CLLocationCoordinate2D,
+        markers: [QRMarker],
+        visitedIds: Set<UUID>,
+        startLocation: CLLocationCoordinate2D?
+    ) -> [CLLocationCoordinate2D] {
+        guard fullPath.count >= 2 else { return fullPath }
+        
+        // Find next unvisited waypoint
+        let nextWaypoint: CLLocationCoordinate2D
+        if let nextMarker = markers.first(where: { !visitedIds.contains($0.id) }) {
+            nextWaypoint = nextMarker.coordinate
+        } else if let start = startLocation ?? fullPath.first {
+            // All waypoints visited - heading back to start
+            nextWaypoint = start
+        } else {
+            return fullPath
+        }
+        
+        // Find the closest point on the polyline to current location
+        var closestIndexToUser = 0
+        var closestDistanceToUser = Double.greatestFiniteMagnitude
+        
+        for (index, point) in fullPath.enumerated() {
+            let distance = distanceBetween(currentLocation, point)
+            if distance < closestDistanceToUser {
+                closestDistanceToUser = distance
+                closestIndexToUser = index
+            }
+        }
+        
+        // Find the closest point on the polyline to next waypoint
+        var closestIndexToWaypoint = fullPath.count - 1
+        var closestDistanceToWaypoint = Double.greatestFiniteMagnitude
+        
+        for (index, point) in fullPath.enumerated() {
+            let distance = distanceBetween(nextWaypoint, point)
+            if distance < closestDistanceToWaypoint {
+                closestDistanceToWaypoint = distance
+                closestIndexToWaypoint = index
+            }
+        }
+        
+        // Extract segment (handle both directions along the route)
+        let startIndex = min(closestIndexToUser, closestIndexToWaypoint)
+        let endIndex = max(closestIndexToUser, closestIndexToWaypoint)
+        
+        // Ensure we have at least 2 points
+        guard startIndex < endIndex else {
+            // Include current location and waypoint for minimal segment
+            return [currentLocation, nextWaypoint]
+        }
+        
+        // Build segment: current location → path segment → next waypoint
+        var segment: [CLLocationCoordinate2D] = [currentLocation]
+        segment.append(contentsOf: Array(fullPath[startIndex...endIndex]))
+        segment.append(nextWaypoint)
+        
+        return segment
+    }
+    
+    /// Helper: Calculate distance between two coordinates in meters
+    private func distanceBetween(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> Double {
+        let locA = CLLocation(latitude: a.latitude, longitude: a.longitude)
+        let locB = CLLocation(latitude: b.latitude, longitude: b.longitude)
+        return locA.distance(from: locB)
     }
 }
 

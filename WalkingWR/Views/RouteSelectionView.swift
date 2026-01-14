@@ -4116,22 +4116,17 @@ struct LocalRoutePickerSheet: View {
     }
     
     func createMarkersFromPlaces(_ places: [PlaceResult], origin: CLLocationCoordinate2D) -> [QRMarker] {
-        let wellbeingContent: [WellbeingContent] = [
-            WellbeingContent.breathingExercises[0],
-            WellbeingContent.breathingExercises[1],
-            WellbeingContent.gratitudePrompts[0],
-            WellbeingContent(title: "Mindful Moment", description: "Take a moment to notice your surroundings.", icon: "eye", duration: 60, steps: ["Look around slowly", "Name 5 things you see", "Notice colors and shapes", "Appreciate the details"]),
-            WellbeingContent(title: "Local Discovery", description: "You've found an interesting spot!", icon: "star.fill", duration: 30, steps: ["Take in your surroundings", "What makes this place special?", "Take a photo if you like", "Appreciate the moment"])
-        ]
-        
         return places.enumerated().map { index, place in
-            QRMarker(
+            // Always use a random breathing exercise (one of the 3 available)
+            let content = WellbeingContent.breathingExercises.randomElement() ?? WellbeingContent.breathingExercises[0]
+            
+            return QRMarker(
                 code: "POI\(index + 1)",
                 name: place.name,
                 location: place.vicinity ?? "Local POI",
                 coordinate: place.coordinate,
-                contentType: index % 2 == 0 ? .breathingExercise : .gratitudePrompt,
-                content: wellbeingContent[index % wellbeingContent.count],
+                contentType: .breathingExercise,
+                content: content,
                 pointsValue: 20 + (index * 5)
             )
         }
@@ -4215,14 +4210,6 @@ struct LocalRoutePickerSheet: View {
             ("Green Space", "Garden Area")
         ]
         
-        let wellbeingContent: [WellbeingContent] = [
-            WellbeingContent.breathingExercises[0],
-            WellbeingContent.breathingExercises[1],
-            WellbeingContent.gratitudePrompts[0],
-            WellbeingContent.gratitudePrompts[1],
-            WellbeingContent(title: "Mindful Moment", description: "Take a moment to notice 5 things you can see around you.", icon: "eye", duration: 60, steps: ["Look around slowly", "Name 5 things you see", "Notice colors and shapes", "Appreciate the details"])
-        ]
-        
         for i in 0..<count {
             let angle = (Double(i) / Double(count)) * 2 * .pi
             let randomRadius = radiusMeters * Double.random(in: 0.5...1.0)
@@ -4236,15 +4223,17 @@ struct LocalRoutePickerSheet: View {
             )
             
             let nameIndex = i % markerNames.count
-            let contentIndex = i % wellbeingContent.count
+            
+            // Always use a random breathing exercise (one of the 3 available)
+            let content = WellbeingContent.breathingExercises.randomElement() ?? WellbeingContent.breathingExercises[0]
             
             let marker = QRMarker(
                 code: "LOCAL\(i + 1)",
                 name: markerNames[nameIndex].0,
                 location: markerNames[nameIndex].1,
                 coordinate: markerCoord,
-                contentType: i % 2 == 0 ? .breathingExercise : .gratitudePrompt,
-                content: wellbeingContent[contentIndex],
+                contentType: .breathingExercise,
+                content: content,
                 pointsValue: 15 + (i * 5)
             )
             
@@ -6043,6 +6032,7 @@ struct MarkerArrivalSheet: View {
     @State private var showPhotoOptions = false
     @State private var capturedImage: UIImage?
     @State private var useCamera = false
+    @State private var showBreathingExercise = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -6097,46 +6087,70 @@ struct MarkerArrivalSheet: View {
                             .clipShape(Capsule())
                         }
                         
-                        // Wellbeing content from marker
+                        // Wellbeing content from marker (tappable if breathing exercise)
                         if let marker = viewModel.currentMarker {
-                            VStack(alignment: .leading, spacing: 12) {
-                                HStack {
-                                    Image(systemName: marker.content.icon)
-                                        .font(.title2)
-                                        .foregroundColor(.tealAccent)
-                                    
-                                    Text(marker.content.title)
-                                        .font(.bodyLarge)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.primary)
+                            let isBreathingExercise = marker.contentType == .breathingExercise
+                            
+                            Button(action: {
+                                if isBreathingExercise {
+                                    showBreathingExercise = true
                                 }
-                                
-                                Text(marker.content.description)
-                                    .font(.bodyMedium)
-                                    .foregroundColor(.primary)
-                                
-                                if let steps = marker.content.steps, !steps.isEmpty {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                                            HStack(alignment: .top, spacing: 10) {
-                                                Text("\(index + 1)")
-                                                    .font(.caption)
-                                                    .fontWeight(.bold)
-                                                    .foregroundColor(.white)
-                                                    .frame(width: 20, height: 20)
-                                                    .background(Circle().fill(Color.tealAccent))
-                                                
-                                                Text(step)
-                                                    .font(.bodyMedium)
-                                                    .foregroundColor(.primary)
-                                            }
+                            }) {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    HStack {
+                                        Image(systemName: marker.content.icon)
+                                            .font(.title2)
+                                            .foregroundColor(isBreathingExercise ? .lavenderMist : .tealAccent)
+                                        
+                                        Text(marker.content.title)
+                                            .font(.bodyLarge)
+                                            .fontWeight(.semibold)
+                                            .foregroundColor(.primary)
+                                        
+                                        if isBreathingExercise {
+                                            Spacer()
+                                            Image(systemName: "arrow.right.circle.fill")
+                                                .font(.title3)
+                                                .foregroundColor(.lavenderMist)
                                         }
                                     }
-                                    .padding(.top, 8)
+                                    
+                                    Text(marker.content.description)
+                                        .font(.bodyMedium)
+                                        .foregroundColor(.primary)
+                                    
+                                    if let steps = marker.content.steps, !steps.isEmpty {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                                                HStack(alignment: .top, spacing: 10) {
+                                                    Text("\(index + 1)")
+                                                        .font(.caption)
+                                                        .fontWeight(.bold)
+                                                        .foregroundColor(.white)
+                                                        .frame(width: 20, height: 20)
+                                                        .background(Circle().fill(isBreathingExercise ? Color.lavenderMist : Color.tealAccent))
+                                                    
+                                                    Text(step)
+                                                        .font(.bodyMedium)
+                                                        .foregroundColor(.primary)
+                                                }
+                                            }
+                                        }
+                                        .padding(.top, 8)
+                                    }
+                                    
+                                    if isBreathingExercise {
+                                        Text("Tap to start exercise")
+                                            .font(.caption)
+                                            .foregroundColor(.lavenderMist)
+                                            .padding(.top, 4)
+                                    }
                                 }
+                                .padding(20)
+                                .cardStyle()
                             }
-                            .padding(20)
-                            .cardStyle()
+                            .buttonStyle(PlainButtonStyle())
+                            .disabled(!isBreathingExercise)
                         }
                         
                         // Photo prompt
@@ -6222,6 +6236,23 @@ struct MarkerArrivalSheet: View {
                         viewModel.dismissMarkerPrompt()
                         dismiss()
                     }
+                }
+            }
+            .sheet(isPresented: $showBreathingExercise) {
+                if let marker = viewModel.currentMarker {
+                    BreathingExerciseSheet(
+                        exercise: marker.content,
+                        onDismiss: {
+                            // Just close the breathing exercise sheet, don't auto-close marker arrival sheet
+                            showBreathingExercise = false
+                        },
+                        onComplete: {
+                            // Track completion
+                            viewModel.userProgress.breathingExercisesCompleted += 1
+                            viewModel.userProgress.todayBreathingExercises += 1
+                            viewModel.userProgress.addPoints(15)
+                        }
+                    )
                 }
             }
         }
