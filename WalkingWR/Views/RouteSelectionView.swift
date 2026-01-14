@@ -2284,14 +2284,44 @@ struct LocalRoutePickerSheet: View {
                 await MainActor.run {
                     isStartingWalk = false
                     
-                    // Print comprehensive API call summary
+                    // Print comprehensive route quality summary
                     print("")
-                    print("═══════════════════════════════════════════════════════════")
-                    print("📊 COMPREHENSIVE API CALL SUMMARY")
-                    print("═══════════════════════════════════════════════════════════")
+                    print("╔═══════════════════════════════════════════════════════════╗")
+                    print("║       🚶 ROUTE QUALITY SUMMARY (Copy & Paste)             ║")
+                    print("╠═══════════════════════════════════════════════════════════╣")
+                    print("║ Route: \(refreshedRoute.name.prefix(45))")
+                    print("║ Duration: \(refreshedRoute.durationMinutes)min | Distance: \(refreshedRoute.distanceMeters)m")
+                    print("║ Waypoints: \(refreshedRoute.qrMarkers.count)")
+                    print("║ Directions: \(refreshedRoute.walkingDirections.count) steps")
+                    
+                    // Polyline quality
+                    let polylinePoints = mapsService.decodePolyline(refreshedRoute.encodedPolyline)
+                    let pointsPerKm = refreshedRoute.distanceMeters > 0 
+                        ? Double(polylinePoints.count) / (Double(refreshedRoute.distanceMeters) / 1000.0) 
+                        : 0
+                    print("║ Polyline: \(polylinePoints.count) points (\(String(format: "%.1f", pointsPerKm)) pts/km)")
+                    
+                    if pointsPerKm < 20 {
+                        print("║ ⚠️  LOW DENSITY - polyline may not follow roads")
+                    } else if pointsPerKm < 50 {
+                        print("║ ⚡ MEDIUM DENSITY - should follow main roads")
+                    } else {
+                        print("║ ✅ HIGH DENSITY - follows roads accurately")
+                    }
+                    
+                    // First few direction steps
+                    print("╠═══════════════════════════════════════════════════════════╣")
+                    print("║ First 3 directions:")
+                    for (i, dir) in refreshedRoute.walkingDirections.prefix(3).enumerated() {
+                        let instruction = dir.instruction.prefix(50)
+                        print("║   \(i+1). \(instruction)")
+                    }
+                    
+                    print("╠═══════════════════════════════════════════════════════════╣")
+                    print("║ API CALLS:")
                     mapsService.printAPICallSummary()
                     GeminiService.shared.printAPICallSummary()
-                    print("═══════════════════════════════════════════════════════════")
+                    print("╚═══════════════════════════════════════════════════════════╝")
                     print("")
                     
                     viewModel.selectRoute(refreshedRoute)

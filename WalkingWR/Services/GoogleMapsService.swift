@@ -3399,8 +3399,19 @@ class GoogleMapsService: ObservableObject {
         // Encode the fresh polyline
         let freshEncodedPolyline = encodePolyline(freshPolylinePoints)
         let durationMinutes = max(1, totalDuration / 60)
+        let pointsPerKm = totalDistance > 0 ? Double(freshPolylinePoints.count) / (Double(totalDistance) / 1000.0) : 0
         
-        print("🍎 REFRESH: Complete - \(freshDirections.count) directions, \(totalDistance)m, \(durationMinutes)min")
+        print("🍎 ═══════════════════════════════════════════════════════")
+        print("🍎 REFRESH COMPLETE (MapKit Fallback)")
+        print("🍎   ⏱️  Duration: \(durationMinutes)min")
+        print("🍎   📏 Distance: \(totalDistance)m")
+        print("🍎   🧭 Directions: \(freshDirections.count) steps")
+        print("🍎   📐 Polyline: \(freshEncodedPolyline.count) chars → \(freshPolylinePoints.count) points")
+        print("🍎   📐 Point density: \(String(format: "%.1f", pointsPerKm)) points/km")
+        if pointsPerKm < 20 {
+            print("🍎   ⚠️  LOW DENSITY - may not follow roads precisely")
+        }
+        print("🍎 ═══════════════════════════════════════════════════════")
         
         // Create updated route with fresh data
         let refreshedRoute = WalkingRoute(
@@ -3529,10 +3540,18 @@ class GoogleMapsService: ObservableObject {
                         
                         // Extract overview polyline
                         var polyline = ""
+                        var polylinePointCount = 0
                         if let overviewPolyline = firstRoute["overview_polyline"] as? [String: Any],
                            let points = overviewPolyline["points"] as? String {
                             polyline = points
+                            // Decode to count points
+                            let decodedPoints = self.decodePolyline(points)
+                            polylinePointCount = decodedPoints.count
                         }
+                        
+                        // Also try to get detailed polylines from each step
+                        var stepPolylinePointCount = 0
+                        var combinedStepPolyline: [CLLocationCoordinate2D] = []
                         
                         // Extract legs for directions
                         var freshDirections: [WalkingDirection] = []
@@ -3561,6 +3580,14 @@ class GoogleMapsService: ObservableObject {
                                         let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
                                         let maneuver = step["maneuver"] as? String ?? "straight"
                                         
+                                        // Get step polyline for detailed path
+                                        if let stepPolyline = step["polyline"] as? [String: Any],
+                                           let stepPoints = stepPolyline["points"] as? String {
+                                            let decodedStepPoints = self.decodePolyline(stepPoints)
+                                            stepPolylinePointCount += decodedStepPoints.count
+                                            combinedStepPolyline.append(contentsOf: decodedStepPoints)
+                                        }
+                                        
                                         freshDirections.append(WalkingDirection(
                                             instruction: instruction,
                                             distance: stepDistText,
@@ -3573,14 +3600,34 @@ class GoogleMapsService: ObservableObject {
                             }
                         }
                         
+                        // Use detailed step polyline if available (more points = follows roads better)
+                        var finalPolyline = polyline
+                        var usedDetailedPolyline = false
+                        if stepPolylinePointCount > polylinePointCount && !combinedStepPolyline.isEmpty {
+                            finalPolyline = self.encodePolyline(combinedStepPolyline)
+                            usedDetailedPolyline = true
+                        }
+                        
                         let durationMinutes = max(1, totalDuration / 60)
+                        let pointsPerKm = totalDistance > 0 ? Double(usedDetailedPolyline ? stepPolylinePointCount : polylinePointCount) / (Double(totalDistance) / 1000.0) : 0
+                        
                         print("🌐   ✅ SUCCESS: Parsed Google route")
                         print("🌐      ⏱️  Duration: \(durationMinutes)min")
                         print("🌐      📏 Distance: \(totalDistance)m")
                         print("🌐      🧭 Directions: \(freshDirections.count) steps")
                         print("🌐      📍 Legs: \(legsCount)")
+                        print("🌐      📐 Overview polyline: \(polyline.count) chars → \(polylinePointCount) points")
+                        print("🌐      📐 Step polylines: \(stepPolylinePointCount) points total")
+                        print("🌐      📐 Using: \(usedDetailedPolyline ? "DETAILED step polylines" : "overview polyline")")
+                        print("🌐      📐 Point density: \(String(format: "%.1f", pointsPerKm)) points/km")
+                        if pointsPerKm < 20 {
+                            print("🌐      ⚠️  LOW DENSITY - may not follow roads precisely")
+                        }
                         print("🌐 REFRESH: ✅ Google route - \(durationMinutes)min, \(totalDistance)m, \(freshDirections.count) steps")
                         print("🌐 ═══════════════════════════════════════════════════════")
+                        
+                        // Use the better polyline
+                        let polylineToUse = finalPolyline
                         
                         // Record success
                         recordAPICall(
@@ -3592,7 +3639,7 @@ class GoogleMapsService: ObservableObject {
                             details: "\(waypoints.count) waypoints, \(legsCount) legs, \(durationMinutes)min"
                         )
                         
-                        // Create updated route with Google data
+                        // Create updated route with Google data (using detailed polyline if available)
                         return WalkingRoute(
                             name: route.name,
                             description: route.description,
@@ -3606,7 +3653,7 @@ class GoogleMapsService: ObservableObject {
                             color: route.color,
                             qrMarkers: route.qrMarkers,
                             routeType: route.routeType,
-                            encodedPolyline: polyline.isEmpty ? route.encodedPolyline : polyline,
+                            encodedPolyline: polylineToUse.isEmpty ? route.encodedPolyline : polylineToUse,
                             walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
                         )
                         } else {
@@ -6661,7 +6708,7 @@ class GoogleMapsService: ObservableObject {
     // MARK: - Helper Methods
     
     /// Decode a Google Maps encoded polyline string into coordinates
-    private func decodePolyline(_ encodedPath: String) -> [CLLocationCoordinate2D] {
+    func decodePolyline(_ encodedPath: String) -> [CLLocationCoordinate2D] {
         var coordinates: [CLLocationCoordinate2D] = []
         var index = encodedPath.startIndex
         var lat: Int32 = 0
