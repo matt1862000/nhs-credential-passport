@@ -6033,6 +6033,7 @@ struct MarkerArrivalSheet: View {
     @State private var capturedImage: UIImage?
     @State private var useCamera = false
     @State private var showBreathingExercise = false
+    @State private var selectedExerciseForSheet: WellbeingContent? = nil
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -6087,70 +6088,16 @@ struct MarkerArrivalSheet: View {
                             .clipShape(Capsule())
                         }
                         
-                        // Wellbeing content from marker (tappable if breathing exercise)
-                        if let marker = viewModel.currentMarker {
-                            let isBreathingExercise = marker.contentType == .breathingExercise
-                            
-                            Button(action: {
-                                if isBreathingExercise {
+                        // v1.9.9: Swipeable breathing exercise carousel on arrival card
+                        if let marker = viewModel.currentMarker, marker.contentType == .breathingExercise {
+                            BreathingExerciseCarousel(
+                                exercises: WellbeingContent.breathingExercises,
+                                initialExercise: marker.content,
+                                onTapExercise: { exercise in
+                                    selectedExerciseForSheet = exercise
                                     showBreathingExercise = true
                                 }
-                            }) {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    HStack {
-                                        Image(systemName: marker.content.icon)
-                                            .font(.title2)
-                                            .foregroundColor(isBreathingExercise ? .lavenderMist : .tealAccent)
-                                        
-                                        Text(marker.content.title)
-                                            .font(.bodyLarge)
-                                            .fontWeight(.semibold)
-                                            .foregroundColor(.primary)
-                                        
-                                        if isBreathingExercise {
-                                            Spacer()
-                                            Image(systemName: "arrow.right.circle.fill")
-                                                .font(.title3)
-                                                .foregroundColor(.lavenderMist)
-                                        }
-                                    }
-                                    
-                                    Text(marker.content.description)
-                                        .font(.bodyMedium)
-                                        .foregroundColor(.primary)
-                                    
-                                    if let steps = marker.content.steps, !steps.isEmpty {
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                                                HStack(alignment: .top, spacing: 10) {
-                                                    Text("\(index + 1)")
-                                                        .font(.caption)
-                                                        .fontWeight(.bold)
-                                                        .foregroundColor(.white)
-                                                        .frame(width: 20, height: 20)
-                                                        .background(Circle().fill(isBreathingExercise ? Color.lavenderMist : Color.tealAccent))
-                                                    
-                                                    Text(step)
-                                                        .font(.bodyMedium)
-                                                        .foregroundColor(.primary)
-                                                }
-                                            }
-                                        }
-                                        .padding(.top, 8)
-                                    }
-                                    
-                                    if isBreathingExercise {
-                                        Text("Tap to start exercise")
-                                            .font(.caption)
-                                            .foregroundColor(.lavenderMist)
-                                            .padding(.top, 4)
-                                    }
-                                }
-                                .padding(20)
-                                .cardStyle()
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .disabled(!isBreathingExercise)
+                            )
                         }
                         
                         // Photo prompt
@@ -6239,9 +6186,9 @@ struct MarkerArrivalSheet: View {
                 }
             }
             .sheet(isPresented: $showBreathingExercise) {
-                if let marker = viewModel.currentMarker {
+                if let exercise = selectedExerciseForSheet {
                     BreathingExerciseSheet(
-                        exercise: marker.content,
+                        exercise: exercise,
                         onDismiss: {
                             // Just close the breathing exercise sheet, don't auto-close marker arrival sheet
                             showBreathingExercise = false
@@ -6255,6 +6202,105 @@ struct MarkerArrivalSheet: View {
                     )
                 }
             }
+        }
+    }
+}
+
+// MARK: - Breathing Exercise Carousel (v1.9.9)
+/// Swipeable carousel of breathing exercises for the arrival card
+struct BreathingExerciseCarousel: View {
+    let exercises: [WellbeingContent]
+    let initialExercise: WellbeingContent?
+    let onTapExercise: (WellbeingContent) -> Void
+    
+    @State private var selectedIndex: Int = 0
+    
+    private var initialIndex: Int {
+        if let initial = initialExercise,
+           let index = exercises.firstIndex(where: { $0.title == initial.title }) {
+            return index
+        }
+        return 0
+    }
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            TabView(selection: $selectedIndex) {
+                ForEach(Array(exercises.enumerated()), id: \.element.id) { index, exercise in
+                    Button(action: {
+                        onTapExercise(exercise)
+                    }) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Image(systemName: exercise.icon)
+                                    .font(.title2)
+                                    .foregroundColor(.lavenderMist)
+                                
+                                Text(exercise.title)
+                                    .font(.bodyLarge)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.primary)
+                                
+                                Spacer()
+                                
+                                Image(systemName: "play.circle.fill")
+                                    .font(.title2)
+                                    .foregroundColor(.lavenderMist)
+                            }
+                            
+                            Text(exercise.description)
+                                .font(.bodyMedium)
+                                .foregroundColor(.secondary)
+                            
+                            if let steps = exercise.steps, !steps.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(Array(steps.enumerated()), id: \.offset) { stepIndex, step in
+                                        HStack(alignment: .top, spacing: 10) {
+                                            Text("\(stepIndex + 1)")
+                                                .font(.caption2)
+                                                .fontWeight(.bold)
+                                                .foregroundColor(.white)
+                                                .frame(width: 18, height: 18)
+                                                .background(Circle().fill(Color.lavenderMist))
+                                            
+                                            Text(step)
+                                                .font(.caption)
+                                                .foregroundColor(.primary)
+                                                .lineLimit(2)
+                                        }
+                                    }
+                                }
+                                .padding(.top, 4)
+                            }
+                            
+                            Text("Tap to start exercise")
+                                .font(.caption)
+                                .foregroundColor(.lavenderMist)
+                                .padding(.top, 4)
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .cardStyle()
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                    .tag(index)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(height: 260)
+            
+            // Custom page indicator
+            HStack(spacing: 6) {
+                ForEach(0..<exercises.count, id: \.self) { index in
+                    Circle()
+                        .fill(index == selectedIndex ? Color.lavenderMist : Color.lavenderMist.opacity(0.3))
+                        .frame(width: 8, height: 8)
+                }
+            }
+            .padding(.top, 4)
+        }
+        .onAppear {
+            selectedIndex = initialIndex
         }
     }
 }
