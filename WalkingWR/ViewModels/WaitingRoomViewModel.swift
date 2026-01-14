@@ -44,6 +44,11 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var showHomeArrivalPrompt: Bool = false
     @Published var hasReachedHome: Bool = false
     
+    // v1.9.15: Cached directions for offline use
+    @Published var cachedOriginalDirections: [WalkingDirection] = []
+    @Published var cachedReturnDirections: [WalkingDirection] = []
+    @Published var isUsingReturnDirections: Bool = false
+    
     // Clinician selection
     @Published var availableClinicians: [Clinician] = []
     @Published var selectedClinician: Clinician?
@@ -625,6 +630,11 @@ class WaitingRoomViewModel: ObservableObject {
         // Start location tracking (requests permission if needed)
         locationService.startTracking()
         
+        // v1.9.15: Cache original directions for offline use
+        cachedOriginalDirections = route.walkingDirections
+        cachedReturnDirections = []
+        isUsingReturnDirections = false
+        
         // Start direction monitoring for turn-by-turn notifications (non-indoor routes only)
         if !route.isIndoor && !route.walkingDirections.isEmpty {
             locationService.startDirectionMonitoring(
@@ -679,6 +689,11 @@ class WaitingRoomViewModel: ObservableObject {
         selectedRoute = nil
         visitedMarkerIds = []
         currentMarker = nil
+        
+        // v1.9.15: Reset cached directions
+        cachedOriginalDirections = []
+        cachedReturnDirections = []
+        isUsingReturnDirections = false
         
         // v1.6.28: Reset step tracking flag for next walk
         // (stepTrackingWasEnabled is used to determine if HealthKit offer should be shown)
@@ -815,12 +830,12 @@ class WaitingRoomViewModel: ObservableObject {
         }
     }
     
-    // v1.9.13: Check if user has reached home (start location) at the END of the walk
+    // v1.9.15: Check if user has reached home (start location) at the END of the walk
+    // Fixed to use actual start location, not route end point
     // Only activates when:
     // 1. All waypoints have been visited
-    // 2. Route explicitly ends at home (routePath.last is close to start)
-    // 3. User is returning to start (not at start at the beginning)
-    // 4. User is within 30m of start location
+    // 2. User is returning to start (not at start at the beginning)
+    // 3. User is within 30m of start location
     private func checkHomeArrival() {
         guard let route = selectedRoute,
               let userLocation = locationService.currentLocation,
@@ -833,27 +848,17 @@ class WaitingRoomViewModel: ObservableObject {
         guard visitedMarkerIds.count == route.qrMarkers.count,
               route.qrMarkers.count > 0 else { return }
         
-        // CRITICAL: Verify that the route explicitly ends at home
-        // Check if routePath.last is close to start location (within 50m)
-        guard let routeEnd = route.routePath.last else { return }
-        let startPoint = CLLocation(latitude: startLocation.latitude, longitude: startLocation.longitude)
-        let endPoint = CLLocation(latitude: routeEnd.latitude, longitude: routeEnd.longitude)
-        let routeEndsAtHome = startPoint.distance(from: endPoint) < 50.0
-        
-        guard routeEndsAtHome else {
-            // Route doesn't end at home, so don't trigger home arrival
-            return
-        }
-        
         // Additional check: Ensure we've been walking for at least 30 seconds
         // This prevents false triggers if user starts near home
         guard walkSession.elapsedSeconds >= 30 else { return }
         
+        let startPoint = CLLocation(latitude: startLocation.latitude, longitude: startLocation.longitude)
         let distanceToHome = userLocation.distance(from: startPoint)
         
+        // v1.9.15: Use actual start location, not route end point
         // Activate when within 30 meters of start location
         if distanceToHome < 30 {
-            print("🏠 Home arrival detected at END of walk! (distance: \(Int(distanceToHome))m, elapsed: \(walkSession.elapsedSeconds)s, waypoints visited: \(visitedMarkerIds.count)/\(route.qrMarkers.count), route ends at home: \(routeEndsAtHome))")
+            print("🏠 Home arrival detected at END of walk! (distance: \(Int(distanceToHome))m, elapsed: \(walkSession.elapsedSeconds)s, waypoints visited: \(visitedMarkerIds.count)/\(route.qrMarkers.count))")
             hasReachedHome = true
             showHomeArrivalPrompt = true
             

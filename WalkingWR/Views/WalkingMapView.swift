@@ -1283,9 +1283,86 @@ struct EmbeddedWalkMapView: View {
                 DispatchQueue.main.async {
                     self.returnRoute = route
                     print("✅ Return route calculated: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
+                    
+                    // v1.9.15: Extract directions from return route and cache them
+                    let returnDirections = self.extractDirectionsFromMKRoute(route)
+                    self.viewModel.cachedReturnDirections = returnDirections
+                    
+                    // Extract polyline for route path
+                    let polyline = route.polyline
+                    let pointCount = polyline.pointCount
+                    var returnPath = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
+                    polyline.getCoordinates(&returnPath, range: NSRange(location: 0, length: pointCount))
+                    
+                    // Switch to return route directions
+                    if !returnDirections.isEmpty {
+                        self.viewModel.isUsingReturnDirections = true
+                        self.viewModel.locationService.startDirectionMonitoring(
+                            directions: returnDirections,
+                            routePath: returnPath
+                        )
+                        print("📍 Switched to return route directions: \(returnDirections.count) steps")
+                    }
                 }
             }
         }
+    }
+    
+    /// v1.9.15: Extract walking directions from MKRoute steps
+    private func extractDirectionsFromMKRoute(_ route: MKRoute) -> [WalkingDirection] {
+        var directions: [WalkingDirection] = []
+        
+        // Find the last step with instructions (to mark it as "arrive")
+        let lastStepWithInstructions = route.steps.lastIndex(where: { !$0.instructions.isEmpty })
+        
+        for (index, step) in route.steps.enumerated() {
+            // Skip steps with no instructions (usually the first "depart" step)
+            guard !step.instructions.isEmpty else { continue }
+            
+            let stepDistance = Int(step.distance)
+            // Estimate duration based on walking speed (~80m/min)
+            let stepDurationSeconds = max(60, stepDistance / 80 * 60)
+            let durationText = stepDurationSeconds >= 60 ? "\(stepDurationSeconds / 60) min" : "\(stepDurationSeconds) sec"
+            
+            // Format distance
+            let distanceText: String
+            if stepDistance < 1000 {
+                distanceText = "\(stepDistance) m"
+            } else {
+                distanceText = String(format: "%.1f km", Double(stepDistance) / 1000.0)
+            }
+            
+            // Extract maneuver type from instructions
+            let maneuver = extractManeuverType(from: step.instructions)
+            
+            // Keep all actual directions - don't replace with "Return to starting point"
+            // The last step will naturally be an "arrive" instruction from MapKit
+            let isLastStep = index == lastStepWithInstructions
+            
+            let direction = WalkingDirection(
+                instruction: step.instructions,  // Keep the actual instruction
+                distance: distanceText,
+                distanceMeters: stepDistance,
+                duration: durationText,
+                maneuver: isLastStep ? "arrive" : maneuver
+            )
+            directions.append(direction)
+        }
+        
+        return directions
+    }
+    
+    /// v1.9.15: Extract maneuver type from instruction text
+    private func extractManeuverType(from instruction: String) -> String {
+        let lowercased = instruction.lowercased()
+        if lowercased.contains("turn left") { return "turn-left" }
+        if lowercased.contains("turn right") { return "turn-right" }
+        if lowercased.contains("slight left") { return "turn-slight-left" }
+        if lowercased.contains("slight right") { return "turn-slight-right" }
+        if lowercased.contains("continue") || lowercased.contains("straight") { return "straight" }
+        if lowercased.contains("arrive") || lowercased.contains("destination") { return "arrive" }
+        if lowercased.contains("u-turn") { return "uturn" }
+        return "straight"
     }
     
     // v1.9.13: Get next waypoint ID for caching

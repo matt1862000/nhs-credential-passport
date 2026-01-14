@@ -5663,13 +5663,33 @@ struct ActiveWalkView: View {
                 
                 // Walking directions banner (only for non-indoor routes with directions)
                 // This serves as the main header when directions are available
-                if !route.isIndoor && !route.walkingDirections.isEmpty {
+                // v1.9.15: Use cached directions (return route if returning, original otherwise)
+                let directionsToShow: [WalkingDirection] = {
+                    if viewModel.isUsingReturnDirections && !viewModel.cachedReturnDirections.isEmpty {
+                        return viewModel.cachedReturnDirections
+                    } else if !viewModel.cachedOriginalDirections.isEmpty {
+                        return viewModel.cachedOriginalDirections
+                    } else {
+                        return route.walkingDirections
+                    }
+                }()
+                
+                if !route.isIndoor && !directionsToShow.isEmpty {
+                    // v1.9.15: Clamp direction index to prevent out-of-bounds when switching directions
+                    let clampedIndex = Binding(
+                        get: { 
+                            let idx = viewModel.locationService.currentDirectionIndex
+                            return min(max(0, idx), directionsToShow.count - 1)
+                        },
+                        set: { newValue in
+                            let clamped = min(max(0, newValue), directionsToShow.count - 1)
+                            viewModel.locationService.currentDirectionIndex = clamped
+                        }
+                    )
+                    
                     WalkingDirectionsBanner(
-                        directions: route.walkingDirections,
-                        currentIndex: Binding(
-                            get: { viewModel.locationService.currentDirectionIndex },
-                            set: { viewModel.locationService.currentDirectionIndex = $0 }
-                        ),
+                        directions: directionsToShow,
+                        currentIndex: clampedIndex,
                         showAllDirections: $showAllDirections,
                         delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
                         walkDurationMinutes: route.durationMinutes,
@@ -5687,9 +5707,20 @@ struct ActiveWalkView: View {
                     .frame(maxHeight: .infinity)
                 
                 // Expanded directions overlay - covers map when shown
+                // v1.9.15: Use cached directions (return route if returning, original otherwise)
                 if showAllDirections, let route = viewModel.walkSession.currentRoute {
+                    let directionsToShow: [WalkingDirection] = {
+                        if viewModel.isUsingReturnDirections && !viewModel.cachedReturnDirections.isEmpty {
+                            return viewModel.cachedReturnDirections
+                        } else if !viewModel.cachedOriginalDirections.isEmpty {
+                            return viewModel.cachedOriginalDirections
+                        } else {
+                            return route.walkingDirections
+                        }
+                    }()
+                    
                     ExpandedDirectionsList(
-                        directions: route.walkingDirections,
+                        directions: directionsToShow,
                         currentIndex: Binding(
                             get: { viewModel.locationService.currentDirectionIndex },
                             set: { viewModel.locationService.currentDirectionIndex = $0 }

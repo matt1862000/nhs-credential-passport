@@ -27,9 +27,12 @@ class LocationService: NSObject, ObservableObject {
     // Direction monitoring
     @Published var currentDirectionIndex: Int = 0
     @Published var isMonitoringDirections: Bool = false
+    @Published var isSignificantlyOffRoute: Bool = false  // v1.9.15: Track if user has deviated significantly
     private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String)] = []
     private var notifiedDirectionIndices: Set<Int> = []
+    private var cachedRoutePath: [CLLocationCoordinate2D] = []  // v1.9.15: Cache route path for deviation detection
     private let directionNotificationRadius: Double = 30 // meters - notify when within 30m of turn
+    private let deviationThreshold: Double = 50.0  // v1.9.15: Consider off-route if >50m from route
     
     // Starting point for walk
     private var startLocation: CLLocation?
@@ -134,6 +137,8 @@ class LocationService: NSObject, ObservableObject {
         directionWaypoints = []
         notifiedDirectionIndices = []
         currentDirectionIndex = 0
+        cachedRoutePath = routePath  // v1.9.15: Cache route path for deviation detection
+        isSignificantlyOffRoute = false  // Reset deviation flag
         
         // Calculate cumulative distance for each step to find approximate positions
         var cumulativeDistance: Double = 0
@@ -213,7 +218,9 @@ class LocationService: NSObject, ObservableObject {
                 // Update current direction index
                 if index >= currentDirectionIndex {
                     DispatchQueue.main.async {
-                        self.currentDirectionIndex = index + 1
+                        // v1.9.15: Ensure index doesn't go out of bounds
+                        let newIndex = min(index + 1, self.directionWaypoints.count - 1)
+                        self.currentDirectionIndex = newIndex
                     }
                 }
                 
@@ -259,6 +266,32 @@ class LocationService: NSObject, ObservableObject {
         guard let nextTurn = nextTurnCoordinate else { return nil }
         let turnLocation = CLLocation(latitude: nextTurn.latitude, longitude: nextTurn.longitude)
         return location.distance(from: turnLocation)
+    }
+    
+    // v1.9.15: Check if user has deviated significantly from the route
+    private func checkRouteDeviation(currentLocation: CLLocation) {
+        guard !cachedRoutePath.isEmpty else { return }
+        
+        // Find minimum distance from current location to any point on the route
+        var minDistanceToRoute: Double = .greatestFiniteMagnitude
+        
+        for routePoint in cachedRoutePath {
+            let routeLocation = CLLocation(latitude: routePoint.latitude, longitude: routePoint.longitude)
+            let distance = currentLocation.distance(from: routeLocation)
+            minDistanceToRoute = min(minDistanceToRoute, distance)
+        }
+        
+        // Update deviation flag
+        let wasOffRoute = isSignificantlyOffRoute
+        isSignificantlyOffRoute = minDistanceToRoute > deviationThreshold
+        
+        // Log significant deviations (but don't block directions - they're cached)
+        if isSignificantlyOffRoute && !wasOffRoute {
+            print("⚠️ User has deviated from route: \(Int(minDistanceToRoute))m away (threshold: \(Int(deviationThreshold))m)")
+            print("   Directions will continue using cached data. Re-route would require internet connection.")
+        } else if !isSignificantlyOffRoute && wasOffRoute {
+            print("✅ User is back on route (within \(Int(deviationThreshold))m)")
+        }
     }
     
     /// Request a FRESH location (clears cached location first)
@@ -407,6 +440,9 @@ extension LocationService: CLLocationManagerDelegate {
             
             self.routeLocations.append(newLocation)
             self.currentLocation = newLocation
+            
+            // v1.9.15: Check if user has deviated significantly from route
+            self.checkRouteDeviation(currentLocation: newLocation)
             
             // Check if approaching any direction waypoints
             self.checkDirectionWaypoints(currentLocation: newLocation)
