@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 // MARK: - Wellbeing Category (extracted for reuse)
 enum WellbeingCategory: String, CaseIterable {
@@ -512,6 +513,8 @@ struct BreathingExerciseSheet: View {
     }
     
     @State private var selectedIndex: Int = 0
+    @State private var isAnyExerciseActive: Bool = false
+    @State private var previousIndex: Int = 0
     
     // Find initial index based on initialExercise
     private var initialIndex: Int {
@@ -527,23 +530,43 @@ struct BreathingExerciseSheet: View {
         exercises[selectedIndex]
     }
     
+    @Environment(\.colorScheme) var colorScheme
+    
     var body: some View {
         NavigationStack {
-            TabView(selection: $selectedIndex) {
-                ForEach(Array(exercises.enumerated()), id: \.element.id) { index, exercise in
-                    SingleBreathingExerciseView(
-                        exercise: exercise,
-                        onComplete: {
-                            if index == selectedIndex {
-                                onComplete?()
+            ZStack {
+                // Single gradient background for entire view
+                LinearGradient(
+                    colors: colorScheme == .dark
+                        ? [Color.lavenderMist.opacity(0.15), Color.darkCardBackground]
+                        : [Color.lavenderMist.opacity(0.3), Color.calmGradientEnd],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+                
+                TabView(selection: $selectedIndex) {
+                    ForEach(Array(exercises.enumerated()), id: \.element.id) { index, exercise in
+                        SingleBreathingExerciseView(
+                            exercise: exercise,
+                            isActiveBinding: $isAnyExerciseActive,
+                            onComplete: {
+                                if index == selectedIndex {
+                                    onComplete?()
+                                }
                             }
-                        }
-                    )
-                    .tag(index)
+                        )
+                        .tag(index)
+                    }
                 }
+                .tabViewStyle(.page)
+                .indexViewStyle(.page(backgroundDisplayMode: .always))
+                .background(
+                    // Use UIKit to hide page control when exercise is active
+                    PageControlHider(isHidden: isAnyExerciseActive)
+                        .allowsHitTesting(false)
+                )
             }
-            .tabViewStyle(.page)
-            .indexViewStyle(.page(backgroundDisplayMode: .always))
             .navigationTitle(exercises[selectedIndex].title)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -557,14 +580,28 @@ struct BreathingExerciseSheet: View {
             }
             .onAppear {
                 selectedIndex = initialIndex
+                previousIndex = initialIndex
+            }
+            .onChange(of: selectedIndex) { newIndex in
+                // Prevent swiping when any exercise is active
+                if isAnyExerciseActive {
+                    // Revert to previous index
+                    selectedIndex = previousIndex
+                } else {
+                    // Update previous index when change is allowed
+                    previousIndex = newIndex
+                }
             }
         }
+        // Set sheet presentation background to match gradient end color
+        .presentationBackground(colorScheme == .dark ? Color.darkCardBackground : Color.calmGradientEnd)
     }
 }
 
 // MARK: - Single Breathing Exercise View
 struct SingleBreathingExerciseView: View {
     let exercise: WellbeingContent
+    var isActiveBinding: Binding<Bool>? = nil
     var onComplete: (() -> Void)? = nil
     @Environment(\.colorScheme) var colorScheme
     
@@ -580,6 +617,8 @@ struct SingleBreathingExerciseView: View {
     @State private var phaseProgress: CGFloat = 0
     @State private var customInstruction: String = ""
     @State private var groundingStep = 0  // For Grounding Breath multi-step
+    @State private var countdownSeconds: Int = 0
+    @State private var isCountingDown: Bool = false
     
     // Total cycles/steps for each exercise type
     private var totalCycles: Int {
@@ -638,20 +677,10 @@ struct SingleBreathingExerciseView: View {
     }
     
     var body: some View {
-        ZStack {
-            // Gradient background - adapts to color scheme
-            LinearGradient(
-                colors: colorScheme == .dark
-                    ? [Color.lavenderMist.opacity(0.15), Color.darkCardBackground]
-                    : [Color.lavenderMist.opacity(0.3), Color.calmGradientEnd],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-            
-            VStack(spacing: 24) {
-                Spacer()
-                    .frame(height: 20)
+        // No local background - parent sheet provides the gradient
+        VStack(spacing: 24) {
+            Spacer()
+                .frame(height: 20)
                 
                 // Dynamic instruction text above circle (hidden in ready state)
                 if breathPhase != .ready {
@@ -710,7 +739,7 @@ struct SingleBreathingExerciseView: View {
                         .scaleEffect(circleScale)
                     
                     // Center content
-                    if breathPhase == .ready {
+                    if breathPhase == .ready && !isCountingDown {
                         // Tap hint
                         VStack(spacing: 8) {
                             Image(systemName: "hand.tap.fill")
@@ -720,13 +749,21 @@ struct SingleBreathingExerciseView: View {
                                 .font(.callout)
                                 .foregroundColor(.primary.opacity(0.6))
                         }
+                    } else if isCountingDown {
+                        // Pre-exercise countdown
+                        Text("\(countdownSeconds)")
+                            .font(.system(size: 72, weight: .thin, design: .rounded))
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 2)
+                            .contentTransition(.numericText())
+                            .animation(.easeInOut(duration: 0.2), value: countdownSeconds)
                     } else if breathPhase == .complete {
                         // Completion checkmark
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 60))
                             .foregroundColor(.green)
                     } else if isActive {
-                        // Countdown timer
+                        // Exercise countdown timer
                         Text("\(secondsRemaining)")
                             .font(.system(size: 72, weight: .thin, design: .rounded))
                             .foregroundColor(.white)
@@ -749,7 +786,7 @@ struct SingleBreathingExerciseView: View {
                         .padding(.top, 8)
                 }
                 
-                // Instructions card (only when not active) - adapts to color scheme
+                // Instructions card (only when not active) - blends seamlessly with gradient background
                 if let steps = exercise.steps, !isActive && breathPhase == .ready {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Instructions")
@@ -774,8 +811,7 @@ struct SingleBreathingExerciseView: View {
                         }
                     }
                     .padding(20)
-                    .background(colorScheme == .dark ? Color.darkCardBackground : Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    // No background or border - text blends directly with parent gradient
                     .padding(.horizontal, 20)
                 }
                 
@@ -796,22 +832,44 @@ struct SingleBreathingExerciseView: View {
                     Spacer().frame(height: 60)
                 }
             }
-        }
     }
     
     func startExercise() {
-        isActive = true
-        hasStartedExercise = true
-        cycleCount = 0
-        groundingStep = 0
+        // Start countdown before beginning exercise
+        // Disable TabView swiping and hide dots immediately (synchronously on main thread)
+        isActiveBinding?.wrappedValue = true
+        isCountingDown = true
+        countdownSeconds = 3
         
-        // Choose the right breathing pattern
-        if exercise.title.contains("4-7-8") {
-            run478BreathingCycle()
-        } else if exercise.title.contains("Grounding") {
-            runGroundingBreathCycle()
-        } else {
-            runBoxBreathingCycle()
+        // Countdown timer
+        timer?.invalidate()
+        var remainingSeconds = 3
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { t in
+            remainingSeconds -= 1
+            DispatchQueue.main.async {
+                self.countdownSeconds = remainingSeconds
+            }
+            
+            if remainingSeconds <= 0 {
+                t.invalidate()
+                DispatchQueue.main.async {
+                    self.isCountingDown = false
+                    // Now start the actual exercise
+                    self.isActive = true
+                    self.hasStartedExercise = true
+                    self.cycleCount = 0
+                    self.groundingStep = 0
+                    
+                    // Choose the right breathing pattern
+                    if self.exercise.title.contains("4-7-8") {
+                        self.run478BreathingCycle()
+                    } else if self.exercise.title.contains("Grounding") {
+                        self.runGroundingBreathCycle()
+                    } else {
+                        self.runBoxBreathingCycle()
+                    }
+                }
+            }
         }
     }
     
@@ -1010,6 +1068,8 @@ struct SingleBreathingExerciseView: View {
                 customInstruction = ""
             }
             isActive = false
+            // Re-enable TabView swiping and show dots (synchronously on main thread)
+            self.isActiveBinding?.wrappedValue = false
             if !hasRecordedCompletion {
                 hasRecordedCompletion = true
                 onComplete?()
@@ -1052,6 +1112,10 @@ struct SingleBreathingExerciseView: View {
         timer?.invalidate()
         timer = nil
         isActive = false
+        isCountingDown = false
+        countdownSeconds = 0
+        // Re-enable TabView swiping and show dots (synchronously on main thread)
+        isActiveBinding?.wrappedValue = false
         withAnimation(.easeInOut(duration: 0.3)) {
             breathPhase = .ready
             customInstruction = ""
@@ -2299,6 +2363,35 @@ struct ImagePicker: UIViewControllerRepresentable {
         
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             parent.dismiss()
+        }
+    }
+}
+
+// MARK: - Page Control Hider (UIKit helper to hide TabView page indicators)
+struct PageControlHider: UIViewRepresentable {
+    let isHidden: Bool
+    
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        return view
+    }
+    
+    func updateUIView(_ uiView: UIView, context: Context) {
+        DispatchQueue.main.async {
+            // Find and hide all UIPageControl instances in the view hierarchy
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let window = windowScene.windows.first {
+                self.hidePageControls(in: window)
+            }
+        }
+    }
+    
+    private func hidePageControls(in view: UIView) {
+        for subview in view.subviews {
+            if let pageControl = subview as? UIPageControl {
+                pageControl.isHidden = isHidden
+            }
+            hidePageControls(in: subview)
         }
     }
 }

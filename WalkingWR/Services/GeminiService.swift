@@ -563,6 +563,8 @@ class GeminiService {
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        // v1.9.13: Set explicit timeout for slow networks
+        request.timeoutInterval = 30.0 // 30 second timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "X-goog-api-key")
         // Add iOS bundle ID for API key restrictions
@@ -576,9 +578,15 @@ class GeminiService {
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
+        // Use custom session with timeout configuration
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30.0
+        config.timeoutIntervalForResource = 60.0
+        let timeoutSession = URLSession(configuration: config)
+        
         let startTime = Date()
         print("🤖   ⏱️  Making HTTP request...")
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await timeoutSession.data(for: request)
         let elapsed = Date().timeIntervalSince(startTime)
         
         guard let httpResponse = response as? HTTPURLResponse else {

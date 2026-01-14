@@ -212,6 +212,24 @@ class NotificationService: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
     
+    // v1.9.13: Send notification when user reaches start/end point
+    func sendHomeArrivalNotification() {
+        let content = UNMutableNotificationContent()
+        content.title = "🏁 Welcome Back!"
+        content.body = "You've completed your walk! Tap to end your walk and save your progress."
+        content.sound = .default
+        content.categoryIdentifier = "WALKING_ALERT"
+        
+        // Immediate notification
+        let request = UNNotificationRequest(
+            identifier: "home-arrival-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        
+        UNUserNotificationCenter.current().add(request)
+    }
+    
     // MARK: - Walking Direction Notifications
     
     /// Send a direction notification when approaching a turn

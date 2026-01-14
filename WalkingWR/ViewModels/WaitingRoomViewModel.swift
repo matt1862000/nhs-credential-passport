@@ -40,6 +40,10 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var currentMarker: QRMarker? = nil
     @Published var visitedMarkerIds: Set<UUID> = []
     
+    // v1.9.13: Home arrival detection
+    @Published var showHomeArrivalPrompt: Bool = false
+    @Published var hasReachedHome: Bool = false
+    
     // Clinician selection
     @Published var availableClinicians: [Clinician] = []
     @Published var selectedClinician: Clinician?
@@ -725,6 +729,9 @@ class WaitingRoomViewModel: ObservableObject {
         // Check for marker proximity (location-based triggers)
         checkMarkerProximity()
         
+        // v1.9.13: Check for home arrival (only if all waypoints visited)
+        checkHomeArrival()
+        
         // Force view update for nested observable
         objectWillChange.send()
         
@@ -808,6 +815,56 @@ class WaitingRoomViewModel: ObservableObject {
         }
     }
     
+    // v1.9.13: Check if user has reached home (start location) at the END of the walk
+    // Only activates when:
+    // 1. All waypoints have been visited
+    // 2. Route explicitly ends at home (routePath.last is close to start)
+    // 3. User is returning to start (not at start at the beginning)
+    // 4. User is within 30m of start location
+    private func checkHomeArrival() {
+        guard let route = selectedRoute,
+              let userLocation = locationService.currentLocation,
+              let startLocation = walkSession.startLocation ?? route.routePath.first,
+              !hasReachedHome,
+              walkSession.isActive else { return }
+        
+        // CRITICAL: Only check for home arrival if ALL waypoints have been visited
+        // This ensures we're at the END of the walk, not the beginning
+        guard visitedMarkerIds.count == route.qrMarkers.count,
+              route.qrMarkers.count > 0 else { return }
+        
+        // CRITICAL: Verify that the route explicitly ends at home
+        // Check if routePath.last is close to start location (within 50m)
+        guard let routeEnd = route.routePath.last else { return }
+        let startPoint = CLLocation(latitude: startLocation.latitude, longitude: startLocation.longitude)
+        let endPoint = CLLocation(latitude: routeEnd.latitude, longitude: routeEnd.longitude)
+        let routeEndsAtHome = startPoint.distance(from: endPoint) < 50.0
+        
+        guard routeEndsAtHome else {
+            // Route doesn't end at home, so don't trigger home arrival
+            return
+        }
+        
+        // Additional check: Ensure we've been walking for at least 30 seconds
+        // This prevents false triggers if user starts near home
+        guard walkSession.elapsedSeconds >= 30 else { return }
+        
+        let distanceToHome = userLocation.distance(from: startPoint)
+        
+        // Activate when within 30 meters of start location
+        if distanceToHome < 30 {
+            print("🏠 Home arrival detected at END of walk! (distance: \(Int(distanceToHome))m, elapsed: \(walkSession.elapsedSeconds)s, waypoints visited: \(visitedMarkerIds.count)/\(route.qrMarkers.count), route ends at home: \(routeEndsAtHome))")
+            hasReachedHome = true
+            showHomeArrivalPrompt = true
+            
+            // v1.9.13: Cancel all walking notifications when reaching start/end point
+            notificationService.cancelAllWalkingNotifications()
+            
+            // Send home arrival notification
+            notificationService.sendHomeArrivalNotification()
+        }
+    }
+    
     /// Calculates a dynamic activation radius based on how far the POI is from the walking route.
     /// - POIs on the roadside (cafes, bus stops): ~25m radius
     /// - POIs set back from road (schools, parks): up to 75m radius
@@ -848,6 +905,11 @@ class WaitingRoomViewModel: ObservableObject {
     func dismissMarkerPrompt() {
         showMarkerArrivalPrompt = false
         currentMarker = nil
+    }
+    
+    // v1.9.13: Dismiss home arrival prompt
+    func dismissHomeArrivalPrompt() {
+        showHomeArrivalPrompt = false
     }
     
     // MARK: - Notifications

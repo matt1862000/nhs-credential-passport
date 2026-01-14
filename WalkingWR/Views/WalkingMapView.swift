@@ -296,6 +296,21 @@ struct EmbeddedWalkMapView: View {
     @State private var isApproachingTurn: Bool = false
     @State private var distanceToNextTurn: Double? = nil
     
+    // v1.9.13: Active zoom management
+    @State private var lastZoomUpdate: Date = Date()
+    @State private var currentZoomLevel: Double = 150.0 // meters
+    @State private var currentCameraState: MapCamera? // Track camera state separately
+    
+    // v1.9.13: Cache current leg polyline to prevent re-rendering on location updates
+    @State private var cachedCurrentLegPolyline: [CLLocationCoordinate2D]?
+    @State private var cachedLegPolylineForWaypoint: UUID? // Track which waypoint this polyline is for
+    
+    // v1.9.13: Timer for resuming auto-follow after user interaction
+    @State private var autoFollowResumeTimer: Timer?
+    @State private var isProgrammaticCameraUpdate: Bool = false // Track if camera change is from our code
+    @State private var lastInteractionTime: Date? // Track when user last interacted
+    @State private var lastLocationWhenInteracted: CLLocation? // Track location when user started interacting
+    
     /// Check if user previously opted into step tracking
     /// We trust the UserDefaults flag - if permission was revoked, we'll handle it when pedometer fails
     private var shouldAutoEnableSteps: Bool {
@@ -305,7 +320,7 @@ struct EmbeddedWalkMapView: View {
     enum IntroPhase: String {
         case showingFirstWaypoint = "Your first destination"
         case showingFullRoute = "Your route"
-        case followingUser = ""
+        case followingUser = "Your location"
     }
     
     let clinicCoordinate = CLLocationCoordinate2D(latitude: 53.4084, longitude: -1.4350)
@@ -358,19 +373,37 @@ struct EmbeddedWalkMapView: View {
                 
                 // Route polyline from Google Directions (primary)
                 // v1.9.5: Show only current leg segment once walk has truly started
+                // v1.9.13: Don't show original route when returning to start (only show return route)
+                // v1.9.13: Use cached polyline to prevent re-rendering on location updates
                 if let currentRoute = viewModel.walkSession.currentRoute,
-                   currentRoute.routePath.count >= 2 {
+                   currentRoute.routePath.count >= 2,
+                   !isShowingReturnRoute {  // Hide original route when showing return route
                     // Show full route during intro phases, current leg when actively walking
+                    // Calculate polyline to show - use cache if available, otherwise calculate
+                    // Cache updates happen in onChange handler to avoid state modification during view update
                     let polylineToShow: [CLLocationCoordinate2D] = {
-                        if introPhase == .followingUser,
-                           let currentLocation = viewModel.locationService.currentLocation {
-                            return currentLegPolyline(
-                                fullPath: currentRoute.routePath,
-                                currentLocation: currentLocation.coordinate,
-                                markers: currentRoute.qrMarkers,
-                                visitedIds: viewModel.visitedMarkerIds,
-                                startLocation: viewModel.walkSession.startLocation
-                            )
+                        if introPhase == .followingUser {
+                            // Use cached polyline if available and still valid
+                            let nextWaypointId = getNextWaypointId(markers: currentRoute.qrMarkers, visitedIds: viewModel.visitedMarkerIds)
+                            if let cached = cachedCurrentLegPolyline,
+                               cachedLegPolylineForWaypoint == nextWaypointId {
+                                return cached
+                            } else {
+                                // Return calculated polyline - cache will be updated via onChange handler
+                                // This is a pure calculation, no state modification
+                                if viewModel.visitedMarkerIds.count == currentRoute.qrMarkers.count && currentRoute.qrMarkers.count > 0 {
+                                    // All waypoints visited - return empty (return route shown separately)
+                                    return []
+                                } else {
+                                    // Calculate static polyline from leg start to waypoint
+                                    return calculateStaticLegPolyline(
+                                        fullPath: currentRoute.routePath,
+                                        markers: currentRoute.qrMarkers,
+                                        visitedIds: viewModel.visitedMarkerIds,
+                                        startLocation: viewModel.walkSession.startLocation
+                                    )
+                                }
+                            }
                         } else {
                             return currentRoute.routePath
                         }
@@ -422,6 +455,17 @@ struct EmbeddedWalkMapView: View {
             .mapStyle(.standard)
             .mapControls {
                 // Empty - we'll add custom controls in the overlay
+            }
+            .onMapCameraChange { context in
+                // Detect user interaction with map (pan, zoom, rotation)
+                // Only detect if we're in following mode, not during intro, and not a programmatic update
+                if introPhase == .followingUser && !userInteractedWithMap && !isProgrammaticCameraUpdate {
+                    // This is a user interaction - record the time and handle it
+                    lastInteractionTime = Date()
+                    handleMapInteraction()
+                }
+                // Reset flag after checking
+                isProgrammaticCameraUpdate = false
             }
             
             // v1.6.31: Compact status ring in top-left corner (saves vertical space)
@@ -572,6 +616,31 @@ struct EmbeddedWalkMapView: View {
             if shouldAutoEnableSteps {
                 isStepTrackingEnabled = true
             }
+            
+            // v1.9.13: Initialize cache on appear to avoid state modification during view update
+            if let currentRoute = viewModel.walkSession.currentRoute,
+               introPhase == .followingUser,
+               cachedCurrentLegPolyline == nil {
+                let nextWaypointId = getNextWaypointId(
+                    markers: currentRoute.qrMarkers,
+                    visitedIds: viewModel.visitedMarkerIds
+                )
+                
+                let polyline: [CLLocationCoordinate2D]
+                if viewModel.visitedMarkerIds.count == currentRoute.qrMarkers.count && currentRoute.qrMarkers.count > 0 {
+                    polyline = []
+                } else {
+                    polyline = calculateStaticLegPolyline(
+                        fullPath: currentRoute.routePath,
+                        markers: currentRoute.qrMarkers,
+                        visitedIds: viewModel.visitedMarkerIds,
+                        startLocation: viewModel.walkSession.startLocation
+                    )
+                }
+                
+                cachedCurrentLegPolyline = polyline
+                cachedLegPolylineForWaypoint = nextWaypointId
+            }
         }
         // v1.9.0: Auto-zoom when approaching turn (within 30m)
         .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
@@ -591,10 +660,85 @@ struct EmbeddedWalkMapView: View {
                 zoomToTurn(nextTurnCoord)
             } else if distance > 30 && isApproachingTurn {
                 isApproachingTurn = false
-                // Return to normal zoom after passing turn
-                if !userInteractedWithMap {
-                    withAnimation(.easeInOut(duration: 1.0)) {
-                        cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
+                // Return to active zoom after passing turn
+                if !userInteractedWithMap && introPhase == .followingUser {
+                    startActiveZoom()
+                }
+            }
+        }
+        // v1.9.13: Active zoom management - adjust zoom based on location updates
+        .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
+            guard let location = newLocation,
+                  introPhase == .followingUser,
+                  !userInteractedWithMap,
+                  !isApproachingTurn else {
+                return
+            }
+            
+            // Update zoom every 5 seconds or when distance to next waypoint changes significantly
+            let timeSinceLastUpdate = Date().timeIntervalSince(lastZoomUpdate)
+            if timeSinceLastUpdate >= 5.0 {
+                updateActiveZoom(for: location)
+                lastZoomUpdate = Date()
+            }
+            
+            // Also update camera center to follow user location smoothly
+            // Extract camera before closure to avoid pattern matching issues
+            updateCameraCenter(to: location.coordinate)
+        }
+        // v1.9.13: Update camera heading smoothly when device rotates
+        // v1.9.13: Ignore heading changes during manual interaction to prevent snap-back
+        .onChange(of: viewModel.locationService.headingDegrees) { _, newHeading in
+            guard introPhase == .followingUser,
+                  !userInteractedWithMap, // Don't update heading if user manually interacted
+                  !isApproachingTurn,
+                  let currentLocation = viewModel.locationService.currentLocation,
+                  newHeading >= 0 else {
+                return
+            }
+            
+            // Update heading smoothly
+            updateCameraHeading(to: newHeading, at: currentLocation.coordinate)
+        }
+        // v1.9.13: Update cached leg polyline when waypoint changes (not during view rendering)
+        .onChange(of: viewModel.visitedMarkerIds.count) { _, _ in
+            // Waypoint count changed - update cache
+            guard let currentRoute = viewModel.walkSession.currentRoute,
+                  introPhase == .followingUser else { return }
+            
+            let nextWaypointId = getNextWaypointId(
+                markers: currentRoute.qrMarkers,
+                visitedIds: viewModel.visitedMarkerIds
+            )
+            
+            // Only update if waypoint actually changed
+            if cachedLegPolylineForWaypoint != nextWaypointId {
+                // Calculate polyline
+                let polyline: [CLLocationCoordinate2D]
+                if viewModel.visitedMarkerIds.count == currentRoute.qrMarkers.count && currentRoute.qrMarkers.count > 0 {
+                    // All waypoints visited - return empty (return route shown separately)
+                    polyline = []
+                } else {
+                    // Calculate static polyline from leg start to waypoint
+                    polyline = calculateStaticLegPolyline(
+                        fullPath: currentRoute.routePath,
+                        markers: currentRoute.qrMarkers,
+                        visitedIds: viewModel.visitedMarkerIds,
+                        startLocation: viewModel.walkSession.startLocation
+                    )
+                }
+                
+                // Update cache
+                cachedCurrentLegPolyline = polyline
+                cachedLegPolylineForWaypoint = nextWaypointId
+                
+                // If all waypoints are visited, trigger return route calculation
+                if viewModel.visitedMarkerIds.count == currentRoute.qrMarkers.count && currentRoute.qrMarkers.count > 0 {
+                    if !isShowingReturnRoute {
+                        isShowingReturnRoute = true
+                    }
+                    if returnRoute == nil {
+                        calculateReturnRoute()
                     }
                 }
             }
@@ -681,14 +825,37 @@ struct EmbeddedWalkMapView: View {
             }
         }
         
-        // Phase 3: Switch to auto-follow user location (after 8 seconds)
+        // Phase 3: Switch to auto-follow user location with active zoom (after 8 seconds)
         DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
             guard !userInteractedWithMap else { return }  // Skip if user interacted
-            introPhase = .followingUser
             
-            // v1.9.8: Use auto-follow mode to keep user centered during walk
+            // v1.9.13: Animate transition to user location smoothly
             withAnimation(verySlowAnimation) {
-                cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
+                introPhase = .followingUser
+                
+                // Set initial active zoom state
+                currentZoomLevel = 150.0
+                if let currentLocation = viewModel.locationService.currentLocation {
+                    let heading: CLLocationDirection = {
+                        if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
+                            return trueHeading
+                        } else if currentLocation.course >= 0 {
+                            return currentLocation.course
+                        } else {
+                            return 0
+                        }
+                    }()
+                    
+                    let newCamera = MapCamera(
+                        centerCoordinate: currentLocation.coordinate,
+                        distance: 150.0,
+                        heading: heading,
+                        pitch: 0
+                    )
+                    currentCameraState = newCamera
+                    isProgrammaticCameraUpdate = true
+                    cameraPosition = .camera(newCamera)
+                }
             }
         }
         
@@ -709,13 +876,32 @@ struct EmbeddedWalkMapView: View {
         userInteractedWithMap = true
         showingIntroOverlay = false
         
+        // Use camera mode to maintain heading following capability
+        guard let currentLocation = viewModel.locationService.currentLocation else { return }
+        
+        let heading: CLLocationDirection = {
+            if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
+                return trueHeading
+            } else if currentLocation.course >= 0 {
+                return currentLocation.course
+            } else if let camera = currentCameraState {
+                return camera.heading
+            } else {
+                return 0
+            }
+        }()
+        
         let smoothAnimation = Animation.easeInOut(duration: 1.5)
+        let newCamera = MapCamera(
+            centerCoordinate: coordinate,
+            distance: 150.0,
+            heading: heading,
+            pitch: 0
+        )
+        currentCameraState = newCamera
+        isProgrammaticCameraUpdate = true
         withAnimation(smoothAnimation) {
-            cameraPosition = .region(MKCoordinateRegion(
-                center: coordinate,
-                latitudinalMeters: 150,
-                longitudinalMeters: 150
-            ))
+            cameraPosition = .camera(newCamera)
         }
     }
     
@@ -741,6 +927,7 @@ struct EmbeddedWalkMapView: View {
             let latSpan = (lats.max()! - lats.min()!) * 1.5
             let lngSpan = (lngs.max()! - lngs.min()!) * 1.5
             
+            isProgrammaticCameraUpdate = true
             withAnimation(.easeInOut(duration: 1.0)) {
                 cameraPosition = .region(MKCoordinateRegion(
                     center: center,
@@ -749,13 +936,12 @@ struct EmbeddedWalkMapView: View {
             }
         }
         
-        // Step 2: After 2.5 seconds, return to following user
-        // v1.9.12: Set directly without animation to ensure heading following re-enables properly
-        // ROLLBACK OPTIONS:
-        // Option 1 (restore animation): withAnimation(.easeInOut(duration: 1.5)) { cameraPosition = .userLocation(followsHeading: true, fallback: .automatic) }
-        // Option 2 (force reset): cameraPosition = .automatic; DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { cameraPosition = .userLocation(followsHeading: true, fallback: .automatic) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
+        // Step 2: After 2.0 seconds, return to active zoom mode with smooth animation
+        // v1.9.13: Use resumeAutoFollow for smooth return and state management
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            if introPhase == .followingUser {
+                resumeAutoFollow()
+            }
         }
     }
     
@@ -764,15 +950,273 @@ struct EmbeddedWalkMapView: View {
         // Don't zoom if user has manually interacted with map
         guard !userInteractedWithMap else { return }
         
+        // Use camera mode to maintain heading following capability
+        guard let currentLocation = viewModel.locationService.currentLocation else { return }
+        
+        let heading: CLLocationDirection = {
+            if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
+                return trueHeading
+            } else if currentLocation.course >= 0 {
+                return currentLocation.course
+            } else if let camera = currentCameraState {
+                return camera.heading
+            } else {
+                return 0
+            }
+        }()
+        
         let smoothAnimation = Animation.easeInOut(duration: 1.0)
+        let newCamera = MapCamera(
+            centerCoordinate: coordinate,
+            distance: 100.0,
+            heading: heading,
+            pitch: 0
+        )
+        currentCameraState = newCamera
+        isProgrammaticCameraUpdate = true
         withAnimation(smoothAnimation) {
-            // Zoom to intersection view (100m x 100m for clear turn visibility)
-            cameraPosition = .region(MKCoordinateRegion(
-                center: coordinate,
-                latitudinalMeters: 100,
-                longitudinalMeters: 100
-            ))
+            cameraPosition = .camera(newCamera)
         }
+    }
+    
+    // v1.9.13: Start active zoom mode - uses camera with heading for smooth rotation + custom zoom
+    private func startActiveZoom() {
+        guard let currentLocation = viewModel.locationService.currentLocation else {
+            // Fallback to default if no location
+            cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
+            return
+        }
+        
+        currentZoomLevel = 150.0 // Default zoom level in meters
+        // Get heading from location service or location course
+        let heading: CLLocationDirection = {
+            if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
+                return trueHeading
+            } else if currentLocation.course >= 0 {
+                return currentLocation.course
+            } else {
+                return 0
+            }
+        }()
+        
+        // Use camera with heading for smooth rotation + custom zoom
+        // Set without animation initially for immediate response
+        let newCamera = MapCamera(
+            centerCoordinate: currentLocation.coordinate,
+            distance: currentZoomLevel,
+            heading: heading,
+            pitch: 0
+        )
+        currentCameraState = newCamera
+        isProgrammaticCameraUpdate = true
+        cameraPosition = .camera(newCamera)
+    }
+    
+    // v1.9.13: Update active zoom based on distance to next waypoint
+    private func updateActiveZoom(for location: CLLocation) {
+        guard !userInteractedWithMap,
+              introPhase == .followingUser,
+              let currentRoute = viewModel.walkSession.currentRoute else {
+            return
+        }
+        
+        // Find next unvisited waypoint or start point
+        let visitedIds = viewModel.visitedMarkerIds
+        let nextWaypoint: CLLocationCoordinate2D?
+        
+        if let nextMarker = currentRoute.qrMarkers.first(where: { !visitedIds.contains($0.id) }) {
+            nextWaypoint = nextMarker.coordinate
+        } else if let start = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
+            nextWaypoint = start // Returning to start
+        } else {
+            nextWaypoint = nil
+        }
+        
+        guard let waypoint = nextWaypoint else {
+            // No waypoint, use default zoom
+            if currentZoomLevel != 150.0 {
+                currentZoomLevel = 150.0
+                updateCameraZoom()
+            }
+            return
+        }
+        
+        let waypointLocation = CLLocation(latitude: waypoint.latitude, longitude: waypoint.longitude)
+        let distance = location.distance(from: waypointLocation)
+        
+        // Adjust zoom based on distance to next waypoint
+        // Closer = zoom in more, farther = zoom out slightly
+        let newZoom: Double
+        if distance < 50 {
+            newZoom = 100.0 // Very close, zoom in
+        } else if distance < 200 {
+            newZoom = 120.0 // Close, medium zoom
+        } else if distance < 500 {
+            newZoom = 150.0 // Medium distance, default zoom
+        } else {
+            newZoom = 200.0 // Far, zoom out slightly to show more context
+        }
+        
+        // Only update if zoom level changed significantly (avoid constant updates)
+        if abs(newZoom - currentZoomLevel) > 20.0 {
+            currentZoomLevel = newZoom
+            updateCameraZoom()
+        }
+    }
+    
+    // v1.9.13: Update camera zoom level smoothly while maintaining heading
+    private func updateCameraZoom() {
+        guard let currentLocation = viewModel.locationService.currentLocation else {
+            return
+        }
+        
+        // Get current heading from location service or location course
+        let existingHeading = currentCameraState?.heading ?? 0
+        
+        let heading: CLLocationDirection = {
+            if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
+                return trueHeading
+            } else if currentLocation.course >= 0 {
+                return currentLocation.course
+            } else {
+                return existingHeading
+            }
+        }()
+        
+        // Update camera with new zoom level, using smooth animation
+        // Only animate zoom changes, not heading (heading updates separately)
+        let newCamera = MapCamera(
+            centerCoordinate: currentLocation.coordinate,
+            distance: currentZoomLevel,
+            heading: heading,
+            pitch: 0
+        )
+        currentCameraState = newCamera
+        isProgrammaticCameraUpdate = true
+        withAnimation(.easeInOut(duration: 1.5)) {
+            cameraPosition = .camera(newCamera)
+        }
+    }
+    
+    // v1.9.13: Helper to update camera center smoothly
+    private func updateCameraCenter(to coordinate: CLLocationCoordinate2D) {
+        guard let camera = currentCameraState else { return }
+        
+        // Update center coordinate smoothly without changing zoom/heading
+        let newCamera = MapCamera(
+            centerCoordinate: coordinate,
+            distance: camera.distance,
+            heading: camera.heading,
+            pitch: camera.pitch
+        )
+        currentCameraState = newCamera
+        isProgrammaticCameraUpdate = true
+        withAnimation(.linear(duration: 0.5)) {
+            cameraPosition = .camera(newCamera)
+        }
+    }
+    
+    // v1.9.13: Helper to update camera heading smoothly
+    private func updateCameraHeading(to heading: CLLocationDirection, at coordinate: CLLocationCoordinate2D) {
+        guard let camera = currentCameraState else { return }
+        
+        // Update heading smoothly without changing zoom/position
+        let newCamera = MapCamera(
+            centerCoordinate: coordinate,
+            distance: camera.distance,
+            heading: heading,
+            pitch: camera.pitch
+        )
+        currentCameraState = newCamera
+        isProgrammaticCameraUpdate = true
+        withAnimation(.linear(duration: 0.3)) {
+            cameraPosition = .camera(newCamera)
+        }
+    }
+    
+    // v1.9.13: Handle user map interaction - disable auto-follow temporarily
+    private func handleMapInteraction() {
+        // Set interaction flag to disable auto-follow/auto-zoom
+        userInteractedWithMap = true
+        
+        // Record current location when user starts interacting
+        lastLocationWhenInteracted = viewModel.locationService.currentLocation
+        
+        // Cancel any existing resume timer
+        autoFollowResumeTimer?.invalidate()
+        
+        // Use a repeating timer that checks if user has stopped interacting AND moved
+        // This ensures we wait the full 2 seconds AFTER the last interaction
+        // AND the user has physically moved (not just turned around)
+        autoFollowResumeTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
+            // Check if 2 seconds have passed since last interaction
+            guard let lastInteraction = self.lastInteractionTime else {
+                timer.invalidate()
+                return
+            }
+            
+            let timeSinceLastInteraction = Date().timeIntervalSince(lastInteraction)
+            if timeSinceLastInteraction >= 2.0 {
+                // Check if user has physically moved (not just turned around)
+                guard let currentLocation = self.viewModel.locationService.currentLocation,
+                      let lastLocation = self.lastLocationWhenInteracted else {
+                    timer.invalidate()
+                    return
+                }
+                
+                // User must have moved at least 5 meters to resume (indicates walking, not just turning)
+                let distanceMoved = currentLocation.distance(from: lastLocation)
+                if distanceMoved >= 5.0 {
+                    // User has stopped interacting for 2 seconds AND moved - resume auto-follow
+                    timer.invalidate()
+                    DispatchQueue.main.async {
+                        self.resumeAutoFollow()
+                    }
+                }
+            }
+        }
+    }
+    
+    // v1.9.13: Resume auto-follow and auto-zoom after user interaction with smooth animation
+    private func resumeAutoFollow() {
+        guard introPhase == .followingUser,
+              let currentLocation = viewModel.locationService.currentLocation else { return }
+        
+        // Clear interaction flag and location tracking
+        userInteractedWithMap = false
+        lastLocationWhenInteracted = nil
+        
+        // Get current heading
+        let heading: CLLocationDirection = {
+            if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
+                return trueHeading
+            } else if currentLocation.course >= 0 {
+                return currentLocation.course
+            } else if let camera = currentCameraState {
+                return camera.heading
+            } else {
+                return 0
+            }
+        }()
+        
+        // Smoothly animate back to user location with camera follow, zoom, and heading
+        let newCamera = MapCamera(
+            centerCoordinate: currentLocation.coordinate,
+            distance: currentZoomLevel,
+            heading: heading,
+            pitch: 0
+        )
+        currentCameraState = newCamera
+        isProgrammaticCameraUpdate = true
+        
+        // Smooth animation back to user location
+        withAnimation(.easeInOut(duration: 1.5)) {
+            cameraPosition = .camera(newCamera)
+        }
+        
+        // Clear timer
+        autoFollowResumeTimer?.invalidate()
+        autoFollowResumeTimer = nil
     }
     
     private func calculateRoute() {
@@ -805,7 +1249,14 @@ struct EmbeddedWalkMapView: View {
     }
     
     /// Calculate walking directions from current location back to starting point
+    /// v1.9.13: Only calculate once to prevent multiple route recalculations
     private func calculateReturnRoute() {
+        // Don't recalculate if we already have a return route
+        guard returnRoute == nil else {
+            print("📍 Return route already calculated, skipping...")
+            return
+        }
+        
         guard let currentLocation = viewModel.locationService.currentLocation,
               let currentRoute = viewModel.walkSession.currentRoute,
               let startPoint = currentRoute.routePath.first else {
@@ -829,10 +1280,88 @@ struct EmbeddedWalkMapView: View {
             }
             
             if let route = response?.routes.first {
-                self.returnRoute = route
-                print("✅ Return route calculated: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
+                DispatchQueue.main.async {
+                    self.returnRoute = route
+                    print("✅ Return route calculated: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
+                }
             }
         }
+    }
+    
+    // v1.9.13: Get next waypoint ID for caching
+    private func getNextWaypointId(markers: [QRMarker], visitedIds: Set<UUID>) -> UUID? {
+        if let nextMarker = markers.first(where: { !visitedIds.contains($0.id) }) {
+            return nextMarker.id
+        }
+        // If all waypoints visited, return a special UUID for "return to start"
+        return UUID(uuidString: "00000000-0000-0000-0000-000000000001") // Special ID for return to start
+    }
+    
+    
+    // v1.9.13: Calculate static leg polyline from leg start to waypoint
+    // This doesn't include current location, so it stays fixed
+    private func calculateStaticLegPolyline(
+        fullPath: [CLLocationCoordinate2D],
+        markers: [QRMarker],
+        visitedIds: Set<UUID>,
+        startLocation: CLLocationCoordinate2D?
+    ) -> [CLLocationCoordinate2D] {
+        guard fullPath.count >= 2 else { return fullPath }
+        
+        // Find next unvisited waypoint
+        let nextWaypoint: CLLocationCoordinate2D
+        if let nextMarker = markers.first(where: { !visitedIds.contains($0.id) }) {
+            nextWaypoint = nextMarker.coordinate
+        } else if let start = startLocation ?? fullPath.first {
+            // All waypoints visited - heading back to start
+            nextWaypoint = start
+        } else {
+            return fullPath
+        }
+        
+        // Find the leg start point - use start location or first point of route
+        let legStart = startLocation ?? fullPath.first ?? fullPath[0]
+        
+        // Find the closest point on the polyline to leg start
+        var closestIndexToStart = 0
+        var closestDistanceToStart = Double.greatestFiniteMagnitude
+        
+        for (index, point) in fullPath.enumerated() {
+            let distance = distanceBetween(legStart, point)
+            if distance < closestDistanceToStart {
+                closestDistanceToStart = distance
+                closestIndexToStart = index
+            }
+        }
+        
+        // Find the closest point on the polyline to next waypoint
+        var closestIndexToWaypoint = fullPath.count - 1
+        var closestDistanceToWaypoint = Double.greatestFiniteMagnitude
+        
+        for (index, point) in fullPath.enumerated() {
+            let distance = distanceBetween(nextWaypoint, point)
+            if distance < closestDistanceToWaypoint {
+                closestDistanceToWaypoint = distance
+                closestIndexToWaypoint = index
+            }
+        }
+        
+        // Extract segment from leg start to waypoint
+        let startIndex = min(closestIndexToStart, closestIndexToWaypoint)
+        let endIndex = max(closestIndexToStart, closestIndexToWaypoint)
+        
+        // Ensure we have at least 2 points
+        guard startIndex < endIndex else {
+            return [legStart, nextWaypoint]
+        }
+        
+        // Build static segment: leg start → path segment → next waypoint
+        // Don't include current location - this keeps it static
+        var segment: [CLLocationCoordinate2D] = [legStart]
+        segment.append(contentsOf: Array(fullPath[startIndex...endIndex]))
+        segment.append(nextWaypoint)
+        
+        return segment
     }
     
     /// v1.9.5: Extract polyline segment for current leg only

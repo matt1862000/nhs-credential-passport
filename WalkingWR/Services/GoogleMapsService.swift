@@ -1533,6 +1533,8 @@ class GoogleMapsService: ObservableObject {
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        // v1.9.13: Set explicit timeout for slow networks
+        request.timeoutInterval = 30.0 // 30 second timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "X-Goog-Api-Key")
         // Add iOS bundle ID for API key restrictions
@@ -1548,7 +1550,12 @@ class GoogleMapsService: ObservableObject {
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
         let startTime = Date()
-        let (data, response) = try await session.data(for: request)
+        // Use session with timeout configuration
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30.0
+        config.timeoutIntervalForResource = 60.0
+        let timeoutSession = URLSession(configuration: config)
+        let (data, response) = try await timeoutSession.data(for: request)
         let responseTime = Date().timeIntervalSince(startTime)
         
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -3480,6 +3487,8 @@ class GoogleMapsService: ObservableObject {
                 do {
                     print("🌐   ⏱️  Making HTTP request...")
                     var request = URLRequest(url: url)
+                    // v1.9.13: Set explicit timeout for slow networks
+                    request.timeoutInterval = 30.0 // 30 second timeout
                     // Add iOS bundle ID for API key restrictions
                     let bundleIdSent: Bool
                     if let bundleId = Bundle.main.bundleIdentifier {
@@ -3489,7 +3498,12 @@ class GoogleMapsService: ObservableObject {
                     } else {
                         bundleIdSent = false
                     }
-                    let (data, response) = try await URLSession.shared.data(for: request)
+                    // Use custom session with timeout configuration
+                    let config = URLSessionConfiguration.default
+                    config.timeoutIntervalForRequest = 30.0
+                    config.timeoutIntervalForResource = 60.0
+                    let session = URLSession(configuration: config)
+                    let (data, response) = try await session.data(for: request)
                     let elapsed = Date().timeIntervalSince(startTime)
                     
                     // Log HTTP response details

@@ -210,6 +210,9 @@ struct RouteSelectionView: View {
             .sheet(isPresented: $viewModel.showMarkerArrivalPrompt) {
                 MarkerArrivalSheet(viewModel: viewModel)
             }
+            .sheet(isPresented: $viewModel.showHomeArrivalPrompt) {
+                HomeArrivalSheet(viewModel: viewModel)
+            }
             .sheet(isPresented: $viewModel.showPreWalkWellbeing) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPreWalkWellbeing, isPostWalk: false)
             }
@@ -6206,6 +6209,153 @@ struct MarkerArrivalSheet: View {
     }
 }
 
+// MARK: - Home Arrival Sheet (v1.9.13)
+struct HomeArrivalSheet: View {
+    @ObservedObject var viewModel: WaitingRoomViewModel
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                AnimatedGradientBackground()
+                
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Celebration header
+                        VStack(spacing: 16) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.tealAccent.opacity(0.2))
+                                    .frame(width: 100, height: 100)
+                                
+                                // Black and white chequered flag
+                                ZStack {
+                                    // White background
+                                    Rectangle()
+                                        .fill(Color.white)
+                                        .frame(width: 50, height: 35)
+                                    
+                                    // Black squares pattern
+                                    HStack(spacing: 0) {
+                                        VStack(spacing: 0) {
+                                            Rectangle().fill(Color.black).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.white).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.black).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.white).frame(width: 12.5, height: 8.75)
+                                        }
+                                        VStack(spacing: 0) {
+                                            Rectangle().fill(Color.white).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.black).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.white).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.black).frame(width: 12.5, height: 8.75)
+                                        }
+                                        VStack(spacing: 0) {
+                                            Rectangle().fill(Color.black).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.white).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.black).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.white).frame(width: 12.5, height: 8.75)
+                                        }
+                                        VStack(spacing: 0) {
+                                            Rectangle().fill(Color.white).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.black).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.white).frame(width: 12.5, height: 8.75)
+                                            Rectangle().fill(Color.black).frame(width: 12.5, height: 8.75)
+                                        }
+                                    }
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 2))
+                            }
+                            
+                            Text("Welcome Back!")
+                                .font(.titleLarge)
+                                .fontWeight(.bold)
+                                .foregroundColor(.primary)
+                            
+                            Text("You've completed your walk")
+                                .font(.titleMedium)
+                                .foregroundColor(.primary)
+                            
+                            if let route = viewModel.selectedRoute {
+                                Text(route.name)
+                                    .font(.bodyMedium)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.top, 20)
+                        
+                        // Walk summary
+                        VStack(spacing: 16) {
+                            HStack {
+                                Image(systemName: "figure.walk")
+                                    .foregroundColor(.tealAccent)
+                                Text("\(viewModel.walkSession.stepsThisSession) steps")
+                                    .font(.bodyLarge)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            let elapsed = viewModel.walkSession.elapsedSeconds
+                            if elapsed > 0 {
+                                HStack {
+                                    Image(systemName: "clock.fill")
+                                        .foregroundColor(.tealAccent)
+                                    Text(formatTime(TimeInterval(elapsed)))
+                                        .font(.bodyLarge)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.primary)
+                                }
+                            }
+                            
+                            HStack {
+                                Image(systemName: "star.fill")
+                                    .foregroundColor(.softAmber)
+                                Text("\(viewModel.userProgress.totalPoints) total points")
+                                    .font(.bodyLarge)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.softAmber)
+                            }
+                        }
+                        .padding(20)
+                        .cardStyle()
+                        
+                        // End walk button - same action as "End & Save Progress"
+                        Button(action: {
+                            // Calls endWalk(completed: true) - same as "End & Save Progress" button
+                            viewModel.endWalk(completed: true)
+                            viewModel.dismissHomeArrivalPrompt()
+                            dismiss()
+                        }) {
+                            HStack {
+                                Image(systemName: "checkmark.circle.fill")
+                                Text("End Walk")
+                            }
+                            .font(.bodyLarge)
+                            .fontWeight(.semibold)
+                        }
+                        .buttonStyle(PrimaryButtonStyle(color: .tealAccent))
+                        .padding(.horizontal, 40)
+                        
+                        Spacer(minLength: 40)
+                    }
+                    .padding(.horizontal, 20)
+                }
+            }
+            .navigationTitle("Walk Complete")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+    
+    private func formatTime(_ seconds: TimeInterval) -> String {
+        let minutes = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        if minutes > 0 {
+            return "\(minutes)m \(secs)s"
+        } else {
+            return "\(secs)s"
+        }
+    }
+}
+
 // MARK: - Breathing Exercise Carousel (v1.9.9)
 /// Swipeable carousel of breathing exercises for the arrival card
 struct BreathingExerciseCarousel: View {
@@ -6230,55 +6380,56 @@ struct BreathingExerciseCarousel: View {
                     Button(action: {
                         onTapExercise(exercise)
                     }) {
-                        VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 10) {
                             HStack {
                                 Image(systemName: exercise.icon)
-                                    .font(.title2)
+                                    .font(.title3)
                                     .foregroundColor(.lavenderMist)
                                 
                                 Text(exercise.title)
-                                    .font(.bodyLarge)
+                                    .font(.bodyMedium)
                                     .fontWeight(.semibold)
                                     .foregroundColor(.primary)
                                 
                                 Spacer()
                                 
                                 Image(systemName: "play.circle.fill")
-                                    .font(.title2)
+                                    .font(.title3)
                                     .foregroundColor(.lavenderMist)
                             }
                             
                             Text(exercise.description)
-                                .font(.bodyMedium)
+                                .font(.caption)
                                 .foregroundColor(.secondary)
+                                .lineLimit(2)
                             
                             if let steps = exercise.steps, !steps.isEmpty {
-                                VStack(alignment: .leading, spacing: 6) {
+                                VStack(alignment: .leading, spacing: 5) {
                                     ForEach(Array(steps.enumerated()), id: \.offset) { stepIndex, step in
-                                        HStack(alignment: .top, spacing: 10) {
+                                        HStack(alignment: .top, spacing: 8) {
                                             Text("\(stepIndex + 1)")
                                                 .font(.caption2)
                                                 .fontWeight(.bold)
                                                 .foregroundColor(.white)
-                                                .frame(width: 18, height: 18)
+                                                .frame(width: 16, height: 16)
                                                 .background(Circle().fill(Color.lavenderMist))
                                             
                                             Text(step)
-                                                .font(.caption)
+                                                .font(.caption2)
                                                 .foregroundColor(.primary)
                                                 .lineLimit(2)
                                         }
                                     }
                                 }
-                                .padding(.top, 4)
+                                .padding(.top, 2)
                             }
                             
                             Text("Tap to start exercise")
-                                .font(.caption)
+                                .font(.caption2)
                                 .foregroundColor(.lavenderMist)
-                                .padding(.top, 4)
+                                .padding(.top, 2)
                         }
-                        .padding(16)
+                        .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .cardStyle()
                     }
@@ -6287,7 +6438,7 @@ struct BreathingExerciseCarousel: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: 260)
+            .frame(height: 240)
             
             // Custom page indicator
             HStack(spacing: 6) {
