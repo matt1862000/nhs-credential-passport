@@ -3303,10 +3303,13 @@ class GoogleMapsService: ObservableObject {
                     print("📊 Google Directions refresh: \(googleDirectionsCallsToday)/\(googleDirectionsDailyCap) calls today")
                     
                     if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let status = json["status"] as? String,
-                       status == "OK",
-                       let routes = json["routes"] as? [[String: Any]],
-                       let firstRoute = routes.first {
+                       let status = json["status"] as? String {
+                        // Log the status for debugging
+                        if status != "OK" {
+                            let errorMessage = json["error_message"] as? String ?? "Unknown error"
+                            print("🌐 REFRESH: Google API returned status '\(status)': \(errorMessage) - falling back to MapKit")
+                        } else if let routes = json["routes"] as? [[String: Any]],
+                                  let firstRoute = routes.first {
                         
                         // Extract overview polyline
                         var polyline = ""
@@ -3372,9 +3375,14 @@ class GoogleMapsService: ObservableObject {
                             encodedPolyline: polyline.isEmpty ? route.encodedPolyline : polyline,
                             walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
                         )
+                        } else {
+                            print("🌐 REFRESH: Google returned OK but no routes found - falling back to MapKit")
+                        }
+                    } else {
+                        print("🌐 REFRESH: Failed to parse Google Directions response - falling back to MapKit")
                     }
                 } catch {
-                    print("🌐 REFRESH: Google failed - \(error.localizedDescription), using Apple MapKit")
+                    print("🌐 REFRESH: Google API call failed - \(error.localizedDescription), using Apple MapKit")
                 }
             }
         } else {
