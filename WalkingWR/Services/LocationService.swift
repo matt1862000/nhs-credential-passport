@@ -223,6 +223,20 @@ class LocationService: NSObject, ObservableObject {
         }
     }
     
+    // v1.9.0: Get next turn coordinate for map annotation
+    var nextTurnCoordinate: CLLocationCoordinate2D? {
+        guard isMonitoringDirections, 
+              currentDirectionIndex < directionWaypoints.count else { return nil }
+        return directionWaypoints[currentDirectionIndex].coordinate
+    }
+    
+    // v1.9.0: Get distance to next turn for auto-zoom
+    func distanceToNextTurn(from location: CLLocation) -> Double? {
+        guard let nextTurn = nextTurnCoordinate else { return nil }
+        let turnLocation = CLLocation(latitude: nextTurn.latitude, longitude: nextTurn.longitude)
+        return location.distance(from: turnLocation)
+    }
+    
     /// Request a FRESH location (clears cached location first)
     func requestFreshLocation() {
         // Clear cached location to force fresh GPS fix

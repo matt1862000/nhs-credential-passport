@@ -292,6 +292,10 @@ struct EmbeddedWalkMapView: View {
     @State private var isStepTrackingEnabled: Bool = false
     @State private var showMotionExplainer: Bool = false
     
+    // v1.9.0: Turn navigation enhancements
+    @State private var isApproachingTurn: Bool = false
+    @State private var distanceToNextTurn: Double? = nil
+    
     /// Check if user previously opted into step tracking
     /// We trust the UserDefaults flag - if permission was revoked, we'll handle it when pedometer fails
     private var shouldAutoEnableSteps: Bool {
@@ -391,6 +395,16 @@ struct EmbeddedWalkMapView: View {
                 if isShowingReturnRoute, let returnRoute = returnRoute {
                     MapPolyline(returnRoute.polyline)
                         .stroke(Color.blue, lineWidth: 5)
+                }
+                
+                // v1.9.0: Turn arrow annotation at next turn point
+                if let nextTurnCoord = viewModel.locationService.nextTurnCoordinate,
+                   let currentRoute = viewModel.walkSession.currentRoute,
+                   viewModel.locationService.currentDirectionIndex < currentRoute.walkingDirections.count {
+                    let currentDirection = currentRoute.walkingDirections[viewModel.locationService.currentDirectionIndex]
+                    Annotation("Turn", coordinate: nextTurnCoord) {
+                        TurnArrowView(maneuver: currentDirection.maneuver)
+                    }
                 }
             }
             .mapStyle(.standard)
@@ -548,6 +562,32 @@ struct EmbeddedWalkMapView: View {
                 isStepTrackingEnabled = true
             }
         }
+        // v1.9.0: Auto-zoom when approaching turn (within 30m)
+        .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
+            guard let location = newLocation,
+                  let nextTurnCoord = viewModel.locationService.nextTurnCoordinate else {
+                isApproachingTurn = false
+                distanceToNextTurn = nil
+                return
+            }
+            
+            let distance = location.distance(from: CLLocation(latitude: nextTurnCoord.latitude, longitude: nextTurnCoord.longitude))
+            distanceToNextTurn = distance
+            
+            // Auto-zoom when within 30m of turn
+            if distance <= 30 && !isApproachingTurn {
+                isApproachingTurn = true
+                zoomToTurn(nextTurnCoord)
+            } else if distance > 30 && isApproachingTurn {
+                isApproachingTurn = false
+                // Return to normal zoom after passing turn
+                if !userInteractedWithMap {
+                    withAnimation(.easeInOut(duration: 1.0)) {
+                        cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
+                    }
+                }
+            }
+        }
         // v1.6.30: Motion permission explainer as fullScreenCover for reliable dismissal
         .fullScreenCover(isPresented: $showMotionExplainer) {
             MotionPermissionExplainerSheet(
@@ -668,6 +708,22 @@ struct EmbeddedWalkMapView: View {
                 center: coordinate,
                 latitudinalMeters: 150,
                 longitudinalMeters: 150
+            ))
+        }
+    }
+    
+    // v1.9.0: Auto-zoom to turn intersection when approaching
+    private func zoomToTurn(_ coordinate: CLLocationCoordinate2D) {
+        // Don't zoom if user has manually interacted with map
+        guard !userInteractedWithMap else { return }
+        
+        let smoothAnimation = Animation.easeInOut(duration: 1.0)
+        withAnimation(smoothAnimation) {
+            // Zoom to intersection view (100m x 100m for clear turn visibility)
+            cameraPosition = .region(MKCoordinateRegion(
+                center: coordinate,
+                latitudinalMeters: 100,
+                longitudinalMeters: 100
             ))
         }
     }
@@ -2165,6 +2221,55 @@ struct HealthKitSyncOfferSheet: View {
                 }
                 isPresented = false
             }
+        }
+    }
+}
+
+// MARK: - Turn Arrow View (v1.9.0)
+/// Large animated arrow showing turn direction on map
+struct TurnArrowView: View {
+    let maneuver: String?
+    @State private var isPulsing = false
+    
+    var body: some View {
+        ZStack {
+            // Pulsing outer ring
+            Circle()
+                .fill(Color.tealAccent.opacity(0.2))
+                .frame(width: 80, height: 80)
+                .scaleEffect(isPulsing ? 1.3 : 1.0)
+                .opacity(isPulsing ? 0.3 : 0.5)
+                .animation(.easeInOut(duration: 1.5).repeatForever(autoreverses: true), value: isPulsing)
+            
+            // Main arrow circle
+            Circle()
+                .fill(Color.tealAccent)
+                .frame(width: 64, height: 64)
+                .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+            
+            // Directional arrow icon
+            Image(systemName: turnArrowIcon(for: maneuver))
+                .font(.system(size: 32, weight: .bold))
+                .foregroundColor(.white)
+        }
+        .onAppear {
+            isPulsing = true
+        }
+    }
+    
+    private func turnArrowIcon(for maneuver: String?) -> String {
+        guard let maneuver = maneuver else { return "arrow.up" }
+        
+        switch maneuver {
+        case "turn-left": return "arrow.left"
+        case "turn-right": return "arrow.right"
+        case "turn-slight-left": return "arrow.up.left"
+        case "turn-slight-right": return "arrow.up.right"
+        case "turn-sharp-left": return "arrow.turn.left.down"
+        case "turn-sharp-right": return "arrow.turn.right.down"
+        case "straight": return "arrow.up"
+        case "uturn": return "arrow.uturn.backward"
+        default: return "arrow.up"
         }
     }
 }

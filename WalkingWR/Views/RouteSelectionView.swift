@@ -5750,15 +5750,15 @@ struct WalkingDirectionsBanner: View {
                 }
             }) {
                 HStack(spacing: 12) {
-                    // Direction icon
+                    // v1.9.0: Enhanced directional arrow (larger, more prominent)
                     ZStack {
                         Circle()
-                            .fill(Color.white.opacity(0.25))
-                            .frame(width: 44, height: 44)
+                            .fill(Color.white.opacity(0.3))
+                            .frame(width: 56, height: 56)
                         
-                        Image(systemName: direction.icon)
-                            .font(.title3)
-                            .fontWeight(.bold)
+                        // Large directional arrow matching turn direction
+                        Image(systemName: turnArrowIcon(for: direction.maneuver))
+                            .font(.system(size: 28, weight: .bold))
                             .foregroundColor(.white)
                     }
                     
@@ -5829,6 +5829,23 @@ struct WalkingDirectionsBanner: View {
                 .background(bannerColor)
             }
             .buttonStyle(PlainButtonStyle())
+        }
+    }
+    
+    // v1.9.0: Helper to get large directional arrow icon for turn
+    private func turnArrowIcon(for maneuver: String?) -> String {
+        guard let maneuver = maneuver else { return "arrow.up" }
+        
+        switch maneuver {
+        case "turn-left": return "arrow.left"
+        case "turn-right": return "arrow.right"
+        case "turn-slight-left": return "arrow.up.left"
+        case "turn-slight-right": return "arrow.up.right"
+        case "turn-sharp-left": return "arrow.turn.left.down"
+        case "turn-sharp-right": return "arrow.turn.right.down"
+        case "straight": return "arrow.up"
+        case "uturn": return "arrow.uturn.backward"
+        default: return "arrow.up"
         }
     }
 }
