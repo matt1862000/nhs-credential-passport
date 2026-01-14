@@ -3449,7 +3449,6 @@ class GoogleMapsService: ObservableObject {
                 print("🌐   ❌ ERROR: Failed to create URL from string")
                 print("🌐 ═══════════════════════════════════════════════════════")
             }
-            }
         } else {
             print("🌐 REFRESH: Google quota reached (\(googleDirectionsCallsToday)/\(googleDirectionsDailyCap)) - using Apple MapKit")
         }
