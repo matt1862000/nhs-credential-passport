@@ -15,7 +15,7 @@ import CoreLocation
 class RouteCacheService {
     static let shared = RouteCacheService()
     
-    private let cacheKey = "cachedRoutes_v40"  // v40: Quality scoring + skip tracking
+    private let cacheKey = "cachedRoutes_v41"  // v41: Filter restricted POIs from cached routes (v1.9.16)
     private let maxCachedRouteSets = 50
     private let maxRoutesPerDuration = 10  // v1.6.46: Limit routes per location/duration to prevent unbounded growth
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
@@ -203,11 +203,31 @@ class RouteCacheService {
                     // Convert to metadata format
                     let allRoutes = convertToGeneratedRoutesWithMetadata(entry.routes)
                     
+                    // v1.9.16: Filter out routes containing restricted POIs (playcare, nursery, etc.)
+                    // This catches routes cached before the filter was implemented
+                    let routesWithoutRestrictedPOIs = allRoutes.filter { routeWithMeta in
+                        let hasRestrictedPOI = routeWithMeta.route.places.contains { place in
+                            GoogleMapsService.shared.isRestrictedPOI(place)
+                        }
+                        if hasRestrictedPOI {
+                            let routeName = routeWithMeta.name ?? "Unnamed"
+                            let restrictedPOIs = routeWithMeta.route.places.filter { GoogleMapsService.shared.isRestrictedPOI($0) }
+                            let restrictedNames = restrictedPOIs.map { $0.name }.joined(separator: ", ")
+                            print("📦 🏫 Filtered cached route '\(routeName)' - contains restricted POI(s): \(restrictedNames)")
+                        }
+                        return !hasRestrictedPOI
+                    }
+                    
+                    let restrictedFilteredCount = allRoutes.count - routesWithoutRestrictedPOIs.count
+                    if restrictedFilteredCount > 0 {
+                        print("📦 🏫 Filtered \(restrictedFilteredCount) cached route(s) containing restricted POIs")
+                    }
+                    
                     // Filter routes to only those within tolerance FOR THE REQUESTED DURATION
                     var validRoutes: [CachedRouteWithMetadata] = []
                     var filteredRoutes: [(name: String, duration: Int, reason: String)] = []
                     
-                    for routeWithMeta in allRoutes {
+                    for routeWithMeta in routesWithoutRestrictedPOIs {
                         let actualDuration = routeWithMeta.route.durationMinutes
                         if actualDuration >= minAcceptable && actualDuration <= maxAcceptable {
                             validRoutes.append(routeWithMeta)

@@ -449,7 +449,8 @@ class GoogleMapsService: ObservableObject {
     /// Check if POI should be excluded based on name/type patterns
     /// This is a safety net that runs on cached POIs to catch items
     /// that were cached before filters were implemented
-    private func isRestrictedPOI(_ poi: PlaceResult) -> Bool {
+    // v1.9.16: Made internal so RouteCacheService can filter cached routes
+    func isRestrictedPOI(_ poi: PlaceResult) -> Bool {
         // Normalize name: lowercase and remove apostrophes/special chars for matching
         let nameLower = poi.name.lowercased()
             .replacingOccurrences(of: "'", with: "")

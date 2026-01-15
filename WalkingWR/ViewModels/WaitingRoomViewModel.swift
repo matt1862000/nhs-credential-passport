@@ -1385,10 +1385,15 @@ class WaitingRoomViewModel: ObservableObject {
     
     private func startAlertAutoDismissTimer(for alertKeyPath: WritableKeyPath<WaitingRoomViewModel, Bool>) {
         cancelAlertAutoDismissTimer()
+        // v1.9.16: Capture keyPath in a Sendable-safe way by using a closure that captures self weakly
+        // and accesses the keyPath only on the main actor
         alertAutoDismissTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
-            DispatchQueue.main.async {
-                self?[keyPath: alertKeyPath] = false
-                self?.alertAutoDismissTimer = nil
+            guard let self = self else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                // Access keyPath only on main actor to avoid Sendable issues
+                self[keyPath: alertKeyPath] = false
+                self.alertAutoDismissTimer = nil
                 print("⏱️ Auto-dismissed alert after 10 seconds")
             }
         }

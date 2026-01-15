@@ -582,7 +582,7 @@ struct BreathingExerciseSheet: View {
                 selectedIndex = initialIndex
                 previousIndex = initialIndex
             }
-            .onChange(of: selectedIndex) { newIndex in
+            .onChange(of: selectedIndex) { oldValue, newValue in
                 // Prevent swiping when any exercise is active
                 if isAnyExerciseActive {
                     // Revert to previous index

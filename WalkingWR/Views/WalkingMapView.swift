@@ -478,10 +478,14 @@ struct EmbeddedWalkMapView: View {
                                 // Fallback 1: Use MapKit-calculated route if available
                                 MapPolyline(returnRoute.polyline)
                                     .stroke(Color.blue, lineWidth: 5)
-                            } else if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
-                                // Fallback 2: Use cached route
-                                MapPolyline(coordinates: viewModel.cachedReturnRoutePolyline)
-                                    .stroke(Color.blue, lineWidth: 5)
+                            } else {
+                                // Fallback 2: Use cached route (accessed on main actor)
+                                let hasCached = viewModel.hasCachedReturnRoute
+                                let cachedPolyline = viewModel.cachedReturnRoutePolyline
+                                if hasCached && !cachedPolyline.isEmpty {
+                                    MapPolyline(coordinates: cachedPolyline)
+                                        .stroke(Color.blue, lineWidth: 5)
+                                }
                             }
                         }
                     }
@@ -499,9 +503,10 @@ struct EmbeddedWalkMapView: View {
                 formatter.dateFormat = "HH:mm:ss.SSS"
                 let timeString = formatter.string(from: now)
                 
-                // Check if this is a programmatic update (within 0.5 seconds of our update)
-                let isRecentProgrammaticUpdate = lastProgrammaticUpdateTime != nil && 
-                    now.timeIntervalSince(lastProgrammaticUpdateTime!) < 0.5
+                // Check if this is a programmatic update (within 1.0 seconds of our update)
+                // v1.9.16: Increased grace period from 0.5s to 1.0s to prevent false positives
+                let isRecentProgrammaticUpdate = lastProgrammaticUpdateTime != nil &&
+                    now.timeIntervalSince(lastProgrammaticUpdateTime!) < 1.0
                 
                 print("")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -651,9 +656,11 @@ struct EmbeddedWalkMapView: View {
                                     // Only switch if we have return directions available
                                     if !viewModel.cachedReturnDirections.isEmpty, let currentRoute = viewModel.walkSession.currentRoute {
                                         viewModel.isUsingReturnDirections = true
+                                        // v1.9.16: Capture main actor-isolated property before nonisolated context
+                                        let cachedPolyline = viewModel.cachedReturnRoutePolyline
                                         viewModel.locationService.startDirectionMonitoring(
                                             directions: viewModel.cachedReturnDirections,
-                                            routePath: viewModel.cachedReturnRoutePolyline.isEmpty ? currentRoute.routePath : viewModel.cachedReturnRoutePolyline
+                                            routePath: cachedPolyline.isEmpty ? currentRoute.routePath : cachedPolyline
                                         )
                                         print("📍 Switched to return route directions")
                                     }
@@ -1212,8 +1219,9 @@ struct EmbeddedWalkMapView: View {
         
         // Step 2: After 2.0 seconds, return to active zoom mode with smooth animation
         // v1.9.13: Use resumeAutoFollow for smooth return and state management
+        // v1.9.16: Only resume if user hasn't interacted with map (don't override user interaction)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            if introPhase == .followingUser {
+            if introPhase == .followingUser && !userInteractedWithMap {
                 resumeAutoFollow()
             }
         }
@@ -1255,8 +1263,15 @@ struct EmbeddedWalkMapView: View {
     }
     
     // v1.9.13: Start active zoom mode - uses camera with heading for smooth rotation + custom zoom
+    // v1.9.16: Don't start active zoom if user has interacted (prevents unwanted snap-back)
     private func startActiveZoom() {
         print("🎯 [ACTIVE ZOOM] startActiveZoom called")
+        
+        // CRITICAL: Don't move camera if user has interacted with map
+        guard !userInteractedWithMap else {
+            print("🎯 [ACTIVE ZOOM] ❌ BLOCKED: userInteractedWithMap == true")
+            return
+        }
         
         guard let currentLocation = viewModel.locationService.currentLocation else {
             print("🎯 [ACTIVE ZOOM] ❌ No location, using fallback userLocation")
@@ -1351,7 +1366,14 @@ struct EmbeddedWalkMapView: View {
     }
     
     // v1.9.13: Update camera zoom level smoothly while maintaining heading
+    // v1.9.16: Don't update camera if user has interacted (prevents unwanted snap-back)
     private func updateCameraZoom() {
+        // CRITICAL: Don't move camera if user has interacted with map
+        guard !userInteractedWithMap else {
+            print("🎯 [UPDATE CAMERA ZOOM] ❌ BLOCKED: userInteractedWithMap == true")
+            return
+        }
+        
         guard let currentLocation = viewModel.locationService.currentLocation else {
             return
         }
@@ -1892,12 +1914,14 @@ struct EmbeddedWalkMapView: View {
         request.transportType = .walking
         
         let directions = MKDirections(request: request)
+        // v1.9.16: Capture main actor-isolated properties before Sendable closure
+        let hasCachedRoute = viewModel.hasCachedReturnRoute
         directions.calculate { response, error in
             
             if let error = error {
                 print("⚠️ Fresh return route calculation failed: \(error.localizedDescription)")
                 // If we don't have cached route, show error
-                if !self.viewModel.hasCachedReturnRoute {
+                if !hasCachedRoute {
                     print("❌ No cached route available - return route unavailable")
                 } else {
                     print("✅ Falling back to cached return route (offline mode)")
