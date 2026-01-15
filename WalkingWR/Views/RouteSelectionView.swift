@@ -5828,14 +5828,15 @@ struct WalkingDirectionsBanner: View {
                             .foregroundColor(.white)
                     }
                     
-                    // Direction text - more room for full instruction
+                    // Direction text - allow wrapping to show full instruction
                     VStack(alignment: .leading, spacing: 3) {
-                        // Main instruction (turn/continue/etc)
+                        // Main instruction (turn/continue/etc) - allow up to 2 lines
                         Text(instructionParts.main)
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .foregroundColor(.white)
-                            .lineLimit(1)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
                         
                         // v1.9.15: Destination info on separate line if present (expands banner)
@@ -5844,7 +5845,8 @@ struct WalkingDirectionsBanner: View {
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                                 .foregroundColor(.white.opacity(0.95))
-                                .lineLimit(1)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
                                 .multilineTextAlignment(.leading)
                         }
                         

@@ -40,8 +40,7 @@ struct WalkingMapView: View {
                     }
                     
                     // Next waypoint marker (if on a route)
-                    if let route = viewModel.selectedRoute,
-                       let nextWaypoint = nextWaypointCoordinate(for: route) {
+                    if let nextWaypoint = nextWaypointCoordinate() {
                         Annotation("Next Stop", coordinate: nextWaypoint) {
                             ZStack {
                                 Circle()
@@ -116,13 +115,30 @@ struct WalkingMapView: View {
     }
     
     // Get the next waypoint coordinate based on current progress
-    private func nextWaypointCoordinate(for route: WalkingRoute) -> CLLocationCoordinate2D? {
-        guard !route.qrMarkers.isEmpty else { return nil }
+    // When walk is active, use walkSession.currentRoute and visitedMarkerIds
+    // Otherwise, use selectedRoute and userProgress.qrScansCompleted
+    private func nextWaypointCoordinate() -> CLLocationCoordinate2D? {
+        // If walk is active, use currentRoute and visitedMarkerIds
+        if viewModel.walkSession.isActive,
+           let currentRoute = viewModel.walkSession.currentRoute {
+            let visitedIds = viewModel.visitedMarkerIds
+            // Find first unvisited waypoint
+            if let nextMarker = currentRoute.qrMarkers.first(where: { !visitedIds.contains($0.id) }) {
+                return nextMarker.coordinate
+            }
+            // All waypoints visited - return to start
+            return viewModel.walkSession.startLocation ?? currentRoute.routePath.first
+        }
         
-        // For now, return the first unvisited marker or the clinic if all visited
+        // Walk not active - use selectedRoute
+        guard let selectedRoute = viewModel.selectedRoute,
+              !selectedRoute.qrMarkers.isEmpty else {
+            return nil
+        }
+        
         let visitedCount = viewModel.userProgress.qrScansCompleted
-        if visitedCount < route.qrMarkers.count {
-            return route.qrMarkers[visitedCount].coordinate
+        if visitedCount < selectedRoute.qrMarkers.count {
+            return selectedRoute.qrMarkers[visitedCount].coordinate
         }
         return clinicCoordinate // Head back to clinic
     }
@@ -134,8 +150,7 @@ struct WalkingMapView: View {
         }
         
         let destination: CLLocationCoordinate2D
-        if let selectedRoute = viewModel.selectedRoute,
-           let nextWaypoint = nextWaypointCoordinate(for: selectedRoute) {
+        if let nextWaypoint = nextWaypointCoordinate() {
             destination = nextWaypoint
         } else {
             destination = clinicCoordinate
