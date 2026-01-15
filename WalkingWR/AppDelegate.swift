@@ -50,8 +50,9 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         let tokenString = deviceToken.map { String(format: "%02.2hhx", $0) }.joined()
-        print("📱 APNs Token received: \(tokenString)")
+        print("📱 APNs Token received: \(tokenString.prefix(20))...")
         Messaging.messaging().apnsToken = deviceToken
+        print("📱 APNs Token set on Messaging - ready for FCM")
     }
     
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
@@ -64,6 +65,9 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         // Verify token is valid
         if let token = fcmToken {
             print("🔥 FCM Token length: \(token.count) characters")
+            print("🔥 FCM Token (first 20 chars): \(String(token.prefix(20)))...")
+        } else {
+            print("❌ WARNING: FCM Token is nil - push notifications will not work!")
         }
     }
     

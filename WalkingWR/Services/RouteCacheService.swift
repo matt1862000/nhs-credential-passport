@@ -172,7 +172,7 @@ class RouteCacheService {
         let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
         
         // Calculate tolerance for the REQUESTED duration
-        let isEdgeCase = roundedDuration <= 10 || roundedDuration >= 55
+        let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
         let minPercent = isEdgeCase ? 0.75 : 0.80
         let maxPercent = isEdgeCase ? 1.25 : 1.20
         let minAcceptable = Int(Double(roundedDuration) * minPercent)
@@ -185,7 +185,7 @@ class RouteCacheService {
             roundedDuration - 5, roundedDuration + 5,
             roundedDuration - 10, roundedDuration + 10,
             roundedDuration - 15, roundedDuration + 15
-        ].filter { $0 >= 10 && $0 <= 60 }  // Keep within valid range (min 10 min)
+        ].filter { $0 >= 5 && $0 <= 60 }  // Keep within valid range (min 5 min)
         
         // v1.6.39: Track best dead-zone fallback routes (70-74%) in case no valid routes found
         var deadZoneFallbackRoutes: [CachedRouteWithMetadata] = []

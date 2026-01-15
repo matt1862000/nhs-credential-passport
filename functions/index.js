@@ -65,8 +65,12 @@ exports.onClinicianDelayChange = onDocumentUpdated('clinicians/{clinicianId}', a
         aps: {
           'category': 'DELAY_NOTIFICATION',  // Must match NotificationService.registerNotificationCategories()
           'mutable-content': 1,
-          'sound': 'default'
+          'sound': 'default',
+          'badge': 1  // Show badge when notification arrives
         }
+      },
+      headers: {
+        'apns-priority': '10'  // High priority for immediate delivery when backgrounded
       }
     },
     topic: topic

@@ -470,9 +470,16 @@ extension LocationService: CLLocationManagerDelegate {
     }
     
     func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        let trueHeading = newHeading.trueHeading
+        let magneticHeading = newHeading.magneticHeading
+        let finalHeading = trueHeading >= 0 ? trueHeading : magneticHeading
+        
+        print("🧭 [LOCATION SERVICE] didUpdateHeading: trueHeading=\(trueHeading >= 0 ? "\(trueHeading)°" : "invalid"), magneticHeading=\(magneticHeading)°, using=\(finalHeading)°")
+        
         DispatchQueue.main.async {
             self.heading = newHeading
-            self.headingDegrees = newHeading.trueHeading >= 0 ? newHeading.trueHeading : newHeading.magneticHeading
+            self.headingDegrees = finalHeading
+            print("🧭 [LOCATION SERVICE] ✅ headingDegrees updated to \(self.headingDegrees)°")
         }
     }
 }

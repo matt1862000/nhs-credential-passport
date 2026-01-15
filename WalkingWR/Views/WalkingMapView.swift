@@ -676,12 +676,29 @@ struct EmbeddedWalkMapView: View {
         }
         // v1.9.13: Active zoom management - adjust zoom based on location updates
         .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
-            guard let location = newLocation,
-                  introPhase == .followingUser,
-                  !userInteractedWithMap,
-                  !isApproachingTurn else {
+            guard let location = newLocation else {
+                print("📍 [LOCATION UPDATE] No location available")
                 return
             }
+            
+            print("📍 [LOCATION UPDATE] New location: (\(location.coordinate.latitude), \(location.coordinate.longitude)), course=\(location.course >= 0 ? "\(location.course)°" : "invalid")")
+            print("📍 [LOCATION UPDATE] introPhase: \(introPhase.rawValue), followingUser: \(introPhase == .followingUser)")
+            print("📍 [LOCATION UPDATE] userInteractedWithMap: \(userInteractedWithMap)")
+            print("📍 [LOCATION UPDATE] isApproachingTurn: \(isApproachingTurn)")
+            
+            guard introPhase == .followingUser else {
+                print("📍 [LOCATION UPDATE] ❌ BLOCKED: introPhase != .followingUser")
+                return
+            }
+            
+            guard !userInteractedWithMap else {
+                print("📍 [LOCATION UPDATE] ❌ BLOCKED: userInteractedWithMap == true")
+                return
+            }
+            
+            // Allow camera updates even when approaching turn - just follow user smoothly
+            // The turn zoom is handled separately, but we still need to follow user movement
+            print("📍 [LOCATION UPDATE] ✅ PROCEEDING: Updating camera (isApproachingTurn: \(isApproachingTurn))")
             
             // Update zoom every 5 seconds or when distance to next waypoint changes significantly
             let timeSinceLastUpdate = Date().timeIntervalSince(lastZoomUpdate)
@@ -690,23 +707,53 @@ struct EmbeddedWalkMapView: View {
                 lastZoomUpdate = Date()
             }
             
-            // Also update camera center to follow user location smoothly
-            // Extract camera before closure to avoid pattern matching issues
-            updateCameraCenter(to: location.coordinate)
+            // Update camera with both location and current heading together
+            // This ensures smooth updates and prevents camera state from being nil
+            let currentHeading: CLLocationDirection? = {
+                if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
+                    return trueHeading
+                } else if location.course >= 0 {
+                    return location.course
+                } else {
+                    return nil // Will use existing heading or default
+                }
+            }()
+            
+            updateCamera(location: location.coordinate, heading: currentHeading)
         }
         // v1.9.13: Update camera heading smoothly when device rotates
         // v1.9.13: Ignore heading changes during manual interaction to prevent snap-back
         .onChange(of: viewModel.locationService.headingDegrees) { _, newHeading in
-            guard introPhase == .followingUser,
-                  !userInteractedWithMap, // Don't update heading if user manually interacted
-                  !isApproachingTurn,
-                  let currentLocation = viewModel.locationService.currentLocation,
-                  newHeading >= 0 else {
+            print("🧭 [HEADING UPDATE] New heading: \(newHeading)°")
+            print("🧭 [HEADING UPDATE] introPhase: \(introPhase.rawValue), followingUser: \(introPhase == .followingUser)")
+            print("🧭 [HEADING UPDATE] userInteractedWithMap: \(userInteractedWithMap)")
+            print("🧭 [HEADING UPDATE] isApproachingTurn: \(isApproachingTurn)")
+            print("🧭 [HEADING UPDATE] currentLocation: \(viewModel.locationService.currentLocation != nil ? "available" : "nil")")
+            
+            guard introPhase == .followingUser else {
+                print("🧭 [HEADING UPDATE] ❌ BLOCKED: introPhase != .followingUser")
                 return
             }
             
-            // Update heading smoothly
-            updateCameraHeading(to: newHeading, at: currentLocation.coordinate)
+            guard !userInteractedWithMap else {
+                print("🧭 [HEADING UPDATE] ❌ BLOCKED: userInteractedWithMap == true")
+                return
+            }
+            
+            // Allow heading updates even when approaching turn - keep arrow rotating smoothly
+            guard let currentLocation = viewModel.locationService.currentLocation else {
+                print("🧭 [HEADING UPDATE] ❌ BLOCKED: currentLocation is nil")
+                return
+            }
+            
+            guard newHeading >= 0 else {
+                print("🧭 [HEADING UPDATE] ❌ BLOCKED: newHeading < 0 (\(newHeading))")
+                return
+            }
+            
+            print("🧭 [HEADING UPDATE] ✅ PROCEEDING: Updating camera heading to \(newHeading)°")
+            // Update camera with both location and heading together for consistency
+            updateCamera(location: currentLocation.coordinate, heading: newHeading)
         }
         // v1.9.13: Update cached leg polyline when waypoint changes (not during view rendering)
         .onChange(of: viewModel.visitedMarkerIds.count) { _, _ in
@@ -835,10 +882,16 @@ struct EmbeddedWalkMapView: View {
         
         // Phase 3: Switch to auto-follow user location with active zoom (after 8 seconds)
         DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
-            guard !userInteractedWithMap else { return }  // Skip if user interacted
+            print("🎬 [INTRO ANIMATION] Phase 3: Switching to followingUser")
+            print("🎬 [INTRO ANIMATION] userInteractedWithMap: \(userInteractedWithMap)")
+            guard !userInteractedWithMap else {
+                print("🎬 [INTRO ANIMATION] ❌ BLOCKED: User interacted, skipping phase 3")
+                return // Skip if user interacted
+            }
             
             // v1.9.13: Animate transition to user location smoothly
             withAnimation(verySlowAnimation) {
+                print("🎬 [INTRO ANIMATION] ✅ Setting introPhase to .followingUser")
                 introPhase = .followingUser
                 
                 // Set initial active zoom state
@@ -846,13 +899,18 @@ struct EmbeddedWalkMapView: View {
                 if let currentLocation = viewModel.locationService.currentLocation {
                     let heading: CLLocationDirection = {
                         if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
+                            print("🎬 [INTRO ANIMATION] Using trueHeading: \(trueHeading)°")
                             return trueHeading
                         } else if currentLocation.course >= 0 {
+                            print("🎬 [INTRO ANIMATION] Using location.course: \(currentLocation.course)°")
                             return currentLocation.course
                         } else {
+                            print("🎬 [INTRO ANIMATION] ⚠️ No heading available, using 0°")
                             return 0
                         }
                     }()
+                    
+                    print("🎬 [INTRO ANIMATION] Setting initial camera: location=(\(currentLocation.coordinate.latitude), \(currentLocation.coordinate.longitude)), heading=\(heading)°, zoom=150m")
                     
                     let newCamera = MapCamera(
                         centerCoordinate: currentLocation.coordinate,
@@ -863,6 +921,8 @@ struct EmbeddedWalkMapView: View {
                     currentCameraState = newCamera
                     isProgrammaticCameraUpdate = true
                     cameraPosition = .camera(newCamera)
+                    
+                    print("🎬 [INTRO ANIMATION] ✅ Camera initialized, introPhase is now .followingUser")
                 }
             }
         }
@@ -989,7 +1049,10 @@ struct EmbeddedWalkMapView: View {
     
     // v1.9.13: Start active zoom mode - uses camera with heading for smooth rotation + custom zoom
     private func startActiveZoom() {
+        print("🎯 [ACTIVE ZOOM] startActiveZoom called")
+        
         guard let currentLocation = viewModel.locationService.currentLocation else {
+            print("🎯 [ACTIVE ZOOM] ❌ No location, using fallback userLocation")
             // Fallback to default if no location
             cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
             return
@@ -999,13 +1062,18 @@ struct EmbeddedWalkMapView: View {
         // Get heading from location service or location course
         let heading: CLLocationDirection = {
             if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
+                print("🎯 [ACTIVE ZOOM] Using trueHeading: \(trueHeading)°")
                 return trueHeading
             } else if currentLocation.course >= 0 {
+                print("🎯 [ACTIVE ZOOM] Using location.course: \(currentLocation.course)°")
                 return currentLocation.course
             } else {
+                print("🎯 [ACTIVE ZOOM] ⚠️ No heading available, using 0°")
                 return 0
             }
         }()
+        
+        print("🎯 [ACTIVE ZOOM] Setting up camera: location=(\(currentLocation.coordinate.latitude), \(currentLocation.coordinate.longitude)), heading=\(heading)°, zoom=\(currentZoomLevel)m")
         
         // Use camera with heading for smooth rotation + custom zoom
         // Set without animation initially for immediate response
@@ -1018,6 +1086,8 @@ struct EmbeddedWalkMapView: View {
         currentCameraState = newCamera
         isProgrammaticCameraUpdate = true
         cameraPosition = .camera(newCamera)
+        
+        print("🎯 [ACTIVE ZOOM] ✅ Camera initialized with heading \(heading)°")
     }
     
     // v1.9.13: Update active zoom based on distance to next waypoint
@@ -1106,44 +1176,88 @@ struct EmbeddedWalkMapView: View {
         }
     }
     
+    // v1.9.13: Unified camera update function that handles both location and heading
+    // This ensures updates happen reliably and camera state is always initialized
+    // Updates smoothly without throttling to prevent stuttering
+    // When approaching a turn, still follows user but may use different zoom
+    private func updateCamera(location: CLLocationCoordinate2D, heading: CLLocationDirection? = nil) {
+        // Get current heading - prefer provided heading, then location service heading, then existing camera heading
+        let targetHeading: CLLocationDirection = {
+            if let providedHeading = heading, providedHeading >= 0 {
+                return providedHeading
+            } else if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
+                return trueHeading
+            } else if let location = viewModel.locationService.currentLocation, location.course >= 0 {
+                return location.course
+            } else if let existingCamera = currentCameraState {
+                return existingCamera.heading
+            } else {
+                return 0
+            }
+        }()
+        
+        // Get distance from existing camera or use current zoom level
+        // When approaching turn, use closer zoom (100m) for better visibility
+        let existingCamera = currentCameraState
+        let baseDistance = existingCamera?.distance ?? currentZoomLevel
+        let distance = isApproachingTurn ? min(baseDistance, 100.0) : baseDistance
+        
+        // Calculate changes for smooth animation decision
+        let existingHeading = existingCamera?.heading ?? 0
+        let headingDiff = abs(targetHeading - existingHeading)
+        
+        // Normalize heading difference (handle 360° wrap-around)
+        let normalizedHeadingDiff = min(headingDiff, 360 - headingDiff)
+        
+        // Calculate location change distance
+        let locationChange: Double = {
+            guard let existing = existingCamera else { return 100 } // Large value to force update
+            let latDiff = existing.centerCoordinate.latitude - location.latitude
+            let lonDiff = existing.centerCoordinate.longitude - location.longitude
+            // Rough conversion: 1 degree ≈ 111km, so 0.0001° ≈ 11m
+            return sqrt(latDiff * latDiff + lonDiff * lonDiff) * 111000 // Convert to meters
+        }()
+        
+        // Create new camera instance - always follow user location
+        let camera = MapCamera(
+            centerCoordinate: location,
+            distance: distance,
+            heading: targetHeading,
+            pitch: existingCamera?.pitch ?? 0
+        )
+        
+        // Update camera state
+        currentCameraState = camera
+        isProgrammaticCameraUpdate = true
+        
+        // Update strategy:
+        // - No animation for small, frequent changes (smooth and responsive)
+        // - Short animation only for larger changes (prevents jumps)
+        // - Always update to follow user, even when approaching turn
+        if normalizedHeadingDiff > 15 || locationChange > 20 {
+            // Large change: use very short animation to smooth the jump
+            withAnimation(.linear(duration: 0.08)) {
+                cameraPosition = .camera(camera)
+            }
+        } else {
+            // Small change: update instantly for smooth following
+            cameraPosition = .camera(camera)
+        }
+    }
+    
     // v1.9.13: Helper to update camera center smoothly
     private func updateCameraCenter(to coordinate: CLLocationCoordinate2D) {
-        guard let camera = currentCameraState else { return }
-        
-        // Update center coordinate smoothly without changing zoom/heading
-        let newCamera = MapCamera(
-            centerCoordinate: coordinate,
-            distance: camera.distance,
-            heading: camera.heading,
-            pitch: camera.pitch
-        )
-        currentCameraState = newCamera
-        isProgrammaticCameraUpdate = true
-        withAnimation(.linear(duration: 0.5)) {
-            cameraPosition = .camera(newCamera)
-        }
+        updateCamera(location: coordinate)
     }
     
     // v1.9.13: Helper to update camera heading smoothly
     private func updateCameraHeading(to heading: CLLocationDirection, at coordinate: CLLocationCoordinate2D) {
-        guard let camera = currentCameraState else { return }
-        
-        // Update heading smoothly without changing zoom/position
-        let newCamera = MapCamera(
-            centerCoordinate: coordinate,
-            distance: camera.distance,
-            heading: heading,
-            pitch: camera.pitch
-        )
-        currentCameraState = newCamera
-        isProgrammaticCameraUpdate = true
-        withAnimation(.linear(duration: 0.3)) {
-            cameraPosition = .camera(newCamera)
-        }
+        updateCamera(location: coordinate, heading: heading)
     }
     
     // v1.9.13: Handle user map interaction - disable auto-follow temporarily
     private func handleMapInteraction() {
+        print("👆 [MAP INTERACTION] User interacted with map - disabling auto-follow")
         // Set interaction flag to disable auto-follow/auto-zoom
         userInteractedWithMap = true
         
@@ -1188,9 +1302,17 @@ struct EmbeddedWalkMapView: View {
     
     // v1.9.13: Resume auto-follow and auto-zoom after user interaction with smooth animation
     private func resumeAutoFollow() {
-        guard introPhase == .followingUser,
-              let currentLocation = viewModel.locationService.currentLocation else { return }
+        print("🔄 [RESUME AUTO-FOLLOW] resumeAutoFollow called")
+        print("🔄 [RESUME AUTO-FOLLOW] introPhase: \(introPhase.rawValue), followingUser: \(introPhase == .followingUser)")
+        print("🔄 [RESUME AUTO-FOLLOW] currentLocation: \(viewModel.locationService.currentLocation != nil ? "available" : "nil")")
         
+        guard introPhase == .followingUser,
+              let currentLocation = viewModel.locationService.currentLocation else {
+            print("🔄 [RESUME AUTO-FOLLOW] ❌ BLOCKED: introPhase != .followingUser or no location")
+            return
+        }
+        
+        print("🔄 [RESUME AUTO-FOLLOW] ✅ Resuming auto-follow")
         // Clear interaction flag and location tracking
         userInteractedWithMap = false
         lastLocationWhenInteracted = nil
@@ -1198,15 +1320,21 @@ struct EmbeddedWalkMapView: View {
         // Get current heading
         let heading: CLLocationDirection = {
             if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
+                print("🔄 [RESUME AUTO-FOLLOW] Using trueHeading: \(trueHeading)°")
                 return trueHeading
             } else if currentLocation.course >= 0 {
+                print("🔄 [RESUME AUTO-FOLLOW] Using location.course: \(currentLocation.course)°")
                 return currentLocation.course
             } else if let camera = currentCameraState {
+                print("🔄 [RESUME AUTO-FOLLOW] Using existing camera heading: \(camera.heading)°")
                 return camera.heading
             } else {
+                print("🔄 [RESUME AUTO-FOLLOW] ⚠️ No heading available, using 0°")
                 return 0
             }
         }()
+        
+        print("🔄 [RESUME AUTO-FOLLOW] Setting camera: location=(\(currentLocation.coordinate.latitude), \(currentLocation.coordinate.longitude)), heading=\(heading)°, zoom=\(currentZoomLevel)m")
         
         // Smoothly animate back to user location with camera follow, zoom, and heading
         let newCamera = MapCamera(
@@ -1222,6 +1350,8 @@ struct EmbeddedWalkMapView: View {
         withAnimation(.easeInOut(duration: 1.5)) {
             cameraPosition = .camera(newCamera)
         }
+        
+        print("🔄 [RESUME AUTO-FOLLOW] ✅ Camera resumed with heading \(heading)°")
         
         // Clear timer
         autoFollowResumeTimer?.invalidate()
@@ -2123,9 +2253,10 @@ struct CompactStatusRing: View {
         !hasClinicianSelected && shouldAlternate
     }
     
-    /// v1.6.45: Hide pill entirely when no clinic and steps already enabled
+    /// v1.9.18: Always show the pill during active walk (shows walk time remaining)
+    /// Previously hid when no clinic + steps enabled, but users want to see time remaining
     private var shouldHidePill: Bool {
-        !hasClinicianSelected && !shouldAlternate
+        false  // Always show the pill
     }
     
     var body: some View {

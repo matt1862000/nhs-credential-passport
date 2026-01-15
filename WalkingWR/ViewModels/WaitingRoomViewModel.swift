@@ -54,6 +54,10 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var cachedReturnRoutePolyline: [CLLocationCoordinate2D] = []
     @Published var hasCachedReturnRoute: Bool = false
     
+    // v1.9.17: Walking alerts control
+    @Published var walkingAlertsEnabled: Bool = true
+    private var alertAutoDismissTimer: Timer?
+    
     // Clinician selection
     @Published var availableClinicians: [Clinician] = []
     @Published var selectedClinician: Clinician?
@@ -140,9 +144,10 @@ class WaitingRoomViewModel: ObservableObject {
                 DispatchQueue.global(qos: .utility).async {
                     Messaging.messaging().subscribe(toTopic: topic) { error in
                         if let error = error {
-                            print("❌ Error re-subscribing to topic: \(error)")
+                            print("❌ Error re-subscribing to topic: \(error.localizedDescription)")
                         } else {
-                            print("🔔 Re-subscribed to topic on launch: \(topic)")
+                            print("🔔 ✅ Re-subscribed to topic on launch: \(topic)")
+                            print("🔔 Topic subscription confirmed - background notifications should work")
                         }
                     }
                 }
@@ -617,6 +622,9 @@ class WaitingRoomViewModel: ObservableObject {
         // v1.6.28: Reset step tracking flag for new walk
         stepTrackingWasEnabled = false
         
+        // v1.9.17: Reset walking alerts for new walk
+        walkingAlertsEnabled = true
+        
         // Calculate return time (halfway point of route duration)
         let halfwaySeconds = Double(route.durationMinutes * 60) / 2
         walkSession.estimatedReturnTime = Date().addingTimeInterval(halfwaySeconds)
@@ -871,35 +879,64 @@ class WaitingRoomViewModel: ObservableObject {
         if !walkSession.halfwayAlertSent,
            let returnTime = walkSession.estimatedReturnTime,
            Date() >= returnTime {
-            walkSession.halfwayAlertSent = true
-            
-            // Only show in-app alert if NOT coming from a push notification tap
-            if !AppDelegate.cameFromWalkNotification {
-                showHalfwayAlert = true
+            if walkingAlertsEnabled {
+                walkSession.halfwayAlertSent = true
+                
+                // Only show in-app alert if NOT coming from a push notification tap
+                if !AppDelegate.cameFromWalkNotification {
+                    print("🚶 Showing halfway alert (50%)")
+                    showHalfwayAlert = true
+                    startAlertAutoDismissTimer(for: \.showHalfwayAlert)
+                } else {
+                    print("📱 Skipping halfway in-app alert - user came from push notification")
+                }
             } else {
-                print("📱 Skipping halfway in-app alert - user came from push notification")
+                print("🔕 Halfway alert blocked - walkingAlertsEnabled = false")
             }
         }
         
-        // Check for return now point (80%)
-        if !walkSession.returnNowAlertSent && walkSession.progress >= 0.8 && walkSession.progress < 1.0 {
-            walkSession.returnNowAlertSent = true
-            
-            if !AppDelegate.cameFromWalkNotification {
-                showReturnNowAlert = true
-            } else {
-                print("📱 Skipping return now in-app alert - user came from push notification")
+        // Check for return now point (80%) - independent check
+        if walkSession.progress >= 0.8 && walkSession.progress < 1.0 {
+            // Only show if not already shown and alerts are enabled
+            if !walkSession.returnNowAlertSent {
+                if walkingAlertsEnabled {
+                    walkSession.returnNowAlertSent = true
+                    showHalfwayAlert = false // Dismiss halfway alert if it's still showing
+                    cancelAlertAutoDismissTimer() // Cancel previous timer
+                    
+                    if !AppDelegate.cameFromWalkNotification {
+                        print("🚶 Showing return now alert (80%)")
+                        showReturnNowAlert = true
+                        startAlertAutoDismissTimer(for: \.showReturnNowAlert)
+                    } else {
+                        print("📱 Skipping return now in-app alert - user came from push notification")
+                    }
+                } else {
+                    print("🔕 Return now alert blocked - walkingAlertsEnabled = false")
+                }
             }
         }
         
-        // Check if walk is complete (100%)
-        if !walkSession.walkCompleteAlertSent && walkSession.progress >= 1.0 {
-            walkSession.walkCompleteAlertSent = true
-            
-            if !AppDelegate.cameFromWalkNotification {
-                showWalkCompleteAlert = true
-            } else {
-                print("📱 Skipping walk complete in-app alert - user came from push notification")
+        // Check if walk is complete (100%) - independent check
+        if walkSession.progress >= 1.0 {
+            // Only show if not already shown and alerts are enabled
+            if !walkSession.walkCompleteAlertSent {
+                if walkingAlertsEnabled {
+                    walkSession.walkCompleteAlertSent = true
+                    showHalfwayAlert = false // Dismiss previous alerts if they're still showing
+                    showReturnNowAlert = false // Dismiss previous alerts if they're still showing
+                    cancelAlertAutoDismissTimer() // Cancel previous timer
+                    
+                    if !AppDelegate.cameFromWalkNotification {
+                        print("🚶 Showing walk complete alert (100%)")
+                        showWalkCompleteAlert = true
+                        startAlertAutoDismissTimer(for: \.showWalkCompleteAlert)
+                    } else {
+                        print("📱 Skipping walk complete in-app alert - user came from push notification")
+                    }
+                } else {
+                    print("🔕 Walk complete alert blocked - walkingAlertsEnabled = false")
+                }
             }
         }
     }
@@ -1126,9 +1163,10 @@ class WaitingRoomViewModel: ObservableObject {
             DispatchQueue.global(qos: .utility).async {
                 Messaging.messaging().subscribe(toTopic: newTopic) { error in
                     if let error = error {
-                        print("❌ Subscription failed: \(error)")
+                        print("❌ Subscription failed: \(error.localizedDescription)")
                     } else {
                         print("✅ Subscription success: \(newTopic)")
+                        print("🔔 Topic subscription confirmed - background notifications should work")
                     }
                 }
             }
@@ -1319,6 +1357,42 @@ class WaitingRoomViewModel: ObservableObject {
         updateTimer?.invalidate()
         updateTimer = nil
         isSimulatingUpdates = false
+    }
+    
+    // MARK: - Walking Alerts (v1.9.17)
+    func disableWalkingAlerts() {
+        walkingAlertsEnabled = false
+        notificationService.cancelAllWalkingNotifications()
+        cancelAlertAutoDismissTimer()
+        
+        // Dismiss any currently shown alerts
+        showHalfwayAlert = false
+        showReturnNowAlert = false
+        showWalkCompleteAlert = false
+        
+        print("🔕 Walking alerts disabled")
+    }
+    
+    func enableWalkingAlerts() {
+        walkingAlertsEnabled = true
+        print("🔔 Walking alerts enabled")
+    }
+    
+    func cancelAlertAutoDismissTimer() {
+        alertAutoDismissTimer?.invalidate()
+        alertAutoDismissTimer = nil
+    }
+    
+    private func startAlertAutoDismissTimer(for alertKeyPath: WritableKeyPath<WaitingRoomViewModel, Bool>) {
+        cancelAlertAutoDismissTimer()
+        alertAutoDismissTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?[keyPath: alertKeyPath] = false
+                self?.alertAutoDismissTimer = nil
+                print("⏱️ Auto-dismissed alert after 10 seconds")
+            }
+        }
+        RunLoop.current.add(alertAutoDismissTimer!, forMode: .common)
     }
     
     // MARK: - QR Scanning

@@ -1466,7 +1466,7 @@ class GoogleMapsService: ObservableObject {
         print("🌐 GOOGLE NEW PLACES API - Searching \(placeTypesToSearch.count) categories...")
         print("🌐 Categories: \(placeTypesToSearch.joined(separator: ", "))")
         print("🌐 Endpoint: places.googleapis.com/v1/places:searchNearby")
-        print("🌐 Field Mask: places.id, displayName, location, formattedAddress, types (Basic only)")
+        print("🌐 Field Mask: places.id, places.displayName, places.location (Essentials SKU - FREE with $200 credit)")
         print("🌐 API Key present: \(!apiKey.isEmpty), key prefix: \(String(apiKey.prefix(10)))...")
         
         // Search each type in parallel using TaskGroup
@@ -1505,7 +1505,15 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// Search for a single place type using New Places API (Essentials tier - much cheaper!)
-    /// Cost: ~$5/1k requests vs $32/1k with Legacy API
+    /// 
+    /// ⚠️ COST OPTIMIZATION (v1.9.15):
+    /// - Uses Essentials SKU only (places.id, places.displayName, places.location)
+    /// - Removed places.formattedAddress and places.types to avoid Pro SKU charges
+    /// - Pro SKU costs ~$32/1000 requests (£0.025 per request) - was causing £16.87 charges
+    /// - Essentials SKU is FREE with $200 monthly credit
+    /// - To reduce costs further, lower daily quota in Google Cloud Console (APIs & Services > Quotas)
+    /// 
+    /// Cost: Essentials ~$5/1k requests vs Pro $32/1k requests
     private func searchSingleType(
         location: CLLocationCoordinate2D,
         radiusMeters: Int,
@@ -1545,8 +1553,11 @@ class GoogleMapsService: ObservableObject {
         } else {
             bundleIdSent = false
         }
-        // Request only Basic Data fields (FREE tier!) - no rating, no contact info
-        request.setValue("places.id,places.displayName,places.location,places.formattedAddress,places.types", forHTTPHeaderField: "X-Goog-FieldMask")
+        // ⚠️ COST OPTIMIZATION: Use Essentials SKU only (FREE with $200 monthly credit)
+        // Requesting only: places.id, places.displayName, places.location
+        // REMOVED: places.formattedAddress and places.types (trigger Pro SKU at $32/1000 requests)
+        // These fields are optional in PlaceResult, so we can safely omit them
+        request.setValue("places.id,places.displayName,places.location", forHTTPHeaderField: "X-Goog-FieldMask")
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
         let startTime = Date()
@@ -1615,18 +1626,19 @@ class GoogleMapsService: ObservableObject {
         )
         
         // Convert to PlaceResult format
+        // Note: vicinity and types are nil because we're using Essentials SKU (cost optimization)
         return newPlacesResponse.places?.map { place in
             PlaceResult(
                 placeId: place.id ?? "unknown",
                 name: place.displayName?.text ?? "Unknown",
-                vicinity: place.formattedAddress,
+                vicinity: nil, // Not requested (Essentials SKU only - saves ~£0.025 per request)
                 geometry: PlaceGeometry(
                     location: PlaceLocation(
                         lat: place.location?.latitude ?? 0,
                         lng: place.location?.longitude ?? 0
                     )
                 ),
-                types: place.types
+                types: nil // Not requested (Essentials SKU only - saves ~£0.025 per request)
             )
         } ?? []
     }
@@ -4561,7 +4573,7 @@ class GoogleMapsService: ObservableObject {
         var minWaypointsForTier: Int
         
         switch targetDurationMinutes {
-        case 1...10:  // Minimum is 10 min, but handle edge cases
+        case 1...10:  // Handle 5-10 min routes (minimum is 5 min)
             routeMethod = .endpointOnly
             dynamicMaxWaypoints = 2
             minWaypointsForTier = 1
@@ -4766,12 +4778,12 @@ class GoogleMapsService: ObservableObject {
         if targetDurationMinutes <= 7 && nearestPOIDistance > 300 {
             print("🚦 VIABILITY GATE: 5-7min route not possible")
             print("   📏 Nearest POI: \(Int(nearestPOIDistance))m (need ≤300m for round-trip)")
-            print("   💡 Recommending 10-min minimum for this location")
+            print("   💡 Recommending 5-min minimum for this location")
             
             // Set flag so UI can show appropriate message
             await MainActor.run {
                 shortRouteNotViable = true
-                minimumViableMinutes = 10
+                minimumViableMinutes = 5
             }
         } else {
             await MainActor.run {

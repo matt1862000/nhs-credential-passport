@@ -131,10 +131,10 @@ class GeminiService {
             // Create a task with timeout
             let geminiTask = Task {
                 await tryGeminiGeneration(
-                    waypoints: waypoints,
-                    durationMinutes: durationMinutes,
-                    distanceMeters: distanceMeters,
-                    difficulty: difficulty
+                waypoints: waypoints,
+                durationMinutes: durationMinutes,
+                distanceMeters: distanceMeters,
+                difficulty: difficulty
                 )
             }
             
@@ -155,7 +155,7 @@ class GeminiService {
             if elapsed >= 1.0 {
                 print("🤖 Gemini timed out after \(String(format: "%.2f", elapsed))s, using local template")
             } else {
-                print("🤖 Gemini failed, falling back to template")
+            print("🤖 Gemini failed, falling back to template")
             }
         } else {
             print("🤖 No Gemini API key, using template")

@@ -2097,7 +2097,7 @@ struct SettingsView: View {
                 let showDebugTools = false  // v1.9.0: Hidden for TestFlight
                 if showDebugTools {
                     #if DEBUG
-                    SavedBatchTestsSection(locationService: locationService)
+                SavedBatchTestsSection(locationService: locationService)
                     #endif
                 }
             }
@@ -3050,28 +3050,28 @@ struct SavedBatchTestsSection: View {
             } label: {
                 HStack {
                     Image(systemName: isRunningOSMDiagnostic ? "hourglass" : "map.fill")
-                        .foregroundColor(.green)
+                            .foregroundColor(.green)
                     Text(isRunningOSMDiagnostic ? "Running OSM Diagnostic..." : "Test OSM POIs")
                         .foregroundColor(.primary)
+                    }
                 }
-            }
             .disabled(isRunningOSMDiagnostic)
             
             // Test Google POIs button
-            Button {
+                    Button {
                 runGooglePOIDiagnostic()
-            } label: {
-                HStack {
+                    } label: {
+                        HStack {
                     Image(systemName: isRunningGoogleDiagnostic ? "hourglass" : "g.circle.fill")
-                        .foregroundColor(.blue)
+                                    .foregroundColor(.blue)
                     Text(isRunningGoogleDiagnostic ? "Running Google Diagnostic..." : "Test Google POIs")
-                        .foregroundColor(.primary)
-                }
-            }
+                                .foregroundColor(.primary)
+                        }
+                    }
             .disabled(isRunningGoogleDiagnostic)
-            
+                    
             // Apple POI Diagnostic button
-            Button {
+                        Button {
                 runApplePOIDiagnostic()
             } label: {
                 HStack {
@@ -3086,35 +3086,35 @@ struct SavedBatchTestsSection: View {
             // Batch Test All Durations button
             Button {
                 runBatchDurationTest()
-            } label: {
-                HStack {
+                        } label: {
+                            HStack {
                     Image(systemName: isRunningBatchDurationTest ? "hourglass" : "clock.arrow.2.circlepath")
                         .foregroundColor(.purple)
                     Text(isRunningBatchDurationTest ? "Testing All Durations..." : "Batch Test All Durations")
-                        .foregroundColor(.primary)
+                                        .foregroundColor(.primary)
                     Spacer()
                     Text("10-60 min")
                         .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
+                                        .foregroundColor(.secondary)
+                                }
+                            }
             .disabled(isRunningBatchDurationTest)
             
             // Multi-Site Batch Test button (v1.8.15)
             Button {
                 runMultiSiteBatchTest()
-            } label: {
-                HStack {
+                } label: {
+                    HStack {
                     Image(systemName: isRunningMultiSiteTest ? "hourglass" : "map.fill")
-                        .foregroundColor(.orange)
+                            .foregroundColor(.orange)
                     Text(isRunningMultiSiteTest ? "Testing Multiple Sites..." : "Multi-Site Batch Test")
-                        .foregroundColor(.primary)
+                            .foregroundColor(.primary)
                     Spacer()
                     Text("3 locations")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    }
                 }
-            }
             .disabled(isRunningMultiSiteTest)
             
             // Clear Route Cache button
@@ -3159,7 +3159,7 @@ struct SavedBatchTestsSection: View {
                 } else {
                     ForEach(cacheDetails, id: \.duration) { set in
                         VStack(alignment: .leading, spacing: 4) {
-                            HStack {
+                HStack {
                                 Text("\(set.duration) min")
                                     .font(.headline)
                                     .foregroundColor(.tealAccent)
@@ -3192,7 +3192,7 @@ struct SavedBatchTestsSection: View {
                                         .font(.caption2)
                                         .foregroundColor(.secondary)
                                         .lineLimit(1)
-                                }
+            }
                                 .padding(.leading, 8)
                             }
                         }
@@ -3386,7 +3386,7 @@ struct SavedBatchTestsSection: View {
                 viewState.refresh()
                 // Auto-select the most recent test to show results
                 if let latestTest = viewState.savedTests.first {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         DiagnosticViewState.shared.selectTest(latestTest)
                     }
                 }

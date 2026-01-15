@@ -54,18 +54,24 @@ struct RouteSelectionView: View {
         if let bestOption = presetOptions.reversed().first(where: { $0 <= availableTime }) {
             return bestOption
         }
-        return 10 // Default to minimum if delay is very short
+        return 10 // Default to minimum preset if delay is very short (5 min available via custom)
     }
     
-    // Whether custom time should be auto-selected (delay > 35 min, i.e., 30 min walk + 5 min buffer)
+    // Whether custom time should be auto-selected:
+    // 1. When delay > 35 min (i.e., 30 min walk + 5 min buffer)
+    // 2. When recommended walk is 5 min (not available as preset button)
     // Only applies when a clinic is active - free walk mode uses preset 30 min
     private var shouldUseCustom: Bool {
-        hasActiveClinicDelay && viewModel.waitTimeInfo.estimatedMinutes > 35
+        guard hasActiveClinicDelay else { return false }
+        let delayMinutes = viewModel.waitTimeInfo.estimatedMinutes
+        let recommendedWalk = max(5, delayMinutes - 5)
+        // Use custom if recommended is 5 min (not in presets) or if delay > 35 min
+        return recommendedWalk == 5 || delayMinutes > 35
     }
     
     // Custom duration value based on delay (with 6 min buffer)
     private var customDurationForDelay: Int {
-        max(10, viewModel.waitTimeInfo.estimatedMinutes - 6)
+        max(5, viewModel.waitTimeInfo.estimatedMinutes - 6)
     }
     
     var filteredRoutes: [WalkingRoute] {
@@ -96,105 +102,116 @@ struct RouteSelectionView: View {
         filteredRoutes.filter { $0.routeType == .indoor || $0.isIndoor }
     }
     
-    var body: some View {
+    // MARK: - Main Navigation View
+    private var mainNavigationView: some View {
         NavigationStack {
-            ZStack {
-                AnimatedGradientBackground()
-                
-                if viewModel.walkSession.isActive {
-                    ActiveWalkView(viewModel: viewModel)
-                } else {
-                    ScrollView {
-                        VStack(spacing: 16) {
-                            // Time remaining banner - only show when clinician is selected
-                            if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
-                                TimeRemainingBanner(minutes: viewModel.waitTimeInfo.estimatedMinutes)
-                                    .padding(.top, 20)
-                            } else {
-                                // No clinician selected - show different message
-                                NoClinicianBanner()
-                                    .padding(.top, 20)
-                            }
-                            
-                            // Featured: Local Route (most popular)
-                            LocalRouteCard(
-                                onTap: { showLocalRoutePicker = true },
-                                locationService: viewModel.locationService
-                            )
-                            
-                            // Collapsible sections for other routes
-                            VStack(spacing: 12) {
-                                // Curated Routes Section
-                                if !curatedFilteredRoutes.isEmpty {
-                                    CollapsibleRouteSection(
-                                        title: "Curated Routes",
-                                        subtitle: "\(curatedFilteredRoutes.count) verified walks",
-                                        icon: "checkmark.seal.fill",
-                                        iconColor: .mintGreen,
-                                        routes: curatedFilteredRoutes,
-                                        viewModel: viewModel,
-                                        isRecommended: isRecommended,
-                                        isTooLong: isTooLong
-                                    )
-                                }
-                                
-                                // Indoor Routes Section
-                                if !indoorFilteredRoutes.isEmpty {
-                                    CollapsibleRouteSection(
-                                        title: "Indoor Routes",
-                                        subtitle: "Stay inside the building",
-                                        icon: "building.2.fill",
-                                        iconColor: .lavenderMist,
-                                        routes: indoorFilteredRoutes,
-                                        viewModel: viewModel,
-                                        isRecommended: isRecommended,
-                                        isTooLong: isTooLong
-                                    )
-                                }
-                            }
-                            
-                            // Filters (moved lower, less prominent)
-                            RouteFiltersCompact(
-                                selectedDifficulty: $selectedDifficulty,
-                                showIndoorOnly: $showIndoorOnly,
-                                showAccessibleOnly: $showAccessibleOnly
-                            )
-                            
-                            Spacer(minLength: 100)
+            mainContent
+                .navigationTitle(viewModel.walkSession.isActive ? "" : "Choose a Route")
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(viewModel.walkSession.isActive ? .inline : .large)
+                .navigationBarHidden(viewModel.walkSession.isActive)
+                .toolbarColorScheme(.dark, for: .navigationBar)
+                #endif
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: { showHelpSheet = true }) {
+                            Image(systemName: "hand.raised.fill")
+                                .foregroundColor(.coralPink)
                         }
-                        .padding(.horizontal, 20)
                     }
                 }
+        }
+    }
+    
+    private var mainContent: some View {
+        ZStack {
+            AnimatedGradientBackground()
+            
+            if viewModel.walkSession.isActive {
+                ActiveWalkView(viewModel: viewModel)
+            } else {
+                routeListContent
             }
-            .navigationTitle(viewModel.walkSession.isActive ? "" : "Choose a Route")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(viewModel.walkSession.isActive ? .inline : .large)
-            .navigationBarHidden(viewModel.walkSession.isActive)
-            .toolbarColorScheme(.dark, for: .navigationBar)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: { showHelpSheet = true }) {
-                        Image(systemName: "hand.raised.fill")
-                            .foregroundColor(.coralPink)
-                    }
-                }
+        }
+    }
+    
+    private var routeListContent: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                bannerView
+                
+                LocalRouteCard(
+                    onTap: { showLocalRoutePicker = true },
+                    locationService: viewModel.locationService
+                )
+                
+                routeSections
+                
+                RouteFiltersCompact(
+                    selectedDifficulty: $selectedDifficulty,
+                    showIndoorOnly: $showIndoorOnly,
+                    showAccessibleOnly: $showAccessibleOnly
+                )
+                
+                Spacer(minLength: 100)
             }
-            .sheet(isPresented: $showHelpSheet) {
-                HelpView()
-            }
-            .sheet(isPresented: $showLocalRoutePicker, onDismiss: {
-                pendingBatchTest = .none  // Clear pending test when sheet closes
-            }) {
-                LocalRoutePickerSheet(
+            .padding(.horizontal, 20)
+        }
+    }
+    
+    @ViewBuilder
+    private var bannerView: some View {
+        if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
+            TimeRemainingBanner(minutes: viewModel.waitTimeInfo.estimatedMinutes)
+                .padding(.top, 20)
+        } else {
+            NoClinicianBanner()
+                .padding(.top, 20)
+        }
+    }
+    
+    private var routeSections: some View {
+        VStack(spacing: 12) {
+            if !curatedFilteredRoutes.isEmpty {
+                CollapsibleRouteSection(
+                    title: "Curated Routes",
+                    subtitle: "\(curatedFilteredRoutes.count) verified walks",
+                    icon: "checkmark.seal.fill",
+                    iconColor: .mintGreen,
+                    routes: curatedFilteredRoutes,
                     viewModel: viewModel,
-                    locationService: viewModel.locationService,
-                    selectedDuration: $localRouteDuration,
-                    useCustomTime: $localRouteUseCustom,
-                    isPresented: $showLocalRoutePicker,
-                    pendingBatchTest: $pendingBatchTest  // v1.6.45: Pass pending test
+                    isRecommended: isRecommended,
+                    isTooLong: isTooLong
                 )
             }
+            
+            if !indoorFilteredRoutes.isEmpty {
+                CollapsibleRouteSection(
+                    title: "Indoor Routes",
+                    subtitle: "Stay inside the building",
+                    icon: "building.2.fill",
+                    iconColor: .lavenderMist,
+                    routes: indoorFilteredRoutes,
+                    viewModel: viewModel,
+                    isRecommended: isRecommended,
+                    isTooLong: isTooLong
+                )
+            }
+        }
+    }
+    
+    var body: some View {
+        mainNavigationView
+            .addSheets(
+                showHelpSheet: $showHelpSheet,
+                showLocalRoutePicker: $showLocalRoutePicker,
+                viewModel: viewModel,
+                locationService: viewModel.locationService,
+                localRouteDuration: $localRouteDuration,
+                localRouteUseCustom: $localRouteUseCustom,
+                pendingBatchTest: $pendingBatchTest
+            )
+            .addAlerts(viewModel: viewModel)
             .onChange(of: showLocalRoutePicker) { _, isShowing in
                 if isShowing {
                     // Pre-select duration based on delay time
@@ -206,63 +223,6 @@ struct RouteSelectionView: View {
                         localRouteDuration = recommendedDuration
                     }
                 }
-            }
-            .sheet(isPresented: $viewModel.showMarkerArrivalPrompt) {
-                MarkerArrivalSheet(viewModel: viewModel)
-            }
-            .sheet(isPresented: $viewModel.showHomeArrivalPrompt) {
-                HomeArrivalSheet(viewModel: viewModel)
-            }
-            .sheet(isPresented: $viewModel.showPreWalkWellbeing) {
-                AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPreWalkWellbeing, isPostWalk: false)
-            }
-            .sheet(isPresented: $viewModel.showPostWalkWellbeing, onDismiss: {
-                // v1.6.28: Show HealthKit sync offer after post-walk wellbeing
-                // Only if:
-                // - Motion permission was granted (user opted into step tracking)
-                // - HealthKit is not already authorized
-                // - User hasn't previously declined the offer
-                let hasDeclinedOffer = UserDefaults.standard.bool(forKey: "healthKitSyncOfferDeclined")
-                print("🏥 Post-walk wellbeing dismissed - checking HealthKit offer conditions:")
-                print("🏥   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
-                print("🏥   isAuthorized: \(viewModel.healthKitService.isAuthorized)")
-                print("🏥   hasDeclinedOffer: \(hasDeclinedOffer)")
-                print("🏥   stepTrackingAutoEnabled (UserDefaults): \(UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled"))")
-                
-                if viewModel.stepTrackingWasEnabled && !viewModel.healthKitService.isAuthorized && !hasDeclinedOffer {
-                    print("🏥   ✅ All conditions met - showing HealthKit offer")
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        viewModel.showHealthKitSyncOffer = true
-                    }
-                } else {
-                    print("🏥   ❌ Conditions not met - NOT showing HealthKit offer")
-                }
-            }) {
-                AnxietyCheckSheet(viewModel: viewModel, isPresented: $viewModel.showPostWalkWellbeing, isPostWalk: true, isWalkActivity: true)
-            }
-            // v1.6.28: HealthKit sync offer (after post-walk wellbeing, if Motion was granted)
-            .sheet(isPresented: $viewModel.showHealthKitSyncOffer) {
-                HealthKitSyncOfferSheet(
-                    healthKitService: viewModel.healthKitService,
-                    isPresented: $viewModel.showHealthKitSyncOffer
-                )
-            }
-            .alert("Halfway Point! 🚶", isPresented: $viewModel.showHalfwayAlert) {
-                Button("Got it") { }
-            } message: {
-                Text("You've completed half your walk. Check your clinic delay and consider heading back.")
-            }
-            .alert("Time to Head Back 🏥", isPresented: $viewModel.showReturnNowAlert) {
-                Button("Got it") { }
-            } message: {
-                Text("You've completed 80% of your walk. Consider heading back to the clinic.")
-            }
-            .alert("Walk Complete! 🎉", isPresented: $viewModel.showWalkCompleteAlert) {
-                Button("End Walk") {
-                    viewModel.endWalk(completed: true)
-                }
-            } message: {
-                Text("Great job completing your walk! Head back to the waiting area when ready.")
             }
             // v1.6.45: Listen for INTERNAL batch test notifications (after MainTabView switches tabs)
             .onReceive(NotificationCenter.default.publisher(for: .runBatchTestInternal)) { _ in
@@ -279,7 +239,6 @@ struct RouteSelectionView: View {
                     pendingBatchTest = .singleLocation(name: name, lat: lat, lon: lon)
                     showLocalRoutePicker = true
                 }
-            }
             }
     }
     
@@ -421,7 +380,7 @@ struct LocalRouteCard: View {
                 HStack(spacing: 16) {
                     FeatureTag(icon: "building.2", text: "Real POIs")
                     FeatureTag(icon: "road.lanes", text: "Walking paths")
-                    FeatureTag(icon: "clock", text: "10-60 min")
+                    FeatureTag(icon: "clock", text: "5-60 min")
                 }
                 
                 // Status and action
@@ -971,7 +930,7 @@ struct LocalRoutePickerSheet: View {
     @State private var generatedRouteData: GeneratedRoute?
     @State private var showMapPreview = false
     @State private var errorMessage: String?
-    @State private var customTimeValue: Double = 10  // Minimum walk duration is 10 minutes
+    @State private var customTimeValue: Double = 5  // Minimum walk duration is 5 minutes
     
     
     // Store last valid route for recycling when shuffle exhausts options
@@ -1056,7 +1015,7 @@ struct LocalRoutePickerSheet: View {
                                 // Recommendation card based on delay
                                 if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
                                     let delayMinutes = viewModel.waitTimeInfo.estimatedMinutes
-                                    let recommendedWalk = max(10, delayMinutes - 5)
+                                    let recommendedWalk = max(5, delayMinutes - 5)
                                     
                                     HStack(spacing: 12) {
                                         Image(systemName: "clock.badge.checkmark")
@@ -1128,20 +1087,20 @@ struct LocalRoutePickerSheet: View {
                                     }
                                 }
                                 
-                                // Custom time slider
-                                if useCustomTime {
-                                    let delayTime = viewModel.waitTimeInfo.estimatedMinutes
-                                    let selectedTime = Int(customTimeValue)
-                                    let isOverTime = selectedTime >= delayTime
-                                    let isCloseToTime = selectedTime >= delayTime - 5 && selectedTime < delayTime
-                                    
-                                    let sliderColor: Color = {
-                                        if isOverTime { return .coralPink }
-                                        if isCloseToTime { return .softAmber }
-                                        return .tealAccent
-                                    }()
-                                    
-                                    VStack(spacing: 8) {
+                            // Custom time slider
+                            if useCustomTime {
+                                let delayTime = viewModel.waitTimeInfo.estimatedMinutes
+                                let selectedTime = Int(customTimeValue)
+                                let isOverTime = selectedTime >= delayTime
+                                let isCloseToTime = selectedTime >= delayTime - 5 && selectedTime < delayTime
+                                
+                                let sliderColor: Color = {
+                                    if isOverTime { return .coralPink }
+                                    if isCloseToTime { return .softAmber }
+                                    return .tealAccent
+                                }()
+                                
+                                VStack(spacing: 8) {
                                         HStack {
                                             Text("\(selectedTime) minutes")
                                                 .font(.titleMedium)
@@ -1155,14 +1114,14 @@ struct LocalRoutePickerSheet: View {
                                                 .foregroundColor(.secondary)
                                         }
                                         
-                                        Slider(value: $customTimeValue, in: 10...60, step: 5)
+                                        Slider(value: $customTimeValue, in: 5...60, step: 5)
                                             .tint(sliderColor)
                                             .onChange(of: customTimeValue) { _, newValue in
                                                 selectedDuration = Int(newValue)
                                             }
                                         
                                         HStack {
-                                            Text("10 min")
+                                            Text("5 min")
                                                 .font(.caption2)
                                                 .foregroundColor(.secondary)
                                             Spacer()
@@ -1199,6 +1158,18 @@ struct LocalRoutePickerSheet: View {
                                         }
                                     }
                                     .padding(.top, 8)
+                                    .onAppear {
+                                        // Sync customTimeValue with selectedDuration when custom is selected
+                                        if customTimeValue != Double(selectedDuration) {
+                                            customTimeValue = Double(selectedDuration)
+                                        }
+                                    }
+                                }
+                            }
+                            .onChange(of: selectedDuration) { _, newValue in
+                                // Sync customTimeValue when selectedDuration changes and custom is active
+                                if useCustomTime && customTimeValue != Double(newValue) {
+                                    customTimeValue = Double(newValue)
                                 }
                             }
                             .padding(20)
@@ -3069,7 +3040,7 @@ struct LocalRoutePickerSheet: View {
         // Preset buttons users see first (most likely choices)
         let presetDurations = [10, 15, 20, 25, 30]
         // Custom/less common durations (fill in after)
-        let gapDurations = [45, 60]  // Removed 5 - minimum is now 10 min
+        let gapDurations = [45, 60]
         
         // v1.6.33: Prioritize preset buttons first (adjacent ones at top), then gaps
         let presetOthers = presetDurations.filter { $0 != currentDuration }
@@ -3581,7 +3552,7 @@ struct LocalRoutePickerSheet: View {
     
     /// Run test for a single location and return summary stats
     func runSingleLocationTest(coordinate: CLLocationCoordinate2D, name: String) async -> (avgAccuracy: Double, validRate: Double, avgSpeed: Double, poiCount: Int) {
-        let durations = stride(from: 10, through: 60, by: 5).map { $0 }  // v1.6.38: Start at 10min (no 5min)
+        let durations = stride(from: 5, through: 60, by: 5).map { $0 }  // v1.9.18: Start at 5min
         let maxRoutesPerDuration = 5
         var allResults: [(accuracy: Double, time: Double, isValid: Bool)] = []
         var poiCount = 0
@@ -3792,7 +3763,7 @@ struct LocalRoutePickerSheet: View {
         routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         
         Task {
-            let durations = stride(from: 10, through: 60, by: 5).map { $0 }  // v1.6.38: Start at 10min (no 5min)
+            let durations = stride(from: 5, through: 60, by: 5).map { $0 }  // v1.9.18: Start at 5min
             let maxRoutesPerDuration = 5  // Try to generate up to 5 routes per duration
             var allResults: [(duration: Int, routeNum: Int, actual: Int, time: Double, accuracy: Double, status: String, waypoints: Int, distance: Int, routeKey: String, waypointNames: [String])] = []
             var seenRouteKeys = Set<String>()  // Track unique routes globally
@@ -5693,7 +5664,7 @@ struct ActiveWalkView: View {
                         showAllDirections: $showAllDirections,
                         delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
                         walkDurationMinutes: route.durationMinutes,
-                        hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable,
+                        hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable && !viewModel.isClinicEnded && viewModel.waitTimeInfo.clinicianName != "Select your clinician",
                         distanceWalked: Int(viewModel.locationService.distanceWalked),
                         halfwayAlert: viewModel.walkSession.halfwayAlertSent
                     )
@@ -5902,26 +5873,17 @@ struct WalkingDirectionsBanner: View {
                     
                     Spacer()
                     
-                    // Static clinic delay OR walk duration (if no clinician selected)
-                    VStack(alignment: .trailing, spacing: 0) {
-                        if hasClinicianSelected {
+                    // Static clinic delay (only show if clinician selected, otherwise blank)
+                    if hasClinicianSelected {
+                        VStack(alignment: .trailing, spacing: 0) {
                             Text("\(delayMinutes)")
-                            .font(.title3)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                            .monospacedDigit()
-                            Text("mins delay")
-                                .font(.caption2)
-                                .foregroundColor(.white.opacity(0.7))
-                        } else {
-                            Text("\(walkDurationMinutes)")
                                 .font(.title3)
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
                                 .monospacedDigit()
-                            Text("min walk")
-                            .font(.caption2)
-                            .foregroundColor(.white.opacity(0.7))
+                            Text("mins delay")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.7))
                         }
                     }
                     
@@ -5987,7 +5949,7 @@ struct ExpandedDirectionsList: View {
             }
         }
         
-        // Also check for comma-separated instructions (common pattern)
+            // Also check for comma-separated instructions (common pattern)
         if let commaIndex = instruction.firstIndex(of: ",") {
             let beforeComma = String(instruction[..<commaIndex]).trimmingCharacters(in: .whitespaces)
             let afterComma = String(instruction[instruction.index(after: commaIndex)...])
@@ -7405,6 +7367,127 @@ struct RouteExplorationLoadingView: View {
             }
         }
         orbit()
+    }
+}
+
+// MARK: - View Extensions for Modifiers
+extension View {
+    @ViewBuilder
+    func addSheets(
+        showHelpSheet: Binding<Bool>,
+        showLocalRoutePicker: Binding<Bool>,
+        viewModel: WaitingRoomViewModel,
+        locationService: LocationService,
+        localRouteDuration: Binding<Int>,
+        localRouteUseCustom: Binding<Bool>,
+        pendingBatchTest: Binding<PendingBatchTest>
+    ) -> some View {
+        self
+            .sheet(isPresented: showHelpSheet) {
+                HelpView()
+            }
+            .sheet(isPresented: showLocalRoutePicker, onDismiss: {
+                pendingBatchTest.wrappedValue = .none
+            }) {
+                LocalRoutePickerSheet(
+                    viewModel: viewModel,
+                    locationService: locationService,
+                    selectedDuration: localRouteDuration,
+                    useCustomTime: localRouteUseCustom,
+                    isPresented: showLocalRoutePicker,
+                    pendingBatchTest: pendingBatchTest
+                )
+            }
+            .sheet(isPresented: Binding(
+                get: { viewModel.showMarkerArrivalPrompt },
+                set: { viewModel.showMarkerArrivalPrompt = $0 }
+            )) {
+                MarkerArrivalSheet(viewModel: viewModel)
+            }
+            .sheet(isPresented: Binding(
+                get: { viewModel.showHomeArrivalPrompt },
+                set: { viewModel.showHomeArrivalPrompt = $0 }
+            )) {
+                HomeArrivalSheet(viewModel: viewModel)
+            }
+            .sheet(isPresented: Binding(
+                get: { viewModel.showPreWalkWellbeing },
+                set: { viewModel.showPreWalkWellbeing = $0 }
+            )) {
+                AnxietyCheckSheet(viewModel: viewModel, isPresented: Binding(
+                    get: { viewModel.showPreWalkWellbeing },
+                    set: { viewModel.showPreWalkWellbeing = $0 }
+                ), isPostWalk: false)
+            }
+            .sheet(isPresented: Binding(
+                get: { viewModel.showPostWalkWellbeing },
+                set: { viewModel.showPostWalkWellbeing = $0 }
+            ), onDismiss: {
+                let hasDeclinedOffer = UserDefaults.standard.bool(forKey: "healthKitSyncOfferDeclined")
+                if viewModel.stepTrackingWasEnabled && !viewModel.healthKitService.isAuthorized && !hasDeclinedOffer {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        viewModel.showHealthKitSyncOffer = true
+                    }
+                }
+            }) {
+                AnxietyCheckSheet(viewModel: viewModel, isPresented: Binding(
+                    get: { viewModel.showPostWalkWellbeing },
+                    set: { viewModel.showPostWalkWellbeing = $0 }
+                ), isPostWalk: true, isWalkActivity: true)
+            }
+            .sheet(isPresented: Binding(
+                get: { viewModel.showHealthKitSyncOffer },
+                set: { viewModel.showHealthKitSyncOffer = $0 }
+            )) {
+                HealthKitSyncOfferSheet(
+                    healthKitService: viewModel.healthKitService,
+                    isPresented: Binding(
+                        get: { viewModel.showHealthKitSyncOffer },
+                        set: { viewModel.showHealthKitSyncOffer = $0 }
+                    )
+                )
+            }
+    }
+    
+    func addAlerts(viewModel: WaitingRoomViewModel) -> some View {
+        self
+            .alert("Halfway Point! 🚶", isPresented: Binding(
+                get: { viewModel.showHalfwayAlert },
+                set: { viewModel.showHalfwayAlert = $0 }
+            )) {
+                Button("Stop Alerts", role: .destructive) {
+                    viewModel.disableWalkingAlerts()
+                }
+                Button("OK", role: .cancel) {
+                    viewModel.cancelAlertAutoDismissTimer()
+                }
+            } message: {
+                Text("You've completed half your walk. Check your clinic delay and consider heading back.")
+            }
+            .alert("Time to Head Back 🏥", isPresented: Binding(
+                get: { viewModel.showReturnNowAlert },
+                set: { viewModel.showReturnNowAlert = $0 }
+            )) {
+                Button("Stop Alerts", role: .destructive) {
+                    viewModel.disableWalkingAlerts()
+                }
+                Button("OK", role: .cancel) {
+                    viewModel.cancelAlertAutoDismissTimer()
+                }
+            } message: {
+                Text("You've completed 80% of your walk. Consider heading back to the clinic.")
+            }
+            .alert("Walk Complete! 🎉", isPresented: Binding(
+                get: { viewModel.showWalkCompleteAlert },
+                set: { viewModel.showWalkCompleteAlert = $0 }
+            )) {
+                Button("End & Save Progress", role: .cancel) {
+                    viewModel.cancelAlertAutoDismissTimer()
+                    viewModel.endWalk(completed: true)
+                }
+            } message: {
+                Text("Great job completing your walk! Head back to the waiting area when ready.")
+            }
     }
 }
 

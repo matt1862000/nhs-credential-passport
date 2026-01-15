@@ -678,77 +678,77 @@ struct SingleBreathingExerciseView: View {
     
     var body: some View {
         // No local background - parent sheet provides the gradient
-        VStack(spacing: 24) {
-            Spacer()
-                .frame(height: 20)
-                
-                // Dynamic instruction text above circle (hidden in ready state)
-                if breathPhase != .ready {
-                    VStack(spacing: 8) {
-                        Text(currentInstruction)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .foregroundColor(.primary)
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(minHeight: 60)
-                            .padding(.horizontal, 20)
-                            .id(currentInstruction)
-                            .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                            .animation(.easeInOut(duration: 0.3), value: currentInstruction)
-                    }
-                } else {
-                    Spacer().frame(height: 60)
-                }
-                
-                // Breathing circle with progress ring and countdown
-                ZStack {
-                    // Background ring
-                    Circle()
-                        .stroke(Color.lavenderMist.opacity(0.2), lineWidth: 8)
-                        .frame(width: 240, height: 240)
+                VStack(spacing: 24) {
+                    Spacer()
+                        .frame(height: 20)
                     
-                    // Progress ring
-                    if isActive && breathPhase != .complete && breathPhase != .ready {
-                        Circle()
-                            .trim(from: 0, to: phaseProgress)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [Color.lavenderMist, Color.lavenderMist.opacity(0.6)],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                ),
-                                style: StrokeStyle(lineWidth: 8, lineCap: .round)
-                            )
-                            .frame(width: 240, height: 240)
-                            .rotationEffect(.degrees(-90))
-                            .animation(.linear(duration: 0.1), value: phaseProgress)
-                    }
-                    
-                    // Animated breathing circle
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [Color.lavenderMist.opacity(0.6), Color.lavenderMist.opacity(0.2)],
-                                center: .center,
-                                startRadius: 0,
-                                endRadius: 120
-                            )
-                        )
-                        .frame(width: 200, height: 200)
-                        .scaleEffect(circleScale)
-                    
-                    // Center content
-                    if breathPhase == .ready && !isCountingDown {
-                        // Tap hint
+                    // Dynamic instruction text above circle (hidden in ready state)
+                    if breathPhase != .ready {
                         VStack(spacing: 8) {
-                            Image(systemName: "hand.tap.fill")
-                                .font(.system(size: 40))
-                                .foregroundColor(.primary.opacity(0.6))
-                            Text("Tap to begin")
-                                .font(.callout)
-                                .foregroundColor(.primary.opacity(0.6))
+                            Text(currentInstruction)
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(minHeight: 60)
+                                .padding(.horizontal, 20)
+                                .id(currentInstruction)
+                                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                                .animation(.easeInOut(duration: 0.3), value: currentInstruction)
                         }
+                    } else {
+                        Spacer().frame(height: 60)
+                    }
+                    
+                    // Breathing circle with progress ring and countdown
+                    ZStack {
+                        // Background ring
+                        Circle()
+                            .stroke(Color.lavenderMist.opacity(0.2), lineWidth: 8)
+                            .frame(width: 240, height: 240)
+                        
+                        // Progress ring
+                        if isActive && breathPhase != .complete && breathPhase != .ready {
+                            Circle()
+                                .trim(from: 0, to: phaseProgress)
+                                .stroke(
+                                    LinearGradient(
+                                        colors: [Color.lavenderMist, Color.lavenderMist.opacity(0.6)],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    ),
+                                    style: StrokeStyle(lineWidth: 8, lineCap: .round)
+                                )
+                                .frame(width: 240, height: 240)
+                                .rotationEffect(.degrees(-90))
+                                .animation(.linear(duration: 0.1), value: phaseProgress)
+                        }
+                        
+                        // Animated breathing circle
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [Color.lavenderMist.opacity(0.6), Color.lavenderMist.opacity(0.2)],
+                                    center: .center,
+                                    startRadius: 0,
+                                    endRadius: 120
+                                )
+                            )
+                            .frame(width: 200, height: 200)
+                            .scaleEffect(circleScale)
+                        
+                        // Center content
+                    if breathPhase == .ready && !isCountingDown {
+                            // Tap hint
+                            VStack(spacing: 8) {
+                                Image(systemName: "hand.tap.fill")
+                                    .font(.system(size: 40))
+                                    .foregroundColor(.primary.opacity(0.6))
+                                Text("Tap to begin")
+                                    .font(.callout)
+                                    .foregroundColor(.primary.opacity(0.6))
+                            }
                     } else if isCountingDown {
                         // Pre-exercise countdown
                         Text("\(countdownSeconds)")
@@ -757,81 +757,81 @@ struct SingleBreathingExerciseView: View {
                             .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 2)
                             .contentTransition(.numericText())
                             .animation(.easeInOut(duration: 0.2), value: countdownSeconds)
-                    } else if breathPhase == .complete {
-                        // Completion checkmark
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 60))
-                            .foregroundColor(.green)
-                    } else if isActive {
+                        } else if breathPhase == .complete {
+                            // Completion checkmark
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 60))
+                                .foregroundColor(.green)
+                        } else if isActive {
                         // Exercise countdown timer
-                        Text("\(secondsRemaining)")
-                            .font(.system(size: 72, weight: .thin, design: .rounded))
-                            .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 2)
-                            .contentTransition(.numericText())
-                            .animation(.easeInOut(duration: 0.2), value: secondsRemaining)
+                            Text("\(secondsRemaining)")
+                                .font(.system(size: 72, weight: .thin, design: .rounded))
+                                .foregroundColor(.white)
+                                .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 2)
+                                .contentTransition(.numericText())
+                                .animation(.easeInOut(duration: 0.2), value: secondsRemaining)
+                        }
                     }
-                }
-                .onTapGesture {
-                    if !isActive && breathPhase != .complete {
-                        startExercise()
+                    .onTapGesture {
+                        if !isActive && breathPhase != .complete {
+                            startExercise()
+                        }
                     }
-                }
-                
-                // Cycle/Step counter below circle
-                if isActive && breathPhase != .complete && breathPhase != .ready {
-                    Text(cycleLabel)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .padding(.top, 8)
-                }
-                
+                    
+                    // Cycle/Step counter below circle
+                    if isActive && breathPhase != .complete && breathPhase != .ready {
+                        Text(cycleLabel)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 8)
+                    }
+                    
                 // Instructions card (only when not active) - blends seamlessly with gradient background
-                if let steps = exercise.steps, !isActive && breathPhase == .ready {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Instructions")
-                            .font(.bodyMedium)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.primary)
-                        
+                    if let steps = exercise.steps, !isActive && breathPhase == .ready {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Instructions")
+                                .font(.bodyMedium)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                            
                         ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                            HStack(alignment: .top, spacing: 12) {
-                                Text("\(index + 1)")
-                                    .font(.caption)
-                                    .fontWeight(.bold)
+                                HStack(alignment: .top, spacing: 12) {
+                                    Text("\(index + 1)")
+                                        .font(.caption)
+                                        .fontWeight(.bold)
                                     .foregroundColor(colorScheme == .dark ? .white : .primary)
-                                    .frame(width: 22, height: 22)
-                                    .background(Color.lavenderMist)
-                                    .clipShape(Circle())
-                                
-                                Text(step)
-                                    .font(.bodyMedium)
-                                    .foregroundColor(.primary)
+                                        .frame(width: 22, height: 22)
+                                        .background(Color.lavenderMist)
+                                        .clipShape(Circle())
+                                    
+                                    Text(step)
+                                        .font(.bodyMedium)
+                                        .foregroundColor(.primary)
+                                }
                             }
                         }
-                    }
-                    .padding(20)
+                        .padding(20)
                     // No background or border - text blends directly with parent gradient
-                    .padding(.horizontal, 20)
-                }
-                
-                Spacer()
-                
-                // Stop button (only when active)
-                if isActive {
-                    Button(action: { stopExercise() }) {
-                        HStack {
-                            Image(systemName: "stop.fill")
-                            Text("Stop")
-                        }
+                        .padding(.horizontal, 20)
                     }
-                    .buttonStyle(PrimaryButtonStyle(color: .coralPink))
-                    .padding(.horizontal, 40)
-                    .padding(.bottom, 30)
-                } else {
-                    Spacer().frame(height: 60)
-                }
+                    
+                    Spacer()
+                    
+                    // Stop button (only when active)
+                    if isActive {
+                        Button(action: { stopExercise() }) {
+                            HStack {
+                                Image(systemName: "stop.fill")
+                                Text("Stop")
+                            }
+                        }
+                        .buttonStyle(PrimaryButtonStyle(color: .coralPink))
+                        .padding(.horizontal, 40)
+                        .padding(.bottom, 30)
+                    } else {
+                        Spacer().frame(height: 60)
             }
+        }
     }
     
     func startExercise() {
@@ -859,13 +859,13 @@ struct SingleBreathingExerciseView: View {
                     self.hasStartedExercise = true
                     self.cycleCount = 0
                     self.groundingStep = 0
-                    
-                    // Choose the right breathing pattern
+        
+        // Choose the right breathing pattern
                     if self.exercise.title.contains("4-7-8") {
                         self.run478BreathingCycle()
                     } else if self.exercise.title.contains("Grounding") {
                         self.runGroundingBreathCycle()
-                    } else {
+        } else {
                         self.runBoxBreathingCycle()
                     }
                 }

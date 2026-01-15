@@ -520,7 +520,7 @@ struct WalkingSuggestionCard: View {
         if suggested >= 5 {
             return suggested
         }
-        return 0 // Too short to walk (less than 10 min delay)
+        return 0 // Too short to walk (less than 5 min delay)
     }
     
     // Estimated steps for the duration
