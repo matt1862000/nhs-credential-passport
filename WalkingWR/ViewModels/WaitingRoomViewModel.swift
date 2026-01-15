@@ -1385,19 +1385,44 @@ class WaitingRoomViewModel: ObservableObject {
     
     private func startAlertAutoDismissTimer(for alertKeyPath: WritableKeyPath<WaitingRoomViewModel, Bool>) {
         cancelAlertAutoDismissTimer()
-        // v1.9.16: Capture keyPath in a Sendable-safe way by using a closure that captures self weakly
-        // and accesses the keyPath only on the main actor
+        // v1.9.16: Capture the keyPath identifier before the closure to avoid Sendable issues
+        // Use a switch to determine which property to set
+        let alertType: AlertType
+        switch alertKeyPath {
+        case \.showHalfwayAlert:
+            alertType = .halfway
+        case \.showReturnNowAlert:
+            alertType = .returnNow
+        case \.showWalkCompleteAlert:
+            alertType = .walkComplete
+        default:
+            alertType = .halfway // Fallback
+        }
+        
         alertAutoDismissTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
-            guard let self = self else { return }
-            DispatchQueue.main.async { [weak self] in
+            DispatchQueue.main.async {
                 guard let self = self else { return }
-                // Access keyPath only on main actor to avoid Sendable issues
-                self[keyPath: alertKeyPath] = false
+                // Directly set the property based on the alert type (avoids Sendable/subscript issues)
+                switch alertType {
+                case .halfway:
+                    self.showHalfwayAlert = false
+                case .returnNow:
+                    self.showReturnNowAlert = false
+                case .walkComplete:
+                    self.showWalkCompleteAlert = false
+                }
                 self.alertAutoDismissTimer = nil
                 print("⏱️ Auto-dismissed alert after 10 seconds")
             }
         }
         RunLoop.current.add(alertAutoDismissTimer!, forMode: .common)
+    }
+    
+    // v1.9.16: Helper enum to avoid Sendable issues with WritableKeyPath
+    private enum AlertType {
+        case halfway
+        case returnNow
+        case walkComplete
     }
     
     // MARK: - QR Scanning

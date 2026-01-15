@@ -589,7 +589,7 @@ struct BreathingExerciseSheet: View {
                     selectedIndex = previousIndex
                 } else {
                     // Update previous index when change is allowed
-                    previousIndex = newIndex
+                    previousIndex = newValue
                 }
             }
         }

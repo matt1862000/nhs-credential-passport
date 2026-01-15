@@ -1861,11 +1861,14 @@ struct EmbeddedWalkMapView: View {
         request.transportType = .walking
         
         let directions = MKDirections(request: request)
+        // v1.9.16: Capture main actor-isolated properties before Sendable closure
+        let hasCachedReturnRoute = viewModel.hasCachedReturnRoute
+        let cachedReturnRoutePolyline = viewModel.cachedReturnRoutePolyline
         directions.calculate { [self] response, error in
             if let error = error {
                 print("⚠️ Return route calculation failed: \(error.localizedDescription)")
                 // Fallback to cached route if available
-                if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
+                if hasCachedReturnRoute && !cachedReturnRoutePolyline.isEmpty {
                     print("✅ Falling back to cached return route")
                 }
                 return
