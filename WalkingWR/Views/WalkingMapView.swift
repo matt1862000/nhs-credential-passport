@@ -314,6 +314,7 @@ struct EmbeddedWalkMapView: View {
     @State private var lastProgrammaticUpdateTime: Date? // Track when we last updated camera programmatically
     @State private var lastInteractionTime: Date? // Track when user last interacted
     @State private var lastLocationWhenInteracted: CLLocation? // Track location when user started interacting
+    @State private var sustainedSpeedStartTime: Date? // Track when user started moving at sustained speed
     
     /// Check if user previously opted into step tracking
     /// We trust the UserDefaults flag - if permission was revoked, we'll handle it when pedometer fails
@@ -332,47 +333,10 @@ struct EmbeddedWalkMapView: View {
     var body: some View {
         ZStack {
             Map(position: $cameraPosition) {
-                // Custom user location with direction of travel arrow
+                // Custom user location with pulsating dot
                 if let location = viewModel.locationService.currentLocation {
                     Annotation("You", coordinate: location.coordinate) {
-                        ZStack {
-                            // Outer glow
-                            Circle()
-                                .fill(Color.blue.opacity(0.2))
-                                .frame(width: 60, height: 60)
-                            
-                            // Direction arrow - shows direction of travel (course) not compass heading
-                            // course is the direction you're actually moving based on GPS
-                            // Falls back to heading if course not available
-                            let directionOfTravel: Double = {
-                                if location.course >= 0 {
-                                    // Use course (direction of travel) - this is what user wants
-                                    return location.course
-                                } else if let heading = viewModel.locationService.heading?.trueHeading, heading >= 0 {
-                                    // Fallback to compass heading if course not available
-                                    return heading
-                                } else if let heading = viewModel.locationService.heading?.magneticHeading, heading >= 0 {
-                                    // Fallback to magnetic heading
-                                    return heading
-                                } else {
-                                    // Default to 0 (North) if nothing available
-                                    return 0
-                                }
-                            }()
-                            
-                            Image(systemName: "location.north.fill")
-                                .font(.title)
-                                .foregroundColor(.blue)
-                                .rotationEffect(.degrees(directionOfTravel))
-                            
-                            // Center dot
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 12, height: 12)
-                            Circle()
-                                .fill(Color.blue)
-                                .frame(width: 8, height: 8)
-                        }
+                        PulsatingLocationDot()
                     }
                 } else {
                     UserAnnotation()
@@ -548,6 +512,20 @@ struct EmbeddedWalkMapView: View {
                     print("✅ DETECTED AS USER INTERACTION")
                     lastInteractionTime = now
                     handleMapInteraction()
+                } else if introPhase == .followingUser && 
+                          userInteractedWithMap && 
+                          !isProgrammaticCameraUpdate && 
+                          !isRecentProgrammaticUpdate {
+                    // User is continuing to interact - update the timestamp to reset the timer
+                    // This prevents auto-resume while user is still actively interacting
+                    let oldTime = lastInteractionTime
+                    lastInteractionTime = now
+                    if let old = oldTime {
+                        let timeSinceOld = now.timeIntervalSince(old)
+                        print("🔄 User continuing to interact - resetting timer (was \(String(format: "%.2f", timeSinceOld))s since last)")
+                    } else {
+                        print("🔄 User continuing to interact - resetting timer")
+                    }
                 } else {
                     print("❌ NOT USER INTERACTION (programmatic update)")
                 }
@@ -631,35 +609,6 @@ struct EmbeddedWalkMapView: View {
                 Spacer()
             }
             */
-            
-            // Follow Me button - appears when user has interacted with map
-            if userInteractedWithMap && introPhase == .followingUser {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Button(action: {
-                            showFullRouteThenFollow()
-                        }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "location.fill")
-                                    .font(.system(size: 14, weight: .semibold))
-                                Text("Follow Me")
-                                    .font(.system(size: 15, weight: .semibold))
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 12)
-                            .background(Color.tealAccent)
-                            .clipShape(Capsule())
-                            .shadow(color: Color.black.opacity(0.3), radius: 8, y: 4)
-                        }
-                        .padding(.trailing, 16)
-                        .padding(.bottom, 120)
-                        .zIndex(100)
-                    }
-                }
-            }
             
             // Next waypoint info overlay - tappable and swipeable
             VStack {
@@ -953,7 +902,14 @@ struct EmbeddedWalkMapView: View {
             // Only block location updates when user has interacted, but allow heading rotation
             // This ensures the arrow continues to rotate smoothly even if user panned the map
             if userInteractedWithMap {
-                print("⚠️ userInteractedWithMap == true, but allowing heading update for arrow rotation")
+                print("⚠️ userInteractedWithMap == true - heading update will only rotate arrow, NOT move camera")
+                // When user has interacted, we should NOT update the camera (which would move it back to user location)
+                // The arrow rotation is handled by the rotationEffect modifier in the view, not by camera updates
+                // So we just return here - the arrow will still rotate via the rotationEffect
+                print("✅ Arrow will continue rotating via rotationEffect, but camera won't move")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                print("")
+                return
             }
             
             // Allow heading updates even when approaching turn - keep arrow rotating smoothly
@@ -1495,6 +1451,7 @@ struct EmbeddedWalkMapView: View {
     }
     
     // v1.9.13: Handle user map interaction - disable auto-follow temporarily
+    // v1.9.15: Speed-based auto-resume - only resumes if user is moving (walking)
     private func handleMapInteraction() {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
@@ -1507,7 +1464,7 @@ struct EmbeddedWalkMapView: View {
         print("Time: \(timeString)")
         print("Setting userInteractedWithMap = true")
         print("⚠️ Location updates will be blocked, but heading updates will continue")
-        print("⚠️ Will auto-reset after 5 seconds of no interaction")
+        print("⚠️ Will auto-resume after 5 seconds of no interaction")
         print("═══════════════════════════════════════════════════════════")
         print("")
         
@@ -1517,53 +1474,72 @@ struct EmbeddedWalkMapView: View {
         // Record current location when user starts interacting
         lastLocationWhenInteracted = viewModel.locationService.currentLocation
         
-        // Auto-reset after 5 seconds of no interaction
-        // This prevents false positives from programmatic updates
-        autoFollowResumeTimer?.invalidate()
-        autoFollowResumeTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [self] _ in
-            if userInteractedWithMap && introPhase == .followingUser {
-                print("")
-                print("═══════════════════════════════════════════════════════════")
-                print("⏰ AUTO-RESET: No interaction for 5 seconds, resuming auto-follow")
-                print("═══════════════════════════════════════════════════════════")
-                print("")
-                resumeAutoFollow()
-            }
-        }
-        
         // Cancel any existing resume timer
         autoFollowResumeTimer?.invalidate()
         
-        // Use a repeating timer that checks if user has stopped interacting AND moved
-        // This ensures we wait the full 2 seconds AFTER the last interaction
-        // AND the user has physically moved (not just turned around)
-        autoFollowResumeTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-            // Check if 2 seconds have passed since last interaction
-            guard let lastInteraction = self.lastInteractionTime else {
+        // Use a repeating timer that checks if user has stopped interacting for 5 seconds
+        // CRITICAL: We check timeSinceLastInteraction FIRST - if user is still interacting, 
+        // lastInteractionTime keeps getting updated, so timeSinceLastInteraction never reaches 5.0
+        autoFollowResumeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [self] timer in
+            let now = Date()
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss.SSS"
+            let timeString = formatter.string(from: now)
+            
+            print("")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("⏰ AUTO-RESUME TIMER CHECK")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("Time: \(timeString)")
+            print("userInteractedWithMap: \(userInteractedWithMap)")
+            print("introPhase: \(introPhase.rawValue)")
+            print("lastInteractionTime: \(lastInteractionTime != nil ? formatter.string(from: lastInteractionTime!) : "nil")")
+            
+            // CRITICAL: Don't auto-resume if user is still actively interacting
+            // If userInteractedWithMap is false, user already resumed - stop timer
+            guard userInteractedWithMap && introPhase == .followingUser else {
+                print("❌ BLOCKED: userInteractedWithMap=\(userInteractedWithMap), introPhase=\(introPhase.rawValue)")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                print("")
                 timer.invalidate()
                 return
             }
             
-            let timeSinceLastInteraction = Date().timeIntervalSince(lastInteraction)
-            if timeSinceLastInteraction >= 2.0 {
-                // Check if user has physically moved (not just turned around)
-                // Access MainActor-isolated property on main thread
-                DispatchQueue.main.async {
-                    guard let currentLocation = self.viewModel.locationService.currentLocation,
-                          let lastLocation = self.lastLocationWhenInteracted else {
-                        timer.invalidate()
-                        return
-                    }
-                    
-                    // User must have moved at least 5 meters to resume (indicates walking, not just turning)
-                    let distanceMoved = currentLocation.distance(from: lastLocation)
-                    if distanceMoved >= 5.0 {
-                        // User has stopped interacting for 2 seconds AND moved - resume auto-follow
-                        timer.invalidate()
-                        self.resumeAutoFollow()
-                    }
-                }
+            // Check if 5 seconds have passed since last interaction
+            // If user is still interacting, lastInteractionTime keeps updating, so this never triggers
+            guard let lastInteraction = lastInteractionTime else {
+                print("❌ BLOCKED: lastInteractionTime is nil")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                print("")
+                timer.invalidate()
+                return
             }
+            
+            let timeSinceLastInteraction = now.timeIntervalSince(lastInteraction)
+            print("timeSinceLastInteraction: \(String(format: "%.2f", timeSinceLastInteraction))s")
+            
+            // CRITICAL: Only proceed if user has STOPPED interacting for 5 seconds
+            // If they're still interacting, lastInteractionTime keeps updating, so this stays < 5.0
+            guard timeSinceLastInteraction >= 5.0 else {
+                // User is still interacting (lastInteractionTime was updated recently)
+                print("⏸️ User still interacting (only \(String(format: "%.2f", timeSinceLastInteraction))s since last interaction)")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                print("")
+                return
+            }
+            
+            // User has stopped interacting for 5 seconds - auto-resume regardless of movement
+            print("")
+            print("═══════════════════════════════════════════════════════════════════════════")
+            print("⏰ AUTO-RESUME TRIGGERED")
+            print("═══════════════════════════════════════════════════════════════════════════")
+            print("Time since last interaction: \(String(format: "%.2f", timeSinceLastInteraction))s")
+            print("Auto-resuming after 5 seconds of no interaction")
+            print("═══════════════════════════════════════════════════════════════════════════")
+            print("")
+            timer.invalidate()
+            sustainedSpeedStartTime = nil
+            resumeAutoFollow()
         }
     }
     
@@ -1596,6 +1572,7 @@ struct EmbeddedWalkMapView: View {
         // Clear interaction flag and location tracking
         userInteractedWithMap = false
         lastLocationWhenInteracted = nil
+        sustainedSpeedStartTime = nil // Reset sustained speed tracking
         
         // Get current heading
         let heading: CLLocationDirection = {
@@ -2011,6 +1988,44 @@ struct EmbeddedWalkMapView: View {
         }
         
         return directions
+    }
+    
+    /// Pulsating dot for user location
+    private struct PulsatingLocationDot: View {
+        @State private var pulseScale: CGFloat = 1.0
+        
+        var body: some View {
+            ZStack {
+                // Outer pulsating ring
+                Circle()
+                    .fill(Color.blue.opacity(0.3))
+                    .frame(width: 60, height: 60)
+                    .scaleEffect(pulseScale)
+                    .opacity(2.0 - pulseScale)
+                
+                // Middle ring
+                Circle()
+                    .fill(Color.blue.opacity(0.5))
+                    .frame(width: 40, height: 40)
+                    .scaleEffect(pulseScale * 0.8)
+                    .opacity(1.5 - pulseScale * 0.5)
+                
+                // Center dot
+                ZStack {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 14, height: 14)
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 10, height: 10)
+                }
+            }
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: false)) {
+                    pulseScale = 1.5
+                }
+            }
+        }
     }
     
     /// v1.9.15: Extract maneuver type from instruction text
