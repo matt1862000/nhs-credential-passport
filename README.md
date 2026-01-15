@@ -6,6 +6,16 @@ Transform waiting time into health time with real-time wait displays, walking ro
 
 ---
 
+## ⚠️ Version Information
+
+**Last Stable Release:** `1.9.15 (Build 186)`
+
+The current codebase contains experimental changes. See [VERSION.md](VERSION.md) for details.
+
+**For production releases, always use Version 1.9.15 (Build 186).**
+
+---
+
 ## Overview
 
 The Walking Waiting Room app addresses a critical healthcare challenge: **uncertain waits increase anxiety and lead to early self-discharge**. This iOS app provides:
