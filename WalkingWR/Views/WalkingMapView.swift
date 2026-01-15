@@ -682,6 +682,19 @@ struct EmbeddedWalkMapView: View {
                                 isShowingReturnRoute = true
                                 waypointRoutePolyline = nil  // Clear waypoint route
                                 
+                                // Switch to return directions
+                                if !viewModel.isUsingReturnDirections {
+                                    // Only switch if we have return directions available
+                                    if !viewModel.cachedReturnDirections.isEmpty, let currentRoute = viewModel.walkSession.currentRoute {
+                                        viewModel.isUsingReturnDirections = true
+                                        viewModel.locationService.startDirectionMonitoring(
+                                            directions: viewModel.cachedReturnDirections,
+                                            routePath: viewModel.cachedReturnRoutePolyline.isEmpty ? currentRoute.routePath : viewModel.cachedReturnRoutePolyline
+                                        )
+                                        print("📍 Switched to return route directions")
+                                    }
+                                }
+                                
                                 // Try to extract from routePath first, then check if we need MapKit fallback
                                 if let currentRoute = viewModel.walkSession.currentRoute,
                                    let lastWaypoint = currentRoute.qrMarkers.last,
@@ -708,11 +721,35 @@ struct EmbeddedWalkMapView: View {
                                       let currentRoute = viewModel.walkSession.currentRoute,
                                       let targetMarker = currentRoute.qrMarkers.first(where: { $0.id == waypointId }) {
                                 isShowingReturnRoute = false
+                                // Reset to original outgoing directions when viewing a regular waypoint
+                                if viewModel.isUsingReturnDirections {
+                                    viewModel.isUsingReturnDirections = false
+                                    // Restore original directions monitoring
+                                    if !viewModel.cachedOriginalDirections.isEmpty {
+                                        viewModel.locationService.startDirectionMonitoring(
+                                            directions: viewModel.cachedOriginalDirections,
+                                            routePath: currentRoute.routePath
+                                        )
+                                        print("📍 Switched back to original outgoing directions")
+                                    }
+                                }
                                 // Extract route segment from already-loaded routePath
                                 extractRouteSegmentToWaypoint(targetMarker: targetMarker, markers: currentRoute.qrMarkers, routePath: currentRoute.routePath)
                             } else {
                                 isShowingReturnRoute = false
                                 waypointRoutePolyline = nil
+                                // Reset to original directions if viewingWaypointId is cleared
+                                if viewModel.isUsingReturnDirections {
+                                    viewModel.isUsingReturnDirections = false
+                                    if let currentRoute = viewModel.walkSession.currentRoute,
+                                       !viewModel.cachedOriginalDirections.isEmpty {
+                                        viewModel.locationService.startDirectionMonitoring(
+                                            directions: viewModel.cachedOriginalDirections,
+                                            routePath: currentRoute.routePath
+                                        )
+                                        print("📍 Switched back to original outgoing directions")
+                                    }
+                                }
                             }
                         },
                         colorScheme: colorScheme
