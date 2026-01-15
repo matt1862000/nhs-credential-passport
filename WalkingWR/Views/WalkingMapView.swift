@@ -280,6 +280,7 @@ struct EmbeddedWalkMapView: View {
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var route: MKRoute?
     @State private var returnRoute: MKRoute?  // Route back to starting point
+    @State private var waypointRoutePolyline: [CLLocationCoordinate2D]?  // Route segment to specific waypoint (extracted from Google routePath)
     @State private var isShowingReturnRoute: Bool = false  // Whether we're showing return directions
     @State private var hasPlayedIntro: Bool = false
     @State private var showingIntroOverlay: Bool = false
@@ -304,6 +305,8 @@ struct EmbeddedWalkMapView: View {
     // v1.9.13: Cache current leg polyline to prevent re-rendering on location updates
     @State private var cachedCurrentLegPolyline: [CLLocationCoordinate2D]?
     @State private var cachedLegPolylineForWaypoint: UUID? // Track which waypoint this polyline is for
+    @State private var viewingWaypointId: UUID? // Track which waypoint user is viewing in carousel (nil = not viewing, UUID = viewing that waypoint, special UUID = viewing Return to Start)
+    private static let returnToStartWaypointId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
     
     // v1.9.13: Timer for resuming auto-follow after user interaction
     @State private var autoFollowResumeTimer: Timer?
@@ -400,36 +403,48 @@ struct EmbeddedWalkMapView: View {
                     // Show full route during intro phases, current leg when actively walking
                     // Calculate polyline to show - use cache if available, otherwise calculate
                     // Cache updates happen in onChange handler to avoid state modification during view update
-                    let polylineToShow: [CLLocationCoordinate2D] = {
-                        if introPhase == .followingUser {
-                            // Use cached polyline if available and still valid
-                            let nextWaypointId = getNextWaypointId(markers: currentRoute.qrMarkers, visitedIds: viewModel.visitedMarkerIds)
-                            if let cached = cachedCurrentLegPolyline,
-                               cachedLegPolylineForWaypoint == nextWaypointId {
-                                return cached
-                            } else {
-                                // Return calculated polyline - cache will be updated via onChange handler
-                                // This is a pure calculation, no state modification
-                                if viewModel.visitedMarkerIds.count == currentRoute.qrMarkers.count && currentRoute.qrMarkers.count > 0 {
-                                    // All waypoints visited - return empty (return route shown separately)
-                                    return []
+                    // Show route polyline
+                    // If viewing a waypoint in carousel, show route segment from Google routePath
+                    // Otherwise, show normal route (full route or current leg)
+                    if let viewingId = viewingWaypointId,
+                       viewingId != Self.returnToStartWaypointId,
+                       let waypointPolyline = waypointRoutePolyline,
+                       !waypointPolyline.isEmpty {
+                        // Show route segment extracted from Google routePath
+                        MapPolyline(coordinates: waypointPolyline)
+                            .stroke(currentRoute.color, lineWidth: 4)
+                    } else {
+                        // Normal route display (full route or current leg)
+                        let polylineToShow: [CLLocationCoordinate2D] = {
+                            if introPhase == .followingUser {
+                                // Use cached polyline if available and still valid
+                                let nextWaypointId = getNextWaypointId(markers: currentRoute.qrMarkers, visitedIds: viewModel.visitedMarkerIds)
+                                if let cached = cachedCurrentLegPolyline,
+                                   cachedLegPolylineForWaypoint == nextWaypointId {
+                                    return cached
                                 } else {
-                                    // Calculate static polyline from leg start to waypoint
-                                    return calculateStaticLegPolyline(
-                                        fullPath: currentRoute.routePath,
-                                        markers: currentRoute.qrMarkers,
-                                        visitedIds: viewModel.visitedMarkerIds,
-                                        startLocation: viewModel.walkSession.startLocation
-                                    )
+                                    // Return calculated polyline - cache will be updated via onChange handler
+                                    if viewModel.visitedMarkerIds.count == currentRoute.qrMarkers.count && currentRoute.qrMarkers.count > 0 {
+                                        // All waypoints visited - return empty (return route shown separately)
+                                        return []
+                                    } else {
+                                        // Calculate static polyline from leg start to waypoint
+                                        return calculateStaticLegPolyline(
+                                            fullPath: currentRoute.routePath,
+                                            markers: currentRoute.qrMarkers,
+                                            visitedIds: viewModel.visitedMarkerIds,
+                                            startLocation: viewModel.walkSession.startLocation
+                                        )
+                                    }
                                 }
+                            } else {
+                                return currentRoute.routePath
                             }
-                        } else {
-                            return currentRoute.routePath
-                        }
-                    }()
-                    
-                    MapPolyline(coordinates: polylineToShow)
-                        .stroke(currentRoute.color, lineWidth: 4)
+                        }()
+                        
+                        MapPolyline(coordinates: polylineToShow)
+                            .stroke(currentRoute.color, lineWidth: 4)
+                    }
                 }
                 
                 // ALL waypoint markers with NEXT one prominent
@@ -464,16 +479,32 @@ struct EmbeddedWalkMapView: View {
                 }
                 
                 // Return route polyline (directions back to start)
-                // v1.9.16: Show cached polyline if available, otherwise show calculated route
-                if isShowingReturnRoute {
-                    if let returnRoute = returnRoute {
-                        // Fresh calculated route (more accurate)
-                        MapPolyline(returnRoute.polyline)
-                            .stroke(Color.blue, lineWidth: 5)
-                    } else if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
-                        // Cached route (offline fallback)
-                        MapPolyline(coordinates: viewModel.cachedReturnRoutePolyline)
-                            .stroke(Color.blue, lineWidth: 5)
+                // Try extracting from already-loaded routePath first, fallback to MapKit if needed
+                if isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId {
+                    Group {
+                        if let currentRoute = viewModel.walkSession.currentRoute,
+                           let lastWaypoint = currentRoute.qrMarkers.last,
+                           let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
+                            let returnSegment = extractReturnSegmentFromRoutePath(
+                                routePath: currentRoute.routePath,
+                                fromWaypoint: lastWaypoint.coordinate,
+                                toStart: startLocation
+                            )
+                            
+                            if !returnSegment.isEmpty && returnSegment.count >= 2 {
+                                // Successfully extracted from routePath - use it
+                                MapPolyline(coordinates: returnSegment)
+                                    .stroke(Color.blue, lineWidth: 5)
+                            } else if let returnRoute = returnRoute {
+                                // Fallback 1: Use MapKit-calculated route if available
+                                MapPolyline(returnRoute.polyline)
+                                    .stroke(Color.blue, lineWidth: 5)
+                            } else if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
+                                // Fallback 2: Use cached route
+                                MapPolyline(coordinates: viewModel.cachedReturnRoutePolyline)
+                                    .stroke(Color.blue, lineWidth: 5)
+                            }
+                        }
                     }
                 }
                 
@@ -601,6 +632,35 @@ struct EmbeddedWalkMapView: View {
             }
             */
             
+            // Follow Me button - appears when user has interacted with map
+            if userInteractedWithMap && introPhase == .followingUser {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            showFullRouteThenFollow()
+                        }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "location.fill")
+                                    .font(.system(size: 14, weight: .semibold))
+                                Text("Follow Me")
+                                    .font(.system(size: 15, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .background(Color.tealAccent)
+                            .clipShape(Capsule())
+                            .shadow(color: Color.black.opacity(0.3), radius: 8, y: 4)
+                        }
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 120)
+                        .zIndex(100)
+                    }
+                }
+            }
+            
             // Next waypoint info overlay - tappable and swipeable
             VStack {
                 Spacer()
@@ -615,6 +675,45 @@ struct EmbeddedWalkMapView: View {
                         },
                         onSelectReturnToStart: {
                             calculateReturnRoute()
+                        },
+                        onSwipeToWaypoint: { waypointId in
+                            viewingWaypointId = waypointId
+                            if waypointId == Self.returnToStartWaypointId {
+                                isShowingReturnRoute = true
+                                waypointRoutePolyline = nil  // Clear waypoint route
+                                
+                                // Try to extract from routePath first, then check if we need MapKit fallback
+                                if let currentRoute = viewModel.walkSession.currentRoute,
+                                   let lastWaypoint = currentRoute.qrMarkers.last,
+                                   let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
+                                    let returnSegment = extractReturnSegmentFromRoutePath(
+                                        routePath: currentRoute.routePath,
+                                        fromWaypoint: lastWaypoint.coordinate,
+                                        toStart: startLocation
+                                    )
+                                    
+                                    // Check if extraction was successful
+                                    if returnSegment.isEmpty || returnSegment.count < 2 {
+                                        print("⚠️ Failed to extract return route from routePath, falling back to MapKit...")
+                                        // Fallback: Calculate with MapKit
+                                        calculateReturnRouteFromLastWaypoint()
+                                    } else {
+                                        print("✅ Successfully extracted return route from routePath")
+                                    }
+                                } else {
+                                    // Missing data - use MapKit fallback
+                                    calculateReturnRouteFromLastWaypoint()
+                                }
+                            } else if let waypointId = waypointId,
+                                      let currentRoute = viewModel.walkSession.currentRoute,
+                                      let targetMarker = currentRoute.qrMarkers.first(where: { $0.id == waypointId }) {
+                                isShowingReturnRoute = false
+                                // Extract route segment from already-loaded routePath
+                                extractRouteSegmentToWaypoint(targetMarker: targetMarker, markers: currentRoute.qrMarkers, routePath: currentRoute.routePath)
+                            } else {
+                                isShowingReturnRoute = false
+                                waypointRoutePolyline = nil
+                            }
                         },
                         colorScheme: colorScheme
                     )
@@ -1532,6 +1631,204 @@ struct EmbeddedWalkMapView: View {
         }
     }
     
+    /// Extract route segment from Google routePath to a specific waypoint
+    /// This maintains consistency with the original Google-generated route
+    private func extractRouteSegmentToWaypoint(targetMarker: QRMarker, markers: [QRMarker], routePath: [CLLocationCoordinate2D]) {
+        guard routePath.count >= 2 else {
+            print("⚠️ Route path too short to extract segment")
+            return
+        }
+        
+        // Find the previous waypoint (or start location if this is the first waypoint)
+        let sourceCoordinate: CLLocationCoordinate2D
+        if let targetIndex = markers.firstIndex(where: { $0.id == targetMarker.id }) {
+            if targetIndex > 0 {
+                // Use previous waypoint
+                sourceCoordinate = markers[targetIndex - 1].coordinate
+            } else {
+                // First waypoint - use start location
+                sourceCoordinate = viewModel.walkSession.startLocation ?? routePath.first ?? targetMarker.coordinate
+            }
+        } else {
+            // Fallback to start location
+            sourceCoordinate = viewModel.walkSession.startLocation ?? routePath.first ?? targetMarker.coordinate
+        }
+        
+        print("📍 Extracting route segment from Google routePath to \(targetMarker.name)...")
+        
+        // Find closest point on routePath to source coordinate
+        var closestIndexToSource = 0
+        var closestDistanceToSource = Double.greatestFiniteMagnitude
+        for (index, point) in routePath.enumerated() {
+            let distance = distanceBetween(sourceCoordinate, point)
+            if distance < closestDistanceToSource {
+                closestDistanceToSource = distance
+                closestIndexToSource = index
+            }
+        }
+        
+        // Find closest point on routePath to target waypoint
+        var closestIndexToTarget = routePath.count - 1
+        var closestDistanceToTarget = Double.greatestFiniteMagnitude
+        for (index, point) in routePath.enumerated() {
+            let distance = distanceBetween(targetMarker.coordinate, point)
+            if distance < closestDistanceToTarget {
+                closestDistanceToTarget = distance
+                closestIndexToTarget = index
+            }
+        }
+        
+        // Extract segment from source to target
+        let startIndex = min(closestIndexToSource, closestIndexToTarget)
+        let endIndex = max(closestIndexToSource, closestIndexToTarget)
+        
+        guard startIndex < endIndex else {
+            // Fallback: just show direct line
+            waypointRoutePolyline = [sourceCoordinate, targetMarker.coordinate]
+            return
+        }
+        
+        // Build segment: source → routePath segment → target
+        var segment: [CLLocationCoordinate2D] = [sourceCoordinate]
+        segment.append(contentsOf: Array(routePath[startIndex...endIndex]))
+        segment.append(targetMarker.coordinate)
+        
+        print("✅ Extracted route segment to \(targetMarker.name): \(segment.count) points")
+        waypointRoutePolyline = segment
+    }
+    
+    /// Extract return segment from already-loaded routePath (last waypoint → start)
+    /// Returns empty array if extraction fails (will trigger MapKit fallback)
+    private func extractReturnSegmentFromRoutePath(
+        routePath: [CLLocationCoordinate2D],
+        fromWaypoint: CLLocationCoordinate2D,
+        toStart: CLLocationCoordinate2D
+    ) -> [CLLocationCoordinate2D] {
+        guard routePath.count >= 2 else {
+            print("⚠️ Route path too short to extract return segment")
+            return []
+        }
+        
+        print("📍 Attempting to extract return segment from already-loaded routePath (last waypoint → start)...")
+        
+        // Find closest point on routePath to last waypoint
+        var closestIndexToWaypoint = routePath.count - 1
+        var closestDistanceToWaypoint = Double.greatestFiniteMagnitude
+        for (index, point) in routePath.enumerated() {
+            let distance = distanceBetween(fromWaypoint, point)
+            if distance < closestDistanceToWaypoint {
+                closestDistanceToWaypoint = distance
+                closestIndexToWaypoint = index
+            }
+        }
+        
+        // Find closest point on routePath to start location
+        var closestIndexToStart = 0
+        var closestDistanceToStart = Double.greatestFiniteMagnitude
+        for (index, point) in routePath.enumerated() {
+            let distance = distanceBetween(toStart, point)
+            if distance < closestDistanceToStart {
+                closestDistanceToStart = distance
+                closestIndexToStart = index
+            }
+        }
+        
+        // Check if we found reasonable matches (within 50 meters)
+        let waypointMatchThreshold: Double = 50.0 // meters
+        let startMatchThreshold: Double = 50.0 // meters
+        
+        if closestDistanceToWaypoint > waypointMatchThreshold {
+            print("⚠️ Last waypoint too far from routePath (\(Int(closestDistanceToWaypoint))m) - extraction may be inaccurate")
+        }
+        
+        if closestDistanceToStart > startMatchThreshold {
+            print("⚠️ Start location too far from routePath (\(Int(closestDistanceToStart))m) - extraction may be inaccurate")
+        }
+        
+        // Extract segment from last waypoint to start
+        // For circular routes, the return segment is typically at the end of the routePath
+        let startIndex: Int
+        let endIndex: Int
+        
+        if closestIndexToWaypoint < closestIndexToStart {
+            // Normal case: waypoint comes before start in the path
+            startIndex = closestIndexToWaypoint
+            endIndex = closestIndexToStart
+        } else if closestIndexToWaypoint > closestIndexToStart {
+            // Waypoint is after start - this is the return segment
+            // Take from waypoint to end of path, then from beginning to start
+            startIndex = closestIndexToWaypoint
+            endIndex = routePath.count - 1
+        } else {
+            // Same index - invalid, return empty to trigger fallback
+            print("⚠️ Waypoint and start have same index in routePath - cannot extract")
+            return []
+        }
+        
+        guard startIndex < routePath.count && endIndex < routePath.count && startIndex <= endIndex else {
+            print("⚠️ Invalid indices for segment extraction")
+            return []
+        }
+        
+        // Build segment: last waypoint → routePath segment → start
+        var segment: [CLLocationCoordinate2D] = [fromWaypoint]
+        segment.append(contentsOf: Array(routePath[startIndex...endIndex]))
+        segment.append(toStart)
+        
+        // Validate the segment has reasonable length
+        if segment.count < 2 {
+            print("⚠️ Extracted segment too short (\(segment.count) points)")
+            return []
+        }
+        
+        print("✅ Successfully extracted return segment: \(segment.count) points")
+        return segment
+    }
+    
+    /// Calculate return route from last waypoint to start using MapKit (fallback)
+    /// Only called if extraction from routePath fails
+    private func calculateReturnRouteFromLastWaypoint() {
+        guard let currentRoute = viewModel.walkSession.currentRoute,
+              let lastWaypoint = currentRoute.qrMarkers.last,
+              let startPoint = viewModel.walkSession.startLocation ?? currentRoute.routePath.first else {
+            print("📍 Cannot calculate return route - missing waypoint or start point")
+            return
+        }
+        
+        // Don't recalculate if we already have this route
+        if returnRoute != nil {
+            print("📍 Return route already calculated, using existing")
+            return
+        }
+        
+        print("📍 Fallback: Calculating return route from last waypoint to start using MapKit...")
+        isShowingReturnRoute = true
+        
+        let request = MKDirections.Request()
+        request.source = MKMapItem(placemark: MKPlacemark(coordinate: lastWaypoint.coordinate))
+        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: startPoint))
+        request.transportType = .walking
+        
+        let directions = MKDirections(request: request)
+        directions.calculate { [self] response, error in
+            if let error = error {
+                print("⚠️ Return route calculation failed: \(error.localizedDescription)")
+                // Fallback to cached route if available
+                if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
+                    print("✅ Falling back to cached return route")
+                }
+                return
+            }
+            
+            if let route = response?.routes.first {
+                DispatchQueue.main.async {
+                    print("✅ Return route calculated via MapKit: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
+                    self.returnRoute = route
+                }
+            }
+        }
+    }
+    
     /// Calculate walking directions from current location back to starting point
     /// v1.9.16: Calculate return route with offline fallback
     /// Strategy: Show cached route immediately, then try fresh calculation if online
@@ -1768,6 +2065,77 @@ struct EmbeddedWalkMapView: View {
         return segment
     }
     
+    // Calculate route segment to a specific waypoint (for carousel viewing)
+    // Shows route from previous waypoint to target waypoint
+    private func calculateRouteSegmentToWaypoint(
+        fullPath: [CLLocationCoordinate2D],
+        targetWaypoint: CLLocationCoordinate2D,
+        markers: [QRMarker],
+        visitedIds: Set<UUID>,
+        fromWaypoint: CLLocationCoordinate2D? = nil
+    ) -> [CLLocationCoordinate2D] {
+        guard fullPath.count >= 2 else { return fullPath }
+        
+        // Find which waypoint we're targeting
+        let targetMarkerIndex = markers.firstIndex(where: {
+            abs($0.coordinate.latitude - targetWaypoint.latitude) < 0.0001 &&
+            abs($0.coordinate.longitude - targetWaypoint.longitude) < 0.0001
+        })
+        
+        // Determine segment start point
+        let segmentStart: CLLocationCoordinate2D
+        if let fromWaypoint = fromWaypoint {
+            // Explicitly provided start point (for return route)
+            segmentStart = fromWaypoint
+        } else if let targetIndex = targetMarkerIndex, targetIndex > 0 {
+            // Target is a waypoint - use previous waypoint
+            segmentStart = markers[targetIndex - 1].coordinate
+        } else if let targetIndex = targetMarkerIndex, targetIndex == 0 {
+            // Target is first waypoint - use start location
+            segmentStart = viewModel.walkSession.startLocation ?? fullPath.first ?? fullPath[0]
+        } else {
+            // Target not found in markers - use start location
+            segmentStart = viewModel.walkSession.startLocation ?? fullPath.first ?? fullPath[0]
+        }
+        
+        // Find closest point on polyline to segment start
+        var closestIndexToStart = 0
+        var closestDistanceToStart = Double.greatestFiniteMagnitude
+        for (index, point) in fullPath.enumerated() {
+            let distance = distanceBetween(segmentStart, point)
+            if distance < closestDistanceToStart {
+                closestDistanceToStart = distance
+                closestIndexToStart = index
+            }
+        }
+        
+        // Find closest point on polyline to target waypoint
+        var closestIndexToTarget = fullPath.count - 1
+        var closestDistanceToTarget = Double.greatestFiniteMagnitude
+        for (index, point) in fullPath.enumerated() {
+            let distance = distanceBetween(targetWaypoint, point)
+            if distance < closestDistanceToTarget {
+                closestDistanceToTarget = distance
+                closestIndexToTarget = index
+            }
+        }
+        
+        // Extract segment
+        let startIndex = min(closestIndexToStart, closestIndexToTarget)
+        let endIndex = max(closestIndexToStart, closestIndexToTarget)
+        
+        guard startIndex < endIndex else {
+            return [segmentStart, targetWaypoint]
+        }
+        
+        // Build segment: segment start → path segment → target waypoint
+        var segment: [CLLocationCoordinate2D] = [segmentStart]
+        segment.append(contentsOf: Array(fullPath[startIndex...endIndex]))
+        segment.append(targetWaypoint)
+        
+        return segment
+    }
+    
     /// v1.9.5: Extract polyline segment for current leg only
     /// Shows path from current location to the next unvisited waypoint (or back to start if all visited)
     private func currentLegPolyline(
@@ -1882,6 +2250,7 @@ struct WaypointCarousel: View {
     let startLocation: CLLocationCoordinate2D?
     let onTapWaypoint: (CLLocationCoordinate2D) -> Void
     let onSelectReturnToStart: (() -> Void)?  // Called when Return to Start is selected
+    let onSwipeToWaypoint: ((UUID?) -> Void)? // Called when swiping to a waypoint
     let colorScheme: ColorScheme
     
     @State private var selectedIndex: Int = 0
@@ -1951,8 +2320,11 @@ struct WaypointCarousel: View {
                 if newIndex < unvisitedMarkers.count {
                     let marker = unvisitedMarkers[newIndex].marker
                     onTapWaypoint(marker.coordinate)
+                    onSwipeToWaypoint?(marker.id)
                 } else if newIndex == unvisitedMarkers.count, let start = startLocation {
-                    // Return to Start card - calculate directions
+                    // Return to Start card
+                    let returnToStartId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+                    onSwipeToWaypoint?(returnToStartId)
                     onTapWaypoint(start)
                     onSelectReturnToStart?()
                 }
