@@ -308,6 +308,7 @@ struct EmbeddedWalkMapView: View {
     // v1.9.13: Timer for resuming auto-follow after user interaction
     @State private var autoFollowResumeTimer: Timer?
     @State private var isProgrammaticCameraUpdate: Bool = false // Track if camera change is from our code
+    @State private var lastProgrammaticUpdateTime: Date? // Track when we last updated camera programmatically
     @State private var lastInteractionTime: Date? // Track when user last interacted
     @State private var lastLocationWhenInteracted: CLLocation? // Track location when user started interacting
     
@@ -328,7 +329,7 @@ struct EmbeddedWalkMapView: View {
     var body: some View {
         ZStack {
             Map(position: $cameraPosition) {
-                // Custom user location with heading arrow
+                // Custom user location with direction of travel arrow
                 if let location = viewModel.locationService.currentLocation {
                     Annotation("You", coordinate: location.coordinate) {
                         ZStack {
@@ -337,11 +338,29 @@ struct EmbeddedWalkMapView: View {
                                 .fill(Color.blue.opacity(0.2))
                                 .frame(width: 60, height: 60)
                             
-                            // Direction arrow
+                            // Direction arrow - shows direction of travel (course) not compass heading
+                            // course is the direction you're actually moving based on GPS
+                            // Falls back to heading if course not available
+                            let directionOfTravel: Double = {
+                                if location.course >= 0 {
+                                    // Use course (direction of travel) - this is what user wants
+                                    return location.course
+                                } else if let heading = viewModel.locationService.heading?.trueHeading, heading >= 0 {
+                                    // Fallback to compass heading if course not available
+                                    return heading
+                                } else if let heading = viewModel.locationService.heading?.magneticHeading, heading >= 0 {
+                                    // Fallback to magnetic heading
+                                    return heading
+                                } else {
+                                    // Default to 0 (North) if nothing available
+                                    return 0
+                                }
+                            }()
+                            
                             Image(systemName: "location.north.fill")
                                 .font(.title)
                                 .foregroundColor(.blue)
-                                .rotationEffect(.degrees(viewModel.locationService.headingDegrees))
+                                .rotationEffect(.degrees(directionOfTravel))
                             
                             // Center dot
                             Circle()
@@ -465,15 +484,47 @@ struct EmbeddedWalkMapView: View {
                 // Empty - we'll add custom controls in the overlay
             }
             .onMapCameraChange { context in
+                let now = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: now)
+                
+                // Check if this is a programmatic update (within 0.5 seconds of our update)
+                let isRecentProgrammaticUpdate = lastProgrammaticUpdateTime != nil && 
+                    now.timeIntervalSince(lastProgrammaticUpdateTime!) < 0.5
+                
+                print("")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                print("🗺️ MAP CAMERA CHANGE DETECTED")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                print("Time: \(timeString)")
+                print("isProgrammaticCameraUpdate flag: \(isProgrammaticCameraUpdate)")
+                print("lastProgrammaticUpdateTime: \(lastProgrammaticUpdateTime != nil ? formatter.string(from: lastProgrammaticUpdateTime!) : "nil")")
+                print("isRecentProgrammaticUpdate: \(isRecentProgrammaticUpdate)")
+                print("timeSinceLastProgrammaticUpdate: \(lastProgrammaticUpdateTime != nil ? String(format: "%.3f", now.timeIntervalSince(lastProgrammaticUpdateTime!)) + "s" : "N/A")")
+                print("introPhase: \(introPhase.rawValue)")
+                print("userInteractedWithMap: \(userInteractedWithMap)")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                
                 // Detect user interaction with map (pan, zoom, rotation)
                 // Only detect if we're in following mode, not during intro, and not a programmatic update
-                if introPhase == .followingUser && !userInteractedWithMap && !isProgrammaticCameraUpdate {
+                // Use both the flag AND timestamp check to be more reliable
+                if introPhase == .followingUser && 
+                   !userInteractedWithMap && 
+                   !isProgrammaticCameraUpdate && 
+                   !isRecentProgrammaticUpdate {
                     // This is a user interaction - record the time and handle it
-                    lastInteractionTime = Date()
+                    print("✅ DETECTED AS USER INTERACTION")
+                    lastInteractionTime = now
                     handleMapInteraction()
+                } else {
+                    print("❌ NOT USER INTERACTION (programmatic update)")
                 }
-                // Reset flag after checking
+                
+                // Reset flag after checking (but keep timestamp for a bit longer)
                 isProgrammaticCameraUpdate = false
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                print("")
             }
             
             // v1.6.31: Compact status ring in top-left corner (saves vertical space)
@@ -691,8 +742,10 @@ struct EmbeddedWalkMapView: View {
                 return
             }
             
+            // Location updates are blocked when user has interacted (to prevent camera jumping)
+            // But heading updates are allowed separately to keep arrow rotating
             guard !userInteractedWithMap else {
-                print("📍 [LOCATION UPDATE] ❌ BLOCKED: userInteractedWithMap == true")
+                print("📍 [LOCATION UPDATE] ❌ BLOCKED: userInteractedWithMap == true (location updates blocked, but heading updates allowed)")
                 return
             }
             
@@ -723,37 +776,80 @@ struct EmbeddedWalkMapView: View {
         }
         // v1.9.13: Update camera heading smoothly when device rotates
         // v1.9.13: Ignore heading changes during manual interaction to prevent snap-back
-        .onChange(of: viewModel.locationService.headingDegrees) { _, newHeading in
-            print("🧭 [HEADING UPDATE] New heading: \(newHeading)°")
-            print("🧭 [HEADING UPDATE] introPhase: \(introPhase.rawValue), followingUser: \(introPhase == .followingUser)")
-            print("🧭 [HEADING UPDATE] userInteractedWithMap: \(userInteractedWithMap)")
-            print("🧭 [HEADING UPDATE] isApproachingTurn: \(isApproachingTurn)")
-            print("🧭 [HEADING UPDATE] currentLocation: \(viewModel.locationService.currentLocation != nil ? "available" : "nil")")
+        .onChange(of: viewModel.locationService.headingDegrees) { oldHeading, newHeading in
+            let timestamp = Date()
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss.SSS"
+            let timeString = formatter.string(from: timestamp)
+            
+            print("")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("🔄 MAP VIEW: HEADING CHANGE DETECTED")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("Time: \(timeString)")
+            print("Old heading: \(oldHeading)°")
+            print("New heading: \(newHeading)°")
+            print("Difference: \(String(format: "%.2f", abs(newHeading - oldHeading)))°")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("STATE CHECK:")
+            print("  introPhase: \(introPhase.rawValue)")
+            print("  introPhase == .followingUser: \(introPhase == .followingUser)")
+            print("  userInteractedWithMap: \(userInteractedWithMap)")
+            print("  isApproachingTurn: \(isApproachingTurn)")
+            print("  currentLocation: \(viewModel.locationService.currentLocation != nil ? "AVAILABLE" : "NIL")")
+            print("  heading object: \(viewModel.locationService.heading != nil ? "AVAILABLE" : "NIL")")
+            if let heading = viewModel.locationService.heading {
+                print("  heading.trueHeading: \(heading.trueHeading >= 0 ? "\(heading.trueHeading)°" : "INVALID")")
+                print("  heading.magneticHeading: \(heading.magneticHeading)°")
+                print("  heading.headingAccuracy: \(heading.headingAccuracy >= 0 ? "\(heading.headingAccuracy)°" : "INVALID")")
+            }
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             guard introPhase == .followingUser else {
-                print("🧭 [HEADING UPDATE] ❌ BLOCKED: introPhase != .followingUser")
+                print("❌ BLOCKED: introPhase != .followingUser")
+                print("Current introPhase: \(introPhase.rawValue)")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                print("")
                 return
             }
             
-            guard !userInteractedWithMap else {
-                print("🧭 [HEADING UPDATE] ❌ BLOCKED: userInteractedWithMap == true")
-                return
+            // Allow heading updates even when user has interacted - arrow should always rotate
+            // Only block location updates when user has interacted, but allow heading rotation
+            // This ensures the arrow continues to rotate smoothly even if user panned the map
+            if userInteractedWithMap {
+                print("⚠️ userInteractedWithMap == true, but allowing heading update for arrow rotation")
             }
             
             // Allow heading updates even when approaching turn - keep arrow rotating smoothly
             guard let currentLocation = viewModel.locationService.currentLocation else {
-                print("🧭 [HEADING UPDATE] ❌ BLOCKED: currentLocation is nil")
+                print("❌ BLOCKED: currentLocation is nil")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                print("")
                 return
             }
             
             guard newHeading >= 0 else {
-                print("🧭 [HEADING UPDATE] ❌ BLOCKED: newHeading < 0 (\(newHeading))")
+                print("")
+                print("═══════════════════════════════════════════════════════════")
+                print("❌ BLOCKED: INVALID HEADING DETECTED")
+                print("═══════════════════════════════════════════════════════════")
+                print("Time: \(timeString)")
+                print("newHeading: \(newHeading) (NEGATIVE - INVALID)")
+                print("⚠️ This may indicate heading updates have stopped!")
+                print("═══════════════════════════════════════════════════════════")
+                print("")
                 return
             }
             
-            print("🧭 [HEADING UPDATE] ✅ PROCEEDING: Updating camera heading to \(newHeading)°")
+            print("✅ PROCEEDING: All checks passed, updating camera")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("")
+            
             // Update camera with both location and heading together for consistency
             updateCamera(location: currentLocation.coordinate, heading: newHeading)
+            
+            print("✅ Camera update completed at \(timeString)")
+            print("")
         }
         // v1.9.13: Update cached leg polyline when waypoint changes (not during view rendering)
         .onChange(of: viewModel.visitedMarkerIds.count) { _, _ in
@@ -920,6 +1016,7 @@ struct EmbeddedWalkMapView: View {
                     )
                     currentCameraState = newCamera
                     isProgrammaticCameraUpdate = true
+                    lastProgrammaticUpdateTime = Date()
                     cameraPosition = .camera(newCamera)
                     
                     print("🎬 [INTRO ANIMATION] ✅ Camera initialized, introPhase is now .followingUser")
@@ -968,6 +1065,7 @@ struct EmbeddedWalkMapView: View {
         )
         currentCameraState = newCamera
         isProgrammaticCameraUpdate = true
+        lastProgrammaticUpdateTime = Date()
         withAnimation(smoothAnimation) {
             cameraPosition = .camera(newCamera)
         }
@@ -996,6 +1094,7 @@ struct EmbeddedWalkMapView: View {
             let lngSpan = (lngs.max()! - lngs.min()!) * 1.5
             
             isProgrammaticCameraUpdate = true
+            lastProgrammaticUpdateTime = Date()
             withAnimation(.easeInOut(duration: 1.0)) {
                 cameraPosition = .region(MKCoordinateRegion(
                     center: center,
@@ -1042,6 +1141,7 @@ struct EmbeddedWalkMapView: View {
         )
         currentCameraState = newCamera
         isProgrammaticCameraUpdate = true
+        lastProgrammaticUpdateTime = Date()
         withAnimation(smoothAnimation) {
             cameraPosition = .camera(newCamera)
         }
@@ -1085,6 +1185,7 @@ struct EmbeddedWalkMapView: View {
         )
         currentCameraState = newCamera
         isProgrammaticCameraUpdate = true
+        lastProgrammaticUpdateTime = Date()
         cameraPosition = .camera(newCamera)
         
         print("🎯 [ACTIVE ZOOM] ✅ Camera initialized with heading \(heading)°")
@@ -1171,6 +1272,7 @@ struct EmbeddedWalkMapView: View {
         )
         currentCameraState = newCamera
         isProgrammaticCameraUpdate = true
+        lastProgrammaticUpdateTime = Date()
         withAnimation(.easeInOut(duration: 1.5)) {
             cameraPosition = .camera(newCamera)
         }
@@ -1229,6 +1331,7 @@ struct EmbeddedWalkMapView: View {
         // Update camera state
         currentCameraState = camera
         isProgrammaticCameraUpdate = true
+        lastProgrammaticUpdateTime = Date()
         
         // Update strategy:
         // - No animation for small, frequent changes (smooth and responsive)
@@ -1257,12 +1360,40 @@ struct EmbeddedWalkMapView: View {
     
     // v1.9.13: Handle user map interaction - disable auto-follow temporarily
     private func handleMapInteraction() {
-        print("👆 [MAP INTERACTION] User interacted with map - disabling auto-follow")
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: Date())
+        
+        print("")
+        print("═══════════════════════════════════════════════════════════")
+        print("👆 MAP INTERACTION DETECTED")
+        print("═══════════════════════════════════════════════════════════")
+        print("Time: \(timeString)")
+        print("Setting userInteractedWithMap = true")
+        print("⚠️ Location updates will be blocked, but heading updates will continue")
+        print("⚠️ Will auto-reset after 5 seconds of no interaction")
+        print("═══════════════════════════════════════════════════════════")
+        print("")
+        
         // Set interaction flag to disable auto-follow/auto-zoom
         userInteractedWithMap = true
         
         // Record current location when user starts interacting
         lastLocationWhenInteracted = viewModel.locationService.currentLocation
+        
+        // Auto-reset after 5 seconds of no interaction
+        // This prevents false positives from programmatic updates
+        autoFollowResumeTimer?.invalidate()
+        autoFollowResumeTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [self] _ in
+            if userInteractedWithMap && introPhase == .followingUser {
+                print("")
+                print("═══════════════════════════════════════════════════════════")
+                print("⏰ AUTO-RESET: No interaction for 5 seconds, resuming auto-follow")
+                print("═══════════════════════════════════════════════════════════")
+                print("")
+                resumeAutoFollow()
+            }
+        }
         
         // Cancel any existing resume timer
         autoFollowResumeTimer?.invalidate()
@@ -1312,7 +1443,20 @@ struct EmbeddedWalkMapView: View {
             return
         }
         
-        print("🔄 [RESUME AUTO-FOLLOW] ✅ Resuming auto-follow")
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: Date())
+        
+        print("")
+        print("═══════════════════════════════════════════════════════════")
+        print("🔄 RESUMING AUTO-FOLLOW")
+        print("═══════════════════════════════════════════════════════════")
+        print("Time: \(timeString)")
+        print("Setting userInteractedWithMap = false")
+        print("✅ Location and heading updates will resume")
+        print("═══════════════════════════════════════════════════════════")
+        print("")
+        
         // Clear interaction flag and location tracking
         userInteractedWithMap = false
         lastLocationWhenInteracted = nil
@@ -1345,7 +1489,8 @@ struct EmbeddedWalkMapView: View {
         )
         currentCameraState = newCamera
         isProgrammaticCameraUpdate = true
-        
+        lastProgrammaticUpdateTime = Date()
+
         // Smooth animation back to user location
         withAnimation(.easeInOut(duration: 1.5)) {
             cameraPosition = .camera(newCamera)
