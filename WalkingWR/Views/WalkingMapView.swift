@@ -409,6 +409,9 @@ struct EmbeddedWalkMapView: View {
     // -------------------------------
     
     // Active route polyline (simplified)
+    // Computed property for active route polyline
+    // Automatically handles both MapKit routes and Google Directions API polylines
+    // Google polylines are decoded via WalkingRoute.routePath (uses PolylineDecoder)
     private var polylineToShow: [CLLocationCoordinate2D] {
         guard let currentRoute = viewModel.walkSession.currentRoute,
               currentRoute.routePath.count >= 2,
@@ -423,6 +426,8 @@ struct EmbeddedWalkMapView: View {
         }
         
         // Normal route display
+        // routePath automatically decodes Google encoded polylines if encodedPolyline is set
+        // Falls back to marker coordinates if no polyline available
         if introPhase == .followingUser {
             let nextWaypointId = getNextWaypointId(markers: currentRoute.qrMarkers, visitedIds: viewModel.visitedMarkerIds)
             if let cached = cachedCurrentLegPolyline,
@@ -433,7 +438,7 @@ struct EmbeddedWalkMapView: View {
                     return []
                 } else {
                     return calculateStaticLegPolyline(
-                        fullPath: currentRoute.routePath,
+                        fullPath: currentRoute.routePath,  // Works with Google polylines (already decoded)
                         markers: currentRoute.qrMarkers,
                         visitedIds: viewModel.visitedMarkerIds,
                         startLocation: viewModel.walkSession.startLocation
@@ -441,6 +446,7 @@ struct EmbeddedWalkMapView: View {
                 }
             }
         } else {
+            // Full route display - routePath handles Google polyline decoding automatically
             return currentRoute.routePath
         }
     }
@@ -455,6 +461,8 @@ struct EmbeddedWalkMapView: View {
     }
     
     // Return route segment
+    // Works with both MapKit routes and Google Directions polylines
+    // Google polylines are decoded via currentRoute.routePath
     private var returnSegment: [CLLocationCoordinate2D] {
         guard isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId,
               let currentRoute = viewModel.walkSession.currentRoute,
@@ -463,8 +471,10 @@ struct EmbeddedWalkMapView: View {
             return []
         }
         
+        // Extract return segment from route path (works with Google polylines)
+        // currentRoute.routePath automatically decodes Google encoded polylines
         let segment = extractReturnSegmentFromRoutePath(
-            routePath: currentRoute.routePath,
+            routePath: currentRoute.routePath,  // Already decoded if Google polyline
             fromWaypoint: lastWaypoint.coordinate,
             toStart: startLocation
         )
@@ -472,13 +482,14 @@ struct EmbeddedWalkMapView: View {
         if !segment.isEmpty && segment.count >= 2 {
             return segment
         } else if let returnRoute = returnRoute {
-            // Extract from MKRoute polyline
+            // Fallback: Extract from MapKit MKRoute polyline
             let polyline = returnRoute.polyline
             let pointCount = polyline.pointCount
             var coords = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
             polyline.getCoordinates(&coords, range: NSRange(location: 0, length: pointCount))
             return coords
         } else if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
+            // Fallback: Use cached return route polyline
             return viewModel.cachedReturnRoutePolyline
         }
         
@@ -1820,6 +1831,8 @@ struct EmbeddedWalkMapView: View {
         }
         
         // --- Fit upcoming route points (up to 3)
+        // Works with both MapKit routes and Google Directions polylines
+        // routePath automatically decodes Google encoded polylines via PolylineDecoder
         if let route = viewModel.walkSession.currentRoute, !route.routePath.isEmpty {
             let upcoming = route.routePath.prefix(3)
             var minLat = location.coordinate.latitude
@@ -1841,6 +1854,7 @@ struct EmbeddedWalkMapView: View {
         }
         
         // --- Fit cached route preview
+        // Also works with Google polylines (cached routes store encoded polyline strings)
         if let cachedRoute = cachedRoute, viewModel.walkSession.currentRoute == nil, !cachedRoute.routePath.isEmpty {
             let coords = cachedRoute.routePath
             let latitudes = coords.map { $0.latitude }
