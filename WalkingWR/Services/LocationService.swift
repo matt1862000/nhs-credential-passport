@@ -122,14 +122,6 @@ class LocationService: NSObject, ObservableObject {
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: Date())
         
-        print("")
-        print("═══════════════════════════════════════════════════════════")
-        print("✅ HEADING UPDATES STARTED")
-        print("═══════════════════════════════════════════════════════════")
-        print("Time: \(timeString)")
-        print("isTracking: \(isTracking)")
-        print("═══════════════════════════════════════════════════════════")
-        print("")
         
         // Start monitoring for heading update stops
         startHeadingUpdateMonitoring()
@@ -149,14 +141,6 @@ class LocationService: NSObject, ObservableObject {
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: Date())
         
-        print("")
-        print("═══════════════════════════════════════════════════════════")
-        print("⛔ HEADING UPDATES STOPPED")
-        print("═══════════════════════════════════════════════════════════")
-        print("Time: \(timeString)")
-        print("isTracking: \(isTracking)")
-        print("═══════════════════════════════════════════════════════════")
-        print("")
         
         stopHeadingUpdateMonitoring()
         stopDirectionMonitoring()
@@ -517,44 +501,18 @@ extension LocationService: CLLocationManagerDelegate {
         let timeString = formatter.string(from: timestamp)
         
         if let timeSince = timeSinceLastUpdate, timeSince > 2.0 {
-            print("========================================")
-            print("⚠️ HEADING UPDATE RESUMED")
-            print("Time: \(timeString)")
-            print("Gap: \(String(format: "%.1f", timeSince))s")
-            print("========================================")
         }
-        
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("📍 HEADING UPDATE RECEIVED")
-        print("Time: \(timeString)")
-        print("trueHeading: \(trueHeading >= 0 ? "\(trueHeading)°" : "INVALID (\(trueHeading))")")
-        print("magneticHeading: \(magneticHeading)°")
-        print("using: \(finalHeading)°")
-        print("accuracy: \(newHeading.headingAccuracy >= 0 ? "\(newHeading.headingAccuracy)°" : "INVALID")")
-        print("timeSinceLastUpdate: \(timeSinceLastUpdate != nil ? String(format: "%.2f", timeSinceLastUpdate!) + "s" : "N/A")")
         
         // Log if heading is invalid
         if trueHeading < 0 && magneticHeading < 0 {
             print("⚠️ WARNING: Both headings invalid!")
-            print("trueHeading: \(trueHeading)")
-            print("magneticHeading: \(magneticHeading)")
         }
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         DispatchQueue.main.async {
             let previousHeading = self.headingDegrees
             self.heading = newHeading
             self.headingDegrees = finalHeading
             
-            // Log if heading changed significantly or stopped updating
-            let headingDiff = abs(finalHeading - previousHeading)
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("🔄 HEADING DEGREES UPDATED")
-            print("Time: \(timeString)")
-            print("Previous: \(previousHeading)°")
-            print("New: \(finalHeading)°")
-            print("Difference: \(String(format: "%.2f", headingDiff))°")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         }
     }
     
@@ -568,38 +526,12 @@ extension LocationService: CLLocationManagerDelegate {
             formatter.dateFormat = "HH:mm:ss.SSS"
             let timeString = formatter.string(from: Date())
             
+            // Monitor for heading update stops (silent monitoring)
             if let lastUpdate = self.lastHeadingUpdateTime {
                 let timeSince = Date().timeIntervalSince(lastUpdate)
                 if timeSince > 3.0 {
-                    print("")
-                    print("═══════════════════════════════════════════════════════════")
-                    print("⚠️⚠️⚠️ HEADING UPDATES HAVE STOPPED ⚠️⚠️⚠️")
-                    print("═══════════════════════════════════════════════════════════")
-                    print("Time: \(timeString)")
-                    print("Last update: \(String(format: "%.1f", timeSince))s ago")
-                    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                    print("STATE CHECK:")
-                    print("  isTracking: \(self.isTracking)")
-                    print("  current headingDegrees: \(self.headingDegrees)°")
-                    print("  heading object: \(self.heading != nil ? "EXISTS" : "NIL")")
-                    if let heading = self.heading {
-                        print("  heading.trueHeading: \(heading.trueHeading >= 0 ? "\(heading.trueHeading)°" : "INVALID")")
-                        print("  heading.magneticHeading: \(heading.magneticHeading)°")
-                        print("  heading.headingAccuracy: \(heading.headingAccuracy >= 0 ? "\(heading.headingAccuracy)°" : "INVALID")")
-                    }
-                    print("═══════════════════════════════════════════════════════════")
-                    print("")
+                    // Heading updates may have stopped - silently monitor
                 }
-            } else {
-                print("")
-                print("═══════════════════════════════════════════════════════════")
-                print("⚠️⚠️⚠️ HEADING UPDATES NEVER STARTED ⚠️⚠️⚠️")
-                print("═══════════════════════════════════════════════════════════")
-                print("Time: \(timeString)")
-                print("No updates received yet")
-                print("isTracking: \(self.isTracking)")
-                print("═══════════════════════════════════════════════════════════")
-                print("")
             }
         }
     }
