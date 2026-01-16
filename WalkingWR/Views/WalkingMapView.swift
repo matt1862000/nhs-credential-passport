@@ -370,7 +370,9 @@ struct EmbeddedWalkMapView: View {
     var body: some View {
         ZStack {
             Map(position: $cameraPosition) {
-                // Custom user location with pulsating dot
+                // ----------------------
+                // User Location
+                // ----------------------
                 if let location = viewModel.locationService.currentLocation {
                     Annotation("You", coordinate: location.coordinate) {
                         PulsatingLocationDot()
@@ -379,8 +381,9 @@ struct EmbeddedWalkMapView: View {
                     UserAnnotation()
                 }
                 
-                // Start/End marker (user's actual GPS position when walk started)
-                // v1.6.48: Use walkSession.startLocation to avoid GPS drift between route generation and walk start
+                // ----------------------
+                // Start/End Marker
+                // ----------------------
                 if let startPoint = viewModel.walkSession.startLocation ?? viewModel.walkSession.currentRoute?.routePath.first {
                     Annotation("Start/End", coordinate: startPoint) {
                         ZStack {
@@ -394,24 +397,17 @@ struct EmbeddedWalkMapView: View {
                     }
                 }
                 
-                // Route polyline from Google Directions (primary)
-                // v1.9.5: Show only current leg segment once walk has truly started
-                // v1.9.13: Don't show original route when returning to start (only show return route)
-                // v1.9.13: Use cached polyline to prevent re-rendering on location updates
+                // ----------------------
+                // Active Route Polyline
+                // ----------------------
                 if let currentRoute = viewModel.walkSession.currentRoute,
                    currentRoute.routePath.count >= 2,
-                   !isShowingReturnRoute {  // Hide original route when showing return route
-                    // Show full route during intro phases, current leg when actively walking
-                    // Calculate polyline to show - use cache if available, otherwise calculate
-                    // Cache updates happen in onChange handler to avoid state modification during view update
-                    // Show route polyline
+                   !isShowingReturnRoute {
                     // If viewing a waypoint in carousel, show route segment from Google routePath
-                    // Otherwise, show normal route (full route or current leg)
                     if let viewingId = viewingWaypointId,
                        viewingId != Self.returnToStartWaypointId,
                        let waypointPolyline = waypointRoutePolyline,
                        !waypointPolyline.isEmpty {
-                        // Show route segment extracted from Google routePath
                         MapPolyline(coordinates: waypointPolyline)
                             .stroke(currentRoute.color, lineWidth: 4)
                     } else {
@@ -448,7 +444,9 @@ struct EmbeddedWalkMapView: View {
                     }
                 }
                 
-                // ALL waypoint markers with NEXT one prominent
+                // ----------------------
+                // Waypoints
+                // ----------------------
                 if let currentRoute = viewModel.walkSession.currentRoute {
                     let visitedIds = viewModel.visitedMarkerIds
                     let markers = currentRoute.qrMarkers
@@ -468,56 +466,59 @@ struct EmbeddedWalkMapView: View {
                     }
                 }
                 
-                // Fallback: MKRoute polyline (ONLY if Google Directions routePath is NOT available)
-                // v1.9.1: Fixed to prevent duplicate polylines when Google Directions is used
-                // Only show MKRoute if we don't have Google Directions data
-                if let route = route {
-                    let hasGoogleDirections = viewModel.walkSession.currentRoute?.routePath.count ?? 0 >= 2
-                    if !hasGoogleDirections {
-                        MapPolyline(route.polyline)
-                            .stroke(Color.tealAccent.opacity(0.5), lineWidth: 3)
-                    }
-                }
-                
-                // Return route polyline (directions back to start)
-                // Try extracting from already-loaded routePath first, fallback to MapKit if needed
+                // ----------------------
+                // Return Route Polyline
+                // ----------------------
                 if isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId {
-                    Group {
-                        if let currentRoute = viewModel.walkSession.currentRoute,
-                           let lastWaypoint = currentRoute.qrMarkers.last,
-                           let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
-                            let returnSegment = extractReturnSegmentFromRoutePath(
-                                routePath: currentRoute.routePath,
-                                fromWaypoint: lastWaypoint.coordinate,
-                                toStart: startLocation
-                            )
-                            
-                            if !returnSegment.isEmpty && returnSegment.count >= 2 {
-                                // Successfully extracted from routePath - use it
-                                MapPolyline(coordinates: returnSegment)
-                                    .stroke(Color.blue, lineWidth: 5)
-                            } else if let returnRoute = returnRoute {
-                                // Fallback 1: Use MapKit-calculated route if available
-                                MapPolyline(returnRoute.polyline)
-                                    .stroke(Color.blue, lineWidth: 5)
-                            } else {
-                                // Fallback 2: Use cached route (accessed on main actor)
-                                let hasCached = viewModel.hasCachedReturnRoute
-                                let cachedPolyline = viewModel.cachedReturnRoutePolyline
-                                if hasCached && !cachedPolyline.isEmpty {
-                                    MapPolyline(coordinates: cachedPolyline)
-                                        .stroke(Color.blue, lineWidth: 5)
-                                }
-                            }
+                    if let currentRoute = viewModel.walkSession.currentRoute,
+                       let lastWaypoint = currentRoute.qrMarkers.last,
+                       let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
+                        let returnSegment = extractReturnSegmentFromRoutePath(
+                            routePath: currentRoute.routePath,
+                            fromWaypoint: lastWaypoint.coordinate,
+                            toStart: startLocation
+                        )
+                        
+                        if !returnSegment.isEmpty && returnSegment.count >= 2 {
+                            MapPolyline(coordinates: returnSegment)
+                                .stroke(Color.blue, lineWidth: 5)
+                        } else if let returnRoute = returnRoute {
+                            MapPolyline(returnRoute.polyline)
+                                .stroke(Color.blue, lineWidth: 5)
+                        } else if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
+                            MapPolyline(coordinates: viewModel.cachedReturnRoutePolyline)
+                                .stroke(Color.blue, lineWidth: 5)
                         }
                     }
                 }
                 
-                // v1.9.5: Removed turn arrow annotations - current leg polyline makes direction clear
+                // ----------------------
+                // Preview Cached Route / POIs (PASSIVE, NO CAMERA UPDATES)
+                // ----------------------
+                if let previewRoute = viewModel.selectedRoute,
+                   viewModel.walkSession.currentRoute == nil,
+                   !previewRoute.routePath.isEmpty {
+                    MapPolyline(coordinates: previewRoute.routePath)
+                        .stroke(previewRoute.color, lineWidth: 4)
+                }
+                
+                if let previewRoute = viewModel.selectedRoute,
+                   viewModel.walkSession.currentRoute == nil {
+                    ForEach(Array(previewRoute.qrMarkers.enumerated()), id: \.element.id) { index, marker in
+                        Annotation(marker.name, coordinate: marker.coordinate) {
+                            WaypointMarkerView(
+                                name: marker.name,
+                                index: index + 1,
+                                isNext: false,
+                                isVisited: false
+                            )
+                        }
+                    }
+                }
             }
             .mapStyle(.standard)
             .mapControls {
-                // Empty - we'll add custom controls in the overlay
+                // Empty, custom controls in overlay
             }
             .onMapCameraChange { context in
                 let now = Date()
@@ -1118,34 +1119,13 @@ struct EmbeddedWalkMapView: View {
                     }
                 )
             }
-            
-            
-            // Intro overlay during camera animation
-            if showingIntroOverlay {
-                VStack {
-                    Spacer()
-                    
-                    HStack {
-                        Image(systemName: introPhase == .showingFirstWaypoint ? "1.circle.fill" : 
-                              introPhase == .showingFullRoute ? "map.fill" : "location.fill")
-                            .font(.title2)
-                            .foregroundColor(.white)
-                        
-                        Text(introPhase.rawValue)
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .background(Color.black.opacity(0.7))
-                    .clipShape(Capsule())
-                    .padding(.bottom, 100)
-                }
-                .transition(.opacity)
-                .animation(.easeInOut, value: introPhase)
-            }
         }
+        // ----------------------
+        // Overlay (non-blocking)
+        // ----------------------
+        .overlay(
+            showingIntroOverlay ? IntroOverlayView(introPhase: introPhase).allowsHitTesting(false) : nil
+        )
         .onAppear {
             if !hasPlayedIntro {
                 playIntroAnimation()
@@ -1183,15 +1163,10 @@ struct EmbeddedWalkMapView: View {
                 cachedLegPolylineForWaypoint = nextWaypointId
             }
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in
-                    if !userInteractedWithMap {
-                        handleMapInteraction()
-                    }
-                    lastInteractionTime = Date()
-                }
-        )
+        // ----------------------
+        // Remove simultaneousGesture completely
+        // ----------------------
+        // Interaction detection handled via onMapCameraChange only
         // v1.9.0: Auto-zoom when approaching turn (within 30m)
         .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
             guard let location = newLocation,
@@ -3181,6 +3156,36 @@ struct WaypointCard: View {
             .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 5)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Intro Overlay View
+struct IntroOverlayView: View {
+    let introPhase: EmbeddedWalkMapView.IntroPhase
+    
+    var body: some View {
+        VStack {
+            Spacer()
+            
+            HStack {
+                Image(systemName: introPhase == .showingFirstWaypoint ? "1.circle.fill" : 
+                      introPhase == .showingFullRoute ? "map.fill" : "location.fill")
+                    .font(.title2)
+                    .foregroundColor(.white)
+                
+                Text(introPhase.rawValue)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.white)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(Color.black.opacity(0.7))
+            .clipShape(Capsule())
+            .padding(.bottom, 100)
+        }
+        .transition(.opacity)
+        .animation(.easeInOut, value: introPhase)
     }
 }
 
