@@ -1770,19 +1770,57 @@ struct EmbeddedWalkMapView: View {
         updateCamera(to: location.coordinate)
     }
     
-    private func handleHeading(_ heading: CLLocationDirection) {
-        guard introPhase == .followingUser else { return }
-        guard !userInteracting, !justResumed, let current = currentCamera else { return }
-        
+    private func handleHeading(_ newHeading: CLLocationDirection) {
+        // --- Safety checks ---
+        guard introPhase == .followingUser, !userInteracting, !justResumed else { return }
+        guard let current = currentCamera else { return }
+
+        var currentHeading = current.heading
+
+        // --- Normalize difference to [-180, +180] for wrap-around ---
+        var delta = newHeading - currentHeading
+        if delta > 180 { delta -= 360 }
+        if delta < -180 { delta += 360 }
+
+        // --- Adaptive smoothing ---
+        let absDelta = abs(delta)
+        let filteredHeading: CLLocationDirection
+
+        if absDelta < 5 {
+            // Small change: heavy smoothing (reduce jitter)
+            filteredHeading = currentHeading + delta * 0.2
+        } else if absDelta < 30 {
+            // Medium change: moderate smoothing
+            filteredHeading = currentHeading + delta * 0.5
+        } else {
+            // Large change: direct update (user is turning)
+            filteredHeading = currentHeading + delta
+        }
+
+        // --- Ensure heading stays in [0, 360] ---
+        let normalizedHeading = (filteredHeading + 360).truncatingRemainder(dividingBy: 360)
+
+        // --- Update camera ---
         let camera = MapCamera(
             centerCoordinate: current.centerCoordinate,
             distance: current.distance,
-            heading: heading,
+            heading: normalizedHeading,
             pitch: current.pitch
         )
+
         currentCamera = camera
         currentCameraState = camera
-        cameraPosition = .camera(camera)
+
+        // --- Animation optimization: only animate for medium/large changes ---
+        // Tiny changes (<5°) update directly to reduce animation overhead
+        if absDelta >= 5 {
+            withAnimation(.interactiveSpring(response: 0.4, dampingFraction: 0.75, blendDuration: 0.2)) {
+                cameraPosition = .camera(camera)
+            }
+        } else {
+            // Tiny changes: direct update (no animation overhead)
+            cameraPosition = .camera(camera)
+        }
     }
     
     private func updateCamera(to coordinate: CLLocationCoordinate2D, heading: CLLocationDirection? = nil) {
