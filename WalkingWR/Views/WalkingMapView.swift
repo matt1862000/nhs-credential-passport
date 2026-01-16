@@ -300,7 +300,6 @@ struct EmbeddedWalkMapView: View {
     @State private var hasPlayedIntro: Bool = false
     @State private var showingIntroOverlay: Bool = false
     @State private var introPhase: IntroPhase = .showingFirstWaypoint
-    @State private var userInteractedWithMap: Bool = false  // Cancels intro animation
     @Environment(\.colorScheme) var colorScheme
     
     // v1.6.28: Opt-in step tracking state
@@ -314,24 +313,15 @@ struct EmbeddedWalkMapView: View {
     
     // v1.9.13: Active zoom management
     @State private var lastZoomUpdate: Date = Date()
-    @State private var currentZoomLevel: Double = 150.0 // meters
-    @State private var currentCameraState: MapCamera? // Track camera state separately
     
-    // v1.9.13: Cache current leg polyline to prevent re-rendering on location updates
-    @State private var cachedCurrentLegPolyline: [CLLocationCoordinate2D]?
-    @State private var cachedLegPolylineForWaypoint: UUID? // Track which waypoint this polyline is for
-    @State private var viewingWaypointId: UUID? // Track which waypoint user is viewing in carousel (nil = not viewing, UUID = viewing that waypoint, special UUID = viewing Return to Start)
-    private static let returnToStartWaypointId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    // v1.9.16: Diagnostic tracking (kept for compatibility)
+    @State private var isProgrammaticCameraUpdate: Bool = false
+    @State private var lastProgrammaticUpdateTime: Date?
+    @State private var lastLocationWhenInteracted: CLLocation?
+    @State private var sustainedSpeedStartTime: Date?
+    @State private var lastAutoResumeTime: Date?
     
-    // v1.9.13: Timer for resuming auto-follow after user interaction
-    @State private var autoFollowResumeTimer: Timer?
-    @State private var isProgrammaticCameraUpdate: Bool = false // Track if camera change is from our code
-    @State private var lastProgrammaticUpdateTime: Date? // Track when we last updated camera programmatically
-    @State private var lastInteractionTime: Date? // Track when user last interacted
-    @State private var lastLocationWhenInteracted: CLLocation? // Track location when user started interacting
-    @State private var sustainedSpeedStartTime: Date? // Track when user started moving at sustained speed
-    
-    // v1.9.16: Diagnostic tracking for snap-back issue
+    // v1.9.16: Diagnostic tracking struct
     struct CameraChangeEvent {
         let timestamp: Date
         let centerDelta: Double
@@ -341,16 +331,63 @@ struct EmbeddedWalkMapView: View {
         let wasDetectedAsUserInteraction: Bool
         let reason: String
     }
-    @State private var recentCameraChanges: [CameraChangeEvent] = [] // Track last 20 camera changes
-    @State private var lastAutoResumeTime: Date? // Track when auto-resume occurred
+    @State private var recentCameraChanges: [CameraChangeEvent] = []
     
-    // v1.9.22: Post-interaction grace period to prevent immediate snap-back
-    // Absorbs heading bursts and animation completion callbacks after finger lift
+    // v1.9.13: Cache current leg polyline to prevent re-rendering on location updates
+    @State private var cachedCurrentLegPolyline: [CLLocationCoordinate2D]?
+    @State private var cachedLegPolylineForWaypoint: UUID? // Track which waypoint this polyline is for
+    @State private var viewingWaypointId: UUID? // Track which waypoint user is viewing in carousel (nil = not viewing, UUID = viewing that waypoint, special UUID = viewing Return to Start)
+    private static let returnToStartWaypointId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    
+    // MARK: - State Variables (Cleaner names)
+    @State private var resumeTimer: Timer?
+    @State private var lastInteraction: Date?
+    @State private var lastLocation: CLLocationCoordinate2D?
+    @State private var justResumed: Bool = false
+    
+    // Cleaner state variable names
+    @State private var userInteracting: Bool = false
+    @State private var currentCamera: MapCamera?
+    @State private var currentZoom: Double = 150.0
+    
+    // Legacy state variables (kept for compatibility with existing code)
+    @State private var autoFollowResumeTimer: Timer? {
+        didSet { resumeTimer = autoFollowResumeTimer }
+    }
+    @State private var lastInteractionTime: Date? {
+        didSet { lastInteraction = lastInteractionTime }
+    }
+    @State private var lastCameraUpdateLocation: CLLocationCoordinate2D? {
+        didSet { lastLocation = lastCameraUpdateLocation }
+    }
+    @State private var userInteractedWithMap: Bool = false {
+        didSet { userInteracting = userInteractedWithMap }
+    }
+    @State private var currentCameraState: MapCamera? {
+        didSet { currentCamera = currentCameraState }
+    }
+    @State private var currentZoomLevel: Double = 150.0 {
+        didSet { currentZoom = currentZoomLevel }
+    }
+    @State private var justResumedAutoFollow: Bool = false {
+        didSet { justResumed = justResumedAutoFollow }
+    }
+    
+    // MARK: - Constants
+    private let gpsGrace: TimeInterval = 0.3
+    private let autoResumeDelay: TimeInterval = 5.0
+    private let postResumeCooldown: TimeInterval = 0.3
+    
+    // Legacy constants (kept for compatibility)
     private let interactionGracePeriod: TimeInterval = 0.3
     
+    private var inInteractionGrace: Bool {
+        guard let last = lastInteraction ?? lastInteractionTime else { return false }
+        return Date().timeIntervalSince(last) < gpsGrace
+    }
+    
     private var isInInteractionGracePeriod: Bool {
-        guard let last = lastInteractionTime else { return false }
-        return Date().timeIntervalSince(last) < interactionGracePeriod
+        inInteractionGrace
     }
     
     /// Check if user previously opted into step tracking
@@ -367,12 +404,113 @@ struct EmbeddedWalkMapView: View {
     
     let clinicCoordinate = CLLocationCoordinate2D(latitude: 53.4084, longitude: -1.4350)
     
+    // -------------------------------
+    // Optimized Computed Properties
+    // -------------------------------
+    
+    // Active route polyline (simplified)
+    private var polylineToShow: [CLLocationCoordinate2D] {
+        guard let currentRoute = viewModel.walkSession.currentRoute,
+              currentRoute.routePath.count >= 2,
+              !isShowingReturnRoute else { return [] }
+        
+        // If viewing a waypoint in carousel, show route segment
+        if let viewingId = viewingWaypointId,
+           viewingId != Self.returnToStartWaypointId,
+           let waypointPolyline = waypointRoutePolyline,
+           !waypointPolyline.isEmpty {
+            return waypointPolyline
+        }
+        
+        // Normal route display
+        if introPhase == .followingUser {
+            let nextWaypointId = getNextWaypointId(markers: currentRoute.qrMarkers, visitedIds: viewModel.visitedMarkerIds)
+            if let cached = cachedCurrentLegPolyline,
+               cachedLegPolylineForWaypoint == nextWaypointId {
+                return cached
+            } else {
+                if viewModel.visitedMarkerIds.count == currentRoute.qrMarkers.count && currentRoute.qrMarkers.count > 0 {
+                    return []
+                } else {
+                    return calculateStaticLegPolyline(
+                        fullPath: currentRoute.routePath,
+                        markers: currentRoute.qrMarkers,
+                        visitedIds: viewModel.visitedMarkerIds,
+                        startLocation: viewModel.walkSession.startLocation
+                    )
+                }
+            }
+        } else {
+            return currentRoute.routePath
+        }
+    }
+    
+    // Active route markers
+    private var markers: [QRMarker] {
+        viewModel.walkSession.currentRoute?.qrMarkers ?? []
+    }
+    
+    private var visitedIds: Set<UUID> {
+        viewModel.visitedMarkerIds
+    }
+    
+    // Return route segment
+    private var returnSegment: [CLLocationCoordinate2D] {
+        guard isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId,
+              let currentRoute = viewModel.walkSession.currentRoute,
+              let lastWaypoint = currentRoute.qrMarkers.last,
+              let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first else {
+            return []
+        }
+        
+        let segment = extractReturnSegmentFromRoutePath(
+            routePath: currentRoute.routePath,
+            fromWaypoint: lastWaypoint.coordinate,
+            toStart: startLocation
+        )
+        
+        if !segment.isEmpty && segment.count >= 2 {
+            return segment
+        } else if let returnRoute = returnRoute {
+            // Extract from MKRoute polyline
+            let polyline = returnRoute.polyline
+            let pointCount = polyline.pointCount
+            var coords = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
+            polyline.getCoordinates(&coords, range: NSRange(location: 0, length: pointCount))
+            return coords
+        } else if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
+            return viewModel.cachedReturnRoutePolyline
+        }
+        
+        return []
+    }
+    
+    // Cached route for preview (fallback to selectedRoute if cachedRoute doesn't exist)
+    private var cachedRoute: WalkingRoute? {
+        viewModel.selectedRoute
+    }
+    
+    // Cached POIs for preview
+    private var cachedPOIs: [OptimizedMarker]? {
+        guard let previewRoute = viewModel.selectedRoute,
+              viewModel.walkSession.currentRoute == nil else {
+            return nil
+        }
+        
+        return previewRoute.qrMarkers.enumerated().map { index, marker in
+            OptimizedMarker(
+                id: marker.id.uuidString,
+                name: marker.name,
+                coordinate: marker.coordinate,
+                index: index + 1
+            )
+        }
+    }
+    
     var body: some View {
         ZStack {
             Map(position: $cameraPosition) {
-                // ----------------------
                 // User Location
-                // ----------------------
                 if let location = viewModel.locationService.currentLocation {
                     Annotation("You", coordinate: location.coordinate) {
                         PulsatingLocationDot()
@@ -381,80 +519,29 @@ struct EmbeddedWalkMapView: View {
                     UserAnnotation()
                 }
                 
-                // ----------------------
                 // Start/End Marker
-                // ----------------------
                 if let startPoint = viewModel.walkSession.startLocation ?? viewModel.walkSession.currentRoute?.routePath.first {
                     Annotation("Start/End", coordinate: startPoint) {
                         ZStack {
-                            Circle()
-                                .fill(Color.blue)
-                                .frame(width: 28, height: 28)
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 12, height: 12)
+                            Circle().fill(Color.blue).frame(width: 28, height: 28)
+                            Circle().fill(Color.white).frame(width: 12, height: 12)
                         }
                     }
                 }
                 
-                // ----------------------
                 // Active Route Polyline
-                // ----------------------
                 if let currentRoute = viewModel.walkSession.currentRoute,
                    currentRoute.routePath.count >= 2,
                    !isShowingReturnRoute {
-                    // If viewing a waypoint in carousel, show route segment from Google routePath
-                    if let viewingId = viewingWaypointId,
-                       viewingId != Self.returnToStartWaypointId,
-                       let waypointPolyline = waypointRoutePolyline,
-                       !waypointPolyline.isEmpty {
-                        MapPolyline(coordinates: waypointPolyline)
-                            .stroke(currentRoute.color, lineWidth: 4)
-                    } else {
-                        // Normal route display (full route or current leg)
-                        let polylineToShow: [CLLocationCoordinate2D] = {
-                            if introPhase == .followingUser {
-                                // Use cached polyline if available and still valid
-                                let nextWaypointId = getNextWaypointId(markers: currentRoute.qrMarkers, visitedIds: viewModel.visitedMarkerIds)
-                                if let cached = cachedCurrentLegPolyline,
-                                   cachedLegPolylineForWaypoint == nextWaypointId {
-                                    return cached
-                                } else {
-                                    // Return calculated polyline - cache will be updated via onChange handler
-                                    if viewModel.visitedMarkerIds.count == currentRoute.qrMarkers.count && currentRoute.qrMarkers.count > 0 {
-                                        // All waypoints visited - return empty (return route shown separately)
-                                        return []
-                                    } else {
-                                        // Calculate static polyline from leg start to waypoint
-                                        return calculateStaticLegPolyline(
-                                            fullPath: currentRoute.routePath,
-                                            markers: currentRoute.qrMarkers,
-                                            visitedIds: viewModel.visitedMarkerIds,
-                                            startLocation: viewModel.walkSession.startLocation
-                                        )
-                                    }
-                                }
-                            } else {
-                                return currentRoute.routePath
-                            }
-                        }()
-                        
-                        MapPolyline(coordinates: polylineToShow)
-                            .stroke(currentRoute.color, lineWidth: 4)
-                    }
+                    MapPolyline(coordinates: polylineToShow)
+                        .stroke(currentRoute.color, lineWidth: 4)
                 }
                 
-                // ----------------------
                 // Waypoints
-                // ----------------------
-                if let currentRoute = viewModel.walkSession.currentRoute {
-                    let visitedIds = viewModel.visitedMarkerIds
-                    let markers = currentRoute.qrMarkers
-                    
+                if !markers.isEmpty {
                     ForEach(Array(markers.enumerated()), id: \.element.id) { index, marker in
                         let isVisited = visitedIds.contains(marker.id)
                         let isNext = !isVisited && !markers.prefix(index).contains(where: { !visitedIds.contains($0.id) })
-                        
                         Annotation(marker.name, coordinate: marker.coordinate) {
                             WaypointMarkerView(
                                 name: marker.name,
@@ -466,49 +553,28 @@ struct EmbeddedWalkMapView: View {
                     }
                 }
                 
-                // ----------------------
                 // Return Route Polyline
-                // ----------------------
                 if isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId {
-                    if let currentRoute = viewModel.walkSession.currentRoute,
-                       let lastWaypoint = currentRoute.qrMarkers.last,
-                       let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
-                        let returnSegment = extractReturnSegmentFromRoutePath(
-                            routePath: currentRoute.routePath,
-                            fromWaypoint: lastWaypoint.coordinate,
-                            toStart: startLocation
-                        )
-                        
-                        if !returnSegment.isEmpty && returnSegment.count >= 2 {
-                            MapPolyline(coordinates: returnSegment)
-                                .stroke(Color.blue, lineWidth: 5)
-                        } else if let returnRoute = returnRoute {
-                            MapPolyline(returnRoute.polyline)
-                                .stroke(Color.blue, lineWidth: 5)
-                        } else if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
-                            MapPolyline(coordinates: viewModel.cachedReturnRoutePolyline)
-                                .stroke(Color.blue, lineWidth: 5)
-                        }
-                    }
+                    MapPolyline(coordinates: returnSegment)
+                        .stroke(Color.blue, lineWidth: 5)
                 }
                 
-                // ----------------------
-                // Preview Cached Route / POIs (PASSIVE, NO CAMERA UPDATES)
-                // ----------------------
-                if let previewRoute = viewModel.selectedRoute,
+                // Cached Route Preview (passive)
+                if let previewRoute = cachedRoute,
                    viewModel.walkSession.currentRoute == nil,
                    !previewRoute.routePath.isEmpty {
                     MapPolyline(coordinates: previewRoute.routePath)
                         .stroke(previewRoute.color, lineWidth: 4)
                 }
                 
-                if let previewRoute = viewModel.selectedRoute,
+                // Cached POIs (passive)
+                if let cachedMarkers = cachedPOIs,
                    viewModel.walkSession.currentRoute == nil {
-                    ForEach(Array(previewRoute.qrMarkers.enumerated()), id: \.element.id) { index, marker in
+                    ForEach(cachedMarkers, id: \.id) { marker in
                         Annotation(marker.name, coordinate: marker.coordinate) {
                             WaypointMarkerView(
                                 name: marker.name,
-                                index: index + 1,
+                                index: marker.index,
                                 isNext: false,
                                 isVisited: false
                             )
@@ -517,9 +583,25 @@ struct EmbeddedWalkMapView: View {
                 }
             }
             .mapStyle(.standard)
-            .mapControls {
-                // Empty, custom controls in overlay
-            }
+            .mapControls { }
+            .simultaneousGesture(
+                // Pan
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in startInteraction() }
+                    .onEnded { _ in endInteraction() }
+            )
+            .simultaneousGesture(
+                // Pinch Zoom
+                MagnificationGesture()
+                    .onChanged { _ in startInteraction() }
+                    .onEnded { _ in endInteraction() }
+            )
+            .simultaneousGesture(
+                // Rotate
+                RotationGesture()
+                    .onChanged { _ in startInteraction() }
+                    .onEnded { _ in endInteraction() }
+            )
             .onMapCameraChange { context in
                 let now = Date()
                 let formatter = DateFormatter()
@@ -611,7 +693,7 @@ struct EmbeddedWalkMapView: View {
                 
                 print("")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("🗺️ MAP CAMERA CHANGE DETECTED")
+                print("🗺️ MAP CAMERA CHA -NGE DETECTED")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 print("⏰ Time: \(timeString)")
                 print("")
@@ -1123,8 +1205,9 @@ struct EmbeddedWalkMapView: View {
         // ----------------------
         // Overlay (non-blocking)
         // ----------------------
+        // Non-blocking overlay
         .overlay(
-            showingIntroOverlay ? IntroOverlayView(introPhase: introPhase).allowsHitTesting(false) : nil
+            showingIntroOverlay ? IntroOverlayView(introPhase: introPhase).opacity(1).allowsHitTesting(false) : nil
         )
         .onAppear {
             if !hasPlayedIntro {
@@ -1191,178 +1274,14 @@ struct EmbeddedWalkMapView: View {
                 }
             }
         }
-        // v1.9.13: Active zoom management - adjust zoom based on location updates
+        // MARK: - Location & Heading Handlers
         .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
-            let now = Date()
-            guard let location = newLocation else {
-                print("📍 [LOCATION UPDATE] No location available")
-                return
-            }
-            
-            print("📍 [LOCATION UPDATE] New location: (\(location.coordinate.latitude), \(location.coordinate.longitude)), course=\(location.course >= 0 ? "\(location.course)°" : "invalid")")
-            print("📍 [LOCATION UPDATE] introPhase: \(introPhase.rawValue), followingUser: \(introPhase == .followingUser)")
-            print("📍 [LOCATION UPDATE] userInteractedWithMap: \(userInteractedWithMap)")
-            print("📍 [LOCATION UPDATE] isApproachingTurn: \(isApproachingTurn)")
-            
-            guard introPhase == .followingUser else {
-                print("📍 [LOCATION UPDATE] ❌ BLOCKED: introPhase != .followingUser")
-                return
-            }
-            
-            // v1.9.22: Grace period after interaction to prevent immediate snap-back
-            // Absorbs heading bursts and animation completion callbacks after finger lift
-            if isInInteractionGracePeriod {
-                print("📍 [LOCATION UPDATE] ⏸ Grace period — skipping camera update (time since interaction: \(String(format: "%.2f", Date().timeIntervalSince(lastInteractionTime ?? Date())))s)")
-                return
-            }
-            
-            // Location updates are blocked when user has interacted (to prevent camera jumping)
-            // But heading updates are allowed separately to keep arrow rotating
-            // v1.9.16: Safety mechanism - if blocked for too long (>10s), auto-reset to prevent stuck state
-            if userInteractedWithMap {
-                if let lastInteraction = lastInteractionTime {
-                    let timeSinceInteraction = now.timeIntervalSince(lastInteraction)
-                    if timeSinceInteraction > 10.0 {
-                        // Safety reset: userInteractedWithMap has been true for >10 seconds
-                        // This shouldn't happen (auto-resume should fire at 5s), but if timer fails, this prevents stuck state
-                        print("📍 [LOCATION UPDATE] ⚠️ SAFETY RESET: userInteractedWithMap blocked for \(String(format: "%.1f", timeSinceInteraction))s (>10s), auto-resetting")
-                        userInteractedWithMap = false
-                        lastInteractionTime = nil
-                        autoFollowResumeTimer?.invalidate()
-                        autoFollowResumeTimer = nil
-                        // Continue to update camera below
-                    } else {
-                        print("📍 [LOCATION UPDATE] ❌ BLOCKED: userInteractedWithMap == true (location updates blocked, but heading updates allowed)")
-                        print("📍 [LOCATION UPDATE]   Time since interaction: \(String(format: "%.1f", timeSinceInteraction))s (auto-resume at 5s)")
-                        return
-                    }
-                } else {
-                    // No lastInteractionTime but userInteractedWithMap is true - inconsistent state, reset
-                    print("📍 [LOCATION UPDATE] ⚠️ SAFETY RESET: userInteractedWithMap=true but lastInteractionTime=nil, resetting")
-                    userInteractedWithMap = false
-                    autoFollowResumeTimer?.invalidate()
-                    autoFollowResumeTimer = nil
-                    // Continue to update camera below
-                }
-            }
-            
-            // Allow camera updates even when approaching turn - just follow user smoothly
-            // The turn zoom is handled separately, but we still need to follow user movement
-            print("📍 [LOCATION UPDATE] ✅ PROCEEDING: Updating camera (isApproachingTurn: \(isApproachingTurn))")
-            
-            // Update zoom every 5 seconds or when distance to next waypoint changes significantly
-            let timeSinceLastUpdate = Date().timeIntervalSince(lastZoomUpdate)
-            if timeSinceLastUpdate >= 5.0 {
-                updateActiveZoom(for: location)
-                lastZoomUpdate = Date()
-            }
-            
-            // Update camera with both location and current heading together
-            // This ensures smooth updates and prevents camera state from being nil
-            let currentHeading: CLLocationDirection? = {
-                if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
-                    return trueHeading
-                } else if location.course >= 0 {
-                    return location.course
-                } else {
-                    return nil // Will use existing heading or default
-                }
-            }()
-            
-            updateCamera(location: location.coordinate, heading: currentHeading)
+            guard let location = newLocation else { return }
+            handleLocation(location)
         }
-        // v1.9.13: Update camera heading smoothly when device rotates
-        // v1.9.13: Ignore heading changes during manual interaction to prevent snap-back
-        .onChange(of: viewModel.locationService.headingDegrees) { oldHeading, newHeading in
-            let timestamp = Date()
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm:ss.SSS"
-            let timeString = formatter.string(from: timestamp)
-            
-            print("")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("🔄 MAP VIEW: HEADING CHANGE DETECTED")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("Time: \(timeString)")
-            print("Old heading: \(oldHeading)°")
-            print("New heading: \(newHeading)°")
-            print("Difference: \(String(format: "%.2f", abs(newHeading - oldHeading)))°")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("STATE CHECK:")
-            print("  introPhase: \(introPhase.rawValue)")
-            print("  introPhase == .followingUser: \(introPhase == .followingUser)")
-            print("  userInteractedWithMap: \(userInteractedWithMap)")
-            print("  isApproachingTurn: \(isApproachingTurn)")
-            print("  currentLocation: \(viewModel.locationService.currentLocation != nil ? "AVAILABLE" : "NIL")")
-            print("  heading object: \(viewModel.locationService.heading != nil ? "AVAILABLE" : "NIL")")
-            if let heading = viewModel.locationService.heading {
-                print("  heading.trueHeading: \(heading.trueHeading >= 0 ? "\(heading.trueHeading)°" : "INVALID")")
-                print("  heading.magneticHeading: \(heading.magneticHeading)°")
-                print("  heading.headingAccuracy: \(heading.headingAccuracy >= 0 ? "\(heading.headingAccuracy)°" : "INVALID")")
-            }
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            
-            guard introPhase == .followingUser else {
-                print("❌ BLOCKED: introPhase != .followingUser")
-                print("Current introPhase: \(introPhase.rawValue)")
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("")
-                return
-            }
-            
-            // v1.9.22: Grace period after interaction to prevent immediate snap-back
-            // Absorbs heading bursts and animation completion callbacks after finger lift
-            if isInInteractionGracePeriod {
-                print("⏸ Grace period — skipping camera update (time since interaction: \(String(format: "%.2f", Date().timeIntervalSince(lastInteractionTime ?? Date())))s)")
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("")
-                return
-            }
-            
-            // Allow heading updates even when user has interacted - arrow should always rotate
-            // Only block location updates when user has interacted, but allow heading rotation
-            // This ensures the arrow continues to rotate smoothly even if user panned the map
-            if userInteractedWithMap {
-                print("⚠️ userInteractedWithMap == true - heading update will only rotate arrow, NOT move camera")
-                // When user has interacted, we should NOT update the camera (which would move it back to user location)
-                // The arrow rotation is handled by the rotationEffect modifier in the view, not by camera updates
-                // So we just return here - the arrow will still rotate via the rotationEffect
-                print("✅ Arrow will continue rotating via rotationEffect, but camera won't move")
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("")
-                return
-            }
-            
-            // Allow heading updates even when approaching turn - keep arrow rotating smoothly
-            guard let currentLocation = viewModel.locationService.currentLocation else {
-                print("❌ BLOCKED: currentLocation is nil")
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("")
-                return
-            }
-            
-            guard newHeading >= 0 else {
-                print("")
-                print("═══════════════════════════════════════════════════════════")
-                print("❌ BLOCKED: INVALID HEADING DETECTED")
-                print("═══════════════════════════════════════════════════════════")
-                print("Time: \(timeString)")
-                print("newHeading: \(newHeading) (NEGATIVE - INVALID)")
-                print("⚠️ This may indicate heading updates have stopped!")
-                print("═══════════════════════════════════════════════════════════")
-                print("")
-                return
-            }
-            
-            print("✅ PROCEEDING: All checks passed, updating camera")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("")
-            
-            // Update camera with both location and heading together for consistency
-            updateCamera(location: currentLocation.coordinate, heading: newHeading)
-            
-            print("✅ Camera update completed at \(timeString)")
-            print("")
+        .onChange(of: viewModel.locationService.heading) { _, newHeading in
+            guard let heading = newHeading?.trueHeading else { return }
+            handleHeading(heading)
         }
         // v1.9.13: Update cached leg polyline when waypoint changes (not during view rendering)
         .onChange(of: viewModel.visitedMarkerIds.count) { _, _ in
@@ -1799,144 +1718,143 @@ struct EmbeddedWalkMapView: View {
         }
     }
     
-    // v1.9.13: Update camera zoom level smoothly while maintaining heading
-    // v1.9.16: Don't update camera if user has interacted (prevents unwanted snap-back)
+    // -------------------------------
+    // 196-style updateCameraZoom
+    // -------------------------------
     private func updateCameraZoom() {
-        // CRITICAL: Don't move camera if user has interacted with map
-        guard !userInteractedWithMap else {
-            print("🎯 [UPDATE CAMERA ZOOM] ❌ BLOCKED: userInteractedWithMap == true")
-            return
-        }
+        guard !userInteractedWithMap else { return }
+        guard let location = viewModel.locationService.currentLocation else { return }
         
-        guard let currentLocation = viewModel.locationService.currentLocation else {
-            return
-        }
-        
-        // Get current heading from location service or location course
-        let existingHeading = currentCameraState?.heading ?? 0
-        
-        let heading: CLLocationDirection = {
-            if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
-                return trueHeading
-            } else if currentLocation.course >= 0 {
-                return currentLocation.course
-            } else {
-                return existingHeading
-            }
-        }()
-        
-        // Update camera with new zoom level, using smooth animation
-        // Only animate zoom changes, not heading (heading updates separately)
-        // v1.9.22: Do NOT mark passive zoom updates as "programmatic"
-        let newCamera = MapCamera(
-            centerCoordinate: currentLocation.coordinate,
+        let heading = viewModel.locationService.heading?.trueHeading ?? currentCameraState?.heading ?? 0
+        let camera = MapCamera(
+            centerCoordinate: location.coordinate,
             distance: currentZoomLevel,
             heading: heading,
-            pitch: 0
+            pitch: currentCameraState?.pitch ?? 0
         )
-        currentCameraState = newCamera
-        // NOTE: isProgrammaticCameraUpdate and lastProgrammaticUpdateTime are NOT set here
-        // They are only set for intentional recentering actions
+        
+        currentCameraState = camera
+        
         withAnimation(.easeInOut(duration: 1.5)) {
-            cameraPosition = .camera(newCamera)
+            cameraPosition = .camera(camera)
         }
     }
     
-    // v1.9.13: Unified camera update function that handles both location and heading
-    // This ensures updates happen reliably and camera state is always initialized
-    // Updates smoothly without throttling to prevent stuttering
-    // When approaching a turn, still follows user but may use different zoom
-    private func updateCamera(location: CLLocationCoordinate2D, heading: CLLocationDirection? = nil) {
-        // v1.9.22: CRITICAL FIX - Hard-block all camera updates during user interaction
-        // This prevents snap-back even if interaction detection is late or heading/location updates fire
-        guard !userInteractedWithMap else {
-            print("🚫 updateCamera BLOCKED — user interacting")
+    // MARK: - Camera Updates
+    private func handleLocation(_ location: CLLocation) {
+        guard introPhase == .followingUser else { return }
+        guard !userInteracting, !inInteractionGrace, !justResumed else { return }
+        
+        if let last = lastLocation,
+           abs(last.latitude - location.coordinate.latitude) < 0.00001 &&
+           abs(last.longitude - location.coordinate.longitude) < 0.00001 {
             return
         }
+        lastLocation = location.coordinate
+        lastCameraUpdateLocation = location.coordinate
         
-        // Get current heading - prefer provided heading, then location service heading, then existing camera heading
-        let targetHeading: CLLocationDirection = {
-            if let providedHeading = heading, providedHeading >= 0 {
-                return providedHeading
-            } else if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
-                return trueHeading
-            } else if let location = viewModel.locationService.currentLocation, location.course >= 0 {
-                return location.course
-            } else if let existingCamera = currentCameraState {
-                return existingCamera.heading
-            } else {
-                return 0
-            }
-        }()
+        currentZoom = calculateSmartZoom(for: location)
+        currentZoomLevel = currentZoom
         
-        // Get distance from existing camera or use current zoom level
-        // When approaching turn, use closer zoom (100m) for better visibility
-        let existingCamera = currentCameraState
-        let baseDistance = existingCamera?.distance ?? currentZoomLevel
-        let distance = isApproachingTurn ? min(baseDistance, 100.0) : baseDistance
+        updateCamera(to: location.coordinate)
+    }
+    
+    private func handleHeading(_ heading: CLLocationDirection) {
+        guard introPhase == .followingUser else { return }
+        guard !userInteracting, !justResumed, let current = currentCamera else { return }
         
-        // Calculate changes for smooth animation decision
-        let existingHeading = existingCamera?.heading ?? 0
-        let headingDiff = abs(targetHeading - existingHeading)
-        
-        // Normalize heading difference (handle 360° wrap-around)
-        let normalizedHeadingDiff = min(headingDiff, 360 - headingDiff)
-        
-        // Calculate location change distance
-        let locationChange: Double = {
-            guard let existing = existingCamera else { return 100 } // Large value to force update
-            let latDiff = existing.centerCoordinate.latitude - location.latitude
-            let lonDiff = existing.centerCoordinate.longitude - location.longitude
-            // Rough conversion: 1 degree ≈ 111km, so 0.0001° ≈ 11m
-            return sqrt(latDiff * latDiff + lonDiff * lonDiff) * 111000 // Convert to meters
-        }()
-        
-        // Create new camera instance - always follow user location
         let camera = MapCamera(
-            centerCoordinate: location,
-            distance: distance,
+            centerCoordinate: current.centerCoordinate,
+            distance: current.distance,
+            heading: heading,
+            pitch: current.pitch
+        )
+        currentCamera = camera
+        currentCameraState = camera
+        cameraPosition = .camera(camera)
+    }
+    
+    private func updateCamera(to coordinate: CLLocationCoordinate2D, heading: CLLocationDirection? = nil) {
+        guard !userInteracting else { return }
+        
+        let existing = currentCamera ?? currentCameraState
+        let targetHeading = heading ?? viewModel.locationService.heading?.trueHeading ?? existing?.heading ?? 0
+        
+        let camera = MapCamera(
+            centerCoordinate: coordinate,
+            distance: currentZoom,
             heading: targetHeading,
-            pitch: existingCamera?.pitch ?? 0
+            pitch: existing?.pitch ?? 0
         )
         
-        // Update camera state
-        let updateTime = Date()
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        let timeString = formatter.string(from: updateTime)
-        
-        // v1.9.22: Do NOT mark passive follow updates as "programmatic"
-        // Only intentional recentering (resumeAutoFollow, intro animation, zoom-to-waypoint) should set these flags
-        // This prevents passive updates from masking real user gestures in onMapCameraChange
+        currentCamera = camera
         currentCameraState = camera
-        // NOTE: isProgrammaticCameraUpdate and lastProgrammaticUpdateTime are NOT set here
-        // They are only set for intentional recentering actions
         
-        print("")
-        print("🔧 PASSIVE CAMERA UPDATE (updateCamera - following user)")
-        print("  Time: \(timeString)")
-        print("  Location: (\(String(format: "%.6f", location.latitude)), \(String(format: "%.6f", location.longitude)))")
-        print("  Heading: \(String(format: "%.1f", targetHeading))°")
-        print("  Distance: \(String(format: "%.1f", distance))m")
-        print("  Location change: \(String(format: "%.1f", locationChange))m")
-        print("  Heading change: \(String(format: "%.1f", normalizedHeadingDiff))°")
-        print("  Animation: \(normalizedHeadingDiff > 15 || locationChange > 20 ? "YES (large change)" : "NO (small change)")")
-        print("  userInteractedWithMap: \(userInteractedWithMap)")
-        print("")
+        let largeChange = existing == nil ||
+            abs(camera.heading - (existing?.heading ?? 0)) > 15 ||
+            (existing != nil && sqrt(pow(camera.centerCoordinate.latitude - existing!.centerCoordinate.latitude, 2) +
+                                     pow(camera.centerCoordinate.longitude - existing!.centerCoordinate.longitude, 2)) * 111000 > 20)
         
-        // Update strategy:
-        // - No animation for small, frequent changes (smooth and responsive)
-        // - Short animation only for larger changes (prevents jumps)
-        // - Always update to follow user, even when approaching turn
-        if normalizedHeadingDiff > 15 || locationChange > 20 {
-            // Large change: use very short animation to smooth the jump
-            withAnimation(.linear(duration: 0.08)) {
-                cameraPosition = .camera(camera)
-            }
-        } else {
-            // Small change: update instantly for smooth following
+        withAnimation(largeChange ? .linear(duration: 0.08)
+                                 : .interactiveSpring(response: 0.6, dampingFraction: 0.8, blendDuration: 0.25)) {
             cameraPosition = .camera(camera)
         }
+    }
+    
+    // Legacy function name (kept for compatibility)
+    private func updateCamera(location: CLLocationCoordinate2D, heading: CLLocationDirection? = nil) {
+        updateCamera(to: location, heading: heading)
+    }
+    
+    // MARK: - Smart Dynamic Zoom
+    private func calculateSmartZoom(for location: CLLocation) -> Double {
+        var zoom: Double = 150.0
+        
+        // --- Speed-based zoom
+        if location.speed > 0 {
+            switch location.speed {
+            case 0..<1: zoom = 150
+            case 1..<2: zoom = 170
+            default: zoom = 200
+            }
+        }
+        
+        // --- Fit upcoming route points (up to 3)
+        if let route = viewModel.walkSession.currentRoute, !route.routePath.isEmpty {
+            let upcoming = route.routePath.prefix(3)
+            var minLat = location.coordinate.latitude
+            var maxLat = location.coordinate.latitude
+            var minLon = location.coordinate.longitude
+            var maxLon = location.coordinate.longitude
+            
+            for pt in upcoming {
+                minLat = min(minLat, pt.latitude)
+                maxLat = max(maxLat, pt.latitude)
+                minLon = min(minLon, pt.longitude)
+                maxLon = max(maxLon, pt.longitude)
+            }
+            
+            let latDelta = maxLat - minLat
+            let lonDelta = maxLon - minLon
+            let distance = max(latDelta, lonDelta) * 111_000
+            zoom = max(zoom, min(250, distance * 1.5))
+        }
+        
+        // --- Fit cached route preview
+        if let cachedRoute = cachedRoute, viewModel.walkSession.currentRoute == nil, !cachedRoute.routePath.isEmpty {
+            let coords = cachedRoute.routePath
+            let latitudes = coords.map { $0.latitude }
+            let longitudes = coords.map { $0.longitude }
+            if let minLat = latitudes.min(), let maxLat = latitudes.max(),
+               let minLon = longitudes.min(), let maxLon = longitudes.max() {
+                let latDelta = maxLat - minLat
+                let lonDelta = maxLon - minLon
+                let distance = max(latDelta, lonDelta) * 111_000
+                zoom = max(zoom, min(250, distance * 1.5))
+            }
+        }
+        
+        return zoom
     }
     
     // v1.9.13: Helper to update camera center smoothly
@@ -1949,274 +1867,85 @@ struct EmbeddedWalkMapView: View {
         updateCamera(location: coordinate, heading: heading)
     }
     
-    // v1.9.13: Handle user map interaction - disable auto-follow temporarily
-    // v1.9.15: Speed-based auto-resume - only resumes if user is moving (walking)
-    private func handleMapInteraction() {
-        let now = Date()
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        let timeString = formatter.string(from: now)
+    // MARK: - Interaction
+    private func startInteraction() {
+        userInteracting = true
+        lastInteraction = Date()
         
-        let currentLocation = viewModel.locationService.currentLocation
-        let currentCamera = currentCameraState
-        
-        print("")
-        print("═══════════════════════════════════════════════════════════")
-        print("👆👆👆 MAP INTERACTION DETECTED 👆👆👆")
-        print("═══════════════════════════════════════════════════════════")
-        print("⏰ Time: \(timeString)")
-        print("")
-        print("📍 CURRENT STATE:")
-        print("  userInteractedWithMap: \(userInteractedWithMap) → true (changing)")
-        print("  introPhase: \(introPhase.rawValue)")
-        print("  lastInteractionTime: \(lastInteractionTime != nil ? formatter.string(from: lastInteractionTime!) : "nil")")
-        if let loc = currentLocation {
-            print("  Current location: (\(String(format: "%.6f", loc.coordinate.latitude)), \(String(format: "%.6f", loc.coordinate.longitude)))")
-        } else {
-            print("  Current location: nil")
-        }
-        if let cam = currentCamera {
-            print("  Current camera center: (\(String(format: "%.6f", cam.centerCoordinate.latitude)), \(String(format: "%.6f", cam.centerCoordinate.longitude)))")
-            print("  Current camera heading: \(String(format: "%.1f", cam.heading))°")
-            print("  Current camera distance: \(String(format: "%.1f", cam.distance))m")
-        } else {
-            print("  Current camera: nil")
-        }
-        print("")
-        print("⚠️ ACTION: Setting userInteractedWithMap = true")
-        print("⚠️ Location updates will be blocked, but heading updates will continue")
-        print("⚠️ Will auto-resume after 5 seconds of no interaction")
-        print("═══════════════════════════════════════════════════════════")
-        print("")
-        
-        // Set interaction flag to disable auto-follow/auto-zoom
-        let wasInteracting = userInteractedWithMap
+        // Update legacy variables for compatibility
         userInteractedWithMap = true
+        lastInteractionTime = Date()
         
-        // v1.9.16: DIAGNOSTIC - Log when userInteractedWithMap changes from false to true
-        if !wasInteracting {
-            print("")
-            print("🚨🚨🚨 userInteractedWithMap CHANGED: false → true 🚨🚨🚨")
-            print("  Time: \(timeString)")
-            print("  This means auto-follow is now DISABLED")
-            print("  Auto-resume timer will start (5 seconds)")
-            if let autoResumeTime = lastAutoResumeTime {
-                let timeSinceAutoResume = now.timeIntervalSince(autoResumeTime)
-                print("  Time since last auto-resume: \(String(format: "%.2f", timeSinceAutoResume))s")
-                if timeSinceAutoResume < 3.0 {
-                    print("  ⚠️⚠️⚠️ IN VULNERABILITY WINDOW - This might be a FALSE POSITIVE! ⚠️⚠️⚠️")
-                }
-            }
-            print("🚨🚨🚨 END STATE CHANGE 🚨🚨🚨")
-            print("")
-        }
-        
-        // Record current location when user starts interacting
-        lastLocationWhenInteracted = currentLocation
-        
-        // Cancel any existing resume timer
-        if autoFollowResumeTimer != nil {
-            print("  ⏰ Cancelling existing auto-resume timer")
-            autoFollowResumeTimer?.invalidate()
-        }
-        
-        // Use a repeating timer that checks if user has stopped interacting for 5 seconds
-        // CRITICAL: We check timeSinceLastInteraction FIRST - if user is still interacting, 
-        // lastInteractionTime keeps getting updated, so timeSinceLastInteraction never reaches 5.0
-        print("  ⏰ Creating new auto-resume timer (will check every 0.5s, auto-resume after 5s)")
-        // v1.9.16: Use common run loop modes so timer fires even when app is busy
-        let timer = Timer(timeInterval: 0.5, repeats: true) { [self] timer in
-            let now = Date()
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm:ss.SSS"
-            let timeString = formatter.string(from: now)
-            
-            // v1.9.16: DIAGNOSTIC - Log every timer fire to confirm it's running
-            print("")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("⏰ AUTO-RESUME TIMER CHECK (timer fired)")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("Time: \(timeString)")
-            print("userInteractedWithMap: \(userInteractedWithMap)")
-            print("introPhase: \(introPhase.rawValue)")
-            print("lastInteractionTime: \(lastInteractionTime != nil ? formatter.string(from: lastInteractionTime!) : "nil")")
-            print("Timer is valid: \(timer.isValid)")
-            
-            // CRITICAL: Don't auto-resume if user is still actively interacting
-            // If userInteractedWithMap is false, user already resumed - stop timer
-            guard userInteractedWithMap && introPhase == .followingUser else {
-                print("❌ BLOCKED: userInteractedWithMap=\(userInteractedWithMap), introPhase=\(introPhase.rawValue)")
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("")
-                timer.invalidate()
-                return
-            }
-            
-            // Check if 5 seconds have passed since last interaction
-            // If user is still interacting, lastInteractionTime keeps updating, so this never triggers
-            guard let lastInteraction = lastInteractionTime else {
-                print("❌ BLOCKED: lastInteractionTime is nil")
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("")
-                timer.invalidate()
-                return
-            }
-            
-            let timeSinceLastInteraction = now.timeIntervalSince(lastInteraction)
-            print("timeSinceLastInteraction: \(String(format: "%.2f", timeSinceLastInteraction))s")
-            
-            // CRITICAL: Only proceed if user has STOPPED interacting for 5 seconds
-            // If they're still interacting, lastInteractionTime keeps updating, so this stays < 5.0
-            guard timeSinceLastInteraction >= 5.0 else {
-                // User is still interacting (lastInteractionTime was updated recently)
-                print("⏸️ User still interacting (only \(String(format: "%.2f", timeSinceLastInteraction))s since last interaction)")
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("")
-                return
-            }
-            
-            // User has stopped interacting for 5 seconds - auto-resume regardless of movement
-            print("")
-            print("═══════════════════════════════════════════════════════════════════════════")
-            print("⏰⏰⏰ AUTO-RESUME TRIGGERED ⏰⏰⏰")
-            print("═══════════════════════════════════════════════════════════════════════════")
-            print("⏰ Time: \(timeString)")
-            print("⏰ Time since last interaction: \(String(format: "%.2f", timeSinceLastInteraction))s")
-            print("⏰ Auto-resuming after 5 seconds of no interaction")
-            print("")
-            print("📊 STATE AT AUTO-RESUME:")
-            print("  userInteractedWithMap: \(userInteractedWithMap) → false (will change)")
-            print("  introPhase: \(introPhase.rawValue)")
-            print("  lastInteractionTime: \(formatter.string(from: lastInteraction))")
-            if let loc = viewModel.locationService.currentLocation {
-                print("  Current location: (\(String(format: "%.6f", loc.coordinate.latitude)), \(String(format: "%.6f", loc.coordinate.longitude)))")
-            } else {
-                print("  Current location: nil")
-            }
-            if let cam = currentCameraState {
-                print("  Current camera center: (\(String(format: "%.6f", cam.centerCoordinate.latitude)), \(String(format: "%.6f", cam.centerCoordinate.longitude)))")
-                print("  Current camera heading: \(String(format: "%.1f", cam.heading))°")
-            } else {
-                print("  Current camera: nil")
-            }
-            print("═══════════════════════════════════════════════════════════════════════════")
-            print("")
-            timer.invalidate()
-            sustainedSpeedStartTime = nil
-            
-            // v1.9.16: Note: lastAutoResumeTime will be set inside resumeAutoFollow()
-            // This ensures it's tracked regardless of where resumeAutoFollow() is called from
-            
-            resumeAutoFollow()
-        }
-        // Schedule timer on common run loop modes so it fires even when app is busy
-        RunLoop.main.add(timer, forMode: .common)
-        autoFollowResumeTimer = timer
-        print("  ⏰ Timer scheduled on .common run loop mode (will fire even when app is busy)")
-        print("  ⏰ Timer stored: \(autoFollowResumeTimer != nil), isValid: \(timer.isValid)")
-        print("  ⏰ Timer will fire every 0.5s, auto-resume after 5.0s of no interaction")
+        resumeTimer?.invalidate()
+        autoFollowResumeTimer?.invalidate()
     }
     
-    // v1.9.13: Resume auto-follow and auto-zoom after user interaction with smooth animation
-    private func resumeAutoFollow() {
-        print("🔄 [RESUME AUTO-FOLLOW] resumeAutoFollow called")
-        print("🔄 [RESUME AUTO-FOLLOW] introPhase: \(introPhase.rawValue), followingUser: \(introPhase == .followingUser)")
-        print("🔄 [RESUME AUTO-FOLLOW] currentLocation: \(viewModel.locationService.currentLocation != nil ? "available" : "nil")")
-        
-        guard introPhase == .followingUser,
-              let currentLocation = viewModel.locationService.currentLocation else {
-            print("🔄 [RESUME AUTO-FOLLOW] ❌ BLOCKED: introPhase != .followingUser or no location")
-            return
-        }
-        
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        let timeString = formatter.string(from: Date())
-        
-        print("")
-        print("═══════════════════════════════════════════════════════════")
-        print("🔄 RESUMING AUTO-FOLLOW")
-        print("═══════════════════════════════════════════════════════════")
-        print("Time: \(timeString)")
-        print("Setting userInteractedWithMap = false")
-        print("✅ Location and heading updates will resume")
-        print("═══════════════════════════════════════════════════════════")
-        print("")
-        
-        // Clear interaction flag and location tracking
-        userInteractedWithMap = false
-        lastLocationWhenInteracted = nil
-        sustainedSpeedStartTime = nil // Reset sustained speed tracking
-        
-        // v1.9.16: Track auto-resume time for vulnerability window detection
-        // Set this here so it works regardless of where resumeAutoFollow() is called from
-        let now = Date()
-        lastAutoResumeTime = now
-        print("")
-        print("📌📌📌 AUTO-RESUME TRACKING: lastAutoResumeTime set to \(formatter.string(from: now)) 📌📌📌")
-        print("  ⚠️ VULNERABILITY WINDOW ACTIVE: Next 3 seconds are high-risk for false positives")
-        print("  ⚠️ Any user interaction detected in this window will be flagged as suspicious")
-        print("📌📌📌 END AUTO-RESUME TRACKING 📌📌📌")
-        print("")
-        
-        // Clear old diagnostic history (keep last 5 for context)
-        if recentCameraChanges.count > 5 {
-            recentCameraChanges.removeFirst(recentCameraChanges.count - 5)
-        }
-        
-        // Get current heading
-        let heading: CLLocationDirection = {
-            if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
-                print("🔄 [RESUME AUTO-FOLLOW] Using trueHeading: \(trueHeading)°")
-                return trueHeading
-            } else if currentLocation.course >= 0 {
-                print("🔄 [RESUME AUTO-FOLLOW] Using location.course: \(currentLocation.course)°")
-                return currentLocation.course
-            } else if let camera = currentCameraState {
-                print("🔄 [RESUME AUTO-FOLLOW] Using existing camera heading: \(camera.heading)°")
-                return camera.heading
-            } else {
-                print("🔄 [RESUME AUTO-FOLLOW] ⚠️ No heading available, using 0°")
-                return 0
+    private func endInteraction() {
+        lastInteraction = Date()
+        lastInteractionTime = Date()
+        scheduleAutoResume()
+    }
+    
+    private func scheduleAutoResume() {
+        resumeTimer?.invalidate()
+        resumeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { timer in
+            guard let last = lastInteraction else { timer.invalidate(); return }
+            if Date().timeIntervalSince(last) >= autoResumeDelay {
+                timer.invalidate()
+                autoResumeFollow()
             }
-        }()
-        
-        print("🔄 [RESUME AUTO-FOLLOW] Setting camera: location=(\(currentLocation.coordinate.latitude), \(currentLocation.coordinate.longitude)), heading=\(heading)°, zoom=\(currentZoomLevel)m")
-        
-        // Smoothly animate back to user location with camera follow, zoom, and heading
-        let newCamera = MapCamera(
-            centerCoordinate: currentLocation.coordinate,
-            distance: currentZoomLevel,
-            heading: heading,
-            pitch: 0
-        )
-        let updateTime = Date()
-        let updateTimeString = formatter.string(from: updateTime)
-        
-        currentCameraState = newCamera
-        isProgrammaticCameraUpdate = true
-        lastProgrammaticUpdateTime = updateTime
-
-        print("")
-        print("🔧 PROGRAMMATIC CAMERA UPDATE (resumeAutoFollow)")
-        print("  Time: \(updateTimeString)")
-        print("  Location: (\(String(format: "%.6f", currentLocation.coordinate.latitude)), \(String(format: "%.6f", currentLocation.coordinate.longitude)))")
-        print("  Heading: \(String(format: "%.1f", heading))°")
-        print("  Distance: \(String(format: "%.1f", currentZoomLevel))m")
-        print("  Animation: YES (1.5s easeInOut)")
-        print("  userInteractedWithMap: \(userInteractedWithMap)")
-        print("")
-
-        // Smooth animation back to user location
-        withAnimation(.easeInOut(duration: 1.5)) {
-            cameraPosition = .camera(newCamera)
         }
         
-        print("🔄 [RESUME AUTO-FOLLOW] ✅ Camera resumed with heading \(heading)°")
+        // Update legacy timer for compatibility
+        autoFollowResumeTimer = resumeTimer
+    }
+    
+    // Legacy function name (kept for compatibility)
+    private func handleMapInteraction() {
+        startInteraction()
+    }
+    
+    // MARK: - Auto-Resume
+    private func autoResumeFollow() {
+        guard introPhase == .followingUser,
+              let location = viewModel.locationService.currentLocation else { return }
         
-        // Clear timer
-        autoFollowResumeTimer?.invalidate()
-        autoFollowResumeTimer = nil
+        userInteracting = false
+        lastInteraction = nil
+        justResumed = true
+        
+        // Update legacy variables for compatibility
+        userInteractedWithMap = false
+        lastInteractionTime = nil
+        justResumedAutoFollow = true
+        
+        currentZoom = calculateSmartZoom(for: location)
+        currentZoomLevel = currentZoom
+        
+        let heading = viewModel.locationService.heading?.trueHeading ?? currentCamera?.heading ?? 0
+        let camera = MapCamera(
+            centerCoordinate: location.coordinate,
+            distance: currentZoom,
+            heading: heading,
+            pitch: currentCamera?.pitch ?? 0
+        )
+        
+        currentCamera = camera
+        currentCameraState = camera
+        
+        withAnimation(.easeInOut(duration: 1.5)) {
+            cameraPosition = .camera(camera)
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + postResumeCooldown) {
+            justResumed = false
+            justResumedAutoFollow = false
+        }
+    }
+    
+    // Legacy function name (kept for compatibility)
+    private func resumeAutoFollow() {
+        autoResumeFollow()
     }
     
     private func calculateRoute() {
@@ -3156,6 +2885,22 @@ struct WaypointCard: View {
             .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 5)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - Optimized Marker Model
+struct OptimizedMarker: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let coordinate: CLLocationCoordinate2D
+    let index: Int
+    
+    static func == (lhs: OptimizedMarker, rhs: OptimizedMarker) -> Bool {
+        lhs.id == rhs.id &&
+        lhs.name == rhs.name &&
+        lhs.coordinate.latitude == rhs.coordinate.latitude &&
+        lhs.coordinate.longitude == rhs.coordinate.longitude &&
+        lhs.index == rhs.index
     }
 }
 
