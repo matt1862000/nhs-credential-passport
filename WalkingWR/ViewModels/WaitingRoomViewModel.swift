@@ -1386,16 +1386,15 @@ class WaitingRoomViewModel: ObservableObject {
     private func startAlertAutoDismissTimer(for alertKeyPath: WritableKeyPath<WaitingRoomViewModel, Bool>) {
         cancelAlertAutoDismissTimer()
         // v1.9.16: Capture the keyPath identifier before the closure to avoid Sendable issues
-        // Use a switch to determine which property to set
+        // Use comparison to determine which property to set (key paths can't be switched directly)
         let alertType: AlertType
-        switch alertKeyPath {
-        case \.showHalfwayAlert:
+        if alertKeyPath == \.showHalfwayAlert {
             alertType = .halfway
-        case \.showReturnNowAlert:
+        } else if alertKeyPath == \.showReturnNowAlert {
             alertType = .returnNow
-        case \.showWalkCompleteAlert:
+        } else if alertKeyPath == \.showWalkCompleteAlert {
             alertType = .walkComplete
-        default:
+        } else {
             alertType = .halfway // Fallback
         }
         

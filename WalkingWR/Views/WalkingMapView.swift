@@ -331,6 +331,19 @@ struct EmbeddedWalkMapView: View {
     @State private var lastLocationWhenInteracted: CLLocation? // Track location when user started interacting
     @State private var sustainedSpeedStartTime: Date? // Track when user started moving at sustained speed
     
+    // v1.9.16: Diagnostic tracking for snap-back issue
+    struct CameraChangeEvent {
+        let timestamp: Date
+        let centerDelta: Double
+        let headingDelta: Double
+        let distanceDelta: Double
+        let wasProgrammatic: Bool
+        let wasDetectedAsUserInteraction: Bool
+        let reason: String
+    }
+    @State private var recentCameraChanges: [CameraChangeEvent] = [] // Track last 20 camera changes
+    @State private var lastAutoResumeTime: Date? // Track when auto-resume occurred
+    
     /// Check if user previously opted into step tracking
     /// We trust the UserDefaults flag - if permission was revoked, we'll handle it when pedometer fails
     private var shouldAutoEnableSteps: Bool {
@@ -508,28 +521,330 @@ struct EmbeddedWalkMapView: View {
                 let isRecentProgrammaticUpdate = lastProgrammaticUpdateTime != nil &&
                     now.timeIntervalSince(lastProgrammaticUpdateTime!) < 1.0
                 
+                // Calculate camera change details
+                let cameraCenter = context.camera.centerCoordinate
+                let cameraHeading = context.camera.heading
+                let cameraDistance = context.camera.distance
+                let previousCenter = currentCameraState?.centerCoordinate
+                let previousHeading = currentCameraState?.heading ?? 0
+                let previousDistance = currentCameraState?.distance ?? 0
+                
+                // Get user's current location for direction detection
+                let userLocation = viewModel.locationService.currentLocation?.coordinate
+                
+                // Calculate change deltas
+                let centerDelta: Double = {
+                    guard let prev = previousCenter else { return 999 }
+                    let latDiff = abs(cameraCenter.latitude - prev.latitude)
+                    let lonDiff = abs(cameraCenter.longitude - prev.longitude)
+                    return sqrt(latDiff * latDiff + lonDiff * lonDiff) * 111000 // Convert to meters
+                }()
+                
+                // v1.9.16: Detect if camera is moving AWAY from user location
+                // Programmatic updates always move TOWARDS user location, so moving AWAY = user interaction
+                let isMovingAwayFromUser: Bool = {
+                    guard let userLoc = userLocation,
+                          let prevCenter = previousCenter else { return false }
+                    // Calculate distance from user to previous camera center
+                    let prevDistFromUser = sqrt(
+                        pow(prevCenter.latitude - userLoc.latitude, 2) +
+                        pow(prevCenter.longitude - userLoc.longitude, 2)
+                    ) * 111000
+                    // Calculate distance from user to current camera center
+                    let currentDistFromUser = sqrt(
+                        pow(cameraCenter.latitude - userLoc.latitude, 2) +
+                        pow(cameraCenter.longitude - userLoc.longitude, 2)
+                    ) * 111000
+                    // If current distance > previous distance by >10m, it's moving away
+                    return (currentDistFromUser - prevDistFromUser) > 10.0
+                }()
+                let headingDelta = abs(cameraHeading - previousHeading)
+                let normalizedHeadingDelta = min(headingDelta, 360 - headingDelta)
+                let distanceDelta = abs(cameraDistance - previousDistance)
+                
+                // v1.9.16: DIAGNOSTIC - Flag large camera movements that might feel like snap-back
+                let isLargeMovement = centerDelta > 500.0 || normalizedHeadingDelta > 45.0 || distanceDelta > 500.0
+                if isLargeMovement {
+                    print("")
+                    print("⚠️⚠️⚠️ LARGE CAMERA MOVEMENT DETECTED ⚠️⚠️⚠️")
+                    print("  This might be the snap-back you're experiencing!")
+                    print("  centerDelta=\(String(format: "%.1f", centerDelta))m, headingDelta=\(String(format: "%.1f", normalizedHeadingDelta))°, distanceDelta=\(String(format: "%.1f", distanceDelta))m")
+                    print("  isProgrammaticCameraUpdate=\(isProgrammaticCameraUpdate)")
+                    print("  isRecentProgrammaticUpdate=\(isRecentProgrammaticUpdate)")
+                    print("  userInteractedWithMap=\(userInteractedWithMap)")
+                    print("  lastProgrammaticUpdateTime=\(lastProgrammaticUpdateTime != nil ? formatter.string(from: lastProgrammaticUpdateTime!) : "nil")")
+                    print("  timeSinceLastProgrammaticUpdate=\(lastProgrammaticUpdateTime != nil ? String(format: "%.3f", now.timeIntervalSince(lastProgrammaticUpdateTime!)) + "s" : "N/A")")
+                    print("⚠️⚠️⚠️ END LARGE MOVEMENT ⚠️⚠️⚠️")
+                    print("")
+                }
+                
+                // v1.9.16: In auto-follow mode, assume small/expected changes are programmatic
+                // This prevents false positives from MapKit's internal camera adjustments
+                // Only treat as user interaction if change is large AND unexpected
+                // v1.9.16: Lowered thresholds - user pan gestures can be as small as 50m
+                // v1.9.16: Pattern detection will override this for small movements that form a pattern
+                let isInAutoFollowMode = !userInteractedWithMap && introPhase == .followingUser
+                let isSmallExpectedChange = centerDelta < 50.0 && // Less than 50m movement (was 200m - too high!)
+                                          normalizedHeadingDelta < 5.0 && // Less than 5° heading change (was 10°)
+                                          distanceDelta < 50.0 // Less than 50m zoom change (was 100m)
+                // Note: Pattern detection will be checked later and can override this
+                let isLikelyProgrammaticInAutoFollow = isInAutoFollowMode && isSmallExpectedChange
+                
+                // Calculate time since last interaction
+                let timeSinceLastInteraction: String = {
+                    if let lastInteraction = lastInteractionTime {
+                        let elapsed = now.timeIntervalSince(lastInteraction)
+                        return String(format: "%.3f", elapsed) + "s"
+                    }
+                    return "N/A"
+                }()
+                
                 print("")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 print("🗺️ MAP CAMERA CHANGE DETECTED")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                print("Time: \(timeString)")
-                print("isProgrammaticCameraUpdate flag: \(isProgrammaticCameraUpdate)")
-                print("lastProgrammaticUpdateTime: \(lastProgrammaticUpdateTime != nil ? formatter.string(from: lastProgrammaticUpdateTime!) : "nil")")
-                print("isRecentProgrammaticUpdate: \(isRecentProgrammaticUpdate)")
-                print("timeSinceLastProgrammaticUpdate: \(lastProgrammaticUpdateTime != nil ? String(format: "%.3f", now.timeIntervalSince(lastProgrammaticUpdateTime!)) + "s" : "N/A")")
-                print("introPhase: \(introPhase.rawValue)")
-                print("userInteractedWithMap: \(userInteractedWithMap)")
+                print("⏰ Time: \(timeString)")
+                print("")
+                print("📊 CAMERA STATE:")
+                print("  Center: (\(String(format: "%.6f", cameraCenter.latitude)), \(String(format: "%.6f", cameraCenter.longitude)))")
+                print("  Heading: \(String(format: "%.1f", cameraHeading))°")
+                print("  Distance: \(String(format: "%.1f", cameraDistance))m")
+                print("")
+                print("📈 CAMERA CHANGE DELTAS:")
+                print("  Center moved: \(String(format: "%.1f", centerDelta))m")
+                print("  Heading changed: \(String(format: "%.1f", normalizedHeadingDelta))°")
+                print("  Distance changed: \(String(format: "%.1f", distanceDelta))m")
+                print("")
+                print("🔍 DETECTION STATE:")
+                print("  isProgrammaticCameraUpdate flag: \(isProgrammaticCameraUpdate)")
+                print("  lastProgrammaticUpdateTime: \(lastProgrammaticUpdateTime != nil ? formatter.string(from: lastProgrammaticUpdateTime!) : "nil")")
+                print("  timeSinceLastProgrammaticUpdate: \(lastProgrammaticUpdateTime != nil ? String(format: "%.3f", now.timeIntervalSince(lastProgrammaticUpdateTime!)) + "s" : "N/A")")
+                print("  isRecentProgrammaticUpdate: \(isRecentProgrammaticUpdate)")
+                print("  isInAutoFollowMode: \(isInAutoFollowMode)")
+                print("  isSmallExpectedChange: \(isSmallExpectedChange) (center<50m, heading<5°, distance<50m)")
+                print("  isLikelyProgrammaticInAutoFollow: \(isLikelyProgrammaticInAutoFollow)")
+                print("  lastAutoResumeTime: \(lastAutoResumeTime != nil ? formatter.string(from: lastAutoResumeTime!) : "nil")")
+                print("  timeSinceAutoResume: \(lastAutoResumeTime != nil ? String(format: "%.2f", now.timeIntervalSince(lastAutoResumeTime!)) + "s" : "N/A")")
+                print("  isInVulnerabilityWindow: \(lastAutoResumeTime != nil && now.timeIntervalSince(lastAutoResumeTime!) < 3.0)")
+                print("  introPhase: \(introPhase.rawValue)")
+                print("  userInteractedWithMap: \(userInteractedWithMap)")
+                print("  lastInteractionTime: \(lastInteractionTime != nil ? formatter.string(from: lastInteractionTime!) : "nil")")
+                print("  timeSinceLastInteraction: \(timeSinceLastInteraction)")
+                print("  recentCameraChanges count: \(recentCameraChanges.count)")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                
+                // Track this camera change in diagnostic buffer
+                let wasProgrammatic = isProgrammaticCameraUpdate || isRecentProgrammaticUpdate || isLikelyProgrammaticInAutoFollow
+                let willBeDetectedAsUserInteraction = introPhase == .followingUser &&
+                    !userInteractedWithMap &&
+                    !isProgrammaticCameraUpdate &&
+                    !isRecentProgrammaticUpdate &&
+                    !isLikelyProgrammaticInAutoFollow
+                
+                // Add to diagnostic buffer (keep last 20 events)
+                recentCameraChanges.append(CameraChangeEvent(
+                    timestamp: now,
+                    centerDelta: centerDelta,
+                    headingDelta: normalizedHeadingDelta,
+                    distanceDelta: distanceDelta,
+                    wasProgrammatic: wasProgrammatic,
+                    wasDetectedAsUserInteraction: willBeDetectedAsUserInteraction,
+                    reason: wasProgrammatic ? "programmatic" : (willBeDetectedAsUserInteraction ? "USER_INTERACTION" : "unknown")
+                ))
+                if recentCameraChanges.count > 20 {
+                    recentCameraChanges.removeFirst()
+                }
+                
+                // Check if we're in "vulnerability window" (within 3 seconds of auto-resume)
+                let isInVulnerabilityWindow = lastAutoResumeTime != nil &&
+                    now.timeIntervalSince(lastAutoResumeTime!) < 3.0
+                
+                // v1.9.16: Pattern detection for small user movements
+                // If there are multiple small movements in quick succession, it's likely user interaction
+                // This helps detect small pan gestures that would otherwise be filtered as programmatic
+                // Check pattern BEFORE calculating wasProgrammatic to avoid circular dependency
+                let hasPatternOfSmallMovements: Bool = {
+                    guard isInAutoFollowMode && !isProgrammaticCameraUpdate && !isRecentProgrammaticUpdate else { return false }
+                    // Look at last 5 events within 2 seconds
+                    let recentEvents = recentCameraChanges.suffix(5)
+                    let twoSecondsAgo = now.addingTimeInterval(-2.0)
+                    // Check for small movements that weren't clearly programmatic
+                    // We check the raw events, not the wasProgrammatic flag (which might be wrong)
+                    let recentSmallMovements = recentEvents.filter { event in
+                        event.timestamp >= twoSecondsAgo &&
+                        event.centerDelta < 50.0 && // Small movements
+                        event.centerDelta > 10.0 && // But not tiny (filter noise)
+                        event.centerDelta > 0.0 // Actually moved
+                    }
+                    // If 2+ small movements in last 2 seconds, it's likely a pattern of user interaction
+                    // (programmatic updates are usually single, not repeated small movements)
+                    return recentSmallMovements.count >= 2
+                }()
+                
+                // v1.9.16: Detect "suspicious" changes - borderline cases that might be false positives
+                // These are changes that are larger than "small" but not clearly user-initiated
+                // v1.9.16: Updated thresholds to match new detection thresholds
+                let isSuspiciousChange = isInAutoFollowMode &&
+                    !wasProgrammatic &&
+                    centerDelta >= 50.0 && centerDelta < 300.0 && // Medium movement (50-300m, was 100-500m)
+                    normalizedHeadingDelta < 20.0 && // Not a large rotation (was 30°)
+                    distanceDelta < 100.0 // Not a large zoom (was 200m)
                 
                 // Detect user interaction with map (pan, zoom, rotation)
                 // Only detect if we're in following mode, not during intro, and not a programmatic update
-                // Use both the flag AND timestamp check to be more reliable
-                if introPhase == .followingUser && 
+                // v1.9.16: In auto-follow mode, also ignore small/expected changes (likely MapKit internal adjustments)
+                // v1.9.16: In vulnerability window, be extra cautious - require larger changes to detect as user interaction
+                // v1.9.16: Updated thresholds - but make them reasonable (not too strict)
+                // After auto-resume, we want to detect user interactions, just be slightly more cautious
+                // v1.9.17: FIXED - Changed from OR to AND logic!
+                // The OR logic was blocking legitimate pan gestures because heading/distance are usually 0 for pans
+                // Now only blocks if change is small in ALL dimensions (truly programmatic-looking)
+                // Only block very small movements in vulnerability window to prevent animation false positives
+                let requiresLargerChangeInVulnerabilityWindow = isInVulnerabilityWindow && 
+                    centerDelta < 50.0 &&  // Small center movement
+                    normalizedHeadingDelta < 10.0 &&  // Small heading change
+                    distanceDelta < 50.0  // Small zoom change
+                
+                // v1.9.16: DIAGNOSTIC - Log if we're in vulnerability window and what the check would do
+                if isInVulnerabilityWindow {
+                    let wouldBlock = requiresLargerChangeInVulnerabilityWindow
+                    print("  ⚠️ VULNERABILITY WINDOW: timeSinceAutoResume=\(lastAutoResumeTime != nil ? String(format: "%.3f", now.timeIntervalSince(lastAutoResumeTime!)) + "s" : "N/A")")
+                    print("  ⚠️ Change: center=\(String(format: "%.1f", centerDelta))m, heading=\(String(format: "%.1f", normalizedHeadingDelta))°, distance=\(String(format: "%.1f", distanceDelta))m")
+                    print("  ⚠️ requiresLargerChangeInVulnerabilityWindow=\(wouldBlock) (would block: center<50m AND heading<10° AND distance<50m)")
+                }
+                
+                // v1.9.16: DIAGNOSTIC - Check if this COULD be a user interaction but is being blocked
+                // This helps diagnose why interactions aren't being detected
+                let couldBeUserInteraction = introPhase == .followingUser && !userInteractedWithMap
+                if couldBeUserInteraction {
+                    let wouldBeBlocked = isProgrammaticCameraUpdate || 
+                                        isRecentProgrammaticUpdate || 
+                                        isLikelyProgrammaticInAutoFollow ||
+                                        requiresLargerChangeInVulnerabilityWindow
+                    
+                        // If it's a medium-to-large change that's being blocked, that's suspicious
+                        // v1.9.16: Lowered threshold - even 30m movement could be user interaction
+                        let isMediumOrLargeChange = centerDelta >= 30.0 || normalizedHeadingDelta >= 3.0 || distanceDelta >= 30.0
+                    
+                    if wouldBeBlocked && isMediumOrLargeChange {
+                        print("")
+                        print("🔍🔍🔍 POTENTIAL USER INTERACTION BLOCKED 🔍🔍🔍")
+                        print("  ⚠️ This camera change looks like user interaction but was blocked!")
+                        print("  Change: center=\(String(format: "%.1f", centerDelta))m, heading=\(String(format: "%.1f", normalizedHeadingDelta))°, distance=\(String(format: "%.1f", distanceDelta))m")
+                        print("  Blocked by:")
+                        if isProgrammaticCameraUpdate {
+                            print("    - isProgrammaticCameraUpdate=true")
+                        }
+                        if isRecentProgrammaticUpdate {
+                            print("    - isRecentProgrammaticUpdate=true (timeSince: \(lastProgrammaticUpdateTime != nil ? String(format: "%.3f", now.timeIntervalSince(lastProgrammaticUpdateTime!)) + "s" : "N/A"))")
+                        }
+                        if isLikelyProgrammaticInAutoFollow {
+                            print("    - isLikelyProgrammaticInAutoFollow=true (small change in auto-follow)")
+                        }
+                        if requiresLargerChangeInVulnerabilityWindow {
+                            print("    - requiresLargerChangeInVulnerabilityWindow=true (in vulnerability window)")
+                        }
+                        print("🔍🔍🔍 END BLOCKED INTERACTION 🔍🔍🔍")
+                        print("")
+                    }
+                }
+                
+                // v1.9.16: Pattern detection override - if there's a pattern of small movements, treat as user interaction
+                // This helps detect small pan gestures that would otherwise be filtered
+                // v1.9.17: IMPROVED - Moving away from user now works for ALL movement sizes (not just 10-50m)
+                // If camera is moving AWAY from user location, it's definitely a user interaction
+                // Programmatic updates always move TOWARDS user location
+                let shouldOverrideProgrammaticCheck = hasPatternOfSmallMovements && centerDelta >= 10.0 && centerDelta < 50.0
+                
+                // v1.9.17: Separate check for "moving away" - this is a strong signal of user interaction
+                // regardless of movement size, and should override vulnerability window too
+                let isDefinitelyUserInteraction = isMovingAwayFromUser && centerDelta >= 10.0
+                if hasPatternOfSmallMovements {
+                    print("  🔍 PATTERN DETECTED: \(recentCameraChanges.suffix(5).filter { $0.timestamp >= now.addingTimeInterval(-2.0) && $0.centerDelta < 50.0 && $0.centerDelta > 10.0 }.count) small movements in last 2s")
+                }
+                if isMovingAwayFromUser {
+                    let userLoc = userLocation
+                    let prevCenter = previousCenter
+                    if let user = userLoc, let prev = prevCenter {
+                        let prevDist = sqrt(pow(prev.latitude - user.latitude, 2) + pow(prev.longitude - user.longitude, 2)) * 111000
+                        let currentDist = sqrt(pow(cameraCenter.latitude - user.latitude, 2) + pow(cameraCenter.longitude - user.longitude, 2)) * 111000
+                        print("  🔍 MOVING AWAY FROM USER: prev=\(String(format: "%.1f", prevDist))m, current=\(String(format: "%.1f", currentDist))m, delta=\(String(format: "%.1f", currentDist - prevDist))m")
+                    }
+                }
+                if shouldOverrideProgrammaticCheck {
+                    print("  ✅ Overriding programmatic check - pattern detected (\(String(format: "%.1f", centerDelta))m)")
+                }
+                if isDefinitelyUserInteraction {
+                    print("  ✅ DEFINITE USER INTERACTION - camera moving AWAY from user (\(String(format: "%.1f", centerDelta))m)")
+                    print("  ✅ This will override vulnerability window check!")
+                }
+                
+                // v1.9.17: Main detection condition
+                // isDefinitelyUserInteraction (moving away from user) can override ALL checks except the direct programmatic flags
+                // This is because moving away is a 100% reliable signal - programmatic updates never move away from user
+                let passesStandardChecks = introPhase == .followingUser && 
                    !userInteractedWithMap && 
                    !isProgrammaticCameraUpdate && 
-                   !isRecentProgrammaticUpdate {
+                   !isRecentProgrammaticUpdate &&
+                   (!isLikelyProgrammaticInAutoFollow || shouldOverrideProgrammaticCheck) &&
+                   !requiresLargerChangeInVulnerabilityWindow
+                
+                // v1.9.17: When camera is moving AWAY from user, override isRecentProgrammaticUpdate too
+                // The "moving away" signal is so strong that it overrides the time-based heuristic
+                // Only keep isProgrammaticCameraUpdate check (if flag is set, we're mid-update)
+                let passesWithMovingAwayOverride = introPhase == .followingUser && 
+                   !userInteractedWithMap && 
+                   !isProgrammaticCameraUpdate &&  // Keep: if flag is set, we're mid-programmatic update
+                   // NOTE: Removed !isRecentProgrammaticUpdate - "moving away" overrides this time-based heuristic
+                   isDefinitelyUserInteraction  // Moving away overrides other heuristics including isRecentProgrammaticUpdate
+                
+                if passesStandardChecks || passesWithMovingAwayOverride {
                     // This is a user interaction - record the time and handle it
-                    print("✅ DETECTED AS USER INTERACTION")
+                    print("")
+                    print("✅✅✅ DETECTED AS USER INTERACTION ✅✅✅")
+                    if passesWithMovingAwayOverride && !passesStandardChecks {
+                        print("  Reason: Camera moving AWAY from user location (overrode heuristic checks)")
+                        print("  This bypassed: isRecentProgrammaticUpdate=\(isRecentProgrammaticUpdate), isLikelyProgrammaticInAutoFollow=\(isLikelyProgrammaticInAutoFollow), requiresLargerChangeInVulnerabilityWindow=\(requiresLargerChangeInVulnerabilityWindow)")
+                    } else if shouldOverrideProgrammaticCheck {
+                        print("  Reason: Pattern of small movements detected (overrode programmatic check)")
+                    } else {
+                        print("  Reason: introPhase=\(introPhase.rawValue), userInteractedWithMap=false, isProgrammaticCameraUpdate=false, isRecentProgrammaticUpdate=false, isLikelyProgrammaticInAutoFollow=false")
+                    }
+                    print("  Camera change: center=\(String(format: "%.1f", centerDelta))m, heading=\(String(format: "%.1f", normalizedHeadingDelta))°, distance=\(String(format: "%.1f", distanceDelta))m")
+                    print("  isInVulnerabilityWindow: \(isInVulnerabilityWindow) (timeSinceAutoResume: \(lastAutoResumeTime != nil ? String(format: "%.2f", now.timeIntervalSince(lastAutoResumeTime!)) + "s" : "N/A"))")
+                    print("  isSuspiciousChange: \(isSuspiciousChange)")
+                    
+                    // v1.9.16: SNAPSHOT - If in vulnerability window, this is likely a FALSE POSITIVE
+                    if isInVulnerabilityWindow {
+                        print("")
+                        print("🚨🚨🚨 SNAPSHOT: POTENTIAL FALSE POSITIVE DETECTED 🚨🚨🚨")
+                        print("  ⚠️ User interaction detected within 3 seconds of auto-resume!")
+                        print("  ⚠️ This is likely the snap-back bug!")
+                        print("  Time since auto-resume: \(lastAutoResumeTime != nil ? String(format: "%.3f", now.timeIntervalSince(lastAutoResumeTime!)) + "s" : "N/A")")
+                        print("  Camera change: center=\(String(format: "%.1f", centerDelta))m, heading=\(String(format: "%.1f", normalizedHeadingDelta))°, distance=\(String(format: "%.1f", distanceDelta))m")
+                        print("  ⚠️ This change should have been blocked by requiresLargerChangeInVulnerabilityWindow!")
+                        print("  ⚠️ But it wasn't - investigating why...")
+                        print("🚨🚨🚨 END SNAPSHOT 🚨🚨🚨")
+                        print("")
+                    }
+                    
+                    // v1.9.16: DIAGNOSTIC - Always dump recent camera change history when user interaction detected
+                    // This helps diagnose false positives
+                    print("")
+                    print("🔍🔍🔍 RECENT CAMERA CHANGE HISTORY (last \(recentCameraChanges.count) events) 🔍🔍🔍")
+                    let historyFormatter = DateFormatter()
+                    historyFormatter.dateFormat = "HH:mm:ss.SSS"
+                    for (index, event) in recentCameraChanges.enumerated() {
+                        let timeStr = historyFormatter.string(from: event.timestamp)
+                        let timeSince = now.timeIntervalSince(event.timestamp)
+                        print("  [\(index + 1)] \(timeStr) (\(String(format: "%.2f", timeSince))s ago)")
+                        print("      center=\(String(format: "%.1f", event.centerDelta))m, heading=\(String(format: "%.1f", event.headingDelta))°, distance=\(String(format: "%.1f", event.distanceDelta))m")
+                        print("      wasProgrammatic=\(event.wasProgrammatic), detectedAsUserInteraction=\(event.wasDetectedAsUserInteraction), reason=\(event.reason)")
+                    }
+                    print("🔍🔍🔍 END HISTORY 🔍🔍🔍")
+                    print("")
+                    
+                    print("")
                     lastInteractionTime = now
                     handleMapInteraction()
                 } else if introPhase == .followingUser && 
@@ -538,17 +853,68 @@ struct EmbeddedWalkMapView: View {
                           !isRecentProgrammaticUpdate {
                     // User is continuing to interact - update the timestamp to reset the timer
                     // This prevents auto-resume while user is still actively interacting
+                    // v1.9.16: More lenient detection for continuing interactions - don't filter by isLikelyProgrammaticInAutoFollow
+                    // because once user is interacting, any camera change (even small) likely means they're still interacting
                     let oldTime = lastInteractionTime
                     lastInteractionTime = now
                     if let old = oldTime {
                         let timeSinceOld = now.timeIntervalSince(old)
                         print("🔄 User continuing to interact - resetting timer (was \(String(format: "%.2f", timeSinceOld))s since last)")
+                        print("  Camera change: center=\(String(format: "%.1f", centerDelta))m, heading=\(String(format: "%.1f", normalizedHeadingDelta))°, distance=\(String(format: "%.1f", distanceDelta))m")
+                        print("  ⚠️ Timer reset - will not auto-resume for another 5 seconds")
                     } else {
                         print("🔄 User continuing to interact - resetting timer")
                     }
                 } else {
-                    print("❌ NOT USER INTERACTION (programmatic update)")
+                    let reason: String = {
+                        if introPhase != .followingUser {
+                            return "introPhase != .followingUser"
+                        } else if userInteractedWithMap {
+                            return "userInteractedWithMap=true"
+                        } else if isProgrammaticCameraUpdate {
+                            return "isProgrammaticCameraUpdate=true"
+                        } else if isRecentProgrammaticUpdate {
+                            return "isRecentProgrammaticUpdate=true (within grace period)"
+                        } else if isLikelyProgrammaticInAutoFollow {
+                            return "isLikelyProgrammaticInAutoFollow=true (small change in auto-follow mode)"
+                        } else if requiresLargerChangeInVulnerabilityWindow {
+                            return "requiresLargerChangeInVulnerabilityWindow=true (in vulnerability window, change too small)"
+                        } else {
+                            return "unknown"
+                        }
+                    }()
+                    print("❌ NOT USER INTERACTION - Reason: \(reason)")
+                    
+                    // v1.9.16: DIAGNOSTIC - Log when a change COULD be user interaction but is filtered
+                    // This helps diagnose why user interactions aren't being detected
+                    if introPhase == .followingUser && !userInteractedWithMap {
+                        let couldBeUserInteraction = !isProgrammaticCameraUpdate && 
+                                                     !isRecentProgrammaticUpdate &&
+                                                     !isLikelyProgrammaticInAutoFollow &&
+                                                     !requiresLargerChangeInVulnerabilityWindow
+                        
+                        if !couldBeUserInteraction {
+                            // This change could have been a user interaction but was filtered
+                            print("  🔍 DIAGNOSTIC: This change COULD be user interaction but was filtered:")
+                            print("     - centerDelta=\(String(format: "%.1f", centerDelta))m (threshold: 50m)")
+                            print("     - headingDelta=\(String(format: "%.1f", normalizedHeadingDelta))° (threshold: 5°)")
+                            print("     - distanceDelta=\(String(format: "%.1f", distanceDelta))m (threshold: 50m)")
+                            print("     - isProgrammaticCameraUpdate=\(isProgrammaticCameraUpdate)")
+                            print("     - isRecentProgrammaticUpdate=\(isRecentProgrammaticUpdate) (timeSince: \(lastProgrammaticUpdateTime != nil ? String(format: "%.3f", now.timeIntervalSince(lastProgrammaticUpdateTime!)) + "s" : "N/A"))")
+                            print("     - isLikelyProgrammaticInAutoFollow=\(isLikelyProgrammaticInAutoFollow)")
+                            print("     - requiresLargerChangeInVulnerabilityWindow=\(requiresLargerChangeInVulnerabilityWindow)")
+                            print("     - autoFollowResumeTimer exists: \(autoFollowResumeTimer != nil)")
+                        }
+                    }
+                    
+                    if isSuspiciousChange {
+                        print("  ⚠️ SUSPICIOUS CHANGE DETECTED (borderline case): center=\(String(format: "%.1f", centerDelta))m, heading=\(String(format: "%.1f", normalizedHeadingDelta))°, distance=\(String(format: "%.1f", distanceDelta))m")
+                        print("  ⚠️ This change is medium-sized but not clearly programmatic - monitoring...")
+                    }
                 }
+                
+                // Update current camera state for next comparison
+                currentCameraState = context.camera
                 
                 // Reset flag after checking (but keep timestamp for a bit longer)
                 isProgrammaticCameraUpdate = false
@@ -834,6 +1200,7 @@ struct EmbeddedWalkMapView: View {
         }
         // v1.9.13: Active zoom management - adjust zoom based on location updates
         .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
+            let now = Date()
             guard let location = newLocation else {
                 print("📍 [LOCATION UPDATE] No location available")
                 return
@@ -851,9 +1218,32 @@ struct EmbeddedWalkMapView: View {
             
             // Location updates are blocked when user has interacted (to prevent camera jumping)
             // But heading updates are allowed separately to keep arrow rotating
-            guard !userInteractedWithMap else {
-                print("📍 [LOCATION UPDATE] ❌ BLOCKED: userInteractedWithMap == true (location updates blocked, but heading updates allowed)")
-                return
+            // v1.9.16: Safety mechanism - if blocked for too long (>10s), auto-reset to prevent stuck state
+            if userInteractedWithMap {
+                if let lastInteraction = lastInteractionTime {
+                    let timeSinceInteraction = now.timeIntervalSince(lastInteraction)
+                    if timeSinceInteraction > 10.0 {
+                        // Safety reset: userInteractedWithMap has been true for >10 seconds
+                        // This shouldn't happen (auto-resume should fire at 5s), but if timer fails, this prevents stuck state
+                        print("📍 [LOCATION UPDATE] ⚠️ SAFETY RESET: userInteractedWithMap blocked for \(String(format: "%.1f", timeSinceInteraction))s (>10s), auto-resetting")
+                        userInteractedWithMap = false
+                        lastInteractionTime = nil
+                        autoFollowResumeTimer?.invalidate()
+                        autoFollowResumeTimer = nil
+                        // Continue to update camera below
+                    } else {
+                        print("📍 [LOCATION UPDATE] ❌ BLOCKED: userInteractedWithMap == true (location updates blocked, but heading updates allowed)")
+                        print("📍 [LOCATION UPDATE]   Time since interaction: \(String(format: "%.1f", timeSinceInteraction))s (auto-resume at 5s)")
+                        return
+                    }
+                } else {
+                    // No lastInteractionTime but userInteractedWithMap is true - inconsistent state, reset
+                    print("📍 [LOCATION UPDATE] ⚠️ SAFETY RESET: userInteractedWithMap=true but lastInteractionTime=nil, resetting")
+                    userInteractedWithMap = false
+                    autoFollowResumeTimer?.invalidate()
+                    autoFollowResumeTimer = nil
+                    // Continue to update camera below
+                }
             }
             
             // Allow camera updates even when approaching turn - just follow user smoothly
@@ -1187,8 +1577,32 @@ struct EmbeddedWalkMapView: View {
     
     /// v1.9.10: Show full route overview briefly, then return to camera-following mode
     private func showFullRouteThenFollow() {
+        print("📍 [COMPASS BUTTON] showFullRouteThenFollow called")
+        
+        // v1.9.16: Clear user interaction flag and reset timer state when compass button is pressed
+        // This ensures we can zoom back to current position after showing full route
+        // CRITICAL: Cancel auto-resume timer FIRST to prevent race conditions
+        let wasInteracting = userInteractedWithMap
+        if wasInteracting {
+            print("📍 [COMPASS BUTTON] User was interacting - cancelling auto-resume timer")
+            autoFollowResumeTimer?.invalidate()
+            autoFollowResumeTimer = nil
+        }
+        
+        // Clear interaction state completely
+        userInteractedWithMap = false
+        lastInteractionTime = nil  // v1.9.16: Clear this too to prevent stale timer data
+        lastLocationWhenInteracted = nil
+        
+        if wasInteracting {
+            print("📍 [COMPASS BUTTON] Cleared userInteractedWithMap and lastInteractionTime")
+        }
+        
         guard let currentRoute = viewModel.walkSession.currentRoute else {
             // No route, just follow user
+            print("📍 [COMPASS BUTTON] No route, zooming to user location")
+            isProgrammaticCameraUpdate = true
+            lastProgrammaticUpdateTime = Date()
             withAnimation {
                 cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
             }
@@ -1196,6 +1610,7 @@ struct EmbeddedWalkMapView: View {
         }
         
         // Step 1: Zoom out to show full route
+        print("📍 [COMPASS BUTTON] Step 1: Zooming out to show full route")
         let allPoints = currentRoute.routePath
         if allPoints.count >= 2 {
             let lats = allPoints.map { $0.latitude }
@@ -1218,11 +1633,21 @@ struct EmbeddedWalkMapView: View {
         }
         
         // Step 2: After 2.0 seconds, return to active zoom mode with smooth animation
-        // v1.9.13: Use resumeAutoFollow for smooth return and state management
-        // v1.9.16: Only resume if user hasn't interacted with map (don't override user interaction)
+        // v1.9.16: Always resume after showing full route (compass button should always return to following)
+        // v1.9.16: Ensure no auto-resume timer interferes with this manual resume
+        print("📍 [COMPASS BUTTON] Step 2: Will zoom to current position in 2.0s")
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            if introPhase == .followingUser && !userInteractedWithMap {
+            print("📍 [COMPASS BUTTON] Step 2: Zooming to current position now")
+            // v1.9.16: Double-check timer is cancelled (defensive programming)
+            if autoFollowResumeTimer != nil {
+                print("📍 [COMPASS BUTTON] ⚠️ Timer still exists, cancelling it")
+                autoFollowResumeTimer?.invalidate()
+                autoFollowResumeTimer = nil
+            }
+            if introPhase == .followingUser {
                 resumeAutoFollow()
+            } else {
+                print("📍 [COMPASS BUTTON] ❌ BLOCKED: introPhase != .followingUser")
             }
         }
     }
@@ -1458,9 +1883,26 @@ struct EmbeddedWalkMapView: View {
         )
         
         // Update camera state
+        let updateTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: updateTime)
+        
         currentCameraState = camera
         isProgrammaticCameraUpdate = true
-        lastProgrammaticUpdateTime = Date()
+        lastProgrammaticUpdateTime = updateTime
+        
+        print("")
+        print("🔧 PROGRAMMATIC CAMERA UPDATE (updateCamera)")
+        print("  Time: \(timeString)")
+        print("  Location: (\(String(format: "%.6f", location.latitude)), \(String(format: "%.6f", location.longitude)))")
+        print("  Heading: \(String(format: "%.1f", targetHeading))°")
+        print("  Distance: \(String(format: "%.1f", distance))m")
+        print("  Location change: \(String(format: "%.1f", locationChange))m")
+        print("  Heading change: \(String(format: "%.1f", normalizedHeadingDiff))°")
+        print("  Animation: \(normalizedHeadingDiff > 15 || locationChange > 20 ? "YES (large change)" : "NO (small change)")")
+        print("  userInteractedWithMap: \(userInteractedWithMap)")
+        print("")
         
         // Update strategy:
         // - No animation for small, frequent changes (smooth and responsive)
@@ -1490,47 +1932,95 @@ struct EmbeddedWalkMapView: View {
     // v1.9.13: Handle user map interaction - disable auto-follow temporarily
     // v1.9.15: Speed-based auto-resume - only resumes if user is moving (walking)
     private func handleMapInteraction() {
+        let now = Date()
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
-        let timeString = formatter.string(from: Date())
+        let timeString = formatter.string(from: now)
+        
+        let currentLocation = viewModel.locationService.currentLocation
+        let currentCamera = currentCameraState
         
         print("")
         print("═══════════════════════════════════════════════════════════")
-        print("👆 MAP INTERACTION DETECTED")
+        print("👆👆👆 MAP INTERACTION DETECTED 👆👆👆")
         print("═══════════════════════════════════════════════════════════")
-        print("Time: \(timeString)")
-        print("Setting userInteractedWithMap = true")
+        print("⏰ Time: \(timeString)")
+        print("")
+        print("📍 CURRENT STATE:")
+        print("  userInteractedWithMap: \(userInteractedWithMap) → true (changing)")
+        print("  introPhase: \(introPhase.rawValue)")
+        print("  lastInteractionTime: \(lastInteractionTime != nil ? formatter.string(from: lastInteractionTime!) : "nil")")
+        if let loc = currentLocation {
+            print("  Current location: (\(String(format: "%.6f", loc.coordinate.latitude)), \(String(format: "%.6f", loc.coordinate.longitude)))")
+        } else {
+            print("  Current location: nil")
+        }
+        if let cam = currentCamera {
+            print("  Current camera center: (\(String(format: "%.6f", cam.centerCoordinate.latitude)), \(String(format: "%.6f", cam.centerCoordinate.longitude)))")
+            print("  Current camera heading: \(String(format: "%.1f", cam.heading))°")
+            print("  Current camera distance: \(String(format: "%.1f", cam.distance))m")
+        } else {
+            print("  Current camera: nil")
+        }
+        print("")
+        print("⚠️ ACTION: Setting userInteractedWithMap = true")
         print("⚠️ Location updates will be blocked, but heading updates will continue")
         print("⚠️ Will auto-resume after 5 seconds of no interaction")
         print("═══════════════════════════════════════════════════════════")
         print("")
         
         // Set interaction flag to disable auto-follow/auto-zoom
+        let wasInteracting = userInteractedWithMap
         userInteractedWithMap = true
         
+        // v1.9.16: DIAGNOSTIC - Log when userInteractedWithMap changes from false to true
+        if !wasInteracting {
+            print("")
+            print("🚨🚨🚨 userInteractedWithMap CHANGED: false → true 🚨🚨🚨")
+            print("  Time: \(timeString)")
+            print("  This means auto-follow is now DISABLED")
+            print("  Auto-resume timer will start (5 seconds)")
+            if let autoResumeTime = lastAutoResumeTime {
+                let timeSinceAutoResume = now.timeIntervalSince(autoResumeTime)
+                print("  Time since last auto-resume: \(String(format: "%.2f", timeSinceAutoResume))s")
+                if timeSinceAutoResume < 3.0 {
+                    print("  ⚠️⚠️⚠️ IN VULNERABILITY WINDOW - This might be a FALSE POSITIVE! ⚠️⚠️⚠️")
+                }
+            }
+            print("🚨🚨🚨 END STATE CHANGE 🚨🚨🚨")
+            print("")
+        }
+        
         // Record current location when user starts interacting
-        lastLocationWhenInteracted = viewModel.locationService.currentLocation
+        lastLocationWhenInteracted = currentLocation
         
         // Cancel any existing resume timer
-        autoFollowResumeTimer?.invalidate()
+        if autoFollowResumeTimer != nil {
+            print("  ⏰ Cancelling existing auto-resume timer")
+            autoFollowResumeTimer?.invalidate()
+        }
         
         // Use a repeating timer that checks if user has stopped interacting for 5 seconds
         // CRITICAL: We check timeSinceLastInteraction FIRST - if user is still interacting, 
         // lastInteractionTime keeps getting updated, so timeSinceLastInteraction never reaches 5.0
-        autoFollowResumeTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [self] timer in
+        print("  ⏰ Creating new auto-resume timer (will check every 0.5s, auto-resume after 5s)")
+        // v1.9.16: Use common run loop modes so timer fires even when app is busy
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [self] timer in
             let now = Date()
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm:ss.SSS"
             let timeString = formatter.string(from: now)
             
+            // v1.9.16: DIAGNOSTIC - Log every timer fire to confirm it's running
             print("")
             print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print("⏰ AUTO-RESUME TIMER CHECK")
+            print("⏰ AUTO-RESUME TIMER CHECK (timer fired)")
             print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             print("Time: \(timeString)")
             print("userInteractedWithMap: \(userInteractedWithMap)")
             print("introPhase: \(introPhase.rawValue)")
             print("lastInteractionTime: \(lastInteractionTime != nil ? formatter.string(from: lastInteractionTime!) : "nil")")
+            print("Timer is valid: \(timer.isValid)")
             
             // CRITICAL: Don't auto-resume if user is still actively interacting
             // If userInteractedWithMap is false, user already resumed - stop timer
@@ -1568,16 +2058,43 @@ struct EmbeddedWalkMapView: View {
             // User has stopped interacting for 5 seconds - auto-resume regardless of movement
             print("")
             print("═══════════════════════════════════════════════════════════════════════════")
-            print("⏰ AUTO-RESUME TRIGGERED")
+            print("⏰⏰⏰ AUTO-RESUME TRIGGERED ⏰⏰⏰")
             print("═══════════════════════════════════════════════════════════════════════════")
-            print("Time since last interaction: \(String(format: "%.2f", timeSinceLastInteraction))s")
-            print("Auto-resuming after 5 seconds of no interaction")
+            print("⏰ Time: \(timeString)")
+            print("⏰ Time since last interaction: \(String(format: "%.2f", timeSinceLastInteraction))s")
+            print("⏰ Auto-resuming after 5 seconds of no interaction")
+            print("")
+            print("📊 STATE AT AUTO-RESUME:")
+            print("  userInteractedWithMap: \(userInteractedWithMap) → false (will change)")
+            print("  introPhase: \(introPhase.rawValue)")
+            print("  lastInteractionTime: \(formatter.string(from: lastInteraction))")
+            if let loc = viewModel.locationService.currentLocation {
+                print("  Current location: (\(String(format: "%.6f", loc.coordinate.latitude)), \(String(format: "%.6f", loc.coordinate.longitude)))")
+            } else {
+                print("  Current location: nil")
+            }
+            if let cam = currentCameraState {
+                print("  Current camera center: (\(String(format: "%.6f", cam.centerCoordinate.latitude)), \(String(format: "%.6f", cam.centerCoordinate.longitude)))")
+                print("  Current camera heading: \(String(format: "%.1f", cam.heading))°")
+            } else {
+                print("  Current camera: nil")
+            }
             print("═══════════════════════════════════════════════════════════════════════════")
             print("")
             timer.invalidate()
             sustainedSpeedStartTime = nil
+            
+            // v1.9.16: Note: lastAutoResumeTime will be set inside resumeAutoFollow()
+            // This ensures it's tracked regardless of where resumeAutoFollow() is called from
+            
             resumeAutoFollow()
         }
+        // Schedule timer on common run loop modes so it fires even when app is busy
+        RunLoop.main.add(timer, forMode: .common)
+        autoFollowResumeTimer = timer
+        print("  ⏰ Timer scheduled on .common run loop mode (will fire even when app is busy)")
+        print("  ⏰ Timer stored: \(autoFollowResumeTimer != nil), isValid: \(timer.isValid)")
+        print("  ⏰ Timer will fire every 0.5s, auto-resume after 5.0s of no interaction")
     }
     
     // v1.9.13: Resume auto-follow and auto-zoom after user interaction with smooth animation
@@ -1611,6 +2128,22 @@ struct EmbeddedWalkMapView: View {
         lastLocationWhenInteracted = nil
         sustainedSpeedStartTime = nil // Reset sustained speed tracking
         
+        // v1.9.16: Track auto-resume time for vulnerability window detection
+        // Set this here so it works regardless of where resumeAutoFollow() is called from
+        let now = Date()
+        lastAutoResumeTime = now
+        print("")
+        print("📌📌📌 AUTO-RESUME TRACKING: lastAutoResumeTime set to \(formatter.string(from: now)) 📌📌📌")
+        print("  ⚠️ VULNERABILITY WINDOW ACTIVE: Next 3 seconds are high-risk for false positives")
+        print("  ⚠️ Any user interaction detected in this window will be flagged as suspicious")
+        print("📌📌📌 END AUTO-RESUME TRACKING 📌📌📌")
+        print("")
+        
+        // Clear old diagnostic history (keep last 5 for context)
+        if recentCameraChanges.count > 5 {
+            recentCameraChanges.removeFirst(recentCameraChanges.count - 5)
+        }
+        
         // Get current heading
         let heading: CLLocationDirection = {
             if let trueHeading = viewModel.locationService.heading?.trueHeading, trueHeading >= 0 {
@@ -1637,9 +2170,22 @@ struct EmbeddedWalkMapView: View {
             heading: heading,
             pitch: 0
         )
+        let updateTime = Date()
+        let updateTimeString = formatter.string(from: updateTime)
+        
         currentCameraState = newCamera
         isProgrammaticCameraUpdate = true
-        lastProgrammaticUpdateTime = Date()
+        lastProgrammaticUpdateTime = updateTime
+
+        print("")
+        print("🔧 PROGRAMMATIC CAMERA UPDATE (resumeAutoFollow)")
+        print("  Time: \(updateTimeString)")
+        print("  Location: (\(String(format: "%.6f", currentLocation.coordinate.latitude)), \(String(format: "%.6f", currentLocation.coordinate.longitude)))")
+        print("  Heading: \(String(format: "%.1f", heading))°")
+        print("  Distance: \(String(format: "%.1f", currentZoomLevel))m")
+        print("  Animation: YES (1.5s easeInOut)")
+        print("  userInteractedWithMap: \(userInteractedWithMap)")
+        print("")
 
         // Smooth animation back to user location
         withAnimation(.easeInOut(duration: 1.5)) {
