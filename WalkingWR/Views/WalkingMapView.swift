@@ -344,6 +344,15 @@ struct EmbeddedWalkMapView: View {
     @State private var recentCameraChanges: [CameraChangeEvent] = [] // Track last 20 camera changes
     @State private var lastAutoResumeTime: Date? // Track when auto-resume occurred
     
+    // v1.9.22: Post-interaction grace period to prevent immediate snap-back
+    // Absorbs heading bursts and animation completion callbacks after finger lift
+    private let interactionGracePeriod: TimeInterval = 0.3
+    
+    private var isInInteractionGracePeriod: Bool {
+        guard let last = lastInteractionTime else { return false }
+        return Date().timeIntervalSince(last) < interactionGracePeriod
+    }
+    
     /// Check if user previously opted into step tracking
     /// We trust the UserDefaults flag - if permission was revoked, we'll handle it when pedometer fails
     private var shouldAutoEnableSteps: Bool {
@@ -1174,6 +1183,15 @@ struct EmbeddedWalkMapView: View {
                 cachedLegPolylineForWaypoint = nextWaypointId
             }
         }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    if !userInteractedWithMap {
+                        handleMapInteraction()
+                    }
+                    lastInteractionTime = Date()
+                }
+        )
         // v1.9.0: Auto-zoom when approaching turn (within 30m)
         .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
             guard let location = newLocation,
@@ -1213,6 +1231,13 @@ struct EmbeddedWalkMapView: View {
             
             guard introPhase == .followingUser else {
                 print("📍 [LOCATION UPDATE] ❌ BLOCKED: introPhase != .followingUser")
+                return
+            }
+            
+            // v1.9.22: Grace period after interaction to prevent immediate snap-back
+            // Absorbs heading bursts and animation completion callbacks after finger lift
+            if isInInteractionGracePeriod {
+                print("📍 [LOCATION UPDATE] ⏸ Grace period — skipping camera update (time since interaction: \(String(format: "%.2f", Date().timeIntervalSince(lastInteractionTime ?? Date())))s)")
                 return
             }
             
@@ -1305,6 +1330,15 @@ struct EmbeddedWalkMapView: View {
             guard introPhase == .followingUser else {
                 print("❌ BLOCKED: introPhase != .followingUser")
                 print("Current introPhase: \(introPhase.rawValue)")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                print("")
+                return
+            }
+            
+            // v1.9.22: Grace period after interaction to prevent immediate snap-back
+            // Absorbs heading bursts and animation completion callbacks after finger lift
+            if isInInteractionGracePeriod {
+                print("⏸ Grace period — skipping camera update (time since interaction: \(String(format: "%.2f", Date().timeIntervalSince(lastInteractionTime ?? Date())))s)")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 print("")
                 return
@@ -1818,6 +1852,7 @@ struct EmbeddedWalkMapView: View {
         
         // Update camera with new zoom level, using smooth animation
         // Only animate zoom changes, not heading (heading updates separately)
+        // v1.9.22: Do NOT mark passive zoom updates as "programmatic"
         let newCamera = MapCamera(
             centerCoordinate: currentLocation.coordinate,
             distance: currentZoomLevel,
@@ -1825,8 +1860,8 @@ struct EmbeddedWalkMapView: View {
             pitch: 0
         )
         currentCameraState = newCamera
-        isProgrammaticCameraUpdate = true
-        lastProgrammaticUpdateTime = Date()
+        // NOTE: isProgrammaticCameraUpdate and lastProgrammaticUpdateTime are NOT set here
+        // They are only set for intentional recentering actions
         withAnimation(.easeInOut(duration: 1.5)) {
             cameraPosition = .camera(newCamera)
         }
@@ -1837,6 +1872,13 @@ struct EmbeddedWalkMapView: View {
     // Updates smoothly without throttling to prevent stuttering
     // When approaching a turn, still follows user but may use different zoom
     private func updateCamera(location: CLLocationCoordinate2D, heading: CLLocationDirection? = nil) {
+        // v1.9.22: CRITICAL FIX - Hard-block all camera updates during user interaction
+        // This prevents snap-back even if interaction detection is late or heading/location updates fire
+        guard !userInteractedWithMap else {
+            print("🚫 updateCamera BLOCKED — user interacting")
+            return
+        }
+        
         // Get current heading - prefer provided heading, then location service heading, then existing camera heading
         let targetHeading: CLLocationDirection = {
             if let providedHeading = heading, providedHeading >= 0 {
@@ -1888,12 +1930,15 @@ struct EmbeddedWalkMapView: View {
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: updateTime)
         
+        // v1.9.22: Do NOT mark passive follow updates as "programmatic"
+        // Only intentional recentering (resumeAutoFollow, intro animation, zoom-to-waypoint) should set these flags
+        // This prevents passive updates from masking real user gestures in onMapCameraChange
         currentCameraState = camera
-        isProgrammaticCameraUpdate = true
-        lastProgrammaticUpdateTime = updateTime
+        // NOTE: isProgrammaticCameraUpdate and lastProgrammaticUpdateTime are NOT set here
+        // They are only set for intentional recentering actions
         
         print("")
-        print("🔧 PROGRAMMATIC CAMERA UPDATE (updateCamera)")
+        print("🔧 PASSIVE CAMERA UPDATE (updateCamera - following user)")
         print("  Time: \(timeString)")
         print("  Location: (\(String(format: "%.6f", location.latitude)), \(String(format: "%.6f", location.longitude)))")
         print("  Heading: \(String(format: "%.1f", targetHeading))°")
