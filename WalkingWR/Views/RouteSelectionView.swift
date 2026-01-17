@@ -50,6 +50,7 @@ struct RouteSelectionView: View {
     @State private var showIndoorOnly = false
     @State private var showAccessibleOnly = false
     @State private var showActiveWalk = false
+    @State private var pendingActiveWalk = false  // v1.9.34: Delays map until after pre-walk anxiety check
     @State private var showHelpSheet = false
     @State private var localRouteDuration: Int = 10
     @State private var localRouteUseCustom = false
@@ -236,7 +237,8 @@ struct RouteSelectionView: View {
                 localRouteDuration: $localRouteDuration,
                 localRouteUseCustom: $localRouteUseCustom,
                 pendingBatchTest: $pendingBatchTest,
-                showActiveWalk: $showActiveWalk
+                showActiveWalk: $showActiveWalk,
+                pendingActiveWalk: $pendingActiveWalk
             )
             .addAlerts(viewModel: viewModel)
             .onChange(of: showLocalRoutePicker) { _, isShowing in
@@ -949,6 +951,7 @@ struct LocalRoutePickerSheet: View {
     @Binding var isPresented: Bool
     @Binding var pendingBatchTest: PendingBatchTest  // v1.6.45: Auto-run test when sheet opens
     @Binding var showActiveWalk: Bool  // v1.9.28: Show fullscreen ActiveWalkView
+    @Binding var pendingActiveWalk: Bool  // v1.9.35: Delays map until after pre-walk anxiety check
     @State private var isGenerating = false  // Button shows spinner
     @State private var showLoadingScreen = false  // v1.8.3: Separate flag for loading screen transition
     @State private var routeGenerationComplete = false  // v1.8.5: Signals route is ready (triggers stage animation completion)
@@ -2535,12 +2538,18 @@ struct LocalRoutePickerSheet: View {
                 routeRefreshStatus = nil  // v1.9.28: Clear status
                 viewModel.selectRoute(route)
                 viewModel.startWalk()
-                // v1.9.28: Dismiss sheet first, then show fullscreen after a brief delay
+                // v1.9.34: Check if pre-walk wellbeing sheet will show
+                // If so, delay map until sheet dismisses; otherwise show map now
                 isPresented = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    showActiveWalk = true
+                if viewModel.showPreWalkWellbeing {
+                    pendingActiveWalk = true
+                    print("⏱️ [LET'S GO] [\(timeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        showActiveWalk = true
+                    }
+                    print("⏱️ [LET'S GO] [\(timeString)] 🗺️ Walk started (front-loaded) - showing fullscreen ActiveWalkView")
                 }
-                print("⏱️ [LET'S GO] [\(timeString)] 🗺️ Walk started (front-loaded) - showing fullscreen ActiveWalkView")
             }
             return
         }
@@ -2695,12 +2704,17 @@ struct LocalRoutePickerSheet: View {
                     
                     let totalElapsed = Date().timeIntervalSince(startTime)
                     print("⏱️ [LET'S GO] [\(mainActorTimeString)] ✅ Total time: \(String(format: "%.2f", totalElapsed))s")
-                    // v1.9.28: Dismiss sheet first, then show fullscreen after a brief delay
+                    // v1.9.34: Check if pre-walk wellbeing sheet will show
                     isPresented = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        showActiveWalk = true
+                    if viewModel.showPreWalkWellbeing {
+                        pendingActiveWalk = true
+                        print("⏱️ [LET'S GO] [\(mainActorTimeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
+                    } else {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            showActiveWalk = true
+                        }
+                        print("⏱️ [LET'S GO] [\(mainActorTimeString)] 🗺️ Walk started - showing fullscreen ActiveWalkView")
                     }
-                    print("⏱️ [LET'S GO] [\(mainActorTimeString)] 🗺️ Walk started - showing fullscreen ActiveWalkView")
                     // The view will automatically switch from routeListContent to ActiveWalkView
                 }
             } else {
@@ -2714,12 +2728,17 @@ struct LocalRoutePickerSheet: View {
                     routeRefreshStatus = nil
                     viewModel.selectRoute(route)
                     viewModel.startWalk()
-                    // v1.9.28: Dismiss sheet first, then show fullscreen after a brief delay
+                    // v1.9.34: Check if pre-walk wellbeing sheet will show
                     isPresented = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        showActiveWalk = true
+                    if viewModel.showPreWalkWellbeing {
+                        pendingActiveWalk = true
+                        print("⏱️ [LET'S GO] [\(noLocationTimeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
+                    } else {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            showActiveWalk = true
+                        }
+                        print("⏱️ [LET'S GO] [\(noLocationTimeString)] 🗺️ Walk started (no location) - showing fullscreen ActiveWalkView")
                     }
-                    print("⏱️ [LET'S GO] [\(noLocationTimeString)] 🗺️ Walk started (no location) - showing fullscreen ActiveWalkView")
                 }
             }
         }
@@ -7847,7 +7866,8 @@ extension View {
         localRouteDuration: Binding<Int>,
         localRouteUseCustom: Binding<Bool>,
         pendingBatchTest: Binding<PendingBatchTest>,
-        showActiveWalk: Binding<Bool>  // v1.9.28: Show fullscreen ActiveWalkView
+        showActiveWalk: Binding<Bool>,  // v1.9.28: Show fullscreen ActiveWalkView
+        pendingActiveWalk: Binding<Bool>  // v1.9.34: Delays map until after pre-walk anxiety check
     ) -> some View {
         self
             .sheet(isPresented: showHelpSheet) {
@@ -7863,7 +7883,8 @@ extension View {
                     useCustomTime: localRouteUseCustom,
                     isPresented: showLocalRoutePicker,
                     pendingBatchTest: pendingBatchTest,
-                    showActiveWalk: showActiveWalk
+                    showActiveWalk: showActiveWalk,
+                    pendingActiveWalk: pendingActiveWalk
                 )
             }
             .sheet(isPresented: Binding(
@@ -7885,10 +7906,26 @@ extension View {
                     let formatter = DateFormatter()
                     formatter.dateFormat = "HH:mm:ss.SSS"
                     let timeString = formatter.string(from: timestamp)
-                    print("🔍 [MOTION DEBUG] [\(timeString)] 📋 showPreWalkWellbeing binding changed to: \($0)")
+                    print("🔍 [PRE-WALK] [\(timeString)] 📋 showPreWalkWellbeing binding changed to: \($0)")
                     viewModel.showPreWalkWellbeing = $0
                 }
-            )) {
+            ), onDismiss: {
+                // v1.9.34: Show map after pre-walk anxiety check completes
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                print("🔍 [PRE-WALK] [\(timeString)] Pre-walk anxiety check dismissed")
+                print("🔍 [PRE-WALK] [\(timeString)]   pendingActiveWalk: \(pendingActiveWalk.wrappedValue)")
+                
+                if pendingActiveWalk.wrappedValue {
+                    print("🔍 [PRE-WALK] [\(timeString)]   ✅ Now showing map (was pending)")
+                    pendingActiveWalk.wrappedValue = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        showActiveWalk.wrappedValue = true
+                    }
+                }
+            }) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: Binding(
                     get: { viewModel.showPreWalkWellbeing },
                     set: { viewModel.showPreWalkWellbeing = $0 }
