@@ -2587,203 +2587,91 @@ struct LocalRoutePickerSheet: View {
             return
         }
         
-        // v1.9.1: ALWAYS refresh route with Google Directions first (quality assurance)
-        // Then fallback to Apple MapKit if Google quota is reached
-        // This ensures best route quality and proper walking paths
-        
-        // v1.9.25: Immediate feedback - show status instantly
-        isStartingWalk = true
-        routeRefreshStatus = "Preparing to start..."  // Immediate acknowledgment
-        print("⏱️ [LET'S GO] [\(timeString)] 🌐 Starting route refresh...")
+        // v1.9.39: Only refresh if Google API is available and working
+        // If Google fails or unavailable, use original route immediately (instant start)
+        // This avoids the 15-50s MapKit fallback wait
         
         Task {
             let taskStartTime = Date()
             let taskTimeString = formatter.string(from: taskStartTime)
             
-            if let userLocation = locationService.currentLocation?.coordinate {
-                print("⏱️ [LET'S GO] [\(taskTimeString)] ✅ User location available: (\(String(format: "%.5f", userLocation.latitude)), \(String(format: "%.5f", userLocation.longitude)))")
-                
-                // v1.8.9: Use Google Directions first (better quality), fallback to Apple
-                let refreshStartTime = Date()
-                print("⏱️ [LET'S GO] [\(taskTimeString)] 🔄 Calling refreshRouteWithGoogleThenMapKit...")
-                
-                // v1.9.22: Update status with rate limit awareness
-                let rateLimitStatus = await mapsService.getMapKitRateLimitStatus()
+            // Get user location for potential refresh
+            let userLocation = locationService.currentLocation?.coordinate
+            
+            // v1.9.39: Try Google-only refresh (no MapKit fallback)
+            // If Google fails, just use the original route
+            var routeToUse = route
+            var usedGoogleRefresh = false
+            
+            if let location = userLocation, mapsService.hasAPIKey {
+                print("⏱️ [LET'S GO] [\(taskTimeString)] 🌐 Trying Google-only refresh...")
                 await MainActor.run {
-                    if let waitTime = rateLimitStatus.waitTime, waitTime > 5 {
-                        routeRefreshStatus = "Preparing... (~\(Int(waitTime))s)"
-                    } else {
-                        routeRefreshStatus = "Updating route..."
-                    }
+                    isStartingWalk = true
+                    routeRefreshStatus = "Optimizing route..."
                 }
                 
-                // v1.9.26: Add timeout guard with retry
-                var refreshedRoute: WalkingRoute? = nil
-                var retryCount = 0
-                let maxRetries = 1
-                
-                while retryCount <= maxRetries && refreshedRoute == nil {
-                    do {
-                        // Wrap refresh call with timeout
-                        refreshedRoute = try await withTimeout(seconds: 30) {
-                            await mapsService.refreshRouteWithGoogleThenMapKit(
-                                route: route,
-                                userLocation: userLocation
-                            )
-                        }
-                        break  // Success, exit retry loop
-                    } catch TimeoutError.timeout {
-                        retryCount += 1
-                        if retryCount <= maxRetries {
-                            await MainActor.run {
-                                routeRefreshStatus = "Retrying..."
-                            }
-                            print("⏱️ [LET'S GO] ⏱️ Route refresh timeout (30s) - retrying (\(retryCount)/\(maxRetries))...")
-                            // Brief pause before retry
-                            try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1 second
-                            continue
-                        } else {
-                            // All retries failed - show error and offer "Try again"
-                            await MainActor.run {
-                                routeRefreshStatus = "Timed out. Tap to retry."
-                                isStartingWalk = false  // Re-enable button for retry
-                            }
-                            print("⏱️ [LET'S GO] ⏱️ Route refresh timeout after \(maxRetries) retries")
-                            return  // Exit without starting walk
-                        }
-                    } catch {
-                        // Other errors - show error message
-                        await MainActor.run {
-                            routeRefreshStatus = "Failed. Tap to retry."
-                            isStartingWalk = false
-                        }
-                        print("⏱️ [LET'S GO] ❌ Route refresh failed: \(error.localizedDescription)")
-                        return
-                    }
-                }
-                
-                guard let finalRefreshedRoute = refreshedRoute else {
-                    // Shouldn't reach here, but safety check
-                    await MainActor.run {
-                        routeRefreshStatus = "Failed. Tap to retry."
-                        isStartingWalk = false
-                    }
-                    return
-                }
-                
-                let refreshElapsed = Date().timeIntervalSince(refreshStartTime)
-                let refreshEndTime = Date()
-                let refreshEndTimeString = formatter.string(from: refreshEndTime)
-                print("⏱️ [LET'S GO] [\(refreshEndTimeString)] ✅ Route refresh completed in \(String(format: "%.2f", refreshElapsed))s")
-                
-                await MainActor.run {
-                    let mainActorTime = Date()
-                    let mainActorTimeString = formatter.string(from: mainActorTime)
-                    print("⏱️ [LET'S GO] [\(mainActorTimeString)] 📍 On MainActor - calling selectRoute and startWalk...")
-                    
-                    isStartingWalk = false
-                    routeRefreshStatus = nil  // Clear status message
-                    isRouteRefreshed = true  // Mark as refreshed
-                    
-                    // Print comprehensive route quality summary
-                    print("")
-                    print("╔═══════════════════════════════════════════════════════════╗")
-                    print("║       🚶 ROUTE QUALITY SUMMARY (Copy & Paste)             ║")
-                    print("╠═══════════════════════════════════════════════════════════╣")
-                    print("║ Route: \(finalRefreshedRoute.name.prefix(45))")
-                    print("║ Duration: \(finalRefreshedRoute.durationMinutes)min | Distance: \(finalRefreshedRoute.distanceMeters)m")
-                    print("║ Waypoints: \(finalRefreshedRoute.qrMarkers.count)")
-                    print("║ Directions: \(finalRefreshedRoute.walkingDirections.count) steps")
-                    
-                    // Polyline quality
-                    let polylinePoints = mapsService.decodePolyline(finalRefreshedRoute.encodedPolyline ?? "")
-                    let pointsPerKm = finalRefreshedRoute.distanceMeters > 0 
-                        ? Double(polylinePoints.count) / (Double(finalRefreshedRoute.distanceMeters) / 1000.0) 
-                        : 0
-                    print("║ Polyline: \(polylinePoints.count) points (\(String(format: "%.1f", pointsPerKm)) pts/km)")
-                    
-                    if pointsPerKm < 20 {
-                        print("║ ⚠️  LOW DENSITY - polyline may not follow roads")
-                    } else if pointsPerKm < 50 {
-                        print("║ ⚡ MEDIUM DENSITY - should follow main roads")
-                    } else {
-                        print("║ ✅ HIGH DENSITY - follows roads accurately")
-                    }
-                    
-                    // First few direction steps
-                    print("╠═══════════════════════════════════════════════════════════╣")
-                    print("║ First 3 directions:")
-                    for (i, dir) in finalRefreshedRoute.walkingDirections.prefix(3).enumerated() {
-                        let instruction = dir.instruction.prefix(50)
-                        print("║   \(i+1). \(instruction)")
-                    }
-                    
-                    print("╠═══════════════════════════════════════════════════════════╣")
-                    print("║ API CALLS:")
-                    mapsService.printAPICallSummary()
-                    GeminiService.shared.printAPICallSummary()
-                    print("╚═══════════════════════════════════════════════════════════╝")
-                    print("")
-                    
-                    let selectStartTime = Date()
-                    viewModel.selectRoute(finalRefreshedRoute)
-                    let selectElapsed = Date().timeIntervalSince(selectStartTime)
-                    print("⏱️ [LET'S GO] [\(mainActorTimeString)]   selectRoute() took \(String(format: "%.3f", selectElapsed))s")
-                    
-                    let startWalkStartTime = Date()
-                    viewModel.startWalk()
-                    let startWalkElapsed = Date().timeIntervalSince(startWalkStartTime)
-                    print("⏱️ [LET'S GO] [\(mainActorTimeString)]   startWalk() took \(String(format: "%.3f", startWalkElapsed))s")
-                    
-                    let totalElapsed = Date().timeIntervalSince(startTime)
-                    print("⏱️ [LET'S GO] [\(mainActorTimeString)] ✅ Total time: \(String(format: "%.2f", totalElapsed))s")
-                    // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
-                    print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
-                    print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] pendingActiveWalk BEFORE: \(viewModel.pendingActiveWalk)")
-                    if viewModel.showPreWalkWellbeing {
-                        viewModel.pendingActiveWalk = true
-                        print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] pendingActiveWalk AFTER set: \(viewModel.pendingActiveWalk)")
-                        print("⏱️ [LET'S GO] [\(mainActorTimeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
-                        isPresented = false
-                        print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] isPresented set to false")
-                    } else {
-                        isPresented = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            print("🔍 [iOS17 DEBUG] Setting showActiveWalk = true (no pre-walk check)")
-                            showActiveWalk = true
-                        }
-                        print("⏱️ [LET'S GO] [\(mainActorTimeString)] 🗺️ Walk started - showing fullscreen ActiveWalkView")
-                    }
-                    // The view will automatically switch from routeListContent to ActiveWalkView
+                // Try Google refresh with 5s timeout - if fails, use original route
+                if let refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
+                    route: route,
+                    userLocation: location
+                ) {
+                    routeToUse = refreshedRoute
+                    usedGoogleRefresh = true
+                    print("⏱️ [LET'S GO] [\(taskTimeString)] ✅ Google refresh succeeded!")
+                } else {
+                    print("⏱️ [LET'S GO] [\(taskTimeString)] ⚡ Google unavailable/failed - using original route (instant start)")
                 }
             } else {
-                let noLocationTime = Date()
-                let noLocationTimeString = formatter.string(from: noLocationTime)
-                print("⏱️ [LET'S GO] [\(noLocationTimeString)] ⚠️ No user location - using original route")
+                if userLocation == nil {
+                    print("⏱️ [LET'S GO] [\(taskTimeString)] ⚡ No location - using original route (instant start)")
+                } else {
+                    print("⏱️ [LET'S GO] [\(taskTimeString)] ⚡ No Google API key - using original route (instant start)")
+                }
+            }
+            
+            // Start walk with either refreshed or original route
+            await MainActor.run {
+                let mainActorTime = Date()
+                let mainActorTimeString = formatter.string(from: mainActorTime)
                 
-                // Fallback: use original route if no location
-                await MainActor.run {
-                    isStartingWalk = false
-                    routeRefreshStatus = nil
-                    viewModel.selectRoute(route)
-                    viewModel.startWalk()
-                    // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
-                    print("🔍 [iOS17 DEBUG] [\(noLocationTimeString)] showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
-                    print("🔍 [iOS17 DEBUG] [\(noLocationTimeString)] pendingActiveWalk BEFORE: \(viewModel.pendingActiveWalk)")
-                    if viewModel.showPreWalkWellbeing {
-                        viewModel.pendingActiveWalk = true
-                        print("🔍 [iOS17 DEBUG] [\(noLocationTimeString)] pendingActiveWalk AFTER set: \(viewModel.pendingActiveWalk)")
-                        print("⏱️ [LET'S GO] [\(noLocationTimeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
-                        isPresented = false
-                        print("🔍 [iOS17 DEBUG] [\(noLocationTimeString)] isPresented set to false")
-                    } else {
-                        isPresented = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            print("🔍 [iOS17 DEBUG] Setting showActiveWalk = true (no pre-walk check)")
-                            showActiveWalk = true
-                        }
-                        print("⏱️ [LET'S GO] [\(noLocationTimeString)] 🗺️ Walk started (no location) - showing fullscreen ActiveWalkView")
+                isStartingWalk = false
+                routeRefreshStatus = nil
+                
+                // Print route quality summary
+                print("")
+                print("╔═══════════════════════════════════════════════════════════╗")
+                print("║       🚶 ROUTE QUALITY SUMMARY                            ║")
+                print("╠═══════════════════════════════════════════════════════════╣")
+                print("║ Route: \(routeToUse.name.prefix(45))")
+                print("║ Duration: \(routeToUse.durationMinutes)min | Distance: \(routeToUse.distanceMeters)m")
+                print("║ Waypoints: \(routeToUse.qrMarkers.count)")
+                print("║ Directions: \(routeToUse.walkingDirections.count) steps")
+                print("║ Refresh: \(usedGoogleRefresh ? "✅ Google" : "⚡ Skipped (instant start)")")
+                print("╚═══════════════════════════════════════════════════════════╝")
+                print("")
+                
+                viewModel.selectRoute(routeToUse)
+                viewModel.startWalk()
+                
+                let totalElapsed = Date().timeIntervalSince(startTime)
+                print("⏱️ [LET'S GO] [\(mainActorTimeString)] ✅ Total time: \(String(format: "%.2f", totalElapsed))s")
+                
+                // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
+                print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
+                print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] pendingActiveWalk BEFORE: \(viewModel.pendingActiveWalk)")
+                if viewModel.showPreWalkWellbeing {
+                    viewModel.pendingActiveWalk = true
+                    print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] pendingActiveWalk AFTER set: \(viewModel.pendingActiveWalk)")
+                    print("⏱️ [LET'S GO] [\(mainActorTimeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
+                    isPresented = false
+                    print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] isPresented set to false")
+                } else {
+                    isPresented = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        print("🔍 [iOS17 DEBUG] Setting showActiveWalk = true (no pre-walk check)")
+                        showActiveWalk = true
                     }
+                    print("⏱️ [LET'S GO] [\(mainActorTimeString)] 🗺️ Walk started - showing fullscreen ActiveWalkView")
                 }
             }
         }

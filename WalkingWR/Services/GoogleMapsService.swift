@@ -3935,6 +3935,181 @@ class GoogleMapsService: ObservableObject {
         return mapKitResult
     }
     
+    // MARK: - v1.9.39: Google-Only Refresh (no MapKit fallback)
+    /// Tries Google Directions only. Returns nil if Google fails (caller uses original route).
+    /// This avoids the 15-50s MapKit fallback wait - if Google fails, just use original route.
+    func refreshRouteWithGoogleOnly(
+        route: WalkingRoute,
+        userLocation: CLLocationCoordinate2D
+    ) async -> WalkingRoute? {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] 🚀 refreshRouteWithGoogleOnly() STARTED")
+        print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)]   Route: '\(route.name)'")
+        print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)]   Waypoints: \(route.qrMarkers.count)")
+        
+        // Check if we can use Google Directions
+        guard canUseGoogleDirectionsRefresh else {
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Google quota exhausted - returning nil")
+            return nil
+        }
+        
+        guard hasAPIKey else {
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ No API key - returning nil")
+            return nil
+        }
+        
+        // Extract waypoint coordinates from QR markers
+        let rawWaypoints = route.qrMarkers.map { $0.coordinate }
+        
+        guard !rawWaypoints.isEmpty else {
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ No waypoints - returning nil")
+            return nil
+        }
+        
+        // Optimize waypoint order locally (Nearest Neighbor) to stay in Essentials SKU
+        let waypoints = performLocalOptimization(origin: userLocation, waypoints: rawWaypoints)
+        
+        // Build waypoints string
+        let waypointsParam = waypoints.map { 
+            String(format: "%.6f,%.6f", $0.latitude, $0.longitude)
+        }.joined(separator: "|")
+        
+        // Google Directions API URL
+        var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
+        urlString += "origin=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
+        urlString += "&destination=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
+        urlString += "&waypoints=\(waypointsParam)"
+        urlString += "&mode=walking"
+        urlString += "&key=\(apiKey)"
+        
+        guard let url = URL(string: urlString) else {
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Invalid URL - returning nil")
+            return nil
+        }
+        
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 5.0 // Short 5 second timeout
+            if let bundleId = Bundle.main.bundleIdentifier {
+                request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+            }
+            
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 5.0
+            config.timeoutIntervalForResource = 10.0
+            let session = URLSession(configuration: config)
+            let (data, response) = try await session.data(for: request)
+            let elapsed = Date().timeIntervalSince(startTime)
+            
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ HTTP error - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
+                return nil
+            }
+            
+            recordGoogleDirectionsCall()
+            
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let status = json["status"] as? String,
+                  status == "OK",
+                  let routes = json["routes"] as? [[String: Any]],
+                  let firstRoute = routes.first else {
+                let errorStatus = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["status"] as? String ?? "unknown"
+                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ API status: \(errorStatus) - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
+                return nil
+            }
+            
+            // Parse the response (same logic as refreshRouteWithGoogleThenMapKit)
+            var polyline = ""
+            var polylinePointCount = 0
+            if let overviewPolyline = firstRoute["overview_polyline"] as? [String: Any],
+               let points = overviewPolyline["points"] as? String {
+                polyline = points
+                polylinePointCount = decodePolyline(points).count
+            }
+            
+            var stepPolylinePointCount = 0
+            var combinedStepPolyline: [CLLocationCoordinate2D] = []
+            var freshDirections: [WalkingDirection] = []
+            var totalDistance = 0
+            var totalDuration = 0
+            
+            if let legs = firstRoute["legs"] as? [[String: Any]] {
+                for leg in legs {
+                    if let distance = leg["distance"] as? [String: Any],
+                       let distValue = distance["value"] as? Int {
+                        totalDistance += distValue
+                    }
+                    if let duration = leg["duration"] as? [String: Any],
+                       let durValue = duration["value"] as? Int {
+                        totalDuration += durValue
+                    }
+                    
+                    if let steps = leg["steps"] as? [[String: Any]] {
+                        for step in steps {
+                            let instruction = (step["html_instructions"] as? String)?
+                                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) ?? "Continue"
+                            let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
+                            let stepDistValue = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
+                            let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
+                            let maneuver = step["maneuver"] as? String ?? "straight"
+                            
+                            if let stepPolyline = step["polyline"] as? [String: Any],
+                               let stepPoints = stepPolyline["points"] as? String {
+                                let decodedStepPoints = decodePolyline(stepPoints)
+                                stepPolylinePointCount += decodedStepPoints.count
+                                combinedStepPolyline.append(contentsOf: decodedStepPoints)
+                            }
+                            
+                            freshDirections.append(WalkingDirection(
+                                instruction: instruction,
+                                distance: stepDistText,
+                                distanceMeters: stepDistValue,
+                                duration: stepDurText,
+                                maneuver: maneuver
+                            ))
+                        }
+                    }
+                }
+            }
+            
+            // Use detailed step polyline if available
+            var finalPolyline = polyline
+            if stepPolylinePointCount > polylinePointCount && !combinedStepPolyline.isEmpty {
+                finalPolyline = encodePolyline(combinedStepPolyline)
+            }
+            
+            let durationMinutes = max(1, totalDuration / 60)
+            
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ✅ SUCCESS: \(durationMinutes)min, \(totalDistance)m, \(freshDirections.count) steps (elapsed: \(String(format: "%.2f", elapsed))s)")
+            
+            return WalkingRoute(
+                name: route.name,
+                description: route.description,
+                durationMinutes: durationMinutes,
+                distanceMeters: totalDistance > 0 ? totalDistance : route.distanceMeters,
+                difficulty: route.difficulty,
+                isIndoor: route.isIndoor,
+                isAccessible: route.isAccessible,
+                landmarks: route.landmarks,
+                icon: route.icon,
+                color: route.color,
+                qrMarkers: route.qrMarkers,
+                routeType: route.routeType,
+                encodedPolyline: finalPolyline.isEmpty ? route.encodedPolyline : finalPolyline,
+                walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
+            )
+            
+        } catch {
+            let elapsed = Date().timeIntervalSince(startTime)
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Error: \(error.localizedDescription) - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
+            return nil
+        }
+    }
+    
     /// Extract maneuver type from instruction text
     private func extractManeuverType(from instruction: String) -> String {
         let lowercased = instruction.lowercased()
