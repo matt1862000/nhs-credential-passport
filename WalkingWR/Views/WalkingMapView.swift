@@ -725,9 +725,19 @@ struct EmbeddedWalkMapView: View {
             )
         }
         .onChange(of: showMotionExplainer) { oldValue, newValue in
-            print("🟢 EmbeddedWalkMapView: showMotionExplainer changed from \(oldValue) to \(newValue)")
+            let timestamp = Date()
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss.SSS"
+            let timeString = formatter.string(from: timestamp)
+            print("🔍 [MOTION DEBUG] [\(timeString)] 🟢 EmbeddedWalkMapView: showMotionExplainer changed from \(oldValue) to \(newValue)")
             if newValue {
-                print("🟢 EmbeddedWalkMapView: Attempting to present MotionPermissionExplainerSheet")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   ⚠️ Attempting to present MotionPermissionExplainerSheet")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   Motion auth status: \(viewModel.healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   isStepTrackingEnabled: \(isStepTrackingEnabled)")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   Call stack:")
+                Thread.callStackSymbols.prefix(5).enumerated().forEach { index, symbol in
+                    print("🔍 [MOTION DEBUG] [\(timeString)]     [\(index)] \(symbol)")
+                }
             }
         }
         .onAppear {
@@ -3802,7 +3812,14 @@ struct MotionPermissionExplainer: View {
                     .fill(Color(UIColor.systemBackground))
                     .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
             )
-            .padding(.horizontal, 32)
+                .padding(.horizontal, 32)
+        }
+        .onAppear {
+            let timestamp = Date()
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss.SSS"
+            let timeString = formatter.string(from: timestamp)
+            print("🔍 [MOTION DEBUG] [\(timeString)] 📋 MotionPermissionExplainerSheet.onAppear()")
         }
     }
 }
