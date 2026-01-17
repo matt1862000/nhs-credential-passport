@@ -596,24 +596,10 @@ struct EmbeddedWalkMapView: View {
             }
             .mapStyle(.standard)
             .mapControls { }
-            .simultaneousGesture(
-                // Pan
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in startInteraction() }
-                    .onEnded { _ in endInteraction() }
-            )
-            .simultaneousGesture(
-                // Pinch Zoom
-                MagnificationGesture()
-                    .onChanged { _ in startInteraction() }
-                    .onEnded { _ in endInteraction() }
-            )
-            .simultaneousGesture(
-                // Rotate
-                RotationGesture()
-                    .onChanged { _ in startInteraction() }
-                    .onEnded { _ in endInteraction() }
-            )
+            // iOS 17/18 compatible gesture handling
+            .modifier(PlatformGestureModifier {
+                detectUserInteraction()
+            })
             .onMapCameraChange { context in
                 let now = Date()
                 let formatter = DateFormatter()
@@ -1809,7 +1795,7 @@ struct EmbeddedWalkMapView: View {
     }
     
     // MARK: - Interaction
-    private func startInteraction() {
+    private func detectUserInteraction() {
         userInteracting = true
         lastInteraction = Date()
         
@@ -1819,6 +1805,23 @@ struct EmbeddedWalkMapView: View {
         
         resumeTimer?.invalidate()
         autoFollowResumeTimer?.invalidate()
+        
+        // Schedule auto-resume timer
+        let timer = Timer(timeInterval: 0.5, repeats: true) { t in
+            guard let last = lastInteraction, userInteracting else { t.invalidate(); return }
+            if Date().timeIntervalSince(last) >= autoResumeDelay {
+                t.invalidate()
+                autoResumeFollow()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        resumeTimer = timer
+        autoFollowResumeTimer = timer
+    }
+    
+    // Legacy function names (kept for compatibility)
+    private func startInteraction() {
+        detectUserInteraction()
     }
     
     private func endInteraction() {
@@ -1843,7 +1846,7 @@ struct EmbeddedWalkMapView: View {
     
     // Legacy function name (kept for compatibility)
     private func handleMapInteraction() {
-        startInteraction()
+        detectUserInteraction()
     }
     
     // MARK: - Auto-Resume
@@ -4070,6 +4073,38 @@ struct TurnArrowView: View {
         case "straight": return "arrow.up"
         case "uturn": return "arrow.uturn.backward"
         default: return "arrow.up"
+        }
+    }
+}
+
+// -------------------------------
+// MARK: - Platform Gesture Modifier (iOS 17/18 Compatible)
+// -------------------------------
+struct PlatformGestureModifier: ViewModifier {
+    var onInteraction: () -> Void
+    
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            // iOS 18+: Use gestures for immediate interaction detection
+            content
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in onInteraction() }
+                        .onEnded { _ in onInteraction() }
+                )
+                .simultaneousGesture(
+                    MagnificationGesture()
+                        .onChanged { _ in onInteraction() }
+                        .onEnded { _ in onInteraction() }
+                )
+                .simultaneousGesture(
+                    RotationGesture()
+                        .onChanged { _ in onInteraction() }
+                        .onEnded { _ in onInteraction() }
+                )
+        } else {
+            // iOS 17: Rely on onMapCameraChange only to avoid gesture conflicts
+            content
         }
     }
 }
