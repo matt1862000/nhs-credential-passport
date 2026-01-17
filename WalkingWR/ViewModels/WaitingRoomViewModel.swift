@@ -673,6 +673,19 @@ class WaitingRoomViewModel: ObservableObject {
     }
     
     func endWalk(completed: Bool) {
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+        
+        print("🔍 [MOTION DEBUG] [\(timeString)] 🏁 endWalk(completed: \(completed)) CALLED")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(stepTrackingWasEnabled)")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   Current Motion auth status: \(healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   Call stack:")
+        Thread.callStackSymbols.prefix(10).enumerated().forEach { index, symbol in
+            print("🔍 [MOTION DEBUG] [\(timeString)]     [\(index)] \(symbol)")
+        }
+        
         walkSession.isActive = false
         
         // v1.7.5: Clear flag so app knows walk has ended
@@ -689,6 +702,7 @@ class WaitingRoomViewModel: ObservableObject {
         userProgress.recordSteps(walkSession.stepsThisSession)
         
         // Stop tracking
+        print("🔍 [MOTION DEBUG] [\(timeString)]   🛑 About to call healthKitService.stopObserving()")
         healthKitService.stopObserving()
         locationService.stopTracking()
         notificationService.cancelAllWalkingNotifications()
@@ -696,7 +710,10 @@ class WaitingRoomViewModel: ObservableObject {
         
         // Prompt for post-walk wellbeing score
         if completed && userProgress.anxietyLevelBefore != nil {
+            print("🔍 [MOTION DEBUG] [\(timeString)]   📋 Setting showPostWalkWellbeing = true")
             showPostWalkWellbeing = true
+        } else {
+            print("🔍 [MOTION DEBUG] [\(timeString)]   📋 NOT showing post-walk wellbeing (completed: \(completed), anxietyLevelBefore: \(userProgress.anxietyLevelBefore != nil))")
         }
         
         // Reset session
@@ -719,6 +736,8 @@ class WaitingRoomViewModel: ObservableObject {
         // (stepTrackingWasEnabled is used to determine if HealthKit offer should be shown)
         // Note: We don't reset it here because we need it for the post-walk flow
         // It will be reset at the start of the next walk
+        
+        print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ endWalk() completed")
     }
     
     // v1.9.16: Pre-calculate return route from last waypoint to start (for offline fallback)

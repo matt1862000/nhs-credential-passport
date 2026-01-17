@@ -51,23 +51,34 @@ class HealthKitService: ObservableObject {
     /// Request Core Motion authorization by triggering pedometer updates
     /// This uses the same approach as startObservingSteps which successfully shows the prompt
     func requestMotionAuthorization(completion: ((Bool) -> Void)? = nil) {
-        print("📱 requestMotionAuthorization called")
-        print("📱 Current auth status: \(CMPedometer.authorizationStatus().rawValue) (0=notDetermined, 1=restricted, 2=denied, 3=authorized)")
-        print("📱 isPedometerAvailable: \(isPedometerAvailable)")
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+        
+        print("🔍 [MOTION DEBUG] [\(timeString)] 📱 requestMotionAuthorization() CALLED")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   Current auth status: \(CMPedometer.authorizationStatus().rawValue) (0=notDetermined, 1=restricted, 2=denied, 3=authorized)")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   isPedometerAvailable: \(isPedometerAvailable)")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   Call stack:")
+        Thread.callStackSymbols.prefix(10).enumerated().forEach { index, symbol in
+            print("🔍 [MOTION DEBUG] [\(timeString)]     [\(index)] \(symbol)")
+        }
         
         guard isPedometerAvailable else {
-            print("📱 Pedometer not available, returning false")
+            print("🔍 [MOTION DEBUG] [\(timeString)]   ❌ Pedometer not available, returning false")
             completion?(false)
             return
         }
         
-        print("📱 Starting pedometer updates to trigger permission prompt...")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   ⚠️ Starting pedometer.startUpdates() - THIS WILL TRIGGER MOTION PERMISSION DIALOG")
         
         // Use the exact same approach as startObservingSteps - this triggers the permission prompt
         pedometer.startUpdates(from: Date()) { [weak self] data, error in
-            print("📱 Pedometer callback received! data: \(data != nil), error: \(error?.localizedDescription ?? "none")")
+            let callbackTime = Date()
+            let callbackTimeString = formatter.string(from: callbackTime)
+            print("🔍 [MOTION DEBUG] [\(callbackTimeString)] 📱 Pedometer callback received! data: \(data != nil), error: \(error?.localizedDescription ?? "none")")
             guard let self = self else {
-                print("📱 Self was nil in callback")
+                print("🔍 [MOTION DEBUG] [\(callbackTimeString)]   ❌ Self was nil in callback")
                 return
             }
             
@@ -78,11 +89,11 @@ class HealthKitService: ObservableObject {
                 self.objectWillChange.send()
                 
                 let granted = CMPedometer.authorizationStatus() == .authorized
-                print("📱 Motion authorization result: \(granted), status: \(CMPedometer.authorizationStatus().rawValue)")
+                print("🔍 [MOTION DEBUG] [\(callbackTimeString)]   ✅ Motion authorization result: \(granted), status: \(CMPedometer.authorizationStatus().rawValue)")
                 completion?(granted)
             }
         }
-        print("📱 pedometer.startUpdates called, waiting for callback...")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ pedometer.startUpdates() called, waiting for callback...")
     }
     
     var isHealthKitAvailable: Bool {
@@ -200,12 +211,32 @@ class HealthKitService: ObservableObject {
     }
     
     func startObservingSteps(from startDate: Date) {
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+        
+        print("🔍 [MOTION DEBUG] [\(timeString)] 🚶 startObservingSteps() CALLED")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   startDate: \(startDate)")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   Current Motion auth status: \(CMPedometer.authorizationStatus().rawValue) (0=notDetermined, 1=restricted, 2=denied, 3=authorized)")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   isPedometerAvailable: \(isPedometerAvailable)")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   Call stack:")
+        Thread.callStackSymbols.prefix(10).enumerated().forEach { index, symbol in
+            print("🔍 [MOTION DEBUG] [\(timeString)]     [\(index)] \(symbol)")
+        }
+        
         stopObserving()
         pedometerStartDate = startDate
         
         // Use CMPedometer for real-time step counting (much more responsive)
         if isPedometerAvailable {
+            print("🔍 [MOTION DEBUG] [\(timeString)]   ⚠️ Calling pedometer.startUpdates() - THIS WILL TRIGGER MOTION PERMISSION DIALOG IF NOT AUTHORIZED")
             pedometer.startUpdates(from: startDate) { [weak self] data, error in
+                let callbackTime = Date()
+                let callbackTimeString = formatter.string(from: callbackTime)
+                if let error = error {
+                    print("🔍 [MOTION DEBUG] [\(callbackTimeString)]   ⚠️ Pedometer callback error: \(error.localizedDescription)")
+                }
                 guard let data = data, error == nil else { return }
                 
                 DispatchQueue.main.async {
@@ -215,6 +246,9 @@ class HealthKitService: ObservableObject {
                     }
                 }
             }
+            print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ pedometer.startUpdates() called")
+        } else {
+            print("🔍 [MOTION DEBUG] [\(timeString)]   ❌ Pedometer not available, skipping startUpdates")
         }
         
         // Also use HealthKit as fallback
@@ -269,6 +303,19 @@ class HealthKitService: ObservableObject {
     }
     
     func stopObserving() {
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+        
+        print("🔍 [MOTION DEBUG] [\(timeString)] 🛑 stopObserving() CALLED")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   Current Motion auth status: \(CMPedometer.authorizationStatus().rawValue)")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   pedometerStartDate was: \(pedometerStartDate?.description ?? "nil")")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   Call stack:")
+        Thread.callStackSymbols.prefix(10).enumerated().forEach { index, symbol in
+            print("🔍 [MOTION DEBUG] [\(timeString)]     [\(index)] \(symbol)")
+        }
+        
         // Stop pedometer
         pedometer.stopUpdates()
         pedometerStartDate = nil
@@ -282,6 +329,8 @@ class HealthKitService: ObservableObject {
         // Reset counts
         stepCount = 0
         distance = 0
+        
+        print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ stopObserving() completed - pedometer stopped")
     }
     
     func getTodaysSteps() async -> Int {

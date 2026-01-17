@@ -952,6 +952,15 @@ struct AnxietyCheckSheet: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .onAppear {
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                print("🔍 [MOTION DEBUG] [\(timeString)] 📋 AnxietyCheckSheet.onAppear() - isPostWalk: \(isPostWalk)")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   Motion auth status: \(viewModel.healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
+            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Skip") {

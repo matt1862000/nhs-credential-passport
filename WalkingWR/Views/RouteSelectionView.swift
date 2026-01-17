@@ -1332,7 +1332,30 @@ struct LocalRoutePickerSheet: View {
                 // v1.9.28: Immersive full-screen presentation - no navigation context
                 ActiveWalkView(viewModel: viewModel, isPresented: $showActiveWalk)
             }
+            .onChange(of: showActiveWalk) { oldValue, newValue in
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                if !newValue && oldValue {
+                    print("🔍 [MOTION DEBUG] [\(timeString)] 🚪 showActiveWalk changed: true → false (fullscreen dismissed)")
+                    print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
+                    print("🔍 [MOTION DEBUG] [\(timeString)]   showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
+                    print("🔍 [MOTION DEBUG] [\(timeString)]   showPostWalkWellbeing: \(viewModel.showPostWalkWellbeing)")
+                    print("🔍 [MOTION DEBUG] [\(timeString)]   Motion auth status: \(viewModel.healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
+                }
+            }
             .onAppear {
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                print("🔍 [MOTION DEBUG] [\(timeString)] 📱 RouteSelectionView.onAppear()")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   showPostWalkWellbeing: \(viewModel.showPostWalkWellbeing)")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   Motion auth status: \(viewModel.healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
+                
                 locationService.requestFreshLocation()
                 // Sync customTimeValue with selectedDuration if in custom mode
                 if useCustomTime {
@@ -2528,7 +2551,7 @@ struct LocalRoutePickerSheet: View {
         
         // v1.9.25: Immediate feedback - show status instantly
         isStartingWalk = true
-        routeRefreshStatus = "Starting navigation..."  // Immediate acknowledgment
+        routeRefreshStatus = "Preparing to start..."  // Immediate acknowledgment
         print("⏱️ [LET'S GO] [\(timeString)] 🌐 Starting route refresh...")
         
         Task {
@@ -2546,9 +2569,9 @@ struct LocalRoutePickerSheet: View {
                 let rateLimitStatus = await mapsService.getMapKitRateLimitStatus()
                 await MainActor.run {
                     if let waitTime = rateLimitStatus.waitTime, waitTime > 5 {
-                        routeRefreshStatus = "Preparing navigation... (may take ~\(Int(waitTime))s)"
+                        routeRefreshStatus = "Preparing... (~\(Int(waitTime))s)"
                     } else {
-                        routeRefreshStatus = "Calculating route..."
+                        routeRefreshStatus = "Updating route..."
                     }
                 }
                 
@@ -2571,7 +2594,7 @@ struct LocalRoutePickerSheet: View {
                         retryCount += 1
                         if retryCount <= maxRetries {
                             await MainActor.run {
-                                routeRefreshStatus = "Navigation is taking longer than expected. Retrying..."
+                                routeRefreshStatus = "Retrying..."
                             }
                             print("⏱️ [LET'S GO] ⏱️ Route refresh timeout (30s) - retrying (\(retryCount)/\(maxRetries))...")
                             // Brief pause before retry
@@ -2580,7 +2603,7 @@ struct LocalRoutePickerSheet: View {
                         } else {
                             // All retries failed - show error and offer "Try again"
                             await MainActor.run {
-                                routeRefreshStatus = "Navigation timed out. Tap to try again."
+                                routeRefreshStatus = "Timed out. Tap to retry."
                                 isStartingWalk = false  // Re-enable button for retry
                             }
                             print("⏱️ [LET'S GO] ⏱️ Route refresh timeout after \(maxRetries) retries")
@@ -2589,7 +2612,7 @@ struct LocalRoutePickerSheet: View {
                     } catch {
                         // Other errors - show error message
                         await MainActor.run {
-                            routeRefreshStatus = "Navigation failed. Tap to try again."
+                            routeRefreshStatus = "Failed. Tap to retry."
                             isStartingWalk = false
                         }
                         print("⏱️ [LET'S GO] ❌ Route refresh failed: \(error.localizedDescription)")
@@ -2600,7 +2623,7 @@ struct LocalRoutePickerSheet: View {
                 guard let finalRefreshedRoute = refreshedRoute else {
                     // Shouldn't reach here, but safety check
                     await MainActor.run {
-                        routeRefreshStatus = "Navigation failed. Tap to try again."
+                        routeRefreshStatus = "Failed. Tap to retry."
                         isStartingWalk = false
                     }
                     return
@@ -4661,12 +4684,12 @@ struct LocalRouteMapPreview: View {
     
     var primaryButtonText: String {
         // v1.9.28: Only show status if user has tapped "Let's Go" (isStartingWalk)
-        // Don't show "Calculating route..." when routes are already displayed
+        // Don't show status when routes are already displayed
         if isStartingWalk, let status = routeRefreshStatus {
             return status
         }
         // Routes are ready - show "Let's Go!" even if background generation is happening
-        return isStartingWalk ? "Starting..." : "Let's Go!"
+        return isStartingWalk ? "Preparing..." : "Let's Go!"
     }
     
     var primaryButtonIcon: String {
@@ -7857,7 +7880,14 @@ extension View {
             }
             .sheet(isPresented: Binding(
                 get: { viewModel.showPreWalkWellbeing },
-                set: { viewModel.showPreWalkWellbeing = $0 }
+                set: { 
+                    let timestamp = Date()
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "HH:mm:ss.SSS"
+                    let timeString = formatter.string(from: timestamp)
+                    print("🔍 [MOTION DEBUG] [\(timeString)] 📋 showPreWalkWellbeing binding changed to: \($0)")
+                    viewModel.showPreWalkWellbeing = $0
+                }
             )) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: Binding(
                     get: { viewModel.showPreWalkWellbeing },
