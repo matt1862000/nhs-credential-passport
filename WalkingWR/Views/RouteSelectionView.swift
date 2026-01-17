@@ -250,6 +250,25 @@ struct RouteSelectionView: View {
                 let timeString = formatter.string(from: timestamp)
                 print("🔍 [iOS17 DEBUG] [\(timeString)] 🗺️ showActiveWalk changed: \(oldValue) → \(newValue)")
             }
+            // v1.9.38: iOS 17 fix - onDismiss doesn't reliably fire for sheets
+            // Use onChange to detect when pre-walk anxiety sheet is dismissed
+            .onChange(of: viewModel.showPreWalkWellbeing) { oldValue, newValue in
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                print("🔍 [iOS17 FIX] [\(timeString)] showPreWalkWellbeing changed: \(oldValue) → \(newValue)")
+                print("🔍 [iOS17 FIX] [\(timeString)]   pendingActiveWalk: \(viewModel.pendingActiveWalk)")
+                
+                // When sheet dismisses (true → false) AND we have a pending walk, show the map
+                if oldValue == true && newValue == false && viewModel.pendingActiveWalk {
+                    print("🔍 [iOS17 FIX] [\(timeString)]   ✅ Pre-walk sheet dismissed with pending walk - showing map")
+                    viewModel.pendingActiveWalk = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        showActiveWalk = true
+                    }
+                }
+            }
             .onChange(of: showLocalRoutePicker) { _, isShowing in
                 if isShowing {
                     // Pre-select duration based on delay time
