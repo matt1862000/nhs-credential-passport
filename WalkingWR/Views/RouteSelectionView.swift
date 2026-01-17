@@ -225,8 +225,11 @@ struct RouteSelectionView: View {
     
     var body: some View {
         mainNavigationView
-            .fullScreenCover(isPresented: $showActiveWalk) {
+            .fullScreenCover(isPresented: $showActiveWalk, onDismiss: {
+                print("🔍 [iOS17 DEBUG] fullScreenCover DISMISSED")
+            }) {
                 // v1.9.28: Immersive full-screen presentation - no navigation context
+                let _ = print("🔍 [iOS17 DEBUG] fullScreenCover PRESENTING ActiveWalkView")
                 ActiveWalkView(viewModel: viewModel, isPresented: $showActiveWalk)
             }
             .addSheets(
@@ -240,6 +243,13 @@ struct RouteSelectionView: View {
                 showActiveWalk: $showActiveWalk
             )
             .addAlerts(viewModel: viewModel)
+            .onChange(of: showActiveWalk) { oldValue, newValue in
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                print("🔍 [iOS17 DEBUG] [\(timeString)] 🗺️ showActiveWalk changed: \(oldValue) → \(newValue)")
+            }
             .onChange(of: showLocalRoutePicker) { _, isShowing in
                 if isShowing {
                     // Pre-select duration based on delay time
@@ -2538,13 +2548,18 @@ struct LocalRoutePickerSheet: View {
                 viewModel.selectRoute(route)
                 viewModel.startWalk()
                 // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
+                print("🔍 [iOS17 DEBUG] [\(timeString)] showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
+                print("🔍 [iOS17 DEBUG] [\(timeString)] pendingActiveWalk BEFORE: \(viewModel.pendingActiveWalk)")
                 if viewModel.showPreWalkWellbeing {
                     viewModel.pendingActiveWalk = true
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] pendingActiveWalk AFTER set: \(viewModel.pendingActiveWalk)")
                     print("⏱️ [LET'S GO] [\(timeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
                     isPresented = false
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] isPresented set to false")
                 } else {
                     isPresented = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        print("🔍 [iOS17 DEBUG] Setting showActiveWalk = true (no pre-walk check)")
                         showActiveWalk = true
                     }
                     print("⏱️ [LET'S GO] [\(timeString)] 🗺️ Walk started (front-loaded) - showing fullscreen ActiveWalkView")
@@ -2704,13 +2719,18 @@ struct LocalRoutePickerSheet: View {
                     let totalElapsed = Date().timeIntervalSince(startTime)
                     print("⏱️ [LET'S GO] [\(mainActorTimeString)] ✅ Total time: \(String(format: "%.2f", totalElapsed))s")
                     // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
+                    print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
+                    print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] pendingActiveWalk BEFORE: \(viewModel.pendingActiveWalk)")
                     if viewModel.showPreWalkWellbeing {
                         viewModel.pendingActiveWalk = true
+                        print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] pendingActiveWalk AFTER set: \(viewModel.pendingActiveWalk)")
                         print("⏱️ [LET'S GO] [\(mainActorTimeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
                         isPresented = false
+                        print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] isPresented set to false")
                     } else {
                         isPresented = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            print("🔍 [iOS17 DEBUG] Setting showActiveWalk = true (no pre-walk check)")
                             showActiveWalk = true
                         }
                         print("⏱️ [LET'S GO] [\(mainActorTimeString)] 🗺️ Walk started - showing fullscreen ActiveWalkView")
@@ -2729,13 +2749,18 @@ struct LocalRoutePickerSheet: View {
                     viewModel.selectRoute(route)
                     viewModel.startWalk()
                     // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
+                    print("🔍 [iOS17 DEBUG] [\(noLocationTimeString)] showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
+                    print("🔍 [iOS17 DEBUG] [\(noLocationTimeString)] pendingActiveWalk BEFORE: \(viewModel.pendingActiveWalk)")
                     if viewModel.showPreWalkWellbeing {
                         viewModel.pendingActiveWalk = true
+                        print("🔍 [iOS17 DEBUG] [\(noLocationTimeString)] pendingActiveWalk AFTER set: \(viewModel.pendingActiveWalk)")
                         print("⏱️ [LET'S GO] [\(noLocationTimeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
                         isPresented = false
+                        print("🔍 [iOS17 DEBUG] [\(noLocationTimeString)] isPresented set to false")
                     } else {
                         isPresented = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            print("🔍 [iOS17 DEBUG] Setting showActiveWalk = true (no pre-walk check)")
                             showActiveWalk = true
                         }
                         print("⏱️ [LET'S GO] [\(noLocationTimeString)] 🗺️ Walk started (no location) - showing fullscreen ActiveWalkView")
@@ -7915,15 +7940,25 @@ extension View {
                 let formatter = DateFormatter()
                 formatter.dateFormat = "HH:mm:ss.SSS"
                 let timeString = formatter.string(from: timestamp)
-                print("🔍 [PRE-WALK] [\(timeString)] Pre-walk anxiety check dismissed")
-                print("🔍 [PRE-WALK] [\(timeString)]   pendingActiveWalk: \(viewModel.pendingActiveWalk)")
+                print("🔍 [iOS17 DEBUG] [\(timeString)] ========== PRE-WALK SHEET ONDISMISS ==========")
+                print("🔍 [iOS17 DEBUG] [\(timeString)] viewModel.pendingActiveWalk: \(viewModel.pendingActiveWalk)")
+                print("🔍 [iOS17 DEBUG] [\(timeString)] showActiveWalk.wrappedValue: \(showActiveWalk.wrappedValue)")
+                print("🔍 [iOS17 DEBUG] [\(timeString)] viewModel.walkSession.isActive: \(viewModel.walkSession.isActive)")
                 
                 if viewModel.pendingActiveWalk {
-                    print("🔍 [PRE-WALK] [\(timeString)]   ✅ Now showing map (was pending)")
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] ✅ Condition TRUE - will show map")
                     viewModel.pendingActiveWalk = false
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] Set pendingActiveWalk = false")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        let afterTimestamp = Date()
+                        let afterTimeString = formatter.string(from: afterTimestamp)
+                        print("🔍 [iOS17 DEBUG] [\(afterTimeString)] About to set showActiveWalk = true")
                         showActiveWalk.wrappedValue = true
+                        print("🔍 [iOS17 DEBUG] [\(afterTimeString)] showActiveWalk is now: \(showActiveWalk.wrappedValue)")
                     }
+                } else {
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] ❌ Condition FALSE - NOT showing map")
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] This is the iOS 17 bug - pendingActiveWalk was not propagated!")
                 }
             }) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: Binding(
