@@ -2698,6 +2698,25 @@ struct LocalRoutePickerSheet: View {
                 viewModel.selectRoute(routeToUse)
                 viewModel.startWalk()
                 
+                // v1.9.41: Background MapKit refresh when Google API wasn't available
+                // This gives instant start + better navigation from refreshed route
+                if !usedGoogleRefresh {
+                    print("⏱️ [BG REFRESH] [\(mainActorTimeString)] 🔄 Launching background MapKit refresh...")
+                    let routeForRefresh = routeToUse
+                    let viewModelRef = viewModel
+                    let locationServiceRef = locationService
+                    let mapsServiceRef = mapsService
+                    
+                    Task.detached(priority: .utility) {
+                        await self.refreshRouteInBackground(
+                            route: routeForRefresh,
+                            viewModel: viewModelRef,
+                            locationService: locationServiceRef,
+                            mapsService: mapsServiceRef
+                        )
+                    }
+                }
+                
                 let totalElapsed = Date().timeIntervalSince(startTime)
                 print("⏱️ [LET'S GO] [\(mainActorTimeString)] ✅ Total time: \(String(format: "%.2f", totalElapsed))s")
                 
@@ -2782,6 +2801,96 @@ struct LocalRoutePickerSheet: View {
             generatedRoute = nextRoute.route
             generatedRouteData = nextRoute.data
             print("🗑️ Deleted route - now showing \(currentRouteIndex + 1) of \(allRoutes.count)")
+        }
+    }
+    
+    // MARK: - v1.9.41: Background MapKit Route Refresh
+    
+    /// Refreshes the route with MapKit in the background after walk starts
+    /// This is called when Google API was unavailable/failed, giving instant start + better navigation
+    /// The rate limiter ensures this doesn't conflict with other MapKit operations
+    private func refreshRouteInBackground(
+        route: WalkingRoute,
+        viewModel: WaitingRoomViewModel,
+        locationService: LocationService,
+        mapsService: GoogleMapsService
+    ) async {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        
+        // Wait a moment for walk to fully start and location to stabilize
+        try? await Task.sleep(nanoseconds: 1_500_000_000)  // 1.5 seconds
+        
+        let startTime = Date()
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [BG REFRESH] [\(timeString)] 🚀 Background MapKit refresh starting...")
+        
+        // Check if walk is still active
+        let isActive = await MainActor.run { viewModel.walkSession.isActive }
+        guard isActive else {
+            print("⏱️ [BG REFRESH] [\(timeString)] ❌ Walk ended - skipping refresh")
+            return
+        }
+        
+        // Get current user location
+        let userLocation = await MainActor.run { locationService.currentLocation?.coordinate }
+        guard let location = userLocation else {
+            print("⏱️ [BG REFRESH] [\(timeString)] ❌ No location available - skipping refresh")
+            return
+        }
+        
+        print("⏱️ [BG REFRESH] [\(timeString)] 📍 User location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))")
+        print("⏱️ [BG REFRESH] [\(timeString)] 🎯 Waypoints: \(route.qrMarkers.count)")
+        
+        // Refresh route with MapKit (uses rate limiter internally)
+        let refreshedRoute = await mapsService.refreshRouteWithMapKit(
+            route: route,
+            userLocation: location
+        )
+        
+        let elapsed = Date().timeIntervalSince(startTime)
+        let endTimeString = formatter.string(from: Date())
+        
+        print("⏱️ [BG REFRESH] [\(endTimeString)] ⏱️ MapKit refresh took \(String(format: "%.2f", elapsed))s")
+        
+        // Check again if walk is still active before updating
+        let stillActive = await MainActor.run { viewModel.walkSession.isActive }
+        guard stillActive else {
+            print("⏱️ [BG REFRESH] [\(endTimeString)] ⚠️ Walk ended during refresh - not updating route")
+            return
+        }
+        
+        // Update route on main thread
+        await MainActor.run {
+            let updateTimeString = formatter.string(from: Date())
+            
+            // Compare quality - only update if refreshed route is valid
+            let oldDirections = route.walkingDirections.count
+            let newDirections = refreshedRoute.walkingDirections.count
+            let oldDistance = route.distanceMeters
+            let newDistance = refreshedRoute.distanceMeters
+            
+            print("⏱️ [BG REFRESH] [\(updateTimeString)] 📊 Route comparison:")
+            print("⏱️ [BG REFRESH] [\(updateTimeString)]   Original: \(oldDirections) directions, \(oldDistance)m")
+            print("⏱️ [BG REFRESH] [\(updateTimeString)]   Refreshed: \(newDirections) directions, \(newDistance)m")
+            
+            // Only update if refreshed route has valid directions
+            if newDirections > 0 {
+                viewModel.walkSession.currentRoute = refreshedRoute
+                viewModel.selectedRoute = refreshedRoute
+                
+                print("⏱️ [BG REFRESH] [\(updateTimeString)] ✅ Route updated successfully!")
+                print("╔═══════════════════════════════════════════════════════════╗")
+                print("║  🔄 BACKGROUND ROUTE REFRESH COMPLETE                     ║")
+                print("╠═══════════════════════════════════════════════════════════╣")
+                print("║  Duration: \(String(format: "%.1f", elapsed))s")
+                print("║  Directions: \(oldDirections) → \(newDirections)")
+                print("║  Distance: \(oldDistance)m → \(newDistance)m")
+                print("╚═══════════════════════════════════════════════════════════╝")
+            } else {
+                print("⏱️ [BG REFRESH] [\(updateTimeString)] ⚠️ Refreshed route has no directions - keeping original")
+            }
         }
     }
     
