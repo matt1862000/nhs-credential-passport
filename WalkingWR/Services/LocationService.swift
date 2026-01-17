@@ -25,6 +25,7 @@ class LocationService: NSObject, ObservableObject {
     @Published var isFetchingLocation: Bool = false
     @Published var locationRetryCount: Int = 0
     @Published var isRetrying: Bool = false
+    private var locationRequestStartTime: Date?
     
     // Direction monitoring
     @Published var currentDirectionIndex: Int = 0
@@ -100,10 +101,20 @@ class LocationService: NSObject, ObservableObject {
     // MARK: - Tracking
     
     func startTracking() {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [LOCATION] [\(timeString)] 🚶 startTracking() called")
+        
         guard isAuthorized else {
+            print("⏱️ [LOCATION] [\(timeString)] ❌ Not authorized - requesting permission")
             requestPermission()
             return
         }
+        
+        print("⏱️ [LOCATION] [\(timeString)] ✅ Starting location tracking...")
         
         isTracking = true
         distanceWalked = 0
@@ -118,10 +129,7 @@ class LocationService: NSObject, ObservableObject {
         locationManager.startUpdatingLocation()
         locationManager.startUpdatingHeading()
         
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        let timeString = formatter.string(from: Date())
-        
+        print("⏱️ [LOCATION] [\(timeString)] 📡 startUpdatingLocation() and startUpdatingHeading() called")
         
         // Start monitoring for heading update stops
         startHeadingUpdateMonitoring()
@@ -323,16 +331,29 @@ class LocationService: NSObject, ObservableObject {
     }
     
     func requestCurrentLocation() {
+        let startTime = Date()
+        locationRequestStartTime = startTime
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [LOCATION] [\(timeString)] requestCurrentLocation() called")
+        
         if !isAuthorized {
+            print("⏱️ [LOCATION] [\(timeString)] ❌ Not authorized - requesting permission")
             requestPermission()
             return
         }
+        
+        print("⏱️ [LOCATION] [\(timeString)] ✅ Authorized - requesting location...")
         
         // Show fetching state
         isFetchingLocation = true
         
         // Use requestLocation() for faster one-shot location
         locationManager.requestLocation()
+        
+        print("⏱️ [LOCATION] [\(timeString)] 📡 locationManager.requestLocation() called")
         
         // Start retry timer - if no location after 30 seconds, retry automatically
         startRetryTimer()
@@ -375,6 +396,7 @@ class LocationService: NSObject, ObservableObject {
         cancelRetryTimer()
         isFetchingLocation = false
         isRetrying = false
+        locationRequestStartTime = nil
     }
     
     // MARK: - Distance Calculations
@@ -439,15 +461,36 @@ extension LocationService: CLLocationManagerDelegate {
     }
     
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let newLocation = locations.last else { return }
+        let updateTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: updateTime)
+        
+        guard let newLocation = locations.last else {
+            print("⏱️ [LOCATION] [\(timeString)] ⚠️ didUpdateLocations called but locations array is empty")
+            return
+        }
+        
+        let isFirstLocation = currentLocation == nil
+        
+        print("⏱️ [LOCATION] [\(timeString)] 📍 didUpdateLocations: lat=\(String(format: "%.5f", newLocation.coordinate.latitude)), lon=\(String(format: "%.5f", newLocation.coordinate.longitude)), accuracy=\(String(format: "%.1f", newLocation.horizontalAccuracy))m\(isFirstLocation ? " (FIRST LOCATION)" : "")")
         
         DispatchQueue.main.async {
             // Mark fetching complete and cancel retry timer
+            let wasFetching = self.isFetchingLocation
+            let requestStartTime = self.locationRequestStartTime
             self.locationObtained()
+            
+            if wasFetching, let startTime = requestStartTime {
+                let elapsed = updateTime.timeIntervalSince(startTime)
+                print("⏱️ [LOCATION] [\(timeString)] ✅ Location obtained in \(String(format: "%.2f", elapsed))s")
+                self.locationRequestStartTime = nil
+            }
             
             // Set start location on first update
             if self.startLocation == nil {
                 self.startLocation = newLocation
+                print("⏱️ [LOCATION] [\(timeString)] 🎯 Start location set")
             }
             
             // Calculate distance walked

@@ -1047,21 +1047,40 @@ struct EmbeddedWalkMapView: View {
             showingIntroOverlay ? IntroOverlayView(introPhase: introPhase).opacity(1).allowsHitTesting(false) : nil
         )
         .onAppear {
+            let appearTime = Date()
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss.SSS"
+            let timeString = formatter.string(from: appearTime)
+            
+            print("⏱️ [MAP VIEW] [\(timeString)] 🗺️ EmbeddedWalkMapView.onAppear() STARTED")
+            print("⏱️ [MAP VIEW] [\(timeString)]   hasPlayedIntro: \(hasPlayedIntro)")
+            print("⏱️ [MAP VIEW] [\(timeString)]   introPhase: \(introPhase.rawValue)")
+            print("⏱️ [MAP VIEW] [\(timeString)]   currentRoute: \(viewModel.walkSession.currentRoute != nil ? "exists" : "nil")")
+            print("⏱️ [MAP VIEW] [\(timeString)]   currentLocation: \(viewModel.locationService.currentLocation != nil ? "exists" : "nil")")
+            
             if !hasPlayedIntro {
+                let introStartTime = Date()
+                print("⏱️ [MAP VIEW] [\(timeString)] 🎬 Starting intro animation...")
                 playIntroAnimation()
+                let introElapsed = Date().timeIntervalSince(introStartTime)
+                print("⏱️ [MAP VIEW] [\(timeString)]   playIntroAnimation() took \(String(format: "%.3f", introElapsed))s")
             } else {
-                calculateRoute()
+                print("⏱️ [MAP VIEW] [\(timeString)] ⏭️ Skipping intro (already played)")
             }
             
             // v1.6.28: Auto-enable step tracking if user has previously opted in
             if shouldAutoEnableSteps {
                 isStepTrackingEnabled = true
+                print("⏱️ [MAP VIEW] [\(timeString)] ✅ Auto-enabled step tracking")
             }
             
             // v1.9.13: Initialize cache on appear to avoid state modification during view update
+            let cacheStartTime = Date()
             if let currentRoute = viewModel.walkSession.currentRoute,
                introPhase == .followingUser,
                cachedCurrentLegPolyline == nil {
+                print("⏱️ [MAP VIEW] [\(timeString)] 📦 Initializing polyline cache...")
+                
                 let nextWaypointId = getNextWaypointId(
                     markers: currentRoute.qrMarkers,
                     visitedIds: viewModel.visitedMarkerIds
@@ -1081,7 +1100,15 @@ struct EmbeddedWalkMapView: View {
                 
                 cachedCurrentLegPolyline = polyline
                 cachedLegPolylineForWaypoint = nextWaypointId
+                
+                let cacheElapsed = Date().timeIntervalSince(cacheStartTime)
+                print("⏱️ [MAP VIEW] [\(timeString)]   Cache initialization took \(String(format: "%.3f", cacheElapsed))s")
+            } else {
+                print("⏱️ [MAP VIEW] [\(timeString)] ⏭️ Skipping cache init (route: \(viewModel.walkSession.currentRoute != nil), phase: \(introPhase.rawValue), cached: \(cachedCurrentLegPolyline != nil))")
             }
+            
+            let totalElapsed = Date().timeIntervalSince(appearTime)
+            print("⏱️ [MAP VIEW] [\(timeString)] ✅ onAppear() COMPLETED in \(String(format: "%.3f", totalElapsed))s")
         }
         // ----------------------
         // Remove simultaneousGesture completely
