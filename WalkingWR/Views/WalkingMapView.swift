@@ -7,6 +7,7 @@
 
 import SwiftUI
 import MapKit
+import Combine
 
 struct WalkingMapView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
@@ -519,525 +520,181 @@ struct EmbeddedWalkMapView: View {
         }
     }
     
-    var body: some View {
-        ZStack {
-            Map(position: $cameraPosition) {
-                // User Location
-                if let location = viewModel.locationService.currentLocation {
-                    Annotation("You", coordinate: location.coordinate) {
-                        PulsatingLocationDot()
-                    }
-                } else {
-                    UserAnnotation()
+    // MARK: - Body Components (extracted to reduce complexity)
+    private var mapView: some View {
+        Map(position: $cameraPosition) {
+            // User Location
+            if let location = viewModel.locationService.currentLocation {
+                Annotation("You", coordinate: location.coordinate) {
+                    PulsatingLocationDot()
                 }
-                
-                // Start/End Marker
-                if let startPoint = viewModel.walkSession.startLocation ?? viewModel.walkSession.currentRoute?.routePath.first {
-                    Annotation("Start/End", coordinate: startPoint) {
-                        ZStack {
-                            Circle().fill(Color.blue).frame(width: 28, height: 28)
-                            Circle().fill(Color.white).frame(width: 12, height: 12)
-                        }
-                    }
-                }
-                
-                // Active Route Polyline
-                if let currentRoute = viewModel.walkSession.currentRoute,
-                   currentRoute.routePath.count >= 2,
-                   !isShowingReturnRoute {
-                    MapPolyline(coordinates: polylineToShow)
-                        .stroke(currentRoute.color, lineWidth: 4)
-                }
-                
-                // Waypoints
-                if !markers.isEmpty {
-                    ForEach(Array(markers.enumerated()), id: \.element.id) { index, marker in
-                        let isVisited = visitedIds.contains(marker.id)
-                        let isNext = !isVisited && !markers.prefix(index).contains(where: { !visitedIds.contains($0.id) })
-                        Annotation(marker.name, coordinate: marker.coordinate) {
-                            WaypointMarkerView(
-                                name: marker.name,
-                                index: index + 1,
-                                isNext: isNext,
-                                isVisited: isVisited
-                            )
-                        }
-                    }
-                }
-                
-                // Return Route Polyline
-                if isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId {
-                    MapPolyline(coordinates: returnSegment)
-                        .stroke(Color.blue, lineWidth: 5)
-                }
-                
-                // Cached Route Preview (passive)
-                if let previewRoute = cachedRoute,
-                   viewModel.walkSession.currentRoute == nil,
-                   !previewRoute.routePath.isEmpty {
-                    MapPolyline(coordinates: previewRoute.routePath)
-                        .stroke(previewRoute.color, lineWidth: 4)
-                }
-                
-                // Cached POIs (passive)
-                if let cachedMarkers = cachedPOIs,
-                   viewModel.walkSession.currentRoute == nil {
-                    ForEach(cachedMarkers, id: \.id) { marker in
-                        Annotation(marker.name, coordinate: marker.coordinate) {
-                            WaypointMarkerView(
-                                name: marker.name,
-                                index: marker.index,
-                                isNext: false,
-                                isVisited: false
-                            )
-                        }
-                    }
-                }
-            }
-            .mapStyle(.standard)
-            .mapControls { }
-            // iOS 17/18 compatible gesture handling
-            .modifier(PlatformGestureModifier {
-                detectUserInteraction()
-            })
-            .onMapCameraChange { context in
-                let now = Date()
-                let formatter = DateFormatter()
-                formatter.dateFormat = "HH:mm:ss.SSS"
-                let timeString = formatter.string(from: now)
-                
-                // Check if this is a programmatic update (within 1.0 seconds of our update)
-                // v1.9.16: Increased grace period from 0.5s to 1.0s to prevent false positives
-                let isRecentProgrammaticUpdate = lastProgrammaticUpdateTime != nil &&
-                    now.timeIntervalSince(lastProgrammaticUpdateTime!) < 1.0
-                
-                // Calculate camera change details
-                let cameraCenter = context.camera.centerCoordinate
-                let cameraHeading = context.camera.heading
-                let cameraDistance = context.camera.distance
-                let previousCenter = currentCameraState?.centerCoordinate
-                let previousHeading = currentCameraState?.heading ?? 0
-                let previousDistance = currentCameraState?.distance ?? 0
-                
-                // Get user's current location for direction detection
-                let userLocation = viewModel.locationService.currentLocation?.coordinate
-                
-                // Calculate change deltas
-                let centerDelta: Double = {
-                    guard let prev = previousCenter else { return 999 }
-                    let latDiff = abs(cameraCenter.latitude - prev.latitude)
-                    let lonDiff = abs(cameraCenter.longitude - prev.longitude)
-                    return sqrt(latDiff * latDiff + lonDiff * lonDiff) * 111000 // Convert to meters
-                }()
-                
-                // v1.9.16: Detect if camera is moving AWAY from user location
-                // Programmatic updates always move TOWARDS user location, so moving AWAY = user interaction
-                let isMovingAwayFromUser: Bool = {
-                    guard let userLoc = userLocation,
-                          let prevCenter = previousCenter else { return false }
-                    // Calculate distance from user to previous camera center
-                    let prevDistFromUser = sqrt(
-                        pow(prevCenter.latitude - userLoc.latitude, 2) +
-                        pow(prevCenter.longitude - userLoc.longitude, 2)
-                    ) * 111000
-                    // Calculate distance from user to current camera center
-                    let currentDistFromUser = sqrt(
-                        pow(cameraCenter.latitude - userLoc.latitude, 2) +
-                        pow(cameraCenter.longitude - userLoc.longitude, 2)
-                    ) * 111000
-                    // If current distance > previous distance by >10m, it's moving away
-                    return (currentDistFromUser - prevDistFromUser) > 10.0
-                }()
-                let headingDelta = abs(cameraHeading - previousHeading)
-                let normalizedHeadingDelta = min(headingDelta, 360 - headingDelta)
-                let distanceDelta = abs(cameraDistance - previousDistance)
-                
-                // v1.9.16: DIAGNOSTIC - Flag large camera movements that might feel like snap-back
-                
-                // v1.9.16: In auto-follow mode, assume small/expected changes are programmatic
-                // This prevents false positives from MapKit's internal camera adjustments
-                // Only treat as user interaction if change is large AND unexpected
-                // v1.9.16: Lowered thresholds - user pan gestures can be as small as 50m
-                // v1.9.16: Pattern detection will override this for small movements that form a pattern
-                let isInAutoFollowMode = !userInteractedWithMap && introPhase == .followingUser
-                let isSmallExpectedChange = centerDelta < 50.0 && // Less than 50m movement (was 200m - too high!)
-                                          normalizedHeadingDelta < 5.0 && // Less than 5° heading change (was 10°)
-                                          distanceDelta < 50.0 // Less than 50m zoom change (was 100m)
-                // Note: Pattern detection will be checked later and can override this
-                let isLikelyProgrammaticInAutoFollow = isInAutoFollowMode && isSmallExpectedChange
-                
-                // Calculate time since last interaction
-                let timeSinceLastInteraction: String = {
-                    if let lastInteraction = lastInteractionTime {
-                        let elapsed = now.timeIntervalSince(lastInteraction)
-                        return String(format: "%.3f", elapsed) + "s"
-                    }
-                    return "N/A"
-                }()
-                
-                
-                // Track this camera change in diagnostic buffer
-                let wasProgrammatic = isProgrammaticCameraUpdate || isRecentProgrammaticUpdate || isLikelyProgrammaticInAutoFollow
-                let willBeDetectedAsUserInteraction = introPhase == .followingUser &&
-                    !userInteractedWithMap &&
-                    !isProgrammaticCameraUpdate &&
-                    !isRecentProgrammaticUpdate &&
-                    !isLikelyProgrammaticInAutoFollow
-                
-                // Add to diagnostic buffer (keep last 20 events)
-                recentCameraChanges.append(CameraChangeEvent(
-                    timestamp: now,
-                    centerDelta: centerDelta,
-                    headingDelta: normalizedHeadingDelta,
-                    distanceDelta: distanceDelta,
-                    wasProgrammatic: wasProgrammatic,
-                    wasDetectedAsUserInteraction: willBeDetectedAsUserInteraction,
-                    reason: wasProgrammatic ? "programmatic" : (willBeDetectedAsUserInteraction ? "USER_INTERACTION" : "unknown")
-                ))
-                if recentCameraChanges.count > 20 {
-                    recentCameraChanges.removeFirst()
-                }
-                
-                // Check if we're in "vulnerability window" (within 3 seconds of auto-resume)
-                let isInVulnerabilityWindow = lastAutoResumeTime != nil &&
-                    now.timeIntervalSince(lastAutoResumeTime!) < 3.0
-                
-                // v1.9.16: Pattern detection for small user movements
-                // If there are multiple small movements in quick succession, it's likely user interaction
-                // This helps detect small pan gestures that would otherwise be filtered as programmatic
-                // Check pattern BEFORE calculating wasProgrammatic to avoid circular dependency
-                let hasPatternOfSmallMovements: Bool = {
-                    guard isInAutoFollowMode && !isProgrammaticCameraUpdate && !isRecentProgrammaticUpdate else { return false }
-                    // Look at last 5 events within 2 seconds
-                    let recentEvents = recentCameraChanges.suffix(5)
-                    let twoSecondsAgo = now.addingTimeInterval(-2.0)
-                    // Check for small movements that weren't clearly programmatic
-                    // We check the raw events, not the wasProgrammatic flag (which might be wrong)
-                    let recentSmallMovements = recentEvents.filter { event in
-                        event.timestamp >= twoSecondsAgo &&
-                        event.centerDelta < 50.0 && // Small movements
-                        event.centerDelta > 10.0 && // But not tiny (filter noise)
-                        event.centerDelta > 0.0 // Actually moved
-                    }
-                    // If 2+ small movements in last 2 seconds, it's likely a pattern of user interaction
-                    // (programmatic updates are usually single, not repeated small movements)
-                    return recentSmallMovements.count >= 2
-                }()
-                
-                // v1.9.16: Detect "suspicious" changes - borderline cases that might be false positives
-                // These are changes that are larger than "small" but not clearly user-initiated
-                // v1.9.16: Updated thresholds to match new detection thresholds
-                let isSuspiciousChange = isInAutoFollowMode &&
-                    !wasProgrammatic &&
-                    centerDelta >= 50.0 && centerDelta < 300.0 && // Medium movement (50-300m, was 100-500m)
-                    normalizedHeadingDelta < 20.0 && // Not a large rotation (was 30°)
-                    distanceDelta < 100.0 // Not a large zoom (was 200m)
-                
-                // Detect user interaction with map (pan, zoom, rotation)
-                // Only detect if we're in following mode, not during intro, and not a programmatic update
-                // v1.9.16: In auto-follow mode, also ignore small/expected changes (likely MapKit internal adjustments)
-                // v1.9.16: In vulnerability window, be extra cautious - require larger changes to detect as user interaction
-                // v1.9.16: Updated thresholds - but make them reasonable (not too strict)
-                // After auto-resume, we want to detect user interactions, just be slightly more cautious
-                // v1.9.17: FIXED - Changed from OR to AND logic!
-                // The OR logic was blocking legitimate pan gestures because heading/distance are usually 0 for pans
-                // Now only blocks if change is small in ALL dimensions (truly programmatic-looking)
-                // Only block very small movements in vulnerability window to prevent animation false positives
-                let requiresLargerChangeInVulnerabilityWindow = isInVulnerabilityWindow && 
-                    centerDelta < 50.0 &&  // Small center movement
-                    normalizedHeadingDelta < 10.0 &&  // Small heading change
-                    distanceDelta < 50.0  // Small zoom change
-                
-                
-                // v1.9.16: Pattern detection override - if there's a pattern of small movements, treat as user interaction
-                // This helps detect small pan gestures that would otherwise be filtered
-                // v1.9.17: IMPROVED - Moving away from user now works for ALL movement sizes (not just 10-50m)
-                // If camera is moving AWAY from user location, it's definitely a user interaction
-                // Programmatic updates always move TOWARDS user location
-                let shouldOverrideProgrammaticCheck = hasPatternOfSmallMovements && centerDelta >= 10.0 && centerDelta < 50.0
-                
-                // v1.9.17: Separate check for "moving away" - this is a strong signal of user interaction
-                // regardless of movement size, and should override vulnerability window too
-                let isDefinitelyUserInteraction = isMovingAwayFromUser && centerDelta >= 10.0
-                
-                // v1.9.17: Main detection condition
-                // isDefinitelyUserInteraction (moving away from user) can override ALL checks except the direct programmatic flags
-                // This is because moving away is a 100% reliable signal - programmatic updates never move away from user
-                let passesStandardChecks = introPhase == .followingUser && 
-                   !userInteractedWithMap && 
-                   !isProgrammaticCameraUpdate && 
-                   !isRecentProgrammaticUpdate &&
-                   (!isLikelyProgrammaticInAutoFollow || shouldOverrideProgrammaticCheck) &&
-                   !requiresLargerChangeInVulnerabilityWindow
-                
-                // v1.9.17: When camera is moving AWAY from user, override isRecentProgrammaticUpdate too
-                // The "moving away" signal is so strong that it overrides the time-based heuristic
-                // Only keep isProgrammaticCameraUpdate check (if flag is set, we're mid-update)
-                let passesWithMovingAwayOverride = introPhase == .followingUser && 
-                   !userInteractedWithMap && 
-                   !isProgrammaticCameraUpdate &&  // Keep: if flag is set, we're mid-programmatic update
-                   // NOTE: Removed !isRecentProgrammaticUpdate - "moving away" overrides this time-based heuristic
-                   isDefinitelyUserInteraction  // Moving away overrides other heuristics including isRecentProgrammaticUpdate
-                
-                if passesStandardChecks || passesWithMovingAwayOverride {
-                    // This is a user interaction - record the time and handle it
-                    
-                    lastInteractionTime = now
-                    handleMapInteraction()
-                } else if introPhase == .followingUser && 
-                          userInteractedWithMap && 
-                          !isProgrammaticCameraUpdate && 
-                          !isRecentProgrammaticUpdate {
-                    // User is continuing to interact - update the timestamp to reset the timer
-                    // This prevents auto-resume while user is still actively interacting
-                    // v1.9.16: More lenient detection for continuing interactions - don't filter by isLikelyProgrammaticInAutoFollow
-                    // because once user is interacting, any camera change (even small) likely means they're still interacting
-                    lastInteractionTime = now
-                } else {
-                    let reason: String = {
-                        if introPhase != .followingUser {
-                            return "introPhase != .followingUser"
-                        } else if userInteractedWithMap {
-                            return "userInteractedWithMap=true"
-                        } else if isProgrammaticCameraUpdate {
-                            return "isProgrammaticCameraUpdate=true"
-                        } else if isRecentProgrammaticUpdate {
-                            return "isRecentProgrammaticUpdate=true (within grace period)"
-                        } else if isLikelyProgrammaticInAutoFollow {
-                            return "isLikelyProgrammaticInAutoFollow=true (small change in auto-follow mode)"
-                        } else if requiresLargerChangeInVulnerabilityWindow {
-                            return "requiresLargerChangeInVulnerabilityWindow=true (in vulnerability window, change too small)"
-                        } else {
-                            return "unknown"
-                        }
-                    }()
-                }
-                
-                // Update current camera state for next comparison
-                currentCameraState = context.camera
-                
-                // Reset flag after checking (but keep timestamp for a bit longer)
-                isProgrammaticCameraUpdate = false
+            } else {
+                UserAnnotation()
             }
             
-            // v1.6.31: Compact status ring in top-left corner (saves vertical space)
-            // ROLLBACK: Comment out this VStack and uncomment the one below to restore banner
-            VStack {
-                HStack(alignment: .top) {
-                    // Compact activity ring showing delay/steps (top-left)
-                    CompactStatusRing(
-                        walkDurationMinutes: viewModel.walkSession.currentRoute?.durationMinutes ?? 15,
-                        walkStartTime: viewModel.walkSession.startTime,
-                        healthKitService: viewModel.healthKitService,
-                        isStepTrackingEnabled: $isStepTrackingEnabled,
-                        showMotionExplainer: $showMotionExplainer,
-                        hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable  // v1.6.45
-                    )
-                    
-                    Spacer()
-                    
-                    // Location button (top-right)
-                    // v1.9.10: Shows full route overview first, then returns to following
-                    Button(action: {
-                        showFullRouteThenFollow()
-                    }) {
-                        Image(systemName: "location.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.tealAccent)
-                            .frame(width: 44, height: 44)
-                            .background(Color.darkCardBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
+            // Start/End Marker
+            if let startPoint = viewModel.walkSession.startLocation ?? viewModel.walkSession.currentRoute?.routePath.first {
+                Annotation("Start/End", coordinate: startPoint) {
+                    ZStack {
+                        Circle().fill(Color.blue).frame(width: 28, height: 28)
+                        Circle().fill(Color.white).frame(width: 12, height: 12)
                     }
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                
-                Spacer()
-            }
-            
-            /* ROLLBACK: Uncomment this to restore the banner layout
-            // v1.6.30: Combined status banner (delay + steps) to save vertical space
-            VStack(spacing: 8) {
-                HStack(alignment: .top) {
-                    // Combined delay + steps banner on the left
-                    CombinedStatusBanner(
-                        delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
-                        healthKitService: viewModel.healthKitService,
-                        isStepTrackingEnabled: $isStepTrackingEnabled,
-                        showMotionExplainer: $showMotionExplainer
-                    )
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    
-                    Spacer()
-                    
-                    // Location button at far right
-                    Button(action: {
-                        withAnimation {
-                            cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
-                        }
-                    }) {
-                        Image(systemName: "location.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.tealAccent)
-                            .frame(width: 44, height: 44)
-                            .background(Color.darkCardBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
-                    }
-                }
-                .padding(.leading, 12)
-                .padding(.trailing, 12)
-                .padding(.top, 8)
-                
-                Spacer()
-            }
-            */
-            
-            // Next waypoint info overlay - tappable and swipeable
-            VStack {
-                Spacer()
-                
-                if let currentRoute = viewModel.walkSession.currentRoute {
-                    WaypointCarousel(
-                        markers: currentRoute.qrMarkers,
-                        visitedIds: viewModel.visitedMarkerIds,
-                        startLocation: currentRoute.routePath.first,
-                        onTapWaypoint: { coordinate in
-                            zoomToWaypoint(coordinate)
-                        },
-                        onSelectReturnToStart: {
-                            calculateReturnRoute()
-                        },
-                        onSwipeToWaypoint: { waypointId in
-                            // Check if user is viewing a different waypoint
-                            // Trigger animation if:
-                            // 1. We're switching from one waypoint to another (both non-nil and different)
-                            // 2. We're switching from nil to a waypoint (first selection should also show context)
-                            let wasViewingDifferentLocation = viewingWaypointId != waypointId && 
-                                                               (viewingWaypointId != nil || waypointId != nil)
-                            
-                            previousViewingWaypointId = viewingWaypointId
-                            viewingWaypointId = waypointId
-                            
-                            if waypointId == Self.returnToStartWaypointId {
-                                isShowingReturnRoute = true
-                                waypointRoutePolyline = nil  // Clear waypoint route
-                                
-                                // If viewing different location (switching from a waypoint to Return to Start), zoom out to route then in to start
-                                // Also check if previousViewingWaypointId was set (meaning we were viewing a waypoint)
-                                if (wasViewingDifferentLocation || previousViewingWaypointId != nil),
-                                   let currentRoute = viewModel.walkSession.currentRoute,
-                                   let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
-                                    // Animate when switching from a waypoint to Return to Start
-                                    zoomToRouteThenWaypoint(startLocation, route: currentRoute)
-                                } else if let currentRoute = viewModel.walkSession.currentRoute,
-                                          let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
-                                    // First selection of return to start (from nil) - just zoom directly
-                                    zoomToWaypoint(startLocation)
-                                }
-                                
-                                // Switch to return directions
-                                if !viewModel.isUsingReturnDirections {
-                                    // Only switch if we have return directions available
-                                    if !viewModel.cachedReturnDirections.isEmpty, let currentRoute = viewModel.walkSession.currentRoute {
-                                        viewModel.isUsingReturnDirections = true
-                                        // v1.9.16: Capture main actor-isolated property before nonisolated context
-                                        let cachedPolyline = viewModel.cachedReturnRoutePolyline
-                                        viewModel.locationService.startDirectionMonitoring(
-                                            directions: viewModel.cachedReturnDirections,
-                                            routePath: cachedPolyline.isEmpty ? currentRoute.routePath : cachedPolyline
-                                        )
-                                        print("📍 Switched to return route directions")
-                                    }
-                                }
-                                
-                                // Try to extract from routePath first, then check if we need MapKit fallback
-                                if let currentRoute = viewModel.walkSession.currentRoute,
-                                   let lastWaypoint = currentRoute.qrMarkers.last,
-                                   let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
-                                    let returnSegment = extractReturnSegmentFromRoutePath(
-                                        routePath: currentRoute.routePath,
-                                        fromWaypoint: lastWaypoint.coordinate,
-                                        toStart: startLocation
-                                    )
-                                    
-                                    // Check if extraction was successful
-                                    if returnSegment.isEmpty || returnSegment.count < 2 {
-                                        print("⚠️ Failed to extract return route from routePath, falling back to MapKit...")
-                                        // Fallback: Calculate with MapKit
-                                        calculateReturnRouteFromLastWaypoint()
-                                    } else {
-                                        print("✅ Successfully extracted return route from routePath")
-                                    }
-                                } else {
-                                    // Missing data - use MapKit fallback
-                                    calculateReturnRouteFromLastWaypoint()
-                                }
-                            } else if let waypointId = waypointId,
-                                      let currentRoute = viewModel.walkSession.currentRoute,
-                                      let targetMarker = currentRoute.qrMarkers.first(where: { $0.id == waypointId }) {
-                                isShowingReturnRoute = false
-                                
-                                // If viewing different location, zoom out to route then in to waypoint
-                                if wasViewingDifferentLocation {
-                                    zoomToRouteThenWaypoint(targetMarker.coordinate, route: currentRoute)
-                                } else {
-                                    // First selection or same waypoint - just zoom directly
-                                    zoomToWaypoint(targetMarker.coordinate)
-                                }
-                                
-                                // Reset to original outgoing directions when viewing a regular waypoint
-                                if viewModel.isUsingReturnDirections {
-                                    viewModel.isUsingReturnDirections = false
-                                    // Restore original directions monitoring
-                                    if !viewModel.cachedOriginalDirections.isEmpty {
-                                        viewModel.locationService.startDirectionMonitoring(
-                                            directions: viewModel.cachedOriginalDirections,
-                                            routePath: currentRoute.routePath
-                                        )
-                                        print("📍 Switched back to original outgoing directions")
-                                    }
-                                }
-                                // Extract route segment from already-loaded routePath
-                                extractRouteSegmentToWaypoint(targetMarker: targetMarker, markers: currentRoute.qrMarkers, routePath: currentRoute.routePath)
-                            } else {
-                                isShowingReturnRoute = false
-                                waypointRoutePolyline = nil
-                                // Reset to original directions if viewingWaypointId is cleared
-                                if viewModel.isUsingReturnDirections {
-                                    viewModel.isUsingReturnDirections = false
-                                    if let currentRoute = viewModel.walkSession.currentRoute,
-                                       !viewModel.cachedOriginalDirections.isEmpty {
-                                        viewModel.locationService.startDirectionMonitoring(
-                                            directions: viewModel.cachedOriginalDirections,
-                                            routePath: currentRoute.routePath
-                                        )
-                                        print("📍 Switched back to original outgoing directions")
-                                    }
-                                }
-                            }
-                        },
-                        colorScheme: colorScheme
-                    )
                 }
             }
             
-            // v1.6.11: Delay change overlay
-            if viewModel.showDelayChangeOverlay {
-                DelayChangeOverlay(
-                    oldMinutes: viewModel.waitTimeChangeInfo?.oldMinutes ?? 0,
-                    newMinutes: viewModel.waitTimeChangeInfo?.newMinutes ?? viewModel.waitTimeInfo.estimatedMinutes,
-                    isIncrease: viewModel.waitTimeChangeInfo?.isIncrease ?? false,
-                    onDismiss: {
-                        viewModel.showDelayChangeOverlay = false
-                    },
-                    onReturnNow: {
-                        viewModel.showDelayChangeOverlay = false
-                        calculateReturnRoute()
+            // Active Route Polyline
+            if let currentRoute = viewModel.walkSession.currentRoute,
+               currentRoute.routePath.count >= 2,
+               !isShowingReturnRoute {
+                MapPolyline(coordinates: polylineToShow)
+                    .stroke(currentRoute.color, lineWidth: 4)
+            }
+            
+            // Waypoints
+            if !markers.isEmpty {
+                ForEach(Array(markers.enumerated()), id: \.element.id) { index, marker in
+                    let isVisited = visitedIds.contains(marker.id)
+                    let isNext = !isVisited && !markers.prefix(index).contains(where: { !visitedIds.contains($0.id) })
+                    Annotation(marker.name, coordinate: marker.coordinate) {
+                        WaypointMarkerView(
+                            name: marker.name,
+                            index: index + 1,
+                            isNext: isNext,
+                            isVisited: isVisited
+                        )
+                    }
+                }
+            }
+            
+            // Return Route Polyline
+            if isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId {
+                MapPolyline(coordinates: returnSegment)
+                    .stroke(Color.blue, lineWidth: 5)
+            }
+            
+            // Cached Route Preview (passive)
+            if let previewRoute = cachedRoute,
+               viewModel.walkSession.currentRoute == nil,
+               !previewRoute.routePath.isEmpty {
+                MapPolyline(coordinates: previewRoute.routePath)
+                    .stroke(previewRoute.color, lineWidth: 4)
+            }
+            
+            // Cached POIs (passive)
+            if let cachedMarkers = cachedPOIs,
+               viewModel.walkSession.currentRoute == nil {
+                ForEach(cachedMarkers, id: \.id) { marker in
+                    Annotation(marker.name, coordinate: marker.coordinate) {
+                        WaypointMarkerView(
+                            name: marker.name,
+                            index: marker.index,
+                            isNext: false,
+                            isVisited: false
+                        )
+                    }
+                }
+            }
+        }
+        .mapStyle(.standard)
+        .mapControls { }
+        .modifier(PlatformGestureModifier {
+            detectUserInteraction()
+        })
+        .onMapCameraChange { context in
+            handleCameraChange(context)
+        }
+    }
+    
+    private var topOverlay: some View {
+        VStack {
+            HStack(alignment: .top) {
+                CompactStatusRing(
+                    walkDurationMinutes: viewModel.walkSession.currentRoute?.durationMinutes ?? 15,
+                    walkStartTime: viewModel.walkSession.startTime,
+                    healthKitService: viewModel.healthKitService,
+                    isStepTrackingEnabled: $isStepTrackingEnabled,
+                    showMotionExplainer: $showMotionExplainer,
+                    hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable,
+                    onEnableSteps: {
+                        isStepTrackingEnabled = true
+                        viewModel.stepTrackingWasEnabled = true
+                        UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
+                        if let startTime = viewModel.walkSession.startTime {
+                            viewModel.healthKitService.startObservingSteps(from: startTime)
+                        }
                     }
                 )
+                
+                Spacer()
+                
+                Button(action: {
+                    showFullRouteThenFollow()
+                }) {
+                    Image(systemName: "location.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.tealAccent)
+                        .frame(width: 44, height: 44)
+                        .background(Color.darkCardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
+                }
             }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            
+            Spacer()
+        }
+        .allowsHitTesting(true)
+    }
+    
+    private var bottomOverlay: some View {
+        VStack {
+            Spacer()
+            
+            if let currentRoute = viewModel.walkSession.currentRoute {
+                WaypointCarousel(
+                    markers: currentRoute.qrMarkers,
+                    visitedIds: viewModel.visitedMarkerIds,
+                    startLocation: currentRoute.routePath.first,
+                    onTapWaypoint: { coordinate in
+                        zoomToWaypoint(coordinate)
+                    },
+                    onSelectReturnToStart: {
+                        calculateReturnRoute()
+                    },
+                    onSwipeToWaypoint: { waypointId in
+                        handleWaypointSwipe(waypointId: waypointId)
+                    },
+                    colorScheme: colorScheme
+                )
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var delayOverlay: some View {
+        if viewModel.showDelayChangeOverlay {
+            DelayChangeOverlay(
+                oldMinutes: viewModel.waitTimeChangeInfo?.oldMinutes ?? 0,
+                newMinutes: viewModel.waitTimeChangeInfo?.newMinutes ?? viewModel.waitTimeInfo.estimatedMinutes,
+                isIncrease: viewModel.waitTimeChangeInfo?.isIncrease ?? false,
+                onDismiss: {
+                    viewModel.showDelayChangeOverlay = false
+                },
+                onReturnNow: {
+                    viewModel.showDelayChangeOverlay = false
+                    calculateReturnRoute()
+                }
+            )
+        }
+    }
+    
+    var body: some View {
+        ZStack {
+            mapView
+            topOverlay
+            bottomOverlay
+            delayOverlay
         }
         // ----------------------
         // Overlay (non-blocking)
@@ -1046,6 +703,32 @@ struct EmbeddedWalkMapView: View {
         .overlay(
             showingIntroOverlay ? IntroOverlayView(introPhase: introPhase).opacity(1).allowsHitTesting(false) : nil
         )
+        // Present MotionPermissionExplainerSheet at the top level
+        // Using .fullScreenCover for more reliable presentation in complex overlay hierarchies
+        .fullScreenCover(isPresented: $showMotionExplainer) {
+            MotionPermissionExplainerSheet(
+                onEnable: {
+                    print("🟢 MotionPermissionExplainerSheet: onEnable called")
+                    isStepTrackingEnabled = true
+                    viewModel.stepTrackingWasEnabled = true
+                    UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
+                    if let startTime = viewModel.walkSession.startTime {
+                        viewModel.healthKitService.startObservingSteps(from: startTime)
+                    }
+                    showMotionExplainer = false
+                },
+                onCancel: {
+                    print("🟢 MotionPermissionExplainerSheet: onCancel called")
+                    showMotionExplainer = false
+                }
+            )
+        }
+        .onChange(of: showMotionExplainer) { oldValue, newValue in
+            print("🟢 EmbeddedWalkMapView: showMotionExplainer changed from \(oldValue) to \(newValue)")
+            if newValue {
+                print("🟢 EmbeddedWalkMapView: Attempting to present MotionPermissionExplainerSheet")
+            }
+        }
         .onAppear {
             let appearTime = Date()
             let formatter = DateFormatter()
@@ -1190,32 +873,7 @@ struct EmbeddedWalkMapView: View {
                 }
             }
         }
-        // v1.6.30: Motion permission explainer as fullScreenCover for reliable dismissal
-        .fullScreenCover(isPresented: $showMotionExplainer) {
-            MotionPermissionExplainerSheet(
-                onEnable: {
-                    print("🔵 Enable tapped - setting all step tracking flags immediately")
-                    
-                    // Set ALL flags immediately for instant UI feedback
-                    // The iOS permission dialog can interrupt callbacks, so we trust user intent
-                                    isStepTrackingEnabled = true
-                                    viewModel.stepTrackingWasEnabled = true
-                                    UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
-                    showMotionExplainer = false
-                    
-                    // Start observing steps immediately (this will trigger permission if needed)
-                                    if let startTime = viewModel.walkSession.startTime {
-                                        viewModel.healthKitService.startObservingSteps(from: startTime)
-                                    }
-                    
-                    print("🔵 All flags set: isStepTrackingEnabled=true, stepTrackingWasEnabled=true, UserDefaults saved")
-                },
-                onCancel: {
-                    print("🔵 Cancel tapped")
-                    showMotionExplainer = false
-                }
-            )
-        }
+        // Note: Motion permission explainer is now presented by CompactStatusRing
     }
     
     /// Play the intro camera animation sequence with very smooth, slow transitions
@@ -1752,6 +1410,93 @@ struct EmbeddedWalkMapView: View {
         }
     }
     
+    // MARK: - Waypoint Swipe Handler (extracted to reduce body complexity)
+    private func handleWaypointSwipe(waypointId: UUID?) {
+        guard let waypointId = waypointId else {
+            isShowingReturnRoute = false
+            waypointRoutePolyline = nil
+            if viewModel.isUsingReturnDirections {
+                viewModel.isUsingReturnDirections = false
+                if let currentRoute = viewModel.walkSession.currentRoute,
+                   !viewModel.cachedOriginalDirections.isEmpty {
+                    viewModel.locationService.startDirectionMonitoring(
+                        directions: viewModel.cachedOriginalDirections,
+                        routePath: currentRoute.routePath
+                    )
+                }
+            }
+            return
+        }
+        
+        let wasViewingDifferentLocation = viewingWaypointId != waypointId && 
+                                           (viewingWaypointId != nil || waypointId != nil)
+        
+        previousViewingWaypointId = viewingWaypointId
+        viewingWaypointId = waypointId
+        
+        if waypointId == Self.returnToStartWaypointId {
+            isShowingReturnRoute = true
+            waypointRoutePolyline = nil
+            
+            if (wasViewingDifferentLocation || previousViewingWaypointId != nil),
+               let currentRoute = viewModel.walkSession.currentRoute,
+               let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
+                zoomToRouteThenWaypoint(startLocation, route: currentRoute)
+            } else if let currentRoute = viewModel.walkSession.currentRoute,
+                      let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
+                zoomToWaypoint(startLocation)
+            }
+            
+            if !viewModel.isUsingReturnDirections {
+                if !viewModel.cachedReturnDirections.isEmpty, let currentRoute = viewModel.walkSession.currentRoute {
+                    viewModel.isUsingReturnDirections = true
+                    let cachedPolyline = viewModel.cachedReturnRoutePolyline
+                    viewModel.locationService.startDirectionMonitoring(
+                        directions: viewModel.cachedReturnDirections,
+                        routePath: cachedPolyline.isEmpty ? currentRoute.routePath : cachedPolyline
+                    )
+                }
+            }
+            
+            if let currentRoute = viewModel.walkSession.currentRoute,
+               let lastWaypoint = currentRoute.qrMarkers.last,
+               let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
+                let returnSegment = extractReturnSegmentFromRoutePath(
+                    routePath: currentRoute.routePath,
+                    fromWaypoint: lastWaypoint.coordinate,
+                    toStart: startLocation
+                )
+                
+                if returnSegment.isEmpty || returnSegment.count < 2 {
+                    calculateReturnRouteFromLastWaypoint()
+                }
+            } else {
+                calculateReturnRouteFromLastWaypoint()
+            }
+        } else if let currentRoute = viewModel.walkSession.currentRoute,
+                  let targetMarker = currentRoute.qrMarkers.first(where: { $0.id == waypointId }) {
+            isShowingReturnRoute = false
+            
+            if wasViewingDifferentLocation {
+                zoomToRouteThenWaypoint(targetMarker.coordinate, route: currentRoute)
+            } else {
+                zoomToWaypoint(targetMarker.coordinate)
+            }
+            
+            if viewModel.isUsingReturnDirections {
+                viewModel.isUsingReturnDirections = false
+                if !viewModel.cachedOriginalDirections.isEmpty {
+                    viewModel.locationService.startDirectionMonitoring(
+                        directions: viewModel.cachedOriginalDirections,
+                        routePath: currentRoute.routePath
+                    )
+                }
+            }
+            
+            extractRouteSegmentToWaypoint(targetMarker: targetMarker, markers: currentRoute.qrMarkers, routePath: currentRoute.routePath)
+        }
+    }
+    
     // Legacy function name (kept for compatibility)
     private func updateCamera(location: CLLocationCoordinate2D, heading: CLLocationDirection? = nil) {
         updateCamera(to: location, heading: heading)
@@ -1872,6 +1617,177 @@ struct EmbeddedWalkMapView: View {
     }
     
     // Legacy function name (kept for compatibility)
+    // MARK: - Camera Change Handler (extracted to reduce body complexity)
+    private func handleCameraChange(_ context: MapCameraUpdateContext) {
+        let now = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: now)
+        
+        // Check if this is a programmatic update (within 1.0 seconds of our update)
+        // v1.9.16: Increased grace period from 0.5s to 1.0s to prevent false positives
+        let isRecentProgrammaticUpdate = lastProgrammaticUpdateTime != nil &&
+            now.timeIntervalSince(lastProgrammaticUpdateTime!) < 1.0
+        
+        // Calculate camera change details
+        let cameraCenter = context.camera.centerCoordinate
+        let cameraHeading = context.camera.heading
+        let cameraDistance = context.camera.distance
+        let previousCenter = currentCameraState?.centerCoordinate
+        let previousHeading = currentCameraState?.heading ?? 0
+        let previousDistance = currentCameraState?.distance ?? 0
+        
+        // Get user's current location for direction detection
+        let userLocation = viewModel.locationService.currentLocation?.coordinate
+        
+        // Calculate change deltas
+        let centerDelta: Double = {
+            guard let prev = previousCenter else { return 999 }
+            let latDiff = abs(cameraCenter.latitude - prev.latitude)
+            let lonDiff = abs(cameraCenter.longitude - prev.longitude)
+            return sqrt(latDiff * latDiff + lonDiff * lonDiff) * 111000 // Convert to meters
+        }()
+        
+        // v1.9.16: Detect if camera is moving AWAY from user location
+        // Programmatic updates always move TOWARDS user location, so moving AWAY = user interaction
+        let isMovingAwayFromUser: Bool = {
+            guard let userLoc = userLocation,
+                  let prevCenter = previousCenter else { return false }
+            // Calculate distance from user to previous camera center
+            let prevDistFromUser = sqrt(
+                pow(prevCenter.latitude - userLoc.latitude, 2) +
+                pow(prevCenter.longitude - userLoc.longitude, 2)
+            ) * 111000
+            // Calculate distance from user to current camera center
+            let currentDistFromUser = sqrt(
+                pow(cameraCenter.latitude - userLoc.latitude, 2) +
+                pow(cameraCenter.longitude - userLoc.longitude, 2)
+            ) * 111000
+            // If current distance > previous distance by >10m, it's moving away
+            return (currentDistFromUser - prevDistFromUser) > 10.0
+        }()
+        let headingDelta = abs(cameraHeading - previousHeading)
+        let normalizedHeadingDelta = min(headingDelta, 360 - headingDelta)
+        let distanceDelta = abs(cameraDistance - previousDistance)
+        
+        // v1.9.16: In auto-follow mode, assume small/expected changes are programmatic
+        // This prevents false positives from MapKit's internal camera adjustments
+        // Only treat as user interaction if change is large AND unexpected
+        // v1.9.16: Lowered thresholds - user pan gestures can be as small as 50m
+        // v1.9.16: Pattern detection will override this for small movements that form a pattern
+        let isInAutoFollowMode = !userInteractedWithMap && introPhase == .followingUser
+        let isSmallExpectedChange = centerDelta < 50.0 && // Less than 50m movement (was 200m - too high!)
+                                  normalizedHeadingDelta < 5.0 && // Less than 5° heading change (was 10°)
+                                  distanceDelta < 50.0 // Less than 50m zoom change (was 100m)
+        // Note: Pattern detection will be checked later and can override this
+        let isLikelyProgrammaticInAutoFollow = isInAutoFollowMode && isSmallExpectedChange
+        
+        // Track this camera change in diagnostic buffer
+        let wasProgrammatic = isProgrammaticCameraUpdate || isRecentProgrammaticUpdate || isLikelyProgrammaticInAutoFollow
+        let willBeDetectedAsUserInteraction = introPhase == .followingUser &&
+            !userInteractedWithMap &&
+            !isProgrammaticCameraUpdate &&
+            !isRecentProgrammaticUpdate &&
+            !isLikelyProgrammaticInAutoFollow
+        
+        // Add to diagnostic buffer (keep last 20 events)
+        recentCameraChanges.append(CameraChangeEvent(
+            timestamp: now,
+            centerDelta: centerDelta,
+            headingDelta: normalizedHeadingDelta,
+            distanceDelta: distanceDelta,
+            wasProgrammatic: wasProgrammatic,
+            wasDetectedAsUserInteraction: willBeDetectedAsUserInteraction,
+            reason: wasProgrammatic ? "programmatic" : (willBeDetectedAsUserInteraction ? "USER_INTERACTION" : "unknown")
+        ))
+        if recentCameraChanges.count > 20 {
+            recentCameraChanges.removeFirst()
+        }
+        
+        // Check if we're in "vulnerability window" (within 3 seconds of auto-resume)
+        let isInVulnerabilityWindow = lastAutoResumeTime != nil &&
+            now.timeIntervalSince(lastAutoResumeTime!) < 3.0
+        
+        // v1.9.16: Pattern detection for small user movements
+        // If there are multiple small movements in quick succession, it's likely user interaction
+        // This helps detect small pan gestures that would otherwise be filtered as programmatic
+        // Check pattern BEFORE calculating wasProgrammatic to avoid circular dependency
+        let hasPatternOfSmallMovements: Bool = {
+            guard isInAutoFollowMode && !isProgrammaticCameraUpdate && !isRecentProgrammaticUpdate else { return false }
+            // Look at last 5 events within 2 seconds
+            let recentEvents = recentCameraChanges.suffix(5)
+            let twoSecondsAgo = now.addingTimeInterval(-2.0)
+            // Check for small movements that weren't clearly programmatic
+            // We check the raw events, not the wasProgrammatic flag (which might be wrong)
+            let recentSmallMovements = recentEvents.filter { event in
+                event.timestamp >= twoSecondsAgo &&
+                event.centerDelta < 50.0 && // Small movements
+                event.centerDelta > 10.0 && // But not tiny (filter noise)
+                event.centerDelta > 0.0 // Actually moved
+            }
+            // If 2+ small movements in last 2 seconds, it's likely a pattern of user interaction
+            // (programmatic updates are usually single, not repeated small movements)
+            return recentSmallMovements.count >= 2
+        }()
+        
+        // v1.9.16: Pattern detection override - if there's a pattern of small movements, treat as user interaction
+        // This helps detect small pan gestures that would otherwise be filtered
+        // v1.9.17: IMPROVED - Moving away from user now works for ALL movement sizes (not just 10-50m)
+        // If camera is moving AWAY from user location, it's definitely a user interaction
+        // Programmatic updates always move TOWARDS user location
+        let shouldOverrideProgrammaticCheck = hasPatternOfSmallMovements && centerDelta >= 10.0 && centerDelta < 50.0
+        
+        // v1.9.17: Separate check for "moving away" - this is a strong signal of user interaction
+        // regardless of movement size, and should override vulnerability window too
+        let isDefinitelyUserInteraction = isMovingAwayFromUser && centerDelta >= 10.0
+        
+        // Only block very small movements in vulnerability window to prevent animation false positives
+        let requiresLargerChangeInVulnerabilityWindow = isInVulnerabilityWindow && 
+            centerDelta < 50.0 &&  // Small center movement
+            normalizedHeadingDelta < 10.0 &&  // Small heading change
+            distanceDelta < 50.0  // Small zoom change
+        
+        // v1.9.17: Main detection condition
+        // isDefinitelyUserInteraction (moving away from user) can override ALL checks except the direct programmatic flags
+        // This is because moving away is a 100% reliable signal - programmatic updates never move away from user
+        let passesStandardChecks = introPhase == .followingUser && 
+           !userInteractedWithMap && 
+           !isProgrammaticCameraUpdate && 
+           !isRecentProgrammaticUpdate &&
+           (!isLikelyProgrammaticInAutoFollow || shouldOverrideProgrammaticCheck) &&
+           !requiresLargerChangeInVulnerabilityWindow
+        
+        // v1.9.17: When camera is moving AWAY from user, override isRecentProgrammaticUpdate too
+        // The "moving away" signal is so strong that it overrides the time-based heuristic
+        // Only keep isProgrammaticCameraUpdate check (if flag is set, we're mid-update)
+        let passesWithMovingAwayOverride = introPhase == .followingUser && 
+           !userInteractedWithMap && 
+           !isProgrammaticCameraUpdate &&  // Keep: if flag is set, we're mid-programmatic update
+           // NOTE: Removed !isRecentProgrammaticUpdate - "moving away" overrides this time-based heuristic
+           isDefinitelyUserInteraction  // Moving away overrides other heuristics including isRecentProgrammaticUpdate
+        
+        if passesStandardChecks || passesWithMovingAwayOverride {
+            // This is a user interaction - record the time and handle it
+            lastInteractionTime = now
+            handleMapInteraction()
+        } else if introPhase == .followingUser && 
+                  userInteractedWithMap && 
+                  !isProgrammaticCameraUpdate && 
+                  !isRecentProgrammaticUpdate {
+            // User is continuing to interact - update the timestamp to reset the timer
+            // This prevents auto-resume while user is still actively interacting
+            // v1.9.16: More lenient detection for continuing interactions - don't filter by isLikelyProgrammaticInAutoFollow
+            // because once user is interacting, any camera change (even small) likely means they're still interacting
+            lastInteractionTime = now
+        }
+        
+        // Update current camera state for next comparison
+        currentCameraState = context.camera
+        
+        // Reset flag after checking (but keep timestamp for a bit longer)
+        isProgrammaticCameraUpdate = false
+    }
+    
     private func handleMapInteraction() {
         detectUserInteraction()
     }
@@ -3152,6 +3068,7 @@ private struct CombinedStatusBannerContent: View {
             )
         }
         .buttonStyle(.plain)
+        .contentShape(Rectangle())  // v1.9.30: Ensure entire button area is tappable
     }
 }
 
@@ -3161,158 +3078,107 @@ private struct CombinedStatusBannerContent: View {
 struct CompactStatusRing: View {
     let walkDurationMinutes: Int
     let walkStartTime: Date?
+
     @ObservedObject var healthKitService: HealthKitService
     @Binding var isStepTrackingEnabled: Bool
     @Binding var showMotionExplainer: Bool
     var hasClinicianSelected: Bool = true  // v1.6.45: Hide time when no clinic
-    
-    /// Whether we should show alternating content (steps not yet enabled)
+    let onEnableSteps: () -> Void  // Full enable logic from parent
+
     private var shouldAlternate: Bool {
-        !isStepTrackingEnabled && healthKitService.isPedometerAvailable && !healthKitService.isMotionDenied
+        !isStepTrackingEnabled &&
+        healthKitService.isPedometerAvailable &&
+        !healthKitService.isMotionDenied
     }
-    
-    /// v1.6.45: Whether to show steps prompt only (no time countdown)
+
     private var showStepsOnly: Bool {
+        // Note: hasClinicianSelected is passed as parameter, not from healthKitService
         !hasClinicianSelected && shouldAlternate
     }
-    
-    /// v1.9.18: Always show the pill during active walk (shows walk time remaining)
-    /// Previously hid when no clinic + steps enabled, but users want to see time remaining
-    private var shouldHidePill: Bool {
-        false  // Always show the pill
-    }
-    
+
     var body: some View {
-        if shouldHidePill {
-            // No clinic + steps enabled = nothing to show
-            EmptyView()
-        } else {
-            TimelineView(.periodic(from: .now, by: 1.0)) { context in
-                CompactStatusPillContent(
-                    walkDurationMinutes: walkDurationMinutes,
-                    walkStartTime: walkStartTime,
-                    currentDate: context.date,
-                    shouldAlternate: shouldAlternate,
-                    showStepsOnly: showStepsOnly,  // v1.6.45
-                    isStepsEnabled: isStepTrackingEnabled,  // v1.8.6: For tap behavior
-                    onTapSteps: {
-                        showMotionExplainer = true
-                    }
-                )
-            }
+        CompactStatusPillContent(
+            walkDurationMinutes: walkDurationMinutes,
+            walkStartTime: walkStartTime,
+            shouldAlternate: shouldAlternate,
+            showStepsOnly: showStepsOnly,
+            isStepsEnabled: isStepTrackingEnabled,
+            showMotionExplainer: $showMotionExplainer
+        )
+        .onAppear {
+            print("🟢 CompactStatusRing: onAppear - shouldAlternate=\(shouldAlternate), isStepTrackingEnabled=\(isStepTrackingEnabled), showStepsOnly=\(showStepsOnly)")
         }
     }
 }
 
-/// Inner content for CompactStatusRing - shows walk time remaining (delay in top banner)
+// MARK: - CompactStatusPillContent (Child pill view)
 private struct CompactStatusPillContent: View {
     let walkDurationMinutes: Int
     let walkStartTime: Date?
-    let currentDate: Date
     let shouldAlternate: Bool
-    var showStepsOnly: Bool = false  // v1.6.45: When no clinic, only show steps prompt
-    var isStepsEnabled: Bool = false  // v1.8.6: Track if steps are enabled for tap behavior
-    let onTapSteps: () -> Void
-    
-    /// Toggle between info and steps display (changes every 5 seconds)
-    private var showingStepsPrompt: Bool {
-        // v1.6.45: Always show steps prompt when no clinic
-        if showStepsOnly { return true }
-        guard shouldAlternate else { return false }
-        let seconds = Int(currentDate.timeIntervalSince1970)
-        return (seconds / 5) % 2 == 1
-    }
-    
-    /// Walk time remaining (in minutes)
-    var walkRemaining: Int {
-        guard let start = walkStartTime else { return walkDurationMinutes }
-        let elapsedSeconds = currentDate.timeIntervalSince(start)
-        let elapsedMinutes = Int(elapsedSeconds / 60)
-        return max(0, walkDurationMinutes - elapsedMinutes)
-    }
-    
-    /// Urgency based on walk time remaining
-    var urgencyColor: Color {
-        switch walkRemaining {
-        case 11...: return .tealAccent
-        case 5...10: return .softAmber
-        case 2...4: return .orange
-        default: return .red
-        }
-    }
-    
+    var showStepsOnly: Bool = false
+    var isStepsEnabled: Bool = false
+
+    // Binding to parent for fullScreenCover
+    @Binding var showMotionExplainer: Bool
+
+    // State for pill flipping
+    @State private var showingStepsPrompt: Bool = false
+    @State private var walkRemaining: Int = 0
+    @State private var timerTask: Task<Void, Never>?
+
     var body: some View {
-        ZStack {
-            // Main info pill (delay + walk time)
-            infoPillView
-                .opacity(showingStepsPrompt ? 0 : 1)
-                .scaleEffect(showingStepsPrompt ? 0.95 : 1.0)
-            
-            // Steps prompt pill (only when alternating)
-            if shouldAlternate {
+        Group {
+            if showingStepsPrompt && shouldAlternate {
                 stepsPillView
-                    .opacity(showingStepsPrompt ? 1 : 0)
-                    .scaleEffect(showingStepsPrompt ? 1.0 : 0.95)
+                    .transition(.opacity.combined(with: .scale))
+            } else {
+                infoPillView
+                    .transition(.opacity.combined(with: .scale))
             }
         }
         .animation(.easeInOut(duration: 0.6), value: showingStepsPrompt)
-    }
-    
-    /// Main pill showing walk time remaining (delay shown in top banner)
-    /// v1.8.6: Tappable when steps not enabled - opens motion permission menu
-    private var infoPillView: some View {
-        Group {
-            if isStepsEnabled {
-                // Steps enabled - pill is just informational, not tappable
-                infoPillContent
-            } else {
-                // Steps not enabled - tapping opens motion permission menu
-                Button(action: onTapSteps) {
-                    infoPillContent
+        .onAppear {
+            print("🟢 CompactStatusPillContent: onAppear - shouldAlternate=\(shouldAlternate), isStepsEnabled=\(isStepsEnabled), showStepsOnly=\(showStepsOnly)")
+            updatePillState()
+            // Start 5-second timer
+            timerTask = Task {
+                print("🟢 CompactStatusPillContent: Timer task started")
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
+                    if !Task.isCancelled {
+                        print("🟢 CompactStatusPillContent: Timer fired - calling updatePillState")
+                        await MainActor.run {
+                            updatePillState()
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
+                print("🟢 CompactStatusPillContent: Timer task cancelled")
             }
         }
-    }
-    
-    /// The visual content of the info pill (shared between tappable and non-tappable versions)
-    private var infoPillContent: some View {
-        HStack(spacing: 6) {
-            // Walking icon
-            Image(systemName: "figure.walk")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(urgencyColor)
-            
-            Text("\(walkRemaining)")
-                .font(.system(size: 16, weight: .bold, design: .rounded))
-                .foregroundColor(urgencyColor)
-                .monospacedDigit()
-            
-            Text("mins left")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.white.opacity(0.7))
+        .onDisappear {
+            timerTask?.cancel()
+            timerTask = nil
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            Capsule()
-                .fill(Color.darkCardBackground)
-                .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
-        )
     }
-    
-    /// Steps prompt pill
+
+    // MARK: - Steps Pill
     private var stepsPillView: some View {
-        Button(action: onTapSteps) {
+        Button(action: {
+            print("🔵 stepsPillView TAPPED - setting showMotionExplainer = true")
+            // Force binding update on next run loop to avoid conflicts with Timer/animations
+            DispatchQueue.main.async {
+                showMotionExplainer = true
+                print("🔵 showMotionExplainer after async set: \(showMotionExplainer)")
+            }
+        }) {
             HStack(spacing: 8) {
                 Image(systemName: "figure.walk")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(.tealAccent)
-                
                 Text("Track steps?")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.tealAccent)
-                
                 Image(systemName: "hand.tap.fill")
                     .font(.system(size: 12))
                     .foregroundColor(.tealAccent.opacity(0.7))
@@ -3326,6 +3192,93 @@ private struct CompactStatusPillContent: View {
             )
         }
         .buttonStyle(.plain)
+        .contentShape(Capsule())
+    }
+
+    // MARK: - Info Pill (Time Left)
+    private var infoPillView: some View {
+        Button(action: {
+            print("🔵 infoPillView TAPPED - isStepsEnabled=\(isStepsEnabled)")
+            if !isStepsEnabled {
+                print("🔵 Setting showMotionExplainer = true")
+                // Force binding update on next run loop to avoid conflicts with Timer/animations
+                DispatchQueue.main.async {
+                    showMotionExplainer = true
+                    print("🔵 showMotionExplainer after async set: \(showMotionExplainer)")
+                }
+            } else {
+                print("🔵 Button disabled - steps already enabled")
+            }
+        }) {
+            HStack(spacing: 6) {
+                Image(systemName: "figure.walk")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(urgencyColor)
+                Text("\(walkRemaining)")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundColor(urgencyColor)
+                    .monospacedDigit()
+                Text("mins left")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                Capsule()
+                    .fill(Color.darkCardBackground)
+                    .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
+            )
+        }
+        .buttonStyle(.plain)
+        .contentShape(Capsule())
+        .disabled(isStepsEnabled) // non-tappable if steps enabled
+    }
+
+    // MARK: - Urgency color based on remaining minutes
+    private var urgencyColor: Color {
+        switch walkRemaining {
+        case 11...: return .tealAccent
+        case 5...10: return .softAmber
+        case 2...4: return .orange
+        default: return .red
+        }
+    }
+
+    // MARK: - Update pill state (flip logic & remaining time)
+    private func updatePillState() {
+        // Update walk remaining
+        if let start = walkStartTime {
+            let elapsedMinutes = Int(Date().timeIntervalSince(start) / 60)
+            walkRemaining = max(0, walkDurationMinutes - elapsedMinutes)
+        } else {
+            walkRemaining = walkDurationMinutes
+        }
+
+        // ✅ Do not flip while sheet is showing - prevents Timer conflicts
+        guard !showMotionExplainer else {
+            print("🟢 CompactStatusPillContent: Skipping flip - sheet is showing")
+            return
+        }
+
+        // Save old state for logging
+        let oldValue = showingStepsPrompt
+
+        // Toggle logic
+        if shouldAlternate && !isStepsEnabled {
+            // ✅ Always toggle if allowed, even if showStepsOnly = true
+            showingStepsPrompt.toggle()
+        } else if showStepsOnly {
+            // Force steps prompt when needed, but only if alternation not active
+            showingStepsPrompt = true
+        } else {
+            showingStepsPrompt = false
+        }
+
+        // Log if state changed
+        if oldValue != showingStepsPrompt {
+            print("🟢 CompactStatusPillContent: Flipped showingStepsPrompt from \(oldValue) to \(showingStepsPrompt) (shouldAlternate=\(shouldAlternate), isStepsEnabled=\(isStepsEnabled), showStepsOnly=\(showStepsOnly))")
+        }
     }
 }
 
