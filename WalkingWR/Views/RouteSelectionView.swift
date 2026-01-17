@@ -7899,7 +7899,9 @@ extension View {
                 set: { viewModel.showPostWalkWellbeing = $0 }
             ), onDismiss: {
                 let hasDeclinedOffer = UserDefaults.standard.bool(forKey: "healthKitSyncOfferDeclined")
-                if viewModel.stepTrackingWasEnabled && !viewModel.healthKitService.isAuthorized && !hasDeclinedOffer {
+                // v1.9.33: Also show HealthKit offer if Motion was authorized (even if steps weren't explicitly enabled)
+                // This covers the flow: Walk 1 → Motion permission → Walk 2 ends → HealthKit offer
+                if (viewModel.stepTrackingWasEnabled || viewModel.healthKitService.isMotionAuthorized) && !viewModel.healthKitService.isAuthorized && !hasDeclinedOffer {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         viewModel.showHealthKitSyncOffer = true
                     }

@@ -2920,9 +2920,9 @@ struct CombinedStatusBanner: View {
     
     @Environment(\.colorScheme) var colorScheme
     
-    /// Whether we should show alternating content (steps not yet enabled)
+    // v1.9.33: If Motion is already authorized, don't alternate - just show "Time left"
     private var shouldAlternate: Bool {
-        !isStepTrackingEnabled && healthKitService.isPedometerAvailable && !healthKitService.isMotionDenied
+        !isStepTrackingEnabled && healthKitService.isPedometerAvailable && !healthKitService.isMotionDenied && !healthKitService.isMotionAuthorized
     }
     
     var body: some View {
@@ -3104,10 +3104,13 @@ struct CompactStatusRing: View {
     var hasClinicianSelected: Bool = true  // v1.6.45: Hide time when no clinic
     let onEnableSteps: () -> Void  // Full enable logic from parent
 
+    // v1.9.33: If Motion is already authorized, don't alternate - just show "Time left"
+    // User will see HealthKit offer at end of walk
     private var shouldAlternate: Bool {
         !isStepTrackingEnabled &&
         healthKitService.isPedometerAvailable &&
-        !healthKitService.isMotionDenied
+        !healthKitService.isMotionDenied &&
+        !healthKitService.isMotionAuthorized // If Motion authorized, skip "Track steps?" prompt
     }
 
     private var showStepsOnly: Bool {
