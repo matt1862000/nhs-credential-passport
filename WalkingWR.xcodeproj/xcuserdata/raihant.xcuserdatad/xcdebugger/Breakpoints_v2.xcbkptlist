@@ -18,36 +18,6 @@
             endingLineNumber = "958"
             landmarkName = "testNotificationContentFormat()"
             landmarkType = "7">
-            <Locations>
-               <Location
-                  uuid = "4742424E-D531-483B-9278-F1A3F6B0ED3D - 79bd83024b99ea78"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "(1) suspend resume partial function for closure #1 () async -&gt; () in WalkingWR.NotificationTestRunner.testNotificationContentFormat() -&gt; ()"
-                  moduleName = "WalkingWR.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/raihant/Documents/WalkingWR/WalkingWR/Services/NotificationTestRunner.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "958"
-                  endingLineNumber = "958">
-               </Location>
-               <Location
-                  uuid = "4742424E-D531-483B-9278-F1A3F6B0ED3D - c86ba81ddb92be7a"
-                  shouldBeEnabled = "Yes"
-                  ignoreCount = "0"
-                  continueAfterRunningActions = "No"
-                  symbolName = "(3) suspend resume partial function for closure #1 () async -&gt; () in WalkingWR.NotificationTestRunner.testNotificationContentFormat() -&gt; ()"
-                  moduleName = "WalkingWR.debug.dylib"
-                  usesParentBreakpointCondition = "Yes"
-                  urlString = "file:///Users/raihant/Documents/WalkingWR/WalkingWR/Services/NotificationTestRunner.swift"
-                  startingColumnNumber = "9223372036854775807"
-                  endingColumnNumber = "9223372036854775807"
-                  startingLineNumber = "958"
-                  endingLineNumber = "958">
-               </Location>
-            </Locations>
          </BreakpointContent>
       </BreakpointProxy>
    </Breakpoints>

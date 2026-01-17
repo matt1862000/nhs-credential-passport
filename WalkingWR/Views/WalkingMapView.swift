@@ -938,14 +938,16 @@ struct EmbeddedWalkMapView: View {
                                 isShowingReturnRoute = true
                                 waypointRoutePolyline = nil  // Clear waypoint route
                                 
-                                // If viewing different location, zoom out to route then in to start
-                                if wasViewingDifferentLocation,
+                                // If viewing different location (switching from a waypoint to Return to Start), zoom out to route then in to start
+                                // Also check if previousViewingWaypointId was set (meaning we were viewing a waypoint)
+                                if (wasViewingDifferentLocation || previousViewingWaypointId != nil),
                                    let currentRoute = viewModel.walkSession.currentRoute,
                                    let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
+                                    // Animate when switching from a waypoint to Return to Start
                                     zoomToRouteThenWaypoint(startLocation, route: currentRoute)
                                 } else if let currentRoute = viewModel.walkSession.currentRoute,
                                           let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first {
-                                    // First selection of return to start - just zoom directly
+                                    // First selection of return to start (from nil) - just zoom directly
                                     zoomToWaypoint(startLocation)
                                 }
                                 
