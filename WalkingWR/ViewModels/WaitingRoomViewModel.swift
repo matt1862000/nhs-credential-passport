@@ -713,16 +713,8 @@ class WaitingRoomViewModel: ObservableObject {
         notificationService.cancelAllWalkingNotifications()
         stopSessionTimer()
         
-        // v1.9.33: Request Motion permission at end of walk if steps weren't enabled
-        // This introduces the user to step tracking for their next walk
-        if !stepTrackingWasEnabled && !healthKitService.isMotionAuthorized && !healthKitService.isMotionDenied {
-            print("🔍 [MOTION DEBUG] [\(timeString)]   📲 Requesting Motion permission (steps weren't enabled during walk)")
-            healthKitService.requestMotionAuthorization { authorized in
-                print("🔍 [MOTION DEBUG] Motion authorization result: \(authorized ? "authorized" : "denied")")
-            }
-        }
-        
         // Prompt for post-walk wellbeing score
+        // v1.9.34: Motion permission is now requested AFTER anxiety check dismisses (in RouteSelectionView onDismiss)
         if completed && userProgress.anxietyLevelBefore != nil {
             print("🔍 [MOTION DEBUG] [\(timeString)]   📋 Setting showPostWalkWellbeing = true")
             showPostWalkWellbeing = true
