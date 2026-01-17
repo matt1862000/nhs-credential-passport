@@ -269,6 +269,51 @@ struct RouteSelectionView: View {
                     }
                 }
             }
+            // v1.9.40: iOS 17 fix - onDismiss doesn't reliably fire for post-walk sheet
+            // Use onChange to detect when post-walk anxiety sheet is dismissed
+            .onChange(of: viewModel.showPostWalkWellbeing) { oldValue, newValue in
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                print("🔍 [iOS17 FIX] [\(timeString)] showPostWalkWellbeing changed: \(oldValue) → \(newValue)")
+                
+                // When sheet dismisses (true → false), trigger HealthKit offer logic
+                if oldValue == true && newValue == false {
+                    print("🔍 [iOS17 FIX] [\(timeString)]   Post-walk sheet dismissed - checking HealthKit offer")
+                    
+                    let hasDeclinedOffer = UserDefaults.standard.bool(forKey: "healthKitSyncOfferDeclined")
+                    let stepTrackingWasEnabled = viewModel.stepTrackingWasEnabled
+                    let motionWasAuthorizedAtWalkStart = viewModel.motionWasAuthorizedAtWalkStart
+                    let isMotionAuthorized = viewModel.healthKitService.isMotionAuthorized
+                    let isMotionDenied = viewModel.healthKitService.isMotionDenied
+                    let isHealthKitAuthorized = viewModel.healthKitService.isAuthorized
+                    
+                    print("🔍 [iOS17 FIX] [\(timeString)]   stepTrackingWasEnabled: \(stepTrackingWasEnabled)")
+                    print("🔍 [iOS17 FIX] [\(timeString)]   motionWasAuthorizedAtWalkStart: \(motionWasAuthorizedAtWalkStart)")
+                    print("🔍 [iOS17 FIX] [\(timeString)]   isMotionAuthorized: \(isMotionAuthorized)")
+                    print("🔍 [iOS17 FIX] [\(timeString)]   isMotionDenied: \(isMotionDenied)")
+                    print("🔍 [iOS17 FIX] [\(timeString)]   isHealthKitAuthorized: \(isHealthKitAuthorized)")
+                    print("🔍 [iOS17 FIX] [\(timeString)]   hasDeclinedOffer: \(hasDeclinedOffer)")
+                    
+                    // Same logic as onDismiss handler in addSheets
+                    if !stepTrackingWasEnabled && !isMotionAuthorized && !isMotionDenied {
+                        // Flow 2, Walk 1: Absent-minded user - request Motion permission
+                        print("🔍 [iOS17 FIX] [\(timeString)]   📲 Requesting Motion permission (Flow 2, Walk 1)")
+                        viewModel.healthKitService.requestMotionAuthorization { authorized in
+                            print("🔍 [iOS17 FIX] Motion authorization result: \(authorized ? "authorized" : "denied")")
+                        }
+                    } else if (stepTrackingWasEnabled || motionWasAuthorizedAtWalkStart) && !isHealthKitAuthorized && !hasDeclinedOffer {
+                        // Flow 1 or Flow 2 Walk 2: Motion is authorized → show HealthKit offer
+                        print("🔍 [iOS17 FIX] [\(timeString)]   ✅ Showing HealthKit sync offer")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            viewModel.showHealthKitSyncOffer = true
+                        }
+                    } else {
+                        print("🔍 [iOS17 FIX] [\(timeString)]   ❌ No permission dialog needed")
+                    }
+                }
+            }
             .onChange(of: showLocalRoutePicker) { _, isShowing in
                 if isShowing {
                     // Pre-select duration based on delay time
