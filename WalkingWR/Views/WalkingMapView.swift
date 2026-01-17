@@ -704,8 +704,9 @@ struct EmbeddedWalkMapView: View {
             showingIntroOverlay ? IntroOverlayView(introPhase: introPhase).opacity(1).allowsHitTesting(false) : nil
         )
         // Present MotionPermissionExplainerSheet at the top level
-        // Using .fullScreenCover for more reliable presentation in complex overlay hierarchies
-        .fullScreenCover(isPresented: $showMotionExplainer) {
+        // Using .sheet instead of .fullScreenCover because EmbeddedWalkMapView is inside ActiveWalkView (which is a fullScreenCover)
+        // iOS doesn't allow nested fullScreenCovers, so we must use .sheet here
+        .sheet(isPresented: $showMotionExplainer) {
             MotionPermissionExplainerSheet(
                 onEnable: {
                     print("🟢 MotionPermissionExplainerSheet: onEnable called")
