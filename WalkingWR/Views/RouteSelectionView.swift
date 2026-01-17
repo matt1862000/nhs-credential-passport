@@ -6181,7 +6181,7 @@ struct ActiveWalkView: View {
                 }
                 .buttonStyle(SecondaryButtonStyle(color: .coralPink))
                 .padding(.horizontal, 40)
-                .padding(.bottom, 12)
+                .padding(.bottom, 40)  // v1.9.36: Increased from 12 to 40 for home indicator clearance
             }
         }
         .ignoresSafeArea(.container, edges: .bottom)  // v1.9.28: Extend to bottom edge only (preserve status bar)
