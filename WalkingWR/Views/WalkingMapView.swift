@@ -619,8 +619,12 @@ struct EmbeddedWalkMapView: View {
                         isStepTrackingEnabled = true
                         viewModel.stepTrackingWasEnabled = true
                         UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
-                        if let startTime = viewModel.walkSession.startTime {
-                            viewModel.healthKitService.startObservingSteps(from: startTime)
+                        // Request HealthKit authorization explicitly, then start observing steps
+                        Task {
+                            await viewModel.healthKitService.requestAuthorization()
+                            if let startTime = viewModel.walkSession.startTime {
+                                viewModel.healthKitService.startObservingSteps(from: startTime)
+                            }
                         }
                     }
                 )
@@ -713,8 +717,12 @@ struct EmbeddedWalkMapView: View {
                     isStepTrackingEnabled = true
                     viewModel.stepTrackingWasEnabled = true
                     UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
-                    if let startTime = viewModel.walkSession.startTime {
-                        viewModel.healthKitService.startObservingSteps(from: startTime)
+                    // Request HealthKit authorization explicitly, then start observing steps
+                    Task {
+                        await viewModel.healthKitService.requestAuthorization()
+                        if let startTime = viewModel.walkSession.startTime {
+                            viewModel.healthKitService.startObservingSteps(from: startTime)
+                        }
                     }
                     showMotionExplainer = false
                 },
@@ -3114,7 +3122,9 @@ struct CompactStatusRing: View {
             shouldAlternate: shouldAlternate,
             showStepsOnly: showStepsOnly,
             isStepsEnabled: isStepTrackingEnabled,
-            showMotionExplainer: $showMotionExplainer
+            showMotionExplainer: $showMotionExplainer,
+            healthKitService: healthKitService,
+            onEnableSteps: onEnableSteps
         )
         .onAppear {
             print("🟢 CompactStatusRing: onAppear - shouldAlternate=\(shouldAlternate), isStepTrackingEnabled=\(isStepTrackingEnabled), showStepsOnly=\(showStepsOnly)")
@@ -3132,6 +3142,8 @@ private struct CompactStatusPillContent: View {
 
     // Binding to parent for fullScreenCover
     @Binding var showMotionExplainer: Bool
+    @ObservedObject var healthKitService: HealthKitService
+    let onEnableSteps: () -> Void
 
     // State for pill flipping
     @State private var showingStepsPrompt: Bool = false
@@ -3176,11 +3188,26 @@ private struct CompactStatusPillContent: View {
     // MARK: - Steps Pill
     private var stepsPillView: some View {
         Button(action: {
-            print("🔵 stepsPillView TAPPED - setting showMotionExplainer = true")
-            // Force binding update on next run loop to avoid conflicts with Timer/animations
-            DispatchQueue.main.async {
-                showMotionExplainer = true
-                print("🔵 showMotionExplainer after async set: \(showMotionExplainer)")
+            print("🔵 stepsPillView TAPPED")
+            let timestamp = Date()
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss.SSS"
+            let timeString = formatter.string(from: timestamp)
+            print("🔍 [MOTION DEBUG] [\(timeString)] 🔵 stepsPillView tapped - Motion authorized: \(healthKitService.isMotionAuthorized)")
+            
+            // If Motion is already authorized, enable steps directly (this will trigger HealthKit permission)
+            if healthKitService.isMotionAuthorized {
+                print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ Motion already authorized - enabling steps directly (will trigger HealthKit permission)")
+                DispatchQueue.main.async {
+                    onEnableSteps()
+                }
+            } else {
+                print("🔍 [MOTION DEBUG] [\(timeString)]   ⚠️ Motion not authorized - showing explainer sheet")
+                // Force binding update on next run loop to avoid conflicts with Timer/animations
+                DispatchQueue.main.async {
+                    showMotionExplainer = true
+                    print("🔵 showMotionExplainer after async set: \(showMotionExplainer)")
+                }
             }
         }) {
             HStack(spacing: 8) {
@@ -3210,12 +3237,28 @@ private struct CompactStatusPillContent: View {
     private var infoPillView: some View {
         Button(action: {
             print("🔵 infoPillView TAPPED - isStepsEnabled=\(isStepsEnabled)")
+            let timestamp = Date()
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss.SSS"
+            let timeString = formatter.string(from: timestamp)
+            
             if !isStepsEnabled {
-                print("🔵 Setting showMotionExplainer = true")
-                // Force binding update on next run loop to avoid conflicts with Timer/animations
-                DispatchQueue.main.async {
-                    showMotionExplainer = true
-                    print("🔵 showMotionExplainer after async set: \(showMotionExplainer)")
+                print("🔍 [MOTION DEBUG] [\(timeString)] 🔵 infoPillView tapped - Motion authorized: \(healthKitService.isMotionAuthorized)")
+                
+                // If Motion is already authorized, enable steps directly (this will trigger HealthKit permission)
+                if healthKitService.isMotionAuthorized {
+                    print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ Motion already authorized - enabling steps directly (will trigger HealthKit permission)")
+                    DispatchQueue.main.async {
+                        onEnableSteps()
+                    }
+                } else {
+                    print("🔍 [MOTION DEBUG] [\(timeString)]   ⚠️ Motion not authorized - showing explainer sheet")
+                    print("🔵 Setting showMotionExplainer = true")
+                    // Force binding update on next run loop to avoid conflicts with Timer/animations
+                    DispatchQueue.main.async {
+                        showMotionExplainer = true
+                        print("🔵 showMotionExplainer after async set: \(showMotionExplainer)")
+                    }
                 }
             } else {
                 print("🔵 Button disabled - steps already enabled")
