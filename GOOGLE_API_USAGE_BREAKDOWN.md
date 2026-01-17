@@ -93,6 +93,13 @@ https://maps.googleapis.com/maps/api/directions/json
 - This is a **quality assurance** call - the route is already generated using MapKit (FREE)
 - Google Directions provides more accurate polylines and better turn-by-turn instructions
 - Falls back to MapKit if Google Directions fails
+- **Waypoint Optimization**: Uses local Nearest Neighbor (Greedy) algorithm to optimize waypoint order (saves $5.00/1k calls)
+- **SKU Enforcement**: `optimize:true` flag removed; max 10 waypoints per call
+  - If route has >10 waypoints, only first 10 are sent to Google
+  - Advanced SKU ($10+/1k) is triggered if >10 waypoints or if `optimize:true` parameter is used
+  - Local optimization ensures requests stay in Essentials SKU ($5/1k) instead of Advanced SKU
+- **Coordinate Format**: Waypoints formatted as `lat,lng|lat,lng|lat,lng` using 6 decimal places for precision
+- **URL Structure**: Origin and destination are the same (loop route), waypoints parameter contains only intermediate POIs
 
 ---
 

@@ -153,11 +153,7 @@ struct RouteSelectionView: View {
         ZStack {
             AnimatedGradientBackground()
             
-            if viewModel.walkSession.isActive {
-                ActiveWalkView(viewModel: viewModel)
-            } else {
-                routeListContent
-            }
+            routeListContent
         }
     }
     
@@ -228,6 +224,10 @@ struct RouteSelectionView: View {
     
     var body: some View {
         mainNavigationView
+            .fullScreenCover(isPresented: $showActiveWalk) {
+                // v1.9.28: Immersive full-screen presentation - no navigation context
+                ActiveWalkView(viewModel: viewModel, isPresented: $showActiveWalk)
+            }
             .addSheets(
                 showHelpSheet: $showHelpSheet,
                 showLocalRoutePicker: $showLocalRoutePicker,
@@ -235,7 +235,8 @@ struct RouteSelectionView: View {
                 locationService: viewModel.locationService,
                 localRouteDuration: $localRouteDuration,
                 localRouteUseCustom: $localRouteUseCustom,
-                pendingBatchTest: $pendingBatchTest
+                pendingBatchTest: $pendingBatchTest,
+                showActiveWalk: $showActiveWalk
             )
             .addAlerts(viewModel: viewModel)
             .onChange(of: showLocalRoutePicker) { _, isShowing in
@@ -947,6 +948,7 @@ struct LocalRoutePickerSheet: View {
     @Binding var useCustomTime: Bool
     @Binding var isPresented: Bool
     @Binding var pendingBatchTest: PendingBatchTest  // v1.6.45: Auto-run test when sheet opens
+    @Binding var showActiveWalk: Bool  // v1.9.28: Show fullscreen ActiveWalkView
     @State private var isGenerating = false  // Button shows spinner
     @State private var showLoadingScreen = false  // v1.8.3: Separate flag for loading screen transition
     @State private var routeGenerationComplete = false  // v1.8.5: Signals route is ready (triggers stage animation completion)
@@ -1325,6 +1327,10 @@ struct LocalRoutePickerSheet: View {
                         isPresented = false
                     }
                 }
+            }
+            .fullScreenCover(isPresented: $showActiveWalk) {
+                // v1.9.28: Immersive full-screen presentation - no navigation context
+                ActiveWalkView(viewModel: viewModel, isPresented: $showActiveWalk)
             }
             .onAppear {
                 locationService.requestFreshLocation()
@@ -2028,9 +2034,13 @@ struct LocalRoutePickerSheet: View {
                                 }
                             }
                             isRouteRefreshed = true  // Mark as refreshed
+                            routeRefreshStatus = nil  // v1.9.28: Clear status - route is ready
                             print("⏱️ [FRONT-LOAD] Route refresh complete")
                         }
                     }
+                    
+                    // v1.9.28: Clear any status messages - routes are ready to use
+                    routeRefreshStatus = nil
                     
                     // Mark complete immediately (don't wait for refresh or background loading)
                     // Refresh happens in background and updates route when ready
@@ -2216,6 +2226,9 @@ struct LocalRoutePickerSheet: View {
                         print("═══════════════════════════════════════════════════════════")
                         print("")
                         
+                        // v1.9.28: Clear any status messages - routes are ready
+                        routeRefreshStatus = nil
+                        
                         // Start pre-generating more routes in background
                         preGenerateRemainingRoutes()
                     }
@@ -2223,6 +2236,7 @@ struct LocalRoutePickerSheet: View {
                     await MainActor.run {
                         isGenerating = false
                         showLoadingScreen = false  // Dismiss immediately on error
+                        routeRefreshStatus = nil  // v1.9.28: Clear status on error
                         routeGenerationComplete = false
                         errorMessage = "Could not find a route within time limit. Try different options."
                         print("❌ Smart routing error: \(error)")
@@ -2495,11 +2509,15 @@ struct LocalRoutePickerSheet: View {
             // Route was already refreshed, use it directly
             Task { @MainActor in
                 isStartingWalk = false
+                routeRefreshStatus = nil  // v1.9.28: Clear status
                 viewModel.selectRoute(route)
                 viewModel.startWalk()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    isPresented = false
+                // v1.9.28: Dismiss sheet first, then show fullscreen after a brief delay
+                isPresented = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    showActiveWalk = true
                 }
+                print("⏱️ [LET'S GO] [\(timeString)] 🗺️ Walk started (front-loaded) - showing fullscreen ActiveWalkView")
             }
             return
         }
@@ -2654,14 +2672,13 @@ struct LocalRoutePickerSheet: View {
                     
                     let totalElapsed = Date().timeIntervalSince(startTime)
                     print("⏱️ [LET'S GO] [\(mainActorTimeString)] ✅ Total time: \(String(format: "%.2f", totalElapsed))s")
-                    
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        let dismissTime = Date()
-                        let dismissTimeString = formatter.string(from: dismissTime)
-                        let totalElapsed = dismissTime.timeIntervalSince(startTime)
-                        print("⏱️ [LET'S GO] [\(dismissTimeString)] 🗺️ Dismissing RouteSelectionView (total: \(String(format: "%.2f", totalElapsed))s)")
-                        isPresented = false
+                    // v1.9.28: Dismiss sheet first, then show fullscreen after a brief delay
+                    isPresented = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        showActiveWalk = true
                     }
+                    print("⏱️ [LET'S GO] [\(mainActorTimeString)] 🗺️ Walk started - showing fullscreen ActiveWalkView")
+                    // The view will automatically switch from routeListContent to ActiveWalkView
                 }
             } else {
                 let noLocationTime = Date()
@@ -2674,9 +2691,12 @@ struct LocalRoutePickerSheet: View {
                     routeRefreshStatus = nil
                     viewModel.selectRoute(route)
                     viewModel.startWalk()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        isPresented = false
+                    // v1.9.28: Dismiss sheet first, then show fullscreen after a brief delay
+                    isPresented = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        showActiveWalk = true
                     }
+                    print("⏱️ [LET'S GO] [\(noLocationTimeString)] 🗺️ Walk started (no location) - showing fullscreen ActiveWalkView")
                 }
             }
         }
@@ -4640,9 +4660,12 @@ struct LocalRouteMapPreview: View {
     // and AFTER the walk (HealthKit sync option)
     
     var primaryButtonText: String {
-        if let status = routeRefreshStatus {
+        // v1.9.28: Only show status if user has tapped "Let's Go" (isStartingWalk)
+        // Don't show "Calculating route..." when routes are already displayed
+        if isStartingWalk, let status = routeRefreshStatus {
             return status
         }
+        // Routes are ready - show "Let's Go!" even if background generation is happening
         return isStartingWalk ? "Starting..." : "Let's Go!"
     }
     
@@ -5966,10 +5989,12 @@ struct StatBadge: View {
 // MARK: - Active Walk View
 struct ActiveWalkView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
+    var isPresented: Binding<Bool>? = nil  // v1.9.28: Optional - only needed when shown in a sheet
     @State private var showAllDirections: Bool = false
     @State private var showEndConfirmation: Bool = false
     
     var body: some View {
+        // v1.9.28: Immersive full-screen - no navigation wrapper
         VStack(spacing: 0) {
             // Compact header with route info
             if let route = viewModel.walkSession.currentRoute {
@@ -6116,9 +6141,16 @@ struct ActiveWalkView: View {
                 .padding(.bottom, 12)
             }
         }
+        .ignoresSafeArea(.container, edges: .bottom)  // v1.9.28: Extend to bottom edge only (preserve status bar)
         .confirmationDialog("End Walk?", isPresented: $showEndConfirmation) {
             Button("End & Save Progress") {
                 viewModel.endWalk(completed: true)
+                // v1.9.28: Dismiss fullscreen cover after ending walk
+                if let isPresented = isPresented {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        isPresented.wrappedValue = false
+                    }
+                }
             }
             Button("Cancel", role: .cancel) { }
         } message: {
@@ -7791,7 +7823,8 @@ extension View {
         locationService: LocationService,
         localRouteDuration: Binding<Int>,
         localRouteUseCustom: Binding<Bool>,
-        pendingBatchTest: Binding<PendingBatchTest>
+        pendingBatchTest: Binding<PendingBatchTest>,
+        showActiveWalk: Binding<Bool>  // v1.9.28: Show fullscreen ActiveWalkView
     ) -> some View {
         self
             .sheet(isPresented: showHelpSheet) {
@@ -7806,7 +7839,8 @@ extension View {
                     selectedDuration: localRouteDuration,
                     useCustomTime: localRouteUseCustom,
                     isPresented: showLocalRoutePicker,
-                    pendingBatchTest: pendingBatchTest
+                    pendingBatchTest: pendingBatchTest,
+                    showActiveWalk: showActiveWalk
                 )
             }
             .sheet(isPresented: Binding(

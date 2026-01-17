@@ -3655,25 +3655,32 @@ class GoogleMapsService: ObservableObject {
             print("🌐   📍 Origin: (\(String(format: "%.5f", userLocation.latitude)), \(String(format: "%.5f", userLocation.longitude)))")
             
             // Extract waypoint coordinates from QR markers
-            let waypoints = route.qrMarkers.map { $0.coordinate }
+            let rawWaypoints = route.qrMarkers.map { $0.coordinate }
             
-            guard !waypoints.isEmpty else {
+            guard !rawWaypoints.isEmpty else {
                 print("🌐 REFRESH: No waypoints, using Apple MapKit")
                 return await refreshRouteWithMapKit(route: route, userLocation: userLocation)
             }
             
-            print("🌐   🎯 Waypoints: \(waypoints.count)")
+            // Optimize waypoint order locally (Nearest Neighbor) to stay in Essentials SKU
+            let waypoints = performLocalOptimization(origin: userLocation, waypoints: rawWaypoints)
+            
+            print("🌐   🎯 Waypoints: \(waypoints.count) (optimized locally)")
             for (index, waypoint) in waypoints.enumerated() {
                 print("🌐      [\(index + 1)] (\(String(format: "%.5f", waypoint.latitude)), \(String(format: "%.5f", waypoint.longitude)))")
             }
             
-            // Build waypoints string
-            let waypointsParam = waypoints.map { "\($0.latitude),\($0.longitude)" }.joined(separator: "|")
+            // Build waypoints string (already optimized, no optimize:true parameter needed)
+            // Format: lat,lng|lat,lng|lat,lng (using 6 decimal places for precision)
+            let waypointsParam = waypoints.map { 
+                String(format: "%.6f,%.6f", $0.latitude, $0.longitude)
+            }.joined(separator: "|")
             
-            // Google Directions API URL (no optimize:true to stay in free tier)
+            // Google Directions API URL (no optimize:true to stay in Essentials SKU)
+            // Format: origin and destination are the same (loop route), waypoints are intermediate POIs only
             var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
-            urlString += "origin=\(userLocation.latitude),\(userLocation.longitude)"
-            urlString += "&destination=\(userLocation.latitude),\(userLocation.longitude)"
+            urlString += "origin=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
+            urlString += "&destination=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
             urlString += "&waypoints=\(waypointsParam)"
             urlString += "&mode=walking"
             urlString += "&key=\(apiKey)"
@@ -7029,6 +7036,44 @@ class GoogleMapsService: ObservableObject {
         return loc1.distance(from: loc2)
     }
     
+    // MARK: - Local Waypoint Optimization (Nearest Neighbor)
+    /// Optimizes waypoint order using Nearest Neighbor (Greedy) algorithm
+    /// This keeps Google Directions API calls in the "Essentials" SKU ($5/1k) instead of "Advanced" SKU ($10+/1k)
+    /// by doing the optimization locally instead of using Google's optimize:true parameter
+    /// 
+    /// - Parameters:
+    ///   - origin: Starting location (user's current location)
+    ///   - waypoints: Array of waypoint coordinates to optimize
+    /// - Returns: Optimized array of waypoints in efficient visiting order
+    private func performLocalOptimization(origin: CLLocationCoordinate2D, waypoints: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+        guard !waypoints.isEmpty else { return waypoints }
+        
+        // Cap at 10 waypoints to stay within Essentials SKU billing tier
+        let cappedWaypoints = Array(waypoints.prefix(10))
+        if waypoints.count > 10 {
+            print("🌐 ⚠️  Waypoints capped at 10 (was \(waypoints.count)) to stay in Essentials SKU")
+        }
+        
+        // Nearest Neighbor (Greedy) algorithm
+        var remaining = cappedWaypoints
+        var optimized: [CLLocationCoordinate2D] = []
+        var current = origin
+        
+        while !remaining.isEmpty {
+            // Find nearest unvisited waypoint
+            let nearest = remaining.min { wp1, wp2 in
+                distanceBetween(current, wp1) < distanceBetween(current, wp2)
+            }!
+            
+            optimized.append(nearest)
+            remaining.removeAll { $0.latitude == nearest.latitude && $0.longitude == nearest.longitude }
+            current = nearest
+        }
+        
+        print("🌐 ✅ Local optimization: \(cappedWaypoints.count) waypoints reordered using Nearest Neighbor")
+        return optimized
+    }
+    
     /// Check if two POI names are similar (likely the same place, different naming)
     /// v1.6.47: Used for deduplication - only dedupe very close POIs if names are similar
     private func namesAreSimilar(_ name1: String, _ name2: String) -> Bool {
@@ -7076,15 +7121,25 @@ class GoogleMapsService: ObservableObject {
         
         print("🌐 Google Directions: Attempting fallback route (PAID API)...")
         
-        // Build waypoints string for Google API using coordinate property
-        let waypointCoords = waypoints.map { "\($0.coordinate.latitude),\($0.coordinate.longitude)" }
+        // Extract waypoint coordinates
+        let rawWaypointCoords = waypoints.map { $0.coordinate }
+        
+        // Optimize waypoint order locally (Nearest Neighbor) to stay in Essentials SKU
+        let optimizedWaypointCoords = performLocalOptimization(origin: origin, waypoints: rawWaypointCoords)
+        
+        // Build waypoints string for Google API (already optimized, no optimize:true parameter needed)
+        // Format: lat,lng|lat,lng|lat,lng (using 6 decimal places for precision)
+        let waypointCoords = optimizedWaypointCoords.map { 
+            String(format: "%.6f,%.6f", $0.latitude, $0.longitude)
+        }
         let waypointsParam = waypointCoords.joined(separator: "|")
         
         // Google Directions API URL
+        // Format: origin and destination are the same (loop route), waypoints are intermediate POIs only
         var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
-        urlString += "origin=\(origin.latitude),\(origin.longitude)"
-        urlString += "&destination=\(origin.latitude),\(origin.longitude)"  // Round trip
-        urlString += "&waypoints=\(waypointsParam)"  // v1.8.9: Removed optimize:true to stay in free Essentials tier
+        urlString += "origin=\(String(format: "%.6f,%.6f", origin.latitude, origin.longitude))"
+        urlString += "&destination=\(String(format: "%.6f,%.6f", origin.latitude, origin.longitude))"  // Round trip
+        urlString += "&waypoints=\(waypointsParam)"  // v1.9.30: Locally optimized, no optimize:true to stay in Essentials SKU
         urlString += "&mode=walking"
         urlString += "&key=\(apiKey)"
         
