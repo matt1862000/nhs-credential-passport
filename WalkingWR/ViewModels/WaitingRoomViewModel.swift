@@ -35,6 +35,7 @@ class WaitingRoomViewModel: ObservableObject {
     // v1.6.28: Post-walk HealthKit sync offer (only shown if Motion was granted)
     @Published var showHealthKitSyncOffer: Bool = false
     @Published var stepTrackingWasEnabled: Bool = false  // Track if user opted into steps during walk
+    @Published var motionWasAuthorizedAtWalkStart: Bool = false  // v1.9.33: Track if Motion was authorized when walk started
     
     // Location-based marker detection
     @Published var showMarkerArrivalPrompt: Bool = false
@@ -621,6 +622,10 @@ class WaitingRoomViewModel: ObservableObject {
         
         // v1.6.28: Reset step tracking flag for new walk
         stepTrackingWasEnabled = false
+        
+        // v1.9.33: Track if Motion was authorized at walk start (for HealthKit offer logic)
+        motionWasAuthorizedAtWalkStart = healthKitService.isMotionAuthorized
+        print("🚶 startWalk - motionWasAuthorizedAtWalkStart: \(motionWasAuthorizedAtWalkStart)")
         
         // v1.9.17: Reset walking alerts for new walk
         walkingAlertsEnabled = true

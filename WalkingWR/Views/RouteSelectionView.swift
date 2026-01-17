@@ -7898,13 +7898,41 @@ extension View {
                 get: { viewModel.showPostWalkWellbeing },
                 set: { viewModel.showPostWalkWellbeing = $0 }
             ), onDismiss: {
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                
                 let hasDeclinedOffer = UserDefaults.standard.bool(forKey: "healthKitSyncOfferDeclined")
-                // v1.9.33: Also show HealthKit offer if Motion was authorized (even if steps weren't explicitly enabled)
-                // This covers the flow: Walk 1 → Motion permission → Walk 2 ends → HealthKit offer
-                if (viewModel.stepTrackingWasEnabled || viewModel.healthKitService.isMotionAuthorized) && !viewModel.healthKitService.isAuthorized && !hasDeclinedOffer {
+                let stepTrackingWasEnabled = viewModel.stepTrackingWasEnabled
+                let motionWasAuthorizedAtWalkStart = viewModel.motionWasAuthorizedAtWalkStart
+                let isMotionAuthorized = viewModel.healthKitService.isMotionAuthorized
+                let isHealthKitAuthorized = viewModel.healthKitService.isAuthorized
+                
+                print("🔍 [HEALTHKIT OFFER] [\(timeString)] Post-walk wellbeing sheet dismissed")
+                print("🔍 [HEALTHKIT OFFER] [\(timeString)]   stepTrackingWasEnabled: \(stepTrackingWasEnabled)")
+                print("🔍 [HEALTHKIT OFFER] [\(timeString)]   motionWasAuthorizedAtWalkStart: \(motionWasAuthorizedAtWalkStart)")
+                print("🔍 [HEALTHKIT OFFER] [\(timeString)]   isMotionAuthorized (current): \(isMotionAuthorized)")
+                print("🔍 [HEALTHKIT OFFER] [\(timeString)]   isHealthKitAuthorized: \(isHealthKitAuthorized)")
+                print("🔍 [HEALTHKIT OFFER] [\(timeString)]   hasDeclinedOffer: \(hasDeclinedOffer)")
+                
+                // v1.9.33: Show HealthKit offer if:
+                // - User enabled steps during walk, OR
+                // - Motion was authorized when walk started (even if user didn't tap anything)
+                // AND HealthKit is not yet authorized AND user hasn't declined
+                let shouldShow = (stepTrackingWasEnabled || motionWasAuthorizedAtWalkStart) && !isHealthKitAuthorized && !hasDeclinedOffer
+                print("🔍 [HEALTHKIT OFFER] [\(timeString)]   Condition result: \(shouldShow)")
+                print("🔍 [HEALTHKIT OFFER] [\(timeString)]     (stepTrackingWasEnabled || isMotionAuthorized): \(stepTrackingWasEnabled || isMotionAuthorized)")
+                print("🔍 [HEALTHKIT OFFER] [\(timeString)]     !isHealthKitAuthorized: \(!isHealthKitAuthorized)")
+                print("🔍 [HEALTHKIT OFFER] [\(timeString)]     !hasDeclinedOffer: \(!hasDeclinedOffer)")
+                
+                if shouldShow {
+                    print("🔍 [HEALTHKIT OFFER] [\(timeString)]   ✅ Showing HealthKit sync offer")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         viewModel.showHealthKitSyncOffer = true
                     }
+                } else {
+                    print("🔍 [HEALTHKIT OFFER] [\(timeString)]   ❌ NOT showing HealthKit sync offer")
                 }
             }) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: Binding(
