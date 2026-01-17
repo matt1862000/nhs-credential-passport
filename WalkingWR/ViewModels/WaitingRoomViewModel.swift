@@ -36,6 +36,7 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var showHealthKitSyncOffer: Bool = false
     @Published var stepTrackingWasEnabled: Bool = false  // Track if user opted into steps during walk
     @Published var motionWasAuthorizedAtWalkStart: Bool = false  // v1.9.33: Track if Motion was authorized when walk started
+    @Published var pendingActiveWalk: Bool = false  // v1.9.36: Delays map until after pre-walk anxiety check (iOS 17 compatible)
     
     // Location-based marker detection
     @Published var showMarkerArrivalPrompt: Bool = false

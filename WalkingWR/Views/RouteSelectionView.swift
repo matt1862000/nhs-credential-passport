@@ -50,7 +50,7 @@ struct RouteSelectionView: View {
     @State private var showIndoorOnly = false
     @State private var showAccessibleOnly = false
     @State private var showActiveWalk = false
-    @State private var pendingActiveWalk = false  // v1.9.34: Delays map until after pre-walk anxiety check
+    // v1.9.36: pendingActiveWalk moved to ViewModel for iOS 17 compatibility
     @State private var showHelpSheet = false
     @State private var localRouteDuration: Int = 10
     @State private var localRouteUseCustom = false
@@ -237,8 +237,7 @@ struct RouteSelectionView: View {
                 localRouteDuration: $localRouteDuration,
                 localRouteUseCustom: $localRouteUseCustom,
                 pendingBatchTest: $pendingBatchTest,
-                showActiveWalk: $showActiveWalk,
-                pendingActiveWalk: $pendingActiveWalk
+                showActiveWalk: $showActiveWalk
             )
             .addAlerts(viewModel: viewModel)
             .onChange(of: showLocalRoutePicker) { _, isShowing in
@@ -951,7 +950,7 @@ struct LocalRoutePickerSheet: View {
     @Binding var isPresented: Bool
     @Binding var pendingBatchTest: PendingBatchTest  // v1.6.45: Auto-run test when sheet opens
     @Binding var showActiveWalk: Bool  // v1.9.28: Show fullscreen ActiveWalkView
-    @Binding var pendingActiveWalk: Bool  // v1.9.35: Delays map until after pre-walk anxiety check
+    // v1.9.36: pendingActiveWalk now in viewModel for iOS 17 compatibility
     @State private var isGenerating = false  // Button shows spinner
     @State private var showLoadingScreen = false  // v1.8.3: Separate flag for loading screen transition
     @State private var routeGenerationComplete = false  // v1.8.5: Signals route is ready (triggers stage animation completion)
@@ -2538,13 +2537,13 @@ struct LocalRoutePickerSheet: View {
                 routeRefreshStatus = nil  // v1.9.28: Clear status
                 viewModel.selectRoute(route)
                 viewModel.startWalk()
-                // v1.9.34: Check if pre-walk wellbeing sheet will show
-                // If so, delay map until sheet dismisses; otherwise show map now
-                isPresented = false
+                // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
                 if viewModel.showPreWalkWellbeing {
-                    pendingActiveWalk = true
+                    viewModel.pendingActiveWalk = true
                     print("⏱️ [LET'S GO] [\(timeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
+                    isPresented = false
                 } else {
+                    isPresented = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         showActiveWalk = true
                     }
@@ -2704,12 +2703,13 @@ struct LocalRoutePickerSheet: View {
                     
                     let totalElapsed = Date().timeIntervalSince(startTime)
                     print("⏱️ [LET'S GO] [\(mainActorTimeString)] ✅ Total time: \(String(format: "%.2f", totalElapsed))s")
-                    // v1.9.34: Check if pre-walk wellbeing sheet will show
-                    isPresented = false
+                    // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
                     if viewModel.showPreWalkWellbeing {
-                        pendingActiveWalk = true
+                        viewModel.pendingActiveWalk = true
                         print("⏱️ [LET'S GO] [\(mainActorTimeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
+                        isPresented = false
                     } else {
+                        isPresented = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             showActiveWalk = true
                         }
@@ -2728,12 +2728,13 @@ struct LocalRoutePickerSheet: View {
                     routeRefreshStatus = nil
                     viewModel.selectRoute(route)
                     viewModel.startWalk()
-                    // v1.9.34: Check if pre-walk wellbeing sheet will show
-                    isPresented = false
+                    // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
                     if viewModel.showPreWalkWellbeing {
-                        pendingActiveWalk = true
+                        viewModel.pendingActiveWalk = true
                         print("⏱️ [LET'S GO] [\(noLocationTimeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
+                        isPresented = false
                     } else {
+                        isPresented = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             showActiveWalk = true
                         }
@@ -7866,8 +7867,8 @@ extension View {
         localRouteDuration: Binding<Int>,
         localRouteUseCustom: Binding<Bool>,
         pendingBatchTest: Binding<PendingBatchTest>,
-        showActiveWalk: Binding<Bool>,  // v1.9.28: Show fullscreen ActiveWalkView
-        pendingActiveWalk: Binding<Bool>  // v1.9.34: Delays map until after pre-walk anxiety check
+        showActiveWalk: Binding<Bool>  // v1.9.28: Show fullscreen ActiveWalkView
+        // v1.9.36: pendingActiveWalk now in viewModel for iOS 17 compatibility
     ) -> some View {
         self
             .sheet(isPresented: showHelpSheet) {
@@ -7883,8 +7884,7 @@ extension View {
                     useCustomTime: localRouteUseCustom,
                     isPresented: showLocalRoutePicker,
                     pendingBatchTest: pendingBatchTest,
-                    showActiveWalk: showActiveWalk,
-                    pendingActiveWalk: pendingActiveWalk
+                    showActiveWalk: showActiveWalk
                 )
             }
             .sheet(isPresented: Binding(
@@ -7910,17 +7910,17 @@ extension View {
                     viewModel.showPreWalkWellbeing = $0
                 }
             ), onDismiss: {
-                // v1.9.34: Show map after pre-walk anxiety check completes
+                // v1.9.36: Show map after pre-walk anxiety check completes (iOS 17 compatible)
                 let timestamp = Date()
                 let formatter = DateFormatter()
                 formatter.dateFormat = "HH:mm:ss.SSS"
                 let timeString = formatter.string(from: timestamp)
                 print("🔍 [PRE-WALK] [\(timeString)] Pre-walk anxiety check dismissed")
-                print("🔍 [PRE-WALK] [\(timeString)]   pendingActiveWalk: \(pendingActiveWalk.wrappedValue)")
+                print("🔍 [PRE-WALK] [\(timeString)]   pendingActiveWalk: \(viewModel.pendingActiveWalk)")
                 
-                if pendingActiveWalk.wrappedValue {
+                if viewModel.pendingActiveWalk {
                     print("🔍 [PRE-WALK] [\(timeString)]   ✅ Now showing map (was pending)")
-                    pendingActiveWalk.wrappedValue = false
+                    viewModel.pendingActiveWalk = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         showActiveWalk.wrappedValue = true
                     }

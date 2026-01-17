@@ -619,12 +619,10 @@ struct EmbeddedWalkMapView: View {
                         isStepTrackingEnabled = true
                         viewModel.stepTrackingWasEnabled = true
                         UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
-                        // Request HealthKit authorization explicitly, then start observing steps
-                        Task {
-                            await viewModel.healthKitService.requestAuthorization()
-                            if let startTime = viewModel.walkSession.startTime {
-                                viewModel.healthKitService.startObservingSteps(from: startTime)
-                            }
+                        // v1.9.35: Only start step observation (Motion permission)
+                        // HealthKit permission is requested AFTER the walk (post-anxiety check)
+                        if let startTime = viewModel.walkSession.startTime {
+                            viewModel.healthKitService.startObservingSteps(from: startTime)
                         }
                     }
                 )
@@ -717,12 +715,10 @@ struct EmbeddedWalkMapView: View {
                     isStepTrackingEnabled = true
                     viewModel.stepTrackingWasEnabled = true
                     UserDefaults.standard.set(true, forKey: "stepTrackingAutoEnabled")
-                    // Request HealthKit authorization explicitly, then start observing steps
-                    Task {
-                        await viewModel.healthKitService.requestAuthorization()
-                        if let startTime = viewModel.walkSession.startTime {
-                            viewModel.healthKitService.startObservingSteps(from: startTime)
-                        }
+                    // v1.9.35: Only start step observation (Motion permission)
+                    // HealthKit permission is requested AFTER the walk (post-anxiety check)
+                    if let startTime = viewModel.walkSession.startTime {
+                        viewModel.healthKitService.startObservingSteps(from: startTime)
                     }
                     showMotionExplainer = false
                 },
