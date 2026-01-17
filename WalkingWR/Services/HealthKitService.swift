@@ -36,16 +36,37 @@ class HealthKitService: ObservableObject {
     }
     
     var isMotionAuthorized: Bool {
-        CMPedometer.authorizationStatus() == .authorized
+        let status = CMPedometer.authorizationStatus()
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+        print("🔍 [MOTION DEBUG] [\(timeString)] 🔍 isMotionAuthorized accessed - status: \(status.rawValue)")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   Call stack:")
+        Thread.callStackSymbols.prefix(5).enumerated().forEach { index, symbol in
+            print("🔍 [MOTION DEBUG] [\(timeString)]     [\(index)] \(symbol)")
+        }
+        return status == .authorized
     }
     
     var isMotionDenied: Bool {
         let status = CMPedometer.authorizationStatus()
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+        print("🔍 [MOTION DEBUG] [\(timeString)] 🔍 isMotionDenied accessed - status: \(status.rawValue)")
         return status == .denied || status == .restricted
     }
     
     var isMotionNotDetermined: Bool {
-        CMPedometer.authorizationStatus() == .notDetermined
+        let status = CMPedometer.authorizationStatus()
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+        print("🔍 [MOTION DEBUG] [\(timeString)] 🔍 isMotionNotDetermined accessed - status: \(status.rawValue)")
+        return status == .notDetermined
     }
     
     /// Request Core Motion authorization by triggering pedometer updates
