@@ -1657,7 +1657,7 @@ class GoogleMapsService: ObservableObject {
         print("🌐 GOOGLE NEW PLACES API - Searching \(placeTypesToSearch.count) categories in SINGLE REQUEST...")
         print("🌐 Categories: \(placeTypesToSearch.joined(separator: ", "))")
         print("🌐 Endpoint: places.googleapis.com/v1/places:searchNearby")
-        print("🌐 Field Mask: places.id, places.displayName, places.location (Essentials SKU)")
+        print("🌐 Field Mask: places.id, places.displayName, places.location (Pro SKU - displayName required)")
         print("🌐 API Key present: \(!apiKey.isEmpty), key prefix: \(String(apiKey.prefix(10)))...")
         print("🌐 ⚡ OPTIMIZATION: Using single request with all types (was 43 separate calls, now 1)")
         
@@ -1702,12 +1702,12 @@ class GoogleMapsService: ObservableObject {
     /// Search for multiple place types in a SINGLE API call (v1.9.16 cost optimization)
     /// 
     /// ⚡ CRITICAL FIX: Changed from 43 separate calls to 1 call with all types
-    /// - Reduces monthly requests from ~25,800 to ~600 (stays within 10,000 free tier)
-    /// - Uses Essentials SKU only (places.id, places.displayName, places.location)
-    /// - Removed expensive fields: rating, user_ratings_total, opening_hours, price_level, reviews
+    /// - Reduces monthly requests from ~25,800 to ~600 (stays within $200 credit)
+    /// - Uses Pro SKU (places.displayName required for readable place names)
+    /// - Removed expensive fields: rating, user_ratings_total, opening_hours, price_level, reviews (Enterprise SKU)
     /// - API supports up to 50 types per request (we use 43)
     /// 
-    /// Cost: Essentials ~$2-5/1k requests, but now only ~600 requests/month = FREE
+    /// Cost: Pro SKU $32/1k requests, but only ~600 requests/month = FREE (within $200 credit)
     private func searchMultipleTypes(
         location: CLLocationCoordinate2D,
         radiusMeters: Int,
@@ -1748,11 +1748,12 @@ class GoogleMapsService: ObservableObject {
         } else {
             bundleIdSent = false
         }
-        // ⚠️ COST OPTIMIZATION: Use Essentials SKU only (FREE with $200 monthly credit)
-        // Requesting only: places.id, places.displayName, places.location
-        // REMOVED: places.formattedAddress and places.types (trigger Pro SKU at $32/1000 requests)
-        // REMOVED: rating, user_ratings_total, opening_hours, price_level, reviews (Enterprise SKU - very expensive!)
-        // These fields are optional in PlaceResult, so we can safely omit them
+        // ⚠️ SKU TIER: Pro SKU ($32/1k) - displayName required for readable place names
+        // Field mask: places.id, places.displayName, places.location
+        // - displayName triggers Pro SKU billing (but provides actual place names)
+        // - REMOVED: places.formattedAddress and places.types (not needed)
+        // - REMOVED: rating, user_ratings_total, opening_hours, price_level, reviews (Enterprise SKU - very expensive!)
+        // Cost: ~$0.032 per request, but FREE within $200 monthly credit (~6,250 requests/month)
         let fieldMask = "places.id,places.displayName,places.location"
         request.setValue(fieldMask, forHTTPHeaderField: "X-Goog-FieldMask")
         print("   🔒 FieldMask: \(fieldMask) (Pro SKU - displayName required for place names)")
@@ -7607,8 +7608,8 @@ struct NewPlace: Codable {
     let id: String?
     let displayName: DisplayName?
     let location: NewPlaceLocation?
-    // ⚠️ REMOVED: formattedAddress and types to prevent Pro SKU billing
-    // These fields trigger Enterprise/Pro SKU charges even if not in FieldMask
+    // ⚠️ SKU TIER: Using Pro SKU - displayName triggers Pro billing ($32/1k)
+    // We accept Pro SKU cost for readable place names (better UX)
     // Only decode the fields we explicitly request: id, displayName, location
 }
 

@@ -2210,9 +2210,28 @@ struct LocalRoutePickerSheet: View {
                         return
                     }
                     
+                    // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
+                    // Start naming as soon as we have POIs, in parallel with directions/markers
+                    let waypointInfos = result.places.map { place in
+                        GeminiService.WaypointInfo(
+                            name: place.name,
+                            types: place.types ?? [],
+                            vicinity: place.vicinity
+                        )
+                    }
+                    
+                    // Start template generation in parallel (Route 1 uses template)
+                    let namingTask = Task {
+                        GeminiService.shared.generateTemplateContent(
+                            waypoints: waypointInfos,
+                            durationMinutes: result.durationMinutes,
+                            distanceMeters: result.distanceMeters
+                        )
+                    }
+                    
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Extracting directions...")
                     
-                    // Extract walking directions from OSRM/Google legs
+                    // Extract walking directions from OSRM/Google legs (in parallel with naming)
                     var directions = await MainActor.run {
                         extractWalkingDirections(from: result.legs)
                     }
@@ -2233,24 +2252,10 @@ struct LocalRoutePickerSheet: View {
                     // Determine difficulty based on duration
                     let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
                     
-                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Generating route name (template)...")
-                    
-                    // v1.6.45: Use INSTANT template for Route 1 (saves 1-3 sec)
-                    // AI naming happens for subsequent routes in background
-                    let waypointInfos = result.places.map { place in
-                        GeminiService.WaypointInfo(
-                            name: place.name,
-                            types: place.types ?? [],
-                            vicinity: place.vicinity
-                        )
-                    }
-                    // Use template directly - no network call, instant response
-                    let templateContent = GeminiService.shared.generateTemplateContent(
-                        waypoints: waypointInfos,
-                        durationMinutes: result.durationMinutes,
-                        distanceMeters: result.distanceMeters
-                    )
-                    print("⚡ Route 1: '\(templateContent.name)' (instant template)")
+                    // Get route name (should be ready by now since template is instant)
+                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Getting route name (parallel)...")
+                    let templateContent = await namingTask.value
+                    print("⚡ Route 1: '\(templateContent.name)' (instant template, generated in parallel)")
                     
                     let routeName = templateContent.name
                     let description = templateContent.description
@@ -2959,7 +2964,27 @@ struct LocalRoutePickerSheet: View {
                         extractWalkingDirections(from: result.legs)
                     }
                     
-                    // v1.6.14: If no directions, get them from Apple MapKit
+                    // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
+                    // Start naming as soon as we have POIs, in parallel with directions
+                    let waypointInfos = result.places.map { place in
+                        GeminiService.WaypointInfo(
+                            name: place.name,
+                            types: place.types ?? [],
+                            vicinity: place.vicinity
+                        )
+                    }
+                    
+                    // Start Gemini naming in parallel (has 3s timeout, template fallback)
+                    let namingTask = Task {
+                        await GeminiService.shared.generateRouteContent(
+                            waypoints: waypointInfos,
+                            durationMinutes: result.durationMinutes,
+                            distanceMeters: result.distanceMeters,
+                            difficulty: nil
+                        )
+                    }
+                    
+                    // v1.6.14: If no directions, get them from Apple MapKit (in parallel with naming)
                     if directions.isEmpty && !result.places.isEmpty {
                         let waypointCoords = result.places.map { $0.coordinate }
                         directions = await mapsService.getMapKitDirectionsForRoute(
@@ -2972,20 +2997,8 @@ struct LocalRoutePickerSheet: View {
                     // Determine difficulty based on duration
                     let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
                     
-                    let waypointInfos = result.places.map { place in
-                        GeminiService.WaypointInfo(
-                            name: place.name,
-                            types: place.types ?? [],
-                            vicinity: place.vicinity
-                        )
-                    }
-                    // Generate route name (always succeeds with template fallback)
-                    let aiContent = await GeminiService.shared.generateRouteContent(
-                        waypoints: waypointInfos,
-                        durationMinutes: result.durationMinutes,
-                        distanceMeters: result.distanceMeters,
-                        difficulty: nil
-                    )
+                    // Get route name (should be ready or nearly ready by now)
+                    let aiContent = await namingTask.value
                     
                     let routeName = aiContent.name
                     let description = aiContent.description
@@ -3222,10 +3235,7 @@ struct LocalRoutePickerSheet: View {
                         )
                     }
                     
-                    // Determine difficulty based on duration
-                    let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
-                    
-                    // Generate AI content
+                    // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
                     let waypointInfos = result.places.map { place in
                         GeminiService.WaypointInfo(
                             name: place.name,
@@ -3233,13 +3243,22 @@ struct LocalRoutePickerSheet: View {
                             vicinity: place.vicinity
                         )
                     }
-                    // Generate route name (always succeeds with template fallback)
-                    let aiContent = await GeminiService.shared.generateRouteContent(
-                        waypoints: waypointInfos,
-                        durationMinutes: result.durationMinutes,
-                        distanceMeters: result.distanceMeters,
-                        difficulty: nil
-                    )
+                    
+                    // Start Gemini naming in parallel (has 3s timeout, template fallback)
+                    let namingTask = Task {
+                        await GeminiService.shared.generateRouteContent(
+                            waypoints: waypointInfos,
+                            durationMinutes: result.durationMinutes,
+                            distanceMeters: result.distanceMeters,
+                            difficulty: nil
+                        )
+                    }
+                    
+                    // Determine difficulty based on duration
+                    let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                    
+                    // Get route name (should be ready or nearly ready by now)
+                    let aiContent = await namingTask.value
                     
                     let routeName = aiContent.name
                     let description = aiContent.description
@@ -3417,8 +3436,7 @@ struct LocalRoutePickerSheet: View {
                                 )
                             }
                             
-                            let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
-                            
+                            // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
                             let waypointInfos = result.places.map { place in
                                 GeminiService.WaypointInfo(
                                     name: place.name,
@@ -3426,12 +3444,21 @@ struct LocalRoutePickerSheet: View {
                                     vicinity: place.vicinity
                                 )
                             }
-                            let aiContent = await GeminiService.shared.generateRouteContent(
-                                waypoints: waypointInfos,
-                                durationMinutes: result.durationMinutes,
-                                distanceMeters: result.distanceMeters,
-                                difficulty: nil
-                            )
+                            
+                            // Start Gemini naming in parallel (has 3s timeout, template fallback)
+                            let namingTask = Task {
+                                await GeminiService.shared.generateRouteContent(
+                                    waypoints: waypointInfos,
+                                    durationMinutes: result.durationMinutes,
+                                    distanceMeters: result.distanceMeters,
+                                    difficulty: nil
+                                )
+                            }
+                            
+                            let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                            
+                            // Get route name (should be ready or nearly ready by now)
+                            let aiContent = await namingTask.value
                             
                             let route = WalkingRoute(
                                 name: aiContent.name,
@@ -3685,7 +3712,7 @@ struct LocalRoutePickerSheet: View {
                     if isUnique {
                         print("🔄 Background refresh: found unique route (attempt \(attempt))")
                         
-                        // Create waypoint infos for Gemini
+                        // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
                         let waypointInfos = result.places.map { place in
                             GeminiService.WaypointInfo(
                                 name: place.name,
@@ -3694,14 +3721,17 @@ struct LocalRoutePickerSheet: View {
                             )
                         }
                         
-                        // Generate route name (always succeeds with template fallback)
-                        let aiContent = await GeminiService.shared.generateRouteContent(
-                            waypoints: waypointInfos,
-                            durationMinutes: result.durationMinutes,
-                            distanceMeters: result.distanceMeters,
-                            difficulty: nil
-                        )
+                        // Start Gemini naming in parallel (has 3s timeout, template fallback)
+                        let namingTask = Task {
+                            await GeminiService.shared.generateRouteContent(
+                                waypoints: waypointInfos,
+                                durationMinutes: result.durationMinutes,
+                                distanceMeters: result.distanceMeters,
+                                difficulty: nil
+                            )
+                        }
                         
+                        // Get directions and markers in parallel with naming
                         let directions = await mapsService.getMapKitDirectionsForRoute(
                             origin: coordinate,
                             waypoints: result.places.map { $0.coordinate },
@@ -3712,6 +3742,9 @@ struct LocalRoutePickerSheet: View {
                             createMarkersFromPlaces(result.places, origin: coordinate)
                         }
                         let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                        
+                        // Get route name (should be ready or nearly ready by now)
+                        let aiContent = await namingTask.value
                         
                         let localRoute = WalkingRoute(
                             name: aiContent.name,
