@@ -126,6 +126,20 @@ enum TimeoutError: Error {
     case timeout
 }
 
+// v1.9.48: POI source tracking for debugging and quality control
+enum POISource: String, Codable {
+    case google = "google"
+    case apple = "apple"
+    case osm = "osm"
+    case unknown = "unknown"
+}
+
+// v1.9.48: Wrapper for POI results with source tracking
+private struct SourcedPOIs {
+    let source: POISource
+    let pois: [PlaceResult]
+}
+
 // MARK: - Google Maps Service
 class GoogleMapsService: ObservableObject {
     static let shared = GoogleMapsService()
@@ -331,6 +345,28 @@ class GoogleMapsService: ObservableObject {
     private var googleDirectionsCallsToday = 0
     private let googleDirectionsCountKey = "googleDirectionsCount"
     private let googleDirectionsDateKey = "googleDirectionsDate"
+    
+    // MARK: - v1.9.48: Google Places Quota Protection
+    // Temporarily disable Google Places on 429/quota errors
+    private var googlePlacesDisabledUntil: Date?
+    private let googlePlacesCooldownMinutes: TimeInterval = 10 // 10 min cooldown on quota errors
+    
+    /// Check if Google Places is currently disabled due to quota
+    private var isGooglePlacesDisabled: Bool {
+        guard let disabledUntil = googlePlacesDisabledUntil else { return false }
+        if Date() >= disabledUntil {
+            googlePlacesDisabledUntil = nil // Cooldown expired
+            print("🌐 [QUOTA] Google Places cooldown expired - re-enabling")
+            return false
+        }
+        return true
+    }
+    
+    /// Disable Google Places temporarily after quota error
+    private func disableGooglePlacesTemporarily() {
+        googlePlacesDisabledUntil = Date().addingTimeInterval(googlePlacesCooldownMinutes * 60)
+        print("🛑 [QUOTA] Google Places disabled for \(Int(googlePlacesCooldownMinutes)) minutes due to quota/rate limit")
+    }
     
     private var canUseGoogleDirectionsRefresh: Bool {
         resetGoogleDirectionsCountIfNewDay()
@@ -1236,83 +1272,124 @@ class GoogleMapsService: ObservableObject {
             print("📭 CACHE MISS - No cached POIs within 1km")
             
             // ═══════════════════════════════════════════════════════════════
-            // 🚀 v1.7.1: PARALLEL FETCH FOR NEW LOCATIONS
-            // Fetch ALL sources simultaneously for best first-time experience
-            // Cost: ~$0.02 per NEW location (cached locations are free)
+            // 🚀 v1.9.48: SMART PARALLEL FETCH WITH EARLY EXIT
+            // - Fetches from all sources simultaneously
+            // - Exits early when we have enough POIs (6+)
+            // - Hard timeout at 3 seconds - never waits for slow OSM
+            // - Gracefully handles Google quota exhaustion
             // ═══════════════════════════════════════════════════════════════
-            print("🚀 PARALLEL FETCH - Fetching OSM + Apple + Google simultaneously...")
-            let parallelStartTime = Date()
+            let timeoutSeconds: Double = 3.0
+            let minimumPOIsRequired = 6
+            let startTime = Date()
             
-            // Launch all fetches in parallel
-            // v1.8.3: Use FAST mode for Apple (40 queries) instead of Complete (120+ queries)
-            // This reduces initial load from 2-3 minutes to ~10 seconds
-            async let osmTask = searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
-            async let appleTask = searchAppleMapsForPOIsFast(location: location, radiusMeters: radiusMeters)
-            async let googleTask: [PlaceResult] = apiKey.isEmpty ? [] : fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
+            print("🚀 SMART PARALLEL FETCH - Up to \(timeoutSeconds)s timeout, need \(minimumPOIsRequired)+ POIs...")
             
-            // Await all results
-            let osmPOIs = await osmTask
-            let applePOIs = await appleTask
-            let googlePOIs = await googleTask
-            
-            let parallelTime = Date().timeIntervalSince(parallelStartTime)
-            print("⏱️ PARALLEL FETCH completed in \(String(format: "%.2f", parallelTime))s")
-            print("   🗺️ OSM:    \(osmPOIs.count) POIs")
-            print("   🍎 Apple:  \(applePOIs.count) POIs")
-            print("   🌐 Google: \(googlePOIs.count) POIs")
-            
-            // Merge results with deduplication
-            // Priority: Google > Apple > OSM (Google has best verification)
-            var mergedResults: [PlaceResult] = []
-            var mergedPlaceIds = Set<String>()
-            
-            // Add Google first (highest quality)
-            for poi in googlePOIs {
-                if !mergedPlaceIds.contains(poi.placeId) {
-                    mergedPlaceIds.insert(poi.placeId)
-                    mergedResults.append(poi)
-                }
-            }
-            let googleCount = mergedResults.count
-            
-            // Add Apple (check for duplicates by name/location)
-            // v1.6.47: Correct deduplication rules:
-            // - Same name AND within 50m → dedupe (actual duplicate from different source)
-            // - Very close (<20m) regardless of name → dedupe (same physical location)
-            // - Otherwise → keep as distinct POI
-            var appleAdded = 0
-            for poi in applePOIs {
-                let isDuplicate = mergedResults.contains { existing in
-                    let distance = distanceBetween(existing.coordinate, poi.coordinate)
-                    let sameNameAndClose = existing.name.lowercased() == poi.name.lowercased() && distance < 50
-                    let veryClose = distance < 20  // Same physical location regardless of name
-                    return sameNameAndClose || veryClose
-                }
-                if !isDuplicate {
-                    mergedResults.append(poi)
-                    appleAdded += 1
-                }
+            // Check if Google is temporarily disabled (429 cooldown)
+            let googleEnabled = !apiKey.isEmpty && !isGooglePlacesDisabled
+            if isGooglePlacesDisabled {
+                print("🌐 [QUOTA] Google Places temporarily disabled - using Apple/OSM only")
             }
             
-            // Add OSM (check for duplicates by name/location)
-            var osmAdded = 0
-            for poi in osmPOIs {
-                let isDuplicate = mergedResults.contains { existing in
-                    let distance = distanceBetween(existing.coordinate, poi.coordinate)
-                    let sameNameAndClose = existing.name.lowercased() == poi.name.lowercased() && distance < 50
-                    let veryClose = distance < 20  // Same physical location regardless of name
-                    return sameNameAndClose || veryClose
+            // Track which sources contributed
+            var googleCount = 0
+            var appleCount = 0
+            var osmCount = 0
+            var timedOut = false
+            
+            allResults = await withTaskGroup(of: SourcedPOIs.self) { group in
+                var collected: [PlaceResult] = []
+                
+                // 🍎 Apple Maps (FREE, reliable, usually fast)
+                group.addTask { [self] in
+                    let pois = await self.searchAppleMapsForPOIsFast(location: location, radiusMeters: radiusMeters)
+                    // Tag with source
+                    let taggedPOIs = pois.map { poi -> PlaceResult in
+                        var tagged = poi
+                        tagged.source = .apple
+                        return tagged
+                    }
+                    return SourcedPOIs(source: .apple, pois: taggedPOIs)
                 }
-                if !isDuplicate {
-                    mergedResults.append(poi)
-                    osmAdded += 1
+                
+                // 🗺️ OpenStreetMap (FREE, can be slow 15-50s, best-effort)
+                group.addTask { [self] in
+                    let pois = await self.searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
+                    // Tag with source
+                    let taggedPOIs = pois.map { poi -> PlaceResult in
+                        var tagged = poi
+                        tagged.source = .osm
+                        return tagged
+                    }
+                    return SourcedPOIs(source: .osm, pois: taggedPOIs)
                 }
+                
+                // 🌐 Google Places (PAID Pro SKU - displayName, optional)
+                if googleEnabled {
+                    group.addTask { [self] in
+                        let pois = await self.fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
+                        // Tag with source
+                        let taggedPOIs = pois.map { poi -> PlaceResult in
+                            var tagged = poi
+                            tagged.source = .google
+                            return tagged
+                        }
+                        return SourcedPOIs(source: .google, pois: taggedPOIs)
+                    }
+                }
+                
+                // Collect results as they arrive - first to finish wins
+                while let result = await group.next() {
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    
+                    // Merge new POIs with deduplication
+                    let beforeCount = collected.count
+                    collected.append(contentsOf: result.pois)
+                    collected = self.deduplicatePOIs(collected)
+                    let added = collected.count - beforeCount
+                    
+                    // Track source contribution
+                    switch result.source {
+                    case .google:
+                        googleCount = result.pois.count
+                        print("   🌐 Google: \(result.pois.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                    case .apple:
+                        appleCount = result.pois.count
+                        print("   🍎 Apple: \(result.pois.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                    case .osm:
+                        osmCount = result.pois.count
+                        print("   🗺️ OSM: \(result.pois.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                    case .unknown:
+                        print("   ❓ Unknown: \(result.pois.count) POIs @ \(String(format: "%.2f", elapsed))s")
+                    }
+                    
+                    // 🚀 EXIT EARLY: We have enough POIs!
+                    if collected.count >= minimumPOIsRequired {
+                        print("⚡ Got \(collected.count) POIs - exiting early @ \(String(format: "%.2f", elapsed))s")
+                        group.cancelAll()
+                        break
+                    }
+                    
+                    // ⏱️ HARD TIMEOUT: Don't wait for slow sources (OSM can take 50s)
+                    if elapsed >= timeoutSeconds {
+                        timedOut = true
+                        print("⏱️ Timeout reached (\(timeoutSeconds)s) with \(collected.count) POIs - proceeding")
+                        group.cancelAll()
+                        break
+                    }
+                }
+                
+                return collected
             }
             
-            allResults = mergedResults
-            print("📊 RAW FETCHED: Google=\(googlePOIs.count), Apple=\(applePOIs.count), OSM=\(osmPOIs.count)")
-            print("📊 AFTER DEDUP: Google=\(googleCount), Apple=\(appleAdded)/\(applePOIs.count), OSM=\(osmAdded)/\(osmPOIs.count)")
-            print("📊 TOTAL: \(allResults.count) unique POIs")
+            let totalTime = Date().timeIntervalSince(startTime)
+            print("═══════════════════════════════════════════════════════════════")
+            print("📊 SMART FETCH COMPLETE in \(String(format: "%.2f", totalTime))s\(timedOut ? " (timeout)" : "")")
+            print("📊 Sources: Google=\(googleCount), Apple=\(appleCount), OSM=\(osmCount)")
+            print("📊 Total unique POIs: \(allResults.count)")
+            if allResults.count < minimumPOIsRequired {
+                print("⚠️ Low POI count (\(allResults.count) < \(minimumPOIsRequired)) - route options may be limited")
+            }
+            print("═══════════════════════════════════════════════════════════════")
         }
         
         // 🚫 FILTER: Remove POIs that are unrealistically far away
@@ -1678,7 +1755,7 @@ class GoogleMapsService: ObservableObject {
         // These fields are optional in PlaceResult, so we can safely omit them
         let fieldMask = "places.id,places.displayName,places.location"
         request.setValue(fieldMask, forHTTPHeaderField: "X-Goog-FieldMask")
-        print("   🔒 FieldMask: \(fieldMask) (Essentials SKU only - no expensive fields)")
+        print("   🔒 FieldMask: \(fieldMask) (Pro SKU - displayName required for place names)")
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
         let startTime = Date()
@@ -1716,6 +1793,13 @@ class GoogleMapsService: ObservableObject {
                 print("   ❌ \(errorMessage!)")
             }
             
+            // v1.9.48: Detect quota/rate limit errors and disable Google temporarily
+            if httpResponse.statusCode == 429 || 
+               (errorMessage?.contains("RESOURCE_EXHAUSTED") == true) ||
+               (errorMessage?.contains("quota") == true) {
+                disableGooglePlacesTemporarily()
+            }
+            
             recordAPICall(
                 apiName: "Places API (New)",
                 success: false,
@@ -1748,18 +1832,20 @@ class GoogleMapsService: ObservableObject {
         
         // Convert to PlaceResult format
         // Note: vicinity and types are nil because we're using Essentials SKU (cost optimization)
+        // v1.9.48: Tag with .google source for tracking
         return newPlacesResponse.places?.map { place in
             PlaceResult(
                 placeId: place.id ?? "unknown",
                 name: place.displayName?.text ?? "Unknown",
-                vicinity: nil, // Not requested (Essentials SKU only - saves ~£0.025 per request)
+                vicinity: nil, // Not requested (Pro SKU - displayName required for good names)
                 geometry: PlaceGeometry(
                     location: PlaceLocation(
                         lat: place.location?.latitude ?? 0,
                         lng: place.location?.longitude ?? 0
                     )
                 ),
-                types: nil // Not requested (Essentials SKU only - saves ~£0.025 per request)
+                types: nil, // Not requested (Pro SKU - displayName required for good names)
+                source: .google
             )
         } ?? []
     }
@@ -7228,6 +7314,26 @@ class GoogleMapsService: ObservableObject {
         return loc1.distance(from: loc2)
     }
     
+    // MARK: - v1.9.48: POI Deduplication Helper
+    /// Deduplicates POIs by location proximity
+    /// - Same name AND within 50m → dedupe (actual duplicate from different source)
+    /// - Very close (<20m) regardless of name → dedupe (same physical location)
+    private func deduplicatePOIs(_ pois: [PlaceResult]) -> [PlaceResult] {
+        var result: [PlaceResult] = []
+        for poi in pois {
+            let isDuplicate = result.contains { existing in
+                let distance = distanceBetween(existing.coordinate, poi.coordinate)
+                let sameNameAndClose = existing.name.lowercased() == poi.name.lowercased() && distance < 50
+                let veryClose = distance < 20  // Same physical location regardless of name
+                return sameNameAndClose || veryClose
+            }
+            if !isDuplicate {
+                result.append(poi)
+            }
+        }
+        return result
+    }
+    
     // MARK: - Local Waypoint Optimization (Nearest Neighbor)
     /// Optimizes waypoint order using Nearest Neighbor (Greedy) algorithm
     /// This keeps Google Directions API calls in the "Essentials" SKU ($5/1k) instead of "Advanced" SKU ($10+/1k)
@@ -7522,6 +7628,8 @@ struct PlaceResult: Codable, Identifiable {
     let vicinity: String?
     let geometry: PlaceGeometry
     let types: [String]?
+    // v1.9.48: Track POI source for debugging and quality control
+    var source: POISource = .unknown
     
     var id: String { placeId }
     
@@ -7534,7 +7642,28 @@ struct PlaceResult: Codable, Identifiable {
     
     enum CodingKeys: String, CodingKey {
         case placeId = "place_id"
-        case name, vicinity, geometry, types
+        case name, vicinity, geometry, types, source
+    }
+    
+    // v1.9.48: Custom decoder to handle missing source in cached data
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        placeId = try container.decode(String.self, forKey: .placeId)
+        name = try container.decode(String.self, forKey: .name)
+        vicinity = try container.decodeIfPresent(String.self, forKey: .vicinity)
+        geometry = try container.decode(PlaceGeometry.self, forKey: .geometry)
+        types = try container.decodeIfPresent([String].self, forKey: .types)
+        source = try container.decodeIfPresent(POISource.self, forKey: .source) ?? .unknown
+    }
+    
+    // v1.9.48: Convenience initializer for creating POIs with source
+    init(placeId: String, name: String, vicinity: String?, geometry: PlaceGeometry, types: [String]?, source: POISource = .unknown) {
+        self.placeId = placeId
+        self.name = name
+        self.vicinity = vicinity
+        self.geometry = geometry
+        self.types = types
+        self.source = source
     }
 }
 
