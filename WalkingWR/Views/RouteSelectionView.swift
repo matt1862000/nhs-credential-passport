@@ -7148,7 +7148,7 @@ struct RouteExplorationLoadingView: View {
     @State private var sparklePositions: [(id: UUID, offset: CGSize, opacity: Double, scale: CGFloat)] = []
     @State private var sparkleOrbitAngle: Double = 0    // Stage 3: Orbiting sparkles
     
-    // Countdown timer for stage 1
+    // Countdown timer for stage 2 (Calculating routes)
     @State private var countdownSeconds: Int = 60
     @State private var countdownExpired: Bool = false
     
@@ -7379,9 +7379,9 @@ struct RouteExplorationLoadingView: View {
             }
         }
         .onChange(of: attemptCount) { oldValue, newValue in
-            // When route attempts start, POI fetch is done → stay on stage 1 (Calculating routes)
-            // Stage 1 shows "This may take up to a minute..." during the long MapKit wait
-            // We DON'T advance to stage 2 here - that happens when route is complete
+            // When route attempts start, POI fetch is done → advance to stage 2 (Calculating routes)
+            // Stage 2 shows "This may take up to a minute..." during the long MapKit wait
+            // We DON'T advance to stage 3 here - that happens when route is complete
             
             // Add polyline animation with POI marker (visual feedback during calculation)
             if let attempt = currentAttempt, !attempt.polylineCoordinates.isEmpty {
@@ -7874,7 +7874,7 @@ struct RouteExplorationLoadingView: View {
         }
     }
     
-    /// Start route calculation animation for Stage 1 (Calculating routes)
+    /// Start route calculation animation for Stage 2 (Calculating routes)
     private func startRouteCalculationAnimation() {
         footstepAngle = 0  // Reusing footstepAngle for rotation
         countdownSeconds = 60  // Reset countdown
@@ -7882,7 +7882,7 @@ struct RouteExplorationLoadingView: View {
         
         // Continuous rotation animation - faster for more active feel
         func rotate() {
-            guard displayedStageIndex == 1 else { return }
+            guard displayedStageIndex == 2 else { return }
             
             withAnimation(.linear(duration: 2.0)) {
                 footstepAngle += 2 * .pi
@@ -7898,10 +7898,10 @@ struct RouteExplorationLoadingView: View {
         startCountdownTimer()
     }
     
-    /// Countdown timer for stage 1
+    /// Countdown timer for stage 2 (Calculating routes)
     private func startCountdownTimer() {
         func tick() {
-            guard displayedStageIndex == 1 && !hasCompletedAllStages else { return }
+            guard displayedStageIndex == 2 && !hasCompletedAllStages else { return }
             
             if countdownSeconds > 0 {
                 countdownSeconds -= 1
