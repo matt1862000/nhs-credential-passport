@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UserNotifications
 
 // MARK: - Timeout Helper (shared with GoogleMapsService)
 /// Wraps an async operation with a timeout, throwing TimeoutError if exceeded
@@ -7124,15 +7125,19 @@ struct RouteExplorationLoadingView: View {
     let isComplete: Bool  // v1.8.5: Signal that route is ready
     let onAnimationComplete: () -> Void  // v1.8.5: Callback when all stages animated
     
+    // Notification service for permission request
+    @StateObject private var notificationService = NotificationService.shared
+    
     // Animation state for polylines and POI markers
     @State private var visiblePolylines: [(id: UUID, coordinates: [CLLocationCoordinate2D], opacity: Double, isValid: Bool, poiName: String)] = []
     @State private var visiblePOIMarkers: [(id: UUID, coordinate: CLLocationCoordinate2D, name: String, opacity: Double)] = []
     @State private var mapCameraPosition: MapCameraPosition = .automatic
     
     // v1.8.9: Stage display state - advances based on actual progress with minimum gaps
-    @State private var displayedStageIndex: Int = 0  // 0 = none complete, 1-4 = stages complete
+    @State private var displayedStageIndex: Int = 0  // 0-4 = stages active, 5 = all complete
     @State private var lastStageAdvanceTime: Date = Date()
     @State private var hasCompletedAllStages: Bool = false
+    @State private var notificationPermissionRequested: Bool = false
     
     // Stage-specific animation states
     @State private var radarPulseScale: CGFloat = 1.0  // Stage 0: Radar pulse
@@ -7164,15 +7169,16 @@ struct RouteExplorationLoadingView: View {
         
         // Otherwise use stage-based text
         switch displayedStageIndex {
-        case 0: return "Scanning the area around you..."
-        case 1: 
+        case 0: return "Get updates on walking status and clinic delays."
+        case 1: return "Scanning the area around you..."
+        case 2: 
             if countdownExpired {
                 return "Taking longer than expected. Please wait..."
             } else {
                 return "This may take up to a minute..."
             }
-        case 2: return "Almost there! Getting walking directions..."
-        case 3: return "Adding the finishing touches..."
+        case 3: return "Almost there! Getting walking directions..."
+        case 4: return "Adding the finishing touches..."
         default: return "Your route is ready!"
         }
     }
@@ -7241,37 +7247,46 @@ struct RouteExplorationLoadingView: View {
                 VStack(spacing: 16) {
                     // Stage progress card - v1.8.5: Sequential stage animation
                     VStack(alignment: .leading, spacing: 12) {
+                        // Stage 0: Enabling notifications
+                        stageRow(
+                            icon: "bell.badge",
+                            title: "Enabling notifications",
+                            isComplete: displayedStageIndex >= 1,
+                            isActive: displayedStageIndex == 0,
+                            activeColor: .orange
+                        )
+                        
                         // Stage 1: Finding places
                         stageRow(
                             icon: "mappin.and.ellipse",
                             title: "Finding places nearby",
-                            isComplete: displayedStageIndex >= 1,
-                            isActive: displayedStageIndex == 0
+                            isComplete: displayedStageIndex >= 2,
+                            isActive: displayedStageIndex == 1
                         )
                         
                         // Stage 2: Calculating routes
                         stageRow(
                             icon: "point.topright.arrow.triangle.backward.to.point.bottomleft.scurvepath",
                             title: "Calculating routes",
-                            isComplete: displayedStageIndex >= 2,
-                            isActive: displayedStageIndex == 1,
-                            subtitle: displayedStageIndex == 1 ? (countdownExpired ? "Sorry for the delay..." : "\(countdownSeconds)s remaining") : nil
+                            isComplete: displayedStageIndex >= 3,
+                            isActive: displayedStageIndex == 2,
+                            subtitle: displayedStageIndex == 2 ? (countdownExpired ? "Sorry for the delay..." : "\(countdownSeconds)s remaining") : nil
                         )
                         
                         // Stage 3: Getting directions
                         stageRow(
                             icon: "arrow.triangle.turn.up.right.diamond",
                             title: "Getting directions",
-                            isComplete: displayedStageIndex >= 3,
-                            isActive: displayedStageIndex == 2
+                            isComplete: displayedStageIndex >= 4,
+                            isActive: displayedStageIndex == 3
                         )
                         
                         // Stage 4: Naming route
                         stageRow(
                             icon: "sparkles",
                             title: "Naming your route",
-                            isComplete: displayedStageIndex >= 4,
-                            isActive: displayedStageIndex == 3
+                            isComplete: displayedStageIndex >= 5,
+                            isActive: displayedStageIndex == 4
                         )
                     }
                     .padding(20)
@@ -7300,50 +7315,66 @@ struct RouteExplorationLoadingView: View {
             showFootsteps = false
             countdownSeconds = 60
             countdownExpired = false
-            print("🎬 Loading view appeared - starting at stage 0")
+            notificationPermissionRequested = false
+            print("🎬 Loading view appeared - starting at stage 0 (Enabling notifications)")
             
-            // Start radar pulse animation for Stage 0
+            // IMPORTANT: Route generation (stages 1-4) runs independently in the background.
+            // It started when generateRoute() was called and continues regardless of notification permission.
+            // This view only displays progress - it does NOT control when route generation happens.
+            
+            // Check notification authorization status
+            notificationService.checkAuthorization()
+            
+            // If already authorized, quickly advance past Stage 0
+            if notificationService.isAuthorized {
+                print("🔔 Notifications already authorized - skipping Stage 0")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    if displayedStageIndex == 0 && !hasCompletedAllStages {
+                        advanceToStageWithMinDelay(1)
+                        startPOIIconsAnimation()
+                        startRadarPulseAnimation()
+                    }
+                }
+            } else {
+                // Request notification permission when Stage 0 is active
+                // NOTE: This does NOT block route generation - it runs in a separate Task
+                requestNotificationPermissionIfNeeded()
+            }
+            
+            // Start radar pulse animation for Stage 1 (Finding places)
             startRadarPulseAnimation()
-            // Start POI icons popping in for Stage 0
-            startPOIIconsAnimation()
-            
-            // After minimum time, advance to stage 1
-            advanceToStageWithMinDelay(1)
             
             // Stages advance based on actual progress, not time
-            // Stage 0→1: After POI fetch (initial delay to show radar animation)
-            // Stage 1→2: When route attempts start (triggered by attemptCount change)
-            // Stage 2→3: When route is complete and directions fetched
-            // Stage 3→4: When naming is complete
-            
-            // Initial advance from stage 0 to 1 after radar animation
-            DispatchQueue.main.asyncAfter(deadline: .now() + minStageDisplayTime) {
-                if displayedStageIndex == 0 && !hasCompletedAllStages {
-                    print("🎬 Stage 0 → 1 (POI fetch assumed complete)")
-                    advanceToStageWithMinDelay(1)
-                }
-            }
+            // Stage 0→1: After notifications enabled (or already authorized) - UI only, doesn't block route gen
+            // Stage 1→2: After POI fetch (triggered by attemptCount change) - route gen already running
+            // Stage 2→3: When route attempts complete - route gen already running
+            // Stage 3→4: When route is complete and directions fetched - route gen already running
+            // Stage 4→5: When naming is complete - route gen already running
         }
         .onChange(of: displayedStageIndex) { oldValue, newValue in
-            let stageNames = ["Finding places", "Calculating routes", "Getting directions", "Naming your route", "Complete"]
+            let stageNames = ["Enabling notifications", "Finding places", "Calculating routes", "Getting directions", "Naming your route", "Complete"]
             let stageName = newValue < stageNames.count ? stageNames[newValue] : "Unknown"
             print("🎬 Stage changed: \(oldValue) → \(newValue) (\(stageName))")
             
             // Trigger stage-specific animations
             if newValue == 0 {
-                // Stage 0: POI icons pop in
-                startPOIIconsAnimation()
+                // Stage 0: Enabling notifications - request permission if needed
+                requestNotificationPermissionIfNeeded()
             }
             if newValue == 1 {
-                // Stage 1: Route calculation spinning rings
-                startRouteCalculationAnimation()
+                // Stage 1: POI icons pop in
+                startPOIIconsAnimation()
             }
             if newValue == 2 {
-                // Stage 2: Footsteps walking
-                startFootstepAnimation()
+                // Stage 2: Route calculation spinning rings
+                startRouteCalculationAnimation()
             }
             if newValue == 3 {
-                // Stage 3: Sparkle burst with orbiting
+                // Stage 3: Footsteps walking
+                startFootstepAnimation()
+            }
+            if newValue == 4 {
+                // Stage 4: Sparkle burst with orbiting
                 triggerSparkleAnimation()
             }
         }
@@ -7368,10 +7399,66 @@ struct RouteExplorationLoadingView: View {
         .onChange(of: statusText) { oldValue, newValue in
             // v1.9.22: Update displayed stage based on actual work status
             // If status indicates we're in a specific stage, ensure UI reflects it
-            if newValue.contains("Loading routes") && displayedStageIndex < 1 {
-                // Still in Stage 1 (Calculating routes)
-                if displayedStageIndex != 1 {
+            if newValue.contains("Loading routes") && displayedStageIndex < 2 {
+                // Still in Stage 2 (Calculating routes)
+                if displayedStageIndex != 2 {
+                    advanceToStageWithMinDelay(2)
+                }
+            }
+        }
+        .onChange(of: notificationService.isAuthorized) { oldValue, newValue in
+            // When notification permission is granted, advance to Stage 1
+            if newValue && displayedStageIndex == 0 && !hasCompletedAllStages {
+                print("🔔 Notification permission granted - advancing to Stage 1")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     advanceToStageWithMinDelay(1)
+                    startPOIIconsAnimation()
+                }
+            }
+        }
+    }
+    
+    // MARK: - Notification Permission Request
+    
+    /// Requests notification permission if needed. This runs independently and does NOT block route generation.
+    /// Route generation (stages 1-4: Finding places, Calculating routes, etc.) continues in the background
+    /// regardless of whether the user has responded to the notification permission dialog.
+    private func requestNotificationPermissionIfNeeded() {
+        // Only request once
+        guard !notificationPermissionRequested else { return }
+        
+        // Check current authorization status
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                if settings.authorizationStatus == .notDetermined {
+                    // Permission not yet requested - request it now
+                    // NOTE: This Task runs independently - route generation continues in background
+                    self.notificationPermissionRequested = true
+                    print("🔔 Requesting notification permission...")
+                    
+                    Task {
+                        let granted = await self.notificationService.requestAuthorization()
+                        print("🔔 Notification permission result: \(granted ? "granted" : "denied")")
+                        // The onChange handler will advance to Stage 1 if granted
+                        // Route generation (stages 1-4) continues regardless of this result
+                    }
+                } else if settings.authorizationStatus == .authorized {
+                    // Already authorized - advance immediately
+                    print("🔔 Notifications already authorized")
+                    if self.displayedStageIndex == 0 && !self.hasCompletedAllStages {
+                        self.advanceToStageWithMinDelay(1)
+                        self.startPOIIconsAnimation()
+                    }
+                } else {
+                    // Denied or other status - still advance after delay (user can enable later)
+                    // Route generation continues in background during this delay
+                    print("🔔 Notification permission denied or unavailable - advancing anyway")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        if self.displayedStageIndex == 0 && !self.hasCompletedAllStages {
+                            self.advanceToStageWithMinDelay(1)
+                            self.startPOIIconsAnimation()
+                        }
+                    }
                 }
             }
         }
@@ -7380,7 +7467,7 @@ struct RouteExplorationLoadingView: View {
     // MARK: - Stage Row Helper
     
     @ViewBuilder
-    private func stageRow(icon: String, title: String, isComplete: Bool, isActive: Bool, subtitle: String? = nil) -> some View {
+    private func stageRow(icon: String, title: String, isComplete: Bool, isActive: Bool, subtitle: String? = nil, activeColor: Color = .tealAccent) -> some View {
         HStack(spacing: 12) {
             // Status indicator (checkmark or spinner)
             if isComplete {
@@ -7390,7 +7477,7 @@ struct RouteExplorationLoadingView: View {
             } else if isActive {
                 ProgressView()
                     .scaleEffect(0.8)
-                    .tint(.tealAccent)
+                    .tint(activeColor)
             } else {
                 Image(systemName: "circle")
                     .foregroundColor(.secondary.opacity(0.5))
@@ -7399,7 +7486,7 @@ struct RouteExplorationLoadingView: View {
             
             // Stage icon
             Image(systemName: icon)
-                .foregroundColor(isComplete ? .green : (isActive ? .tealAccent : .secondary.opacity(0.5)))
+                .foregroundColor(isComplete ? .green : (isActive ? activeColor : .secondary.opacity(0.5)))
                 .font(.subheadline)
                 .frame(width: 20)
             
@@ -7465,22 +7552,22 @@ struct RouteExplorationLoadingView: View {
         print("🏁 Initial delay (current stage remaining): \(String(format: "%.2f", cumulativeDelay))s")
         
         // Schedule each remaining stage with explicit timing
-        // Must go through stages 2, 3, 4 regardless of current stage
+        // Must go through stages 3, 4, 5 regardless of current stage
         let stagesToSchedule: [Int]
-        if currentStage < 2 {
-            stagesToSchedule = [2, 3, 4]  // From stage 0 or 1, go through 2, 3, 4
-        } else if currentStage < 3 {
-            stagesToSchedule = [3, 4]      // From stage 2, go through 3, 4
+        if currentStage < 3 {
+            stagesToSchedule = [3, 4, 5]  // From stage 0, 1, or 2, go through 3, 4, 5
         } else if currentStage < 4 {
-            stagesToSchedule = [4]          // From stage 3, just show 4
+            stagesToSchedule = [4, 5]      // From stage 3, go through 4, 5
+        } else if currentStage < 5 {
+            stagesToSchedule = [5]          // From stage 4, just show 5
         } else {
-            stagesToSchedule = []           // Already at 4
+            stagesToSchedule = []           // Already at 5
         }
         print("🏁 Stages to schedule: \(stagesToSchedule) (from current stage \(currentStage))")
         
         for targetStage in stagesToSchedule {
             let delay = cumulativeDelay
-            let stageNames = ["Finding places", "Calculating routes", "Getting directions", "Naming your route", "Complete"]
+            let stageNames = ["Enabling notifications", "Finding places", "Calculating routes", "Getting directions", "Naming your route", "Complete"]
             let stageName = targetStage < stageNames.count ? stageNames[targetStage] : "Unknown"
             
             print("🏁 Stage \(targetStage) (\(stageName)) scheduled at +\(String(format: "%.2f", delay))s")
@@ -7586,12 +7673,12 @@ struct RouteExplorationLoadingView: View {
             
             // Route calculation animation (Stage 1 - Calculating routes)
             // Shows expanding/contracting rings to indicate processing
-            if displayedStageIndex == 1 {
+            if displayedStageIndex == 2 {
                 routeCalculationView
             }
             
-            // Footstep animation (Stage 2 - Getting directions)
-            if displayedStageIndex == 2 && showFootsteps {
+            // Footstep animation (Stage 3 - Getting directions)
+            if displayedStageIndex == 3 && showFootsteps {
                 footstepsView
             }
             
@@ -7839,7 +7926,7 @@ struct RouteExplorationLoadingView: View {
         
         // Continuous rotation animation
         func rotate() {
-            guard displayedStageIndex == 2 else {
+            guard displayedStageIndex == 3 else {
                 showFootsteps = false
                 return
             }
