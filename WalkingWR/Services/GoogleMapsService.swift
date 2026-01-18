@@ -3991,11 +3991,19 @@ class GoogleMapsService: ObservableObject {
             return nil
         }
         
+        // Log the API call (truncate URL for security)
+        let truncatedURL = urlString.prefix(100) + (urlString.count > 100 ? "..." : "")
+        print("🌐 [GOOGLE-ONLY REFRESH] 📡 Calling Google Directions API...")
+        print("🌐 [GOOGLE-ONLY REFRESH]   🔗 URL: \(truncatedURL)")
+        print("🌐 [GOOGLE-ONLY REFRESH]   📍 Origin: (\(String(format: "%.5f", userLocation.latitude)), \(String(format: "%.5f", userLocation.longitude)))")
+        print("🌐 [GOOGLE-ONLY REFRESH]   🎯 Waypoints: \(waypoints.count)")
+        
         do {
             var request = URLRequest(url: url)
             request.timeoutInterval = 5.0 // Short 5 second timeout
             if let bundleId = Bundle.main.bundleIdentifier {
                 request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+                print("🌐 [GOOGLE-ONLY REFRESH]   📱 Bundle ID: \(bundleId)")
             }
             
             let config = URLSessionConfiguration.default
@@ -4005,12 +4013,18 @@ class GoogleMapsService: ObservableObject {
             let (data, response) = try await session.data(for: request)
             let elapsed = Date().timeIntervalSince(startTime)
             
+            print("🌐 [GOOGLE-ONLY REFRESH]   ⏱️  Response received in \(String(format: "%.2f", elapsed))s")
+            
             guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ HTTP error - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ HTTP error - status: \(statusCode) - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
                 return nil
             }
             
+            print("🌐 [GOOGLE-ONLY REFRESH]   ✅ HTTP 200 OK")
+            
             recordGoogleDirectionsCall()
+            print("🌐 [GOOGLE-ONLY REFRESH]   📊 Google Directions quota: \(googleDirectionsCallsToday)/\(googleDirectionsDailyCap) calls today")
             
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let status = json["status"] as? String,
@@ -4018,9 +4032,12 @@ class GoogleMapsService: ObservableObject {
                   let routes = json["routes"] as? [[String: Any]],
                   let firstRoute = routes.first else {
                 let errorStatus = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["status"] as? String ?? "unknown"
+                print("🌐 [GOOGLE-ONLY REFRESH]   ❌ API status: \(errorStatus)")
                 print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ API status: \(errorStatus) - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
                 return nil
             }
+            
+            print("🌐 [GOOGLE-ONLY REFRESH]   ✅ API status: OK - \(routes.count) route(s) found")
             
             // Parse the response (same logic as refreshRouteWithGoogleThenMapKit)
             var polyline = ""

@@ -2653,7 +2653,7 @@ struct LocalRoutePickerSheet: View {
                 print("⏱️ [LET'S GO] [\(taskTimeString)] 🌐 Trying Google-only refresh...")
                 await MainActor.run {
                     isStartingWalk = true
-                    routeRefreshStatus = "Optimizing route..."
+                    // No status text - just show spinner
                 }
                 
                 // Try Google refresh with 5s timeout - if fails, use original route
@@ -4790,17 +4790,13 @@ struct LocalRouteMapPreview: View {
     // and AFTER the walk (HealthKit sync option)
     
     var primaryButtonText: String {
-        // v1.9.28: Only show status if user has tapped "Let's Go" (isStartingWalk)
-        // Don't show status when routes are already displayed
-        if isStartingWalk, let status = routeRefreshStatus {
-            return status
-        }
-        // Routes are ready - show "Let's Go!" even if background generation is happening
-        return isStartingWalk ? "Preparing..." : "Let's Go!"
+        // Always show "Let's Go!" - spinner will appear at end if loading
+        return "Let's Go!"
     }
     
     var primaryButtonIcon: String {
-        isStartingWalk ? "arrow.trianglehead.2.clockwise" : "figure.walk"
+        // Always show walk icon - spinner indicates loading
+        "figure.walk"
     }
     
     var primaryButtonColor: Color {
@@ -5311,14 +5307,14 @@ struct LocalRouteMapPreview: View {
                         onStartWalk()
                     } label: {
                         HStack {
+                            Image(systemName: primaryButtonIcon)
+                            Text(primaryButtonText)
                             if isStartingWalk {
                                 ProgressView()
                                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                     .scaleEffect(0.8)
-                            } else {
-                            Image(systemName: primaryButtonIcon)
+                                    .padding(.leading, 4)
                             }
-                            Text(primaryButtonText)
                         }
                     }
                     .buttonStyle(PrimaryButtonStyle(color: primaryButtonColor))
@@ -7346,10 +7342,19 @@ struct RouteExplorationLoadingView: View {
             
             // Stages advance based on actual progress, not time
             // Stage 0→1: After notifications enabled (or already authorized) - UI only, doesn't block route gen
-            // Stage 1→2: After POI fetch (triggered by attemptCount change) - route gen already running
+            // Stage 1→2: After POI fetch starts or timeout (triggered by attemptCount change or 5s timeout) - route gen already running
             // Stage 2→3: When route attempts complete - route gen already running
             // Stage 3→4: When route is complete and directions fetched - route gen already running
             // Stage 4→5: When naming is complete - route gen already running
+            
+            // Add timeout for Stage 1: If POI fetch takes too long, advance to Stage 2 anyway
+            // This prevents Stage 1 from staying active for 15-20 seconds when OSM is slow
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+                if displayedStageIndex == 1 && !hasCompletedAllStages && attemptCount == 0 {
+                    print("🎬 Stage 1 timeout (5s) - POI fetch still in progress, advancing to Stage 2")
+                    advanceToStageWithMinDelay(2)
+                }
+            }
         }
         .onChange(of: displayedStageIndex) { oldValue, newValue in
             let stageNames = ["Enabling notifications", "Finding places", "Calculating routes", "Getting directions", "Naming your route", "Complete"]
@@ -7382,6 +7387,12 @@ struct RouteExplorationLoadingView: View {
             // When route attempts start, POI fetch is done → advance to stage 2 (Calculating routes)
             // Stage 2 shows "This may take up to a minute..." during the long MapKit wait
             // We DON'T advance to stage 3 here - that happens when route is complete
+            
+            // Advance to Stage 2 when route attempts start
+            if newValue > 0 && displayedStageIndex == 1 && !hasCompletedAllStages {
+                print("🎬 Route attempts started (count: \(newValue)) - advancing to Stage 2")
+                advanceToStageWithMinDelay(2)
+            }
             
             // Add polyline animation with POI marker (visual feedback during calculation)
             if let attempt = currentAttempt, !attempt.polylineCoordinates.isEmpty {
