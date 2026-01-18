@@ -809,6 +809,40 @@ class GoogleMapsService: ObservableObject {
         origin: CLLocationCoordinate2D,
         targetDurationMinutes: Int
     ) -> [PlaceResult] {
+        // v1.9.51: Two-stage filtering (Optimization 3: Early Route Duration Validation)
+        // Stage 1: Fast first-pass filter (cheap distance/80.0 heuristic)
+        // Stage 2: Sophisticated filter (road factor, adaptive speed, round trip)
+        
+        let initialCount = pois.count
+        
+        // STAGE 1: Fast first-pass filter - eliminate obviously invalid POIs
+        // Use simple distance/80.0 with conservative 30-170% range
+        let minEstimated = Double(targetDurationMinutes) * 0.3
+        let maxEstimated = Double(targetDurationMinutes) * 1.7
+        let walkingSpeedMetersPerMinute = 80.0  // ~80m/min walking speed
+        
+        let fastFiltered = pois.filter { poi in
+            let distance = distanceBetween(origin, poi.coordinate)
+            let estimatedMinutes = distance / walkingSpeedMetersPerMinute
+            
+            // Round trip estimate (simple: distance * 2)
+            let roundTripMinutes = estimatedMinutes * 2.0
+            
+            return roundTripMinutes >= minEstimated && roundTripMinutes <= maxEstimated
+        }
+        
+        let fastFilteredCount = initialCount - fastFiltered.count
+        if fastFilteredCount > 0 {
+            print("⚡ Fast pre-filter: Removed \(fastFilteredCount) obviously invalid POIs (\(fastFiltered.count) remaining)")
+        }
+        
+        // If fast filter eliminated everything, return early
+        guard !fastFiltered.isEmpty else {
+            print("🎯 ⏱️ FAST PRE-FILTER: All \(initialCount) POIs rejected (outside 30-170% range)")
+            return []
+        }
+        
+        // STAGE 2: Sophisticated filter on remaining candidates
         // DURATION-AWARE PRE-FILTER: 
         // v1.6.12: HARD CUTOFF for 5-minute routes (batch test showed 180% consistently)
         // The root cause is selection-dominated: we pick wrong POIs, not route wrong
@@ -821,7 +855,8 @@ class GoogleMapsService: ObservableObject {
             var accepted: [PlaceResult] = []
             var rejected: [(name: String, estimated: Int)] = []
             
-            for poi in pois {
+            // Use fast-filtered POIs for sophisticated filter
+            for poi in fastFiltered {
                 let estimated = estimateRoundTripMinutes(from: origin, to: poi)
                 if estimated <= 7 {  // Tight cutoff: max 7min estimated (40% slack)
                     accepted.append(poi)
@@ -904,7 +939,8 @@ class GoogleMapsService: ObservableObject {
         var accepted: [PlaceResult] = []
         var rejected: [(name: String, estimated: Int, reason: String)] = []
         
-        for poi in pois {
+        // Use fast-filtered POIs for sophisticated filter
+        for poi in fastFiltered {
             let estimated = estimateRoundTripMinutes(from: origin, to: poi)
             
             if estimated < minDuration {
