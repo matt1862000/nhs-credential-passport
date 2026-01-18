@@ -1296,6 +1296,10 @@ class GoogleMapsService: ObservableObject {
             var osmCount = 0
             var timedOut = false
             
+            // v1.9.50: Calculate maxRealisticDistance for early filtering (Optimization 5: Aggressive POI Pre-filtering)
+            // Filter out obviously too-far POIs during fetch, not after
+            let maxRealisticDistance = Double(radiusMeters) * 2.0  // Allows for winding walking paths
+            
             allResults = await withTaskGroup(of: SourcedPOIs.self) { group in
                 var collected: [PlaceResult] = []
                 
@@ -1341,25 +1345,41 @@ class GoogleMapsService: ObservableObject {
                 while let result = await group.next() {
                     let elapsed = Date().timeIntervalSince(startTime)
                     
-                    // Merge new POIs with deduplication
+                    // v1.9.50: Filter by distance immediately as POIs arrive (Optimization 5)
+                    // Filter out obviously too-far POIs before deduplication and expensive checks
+                    let filteredPOIs = result.pois.filter { poi in
+                        let distance = distanceBetween(location, poi.coordinate)
+                        if distance > maxRealisticDistance {
+                            return false  // Filter out unrealistic distances
+                        }
+                        return true
+                    }
+                    
+                    // Merge filtered POIs with deduplication
                     let beforeCount = collected.count
-                    collected.append(contentsOf: result.pois)
+                    collected.append(contentsOf: filteredPOIs)
                     collected = self.deduplicatePOIs(collected)
                     let added = collected.count - beforeCount
                     
-                    // Track source contribution
+                    // Track filtered count for logging
+                    let filteredCount = result.pois.count - filteredPOIs.count
+                    if filteredCount > 0 {
+                        print("   🚫 Filtered \(filteredCount) distant POIs from \(result.source.rawValue) (>\(Int(maxRealisticDistance))m)")
+                    }
+                    
+                    // Track source contribution (use filtered count)
                     switch result.source {
                     case .google:
-                        googleCount = result.pois.count
-                        print("   🌐 Google: \(result.pois.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                        googleCount = filteredPOIs.count
+                        print("   🌐 Google: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
                     case .apple:
-                        appleCount = result.pois.count
-                        print("   🍎 Apple: \(result.pois.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                        appleCount = filteredPOIs.count
+                        print("   🍎 Apple: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
                     case .osm:
-                        osmCount = result.pois.count
-                        print("   🗺️ OSM: \(result.pois.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                        osmCount = filteredPOIs.count
+                        print("   🗺️ OSM: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
                     case .unknown:
-                        print("   ❓ Unknown: \(result.pois.count) POIs @ \(String(format: "%.2f", elapsed))s")
+                        print("   ❓ Unknown: \(filteredPOIs.count) POIs @ \(String(format: "%.2f", elapsed))s")
                     }
                     
                     // 🚀 EXIT EARLY: We have enough POIs!
@@ -1392,25 +1412,8 @@ class GoogleMapsService: ObservableObject {
             print("═══════════════════════════════════════════════════════════════")
         }
         
-        // 🚫 FILTER: Remove POIs that are unrealistically far away
-        // APIs (especially Google) can return "popular" places way outside the search radius
-        // Max realistic distance = radiusMeters * 2 (allows for winding walking paths)
-        let maxRealisticDistance = Double(radiusMeters) * 2.0
-        let beforeFilterCount = allResults.count
-        
-        allResults = allResults.filter { poi in
-            let distance = distanceBetween(location, poi.coordinate)
-            if distance > maxRealisticDistance {
-                print("🚫 FILTERED: '\(poi.name)' at \(Int(distance))m (max: \(Int(maxRealisticDistance))m)")
-                return false
-            }
-            return true
-        }
-        
-        let filteredCount = beforeFilterCount - allResults.count
-        if filteredCount > 0 {
-            print("🚫 Distance filter removed \(filteredCount) unrealistic POIs (>\(Int(maxRealisticDistance))m)")
-        }
+        // v1.9.50: Distance filtering now happens during parallel fetch (Optimization 5)
+        // No need to filter again here - already filtered as POIs arrived
         
         // v1.6.47: Filter POIs inside restricted areas (schools, hospitals, etc.) without road access
         let beforeRestrictedFilter = allResults.count
