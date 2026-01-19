@@ -1436,7 +1436,8 @@ struct EmbeddedWalkMapView: View {
                    !viewModel.cachedOriginalDirections.isEmpty {
                     viewModel.locationService.startDirectionMonitoring(
                         directions: viewModel.cachedOriginalDirections,
-                        routePath: currentRoute.routePath
+                        routePath: currentRoute.routePath,
+                        skipPassedWaypoints: true  // v1.9.65: Mid-walk switch, skip passed waypoints
                     )
                 }
             }
@@ -1468,7 +1469,8 @@ struct EmbeddedWalkMapView: View {
                     let cachedPolyline = viewModel.cachedReturnRoutePolyline
                     viewModel.locationService.startDirectionMonitoring(
                         directions: viewModel.cachedReturnDirections,
-                        routePath: cachedPolyline.isEmpty ? currentRoute.routePath : cachedPolyline
+                        routePath: cachedPolyline.isEmpty ? currentRoute.routePath : cachedPolyline,
+                        skipPassedWaypoints: true  // v1.9.65: Mid-walk switch, skip passed waypoints
                     )
                 }
             }
@@ -1503,7 +1505,8 @@ struct EmbeddedWalkMapView: View {
                 if !viewModel.cachedOriginalDirections.isEmpty {
                     viewModel.locationService.startDirectionMonitoring(
                         directions: viewModel.cachedOriginalDirections,
-                        routePath: currentRoute.routePath
+                        routePath: currentRoute.routePath,
+                        skipPassedWaypoints: true  // v1.9.65: Mid-walk switch, skip passed waypoints
                     )
                 }
             }
@@ -2154,7 +2157,8 @@ struct EmbeddedWalkMapView: View {
                         self.viewModel.isUsingReturnDirections = true
                         self.viewModel.locationService.startDirectionMonitoring(
                             directions: returnDirections,
-                            routePath: returnPath
+                            routePath: returnPath,
+                            skipPassedWaypoints: true  // v1.9.65: Mid-walk switch, skip passed waypoints
                         )
                         print("📍 Switched to fresh return route directions: \(returnDirections.count) steps")
                     }
@@ -2176,7 +2180,8 @@ struct EmbeddedWalkMapView: View {
         viewModel.isUsingReturnDirections = true
         viewModel.locationService.startDirectionMonitoring(
             directions: viewModel.cachedReturnDirections,
-            routePath: viewModel.cachedReturnRoutePolyline
+            routePath: viewModel.cachedReturnRoutePolyline,
+            skipPassedWaypoints: true  // v1.9.65: Mid-walk switch, skip passed waypoints
         )
         
         print("✅ Applied cached return route: \(viewModel.cachedReturnDirections.count) steps, \(viewModel.cachedReturnRoutePolyline.count) points")

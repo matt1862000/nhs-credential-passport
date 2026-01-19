@@ -157,7 +157,13 @@ class LocationService: NSObject, ObservableObject {
     // MARK: - Direction Monitoring
     
     /// Start monitoring for direction waypoints to send turn-by-turn notifications
-    func startDirectionMonitoring(directions: [WalkingDirection], routePath: [CLLocationCoordinate2D]) {
+    /// Start monitoring for direction waypoints to send turn-by-turn notifications
+    /// - Parameters:
+    ///   - directions: Walking directions
+    ///   - routePath: Full route polyline
+    ///   - skipPassedWaypoints: If true, check current location and skip already-passed waypoints.
+    ///                          Use false for fresh walk start (index 0), true for mid-walk direction changes.
+    func startDirectionMonitoring(directions: [WalkingDirection], routePath: [CLLocationCoordinate2D], skipPassedWaypoints: Bool = false) {
         // Build waypoints from directions
         // Each direction corresponds to a step - we'll use approximate positions along the route
         directionWaypoints = []
@@ -202,9 +208,10 @@ class LocationService: NSObject, ObservableObject {
             cumulativeDistance += Double(direction.distanceMeters)
         }
         
-        // v1.9.63: Check if user has already passed the first waypoint(s)
-        // This handles cases where the user is already on the road mentioned in the first instruction
-        if let currentLoc = currentLocation, !directionWaypoints.isEmpty, !routePath.isEmpty {
+        // v1.9.63/v1.9.65: Check if user has already passed the first waypoint(s)
+        // Only do this for mid-walk direction changes, NOT for fresh walk starts
+        // This handles cases where return directions are switched and user is partway through
+        if skipPassedWaypoints, let currentLoc = currentLocation, !directionWaypoints.isEmpty, !routePath.isEmpty {
             // Find closest point on route path to user's current location
             var closestRouteIndex = 0
             var closestRouteDistance = Double.greatestFiniteMagnitude
