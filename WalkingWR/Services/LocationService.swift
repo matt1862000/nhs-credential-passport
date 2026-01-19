@@ -208,7 +208,7 @@ class LocationService: NSObject, ObservableObject {
             cumulativeDistance += Double(direction.distanceMeters)
         }
         
-        // v1.9.63/v1.9.65: Check if user has already passed the first waypoint(s)
+        // v1.9.63/v1.9.65/v1.9.66: Check if user has already passed the first waypoint(s)
         // Only do this for mid-walk direction changes, NOT for fresh walk starts
         // This handles cases where return directions are switched and user is partway through
         if skipPassedWaypoints, let currentLoc = currentLocation, !directionWaypoints.isEmpty, !routePath.isEmpty {
@@ -224,11 +224,14 @@ class LocationService: NSObject, ObservableObject {
                 }
             }
             
+            // v1.9.66: Only skip if user is significantly along the route (past 10% of route points)
+            // This prevents skipping when user is at the START of return directions
+            let minRouteProgressToSkip = max(5, routePath.count / 10)  // At least 5 points or 10%
+            
             // Check each waypoint in order - skip any that are already behind the user along the route
             var skippedCount = 0
             for (index, waypoint) in directionWaypoints.enumerated() {
                 let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
-                let distanceToWaypoint = currentLoc.distance(from: waypointLocation)
                 
                 // Find closest point on route path to this waypoint
                 var closestWaypointRouteIndex = 0
@@ -242,21 +245,17 @@ class LocationService: NSObject, ObservableObject {
                     }
                 }
                 
-                // If user is already past this waypoint along the route path, skip it
-                // OR if user is very close to the route (< 30m) and the waypoint is far ahead (> 100m)
-                // This handles the case where user is already on the road but first waypoint is ahead
+                // v1.9.66: Only skip if:
+                // 1. User is past this waypoint along the route path AND
+                // 2. User has made significant progress (not just at the start)
                 let isPastWaypointOnRoute = closestRouteIndex > closestWaypointRouteIndex
-                let isCloseToRouteButWaypointFar = closestRouteDistance < 30 && distanceToWaypoint > 100
+                let hasSignificantProgress = closestRouteIndex >= minRouteProgressToSkip
                 
-                if isPastWaypointOnRoute || (index == 0 && isCloseToRouteButWaypointFar) {
-                    skippedCount = index + 1
-                    notifiedDirectionIndices.insert(index) // Mark as already notified
-                } else if distanceToWaypoint <= 50 {
-                    // User is at or very close to this waypoint, skip it
+                if isPastWaypointOnRoute && hasSignificantProgress {
                     skippedCount = index + 1
                     notifiedDirectionIndices.insert(index) // Mark as already notified
                 } else {
-                    // User hasn't reached this waypoint yet, stop checking
+                    // User hasn't made enough progress or hasn't passed this waypoint
                     break
                 }
             }
