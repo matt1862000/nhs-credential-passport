@@ -231,7 +231,7 @@ struct RouteSelectionView: View {
             }) {
                 // v1.9.28: Immersive full-screen presentation - no navigation context
                 let _ = print("🔍 [iOS17 DEBUG] fullScreenCover PRESENTING ActiveWalkView")
-                ActiveWalkView(viewModel: viewModel, isPresented: $showActiveWalk)
+                ActiveWalkView(viewModel: viewModel, locationService: viewModel.locationService, isPresented: $showActiveWalk)
             }
             .addSheets(
                 showHelpSheet: $showHelpSheet,
@@ -1419,7 +1419,7 @@ struct LocalRoutePickerSheet: View {
             }
             .fullScreenCover(isPresented: $showActiveWalk) {
                 // v1.9.28: Immersive full-screen presentation - no navigation context
-                ActiveWalkView(viewModel: viewModel, isPresented: $showActiveWalk)
+                ActiveWalkView(viewModel: viewModel, locationService: viewModel.locationService, isPresented: $showActiveWalk)
             }
             .onChange(of: showActiveWalk) { oldValue, newValue in
                 let timestamp = Date()
@@ -6160,6 +6160,7 @@ struct StatBadge: View {
 // MARK: - Active Walk View
 struct ActiveWalkView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
+    @ObservedObject var locationService: LocationService  // v1.9.63: Observe directly for responsive direction updates
     var isPresented: Binding<Bool>? = nil  // v1.9.28: Optional - only needed when shown in a sheet
     @State private var showAllDirections: Bool = false
     @State private var showEndConfirmation: Bool = false
@@ -6178,7 +6179,7 @@ struct ActiveWalkView: View {
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
                             
-                            Text("\(Int(viewModel.locationService.distanceWalked))m walked")
+                            Text("\(Int(locationService.distanceWalked))m walked")
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.9))
                         }
@@ -6234,14 +6235,15 @@ struct ActiveWalkView: View {
                 
                 if !route.isIndoor && !directionsToShow.isEmpty {
                     // v1.9.15: Clamp direction index to prevent out-of-bounds when switching directions
+                    // v1.9.63: Use locationService directly (now observed) for responsive updates
                     let clampedIndex = Binding(
                         get: { 
-                            let idx = viewModel.locationService.currentDirectionIndex
+                            let idx = locationService.currentDirectionIndex
                             return min(max(0, idx), directionsToShow.count - 1)
                         },
                         set: { newValue in
                             let clamped = min(max(0, newValue), directionsToShow.count - 1)
-                            viewModel.locationService.currentDirectionIndex = clamped
+                            locationService.currentDirectionIndex = clamped
                         }
                     )
                     
@@ -6252,7 +6254,7 @@ struct ActiveWalkView: View {
                         delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
                         walkDurationMinutes: route.durationMinutes,
                         hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable && !viewModel.isClinicEnded && viewModel.waitTimeInfo.clinicianName != "Select your clinician",
-                        distanceWalked: Int(viewModel.locationService.distanceWalked),
+                        distanceWalked: Int(locationService.distanceWalked),
                         halfwayAlert: viewModel.walkSession.halfwayAlertSent,
                         estimatedSeenTime: viewModel.waitTimeInfo.formattedEstimatedTimeToBeSeen
                     )
@@ -6281,8 +6283,8 @@ struct ActiveWalkView: View {
                     ExpandedDirectionsList(
                         directions: directionsToShow,
                         currentIndex: Binding(
-                            get: { viewModel.locationService.currentDirectionIndex },
-                            set: { viewModel.locationService.currentDirectionIndex = $0 }
+                            get: { locationService.currentDirectionIndex },
+                            set: { locationService.currentDirectionIndex = $0 }
                         ),
                         showAllDirections: $showAllDirections
                     )
