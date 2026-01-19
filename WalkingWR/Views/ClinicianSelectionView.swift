@@ -180,7 +180,8 @@ struct ClinicianSelectionView: View {
                                 .padding(.bottom, 20)
                             } else {
                                 ForEach(filteredClinicians) { clinician in
-                                    let isSelectedClinician = pendingClinician?.id == clinician.id
+                                    // v1.9.61: Match by name instead of ID since Firebase updates recreate objects
+                                    let isSelectedClinician = pendingClinician?.fullTitle == clinician.fullTitle
                                     let shouldShow = !showAppointmentTimePicker || isSelectedClinician
                                     
                                     if shouldShow {
@@ -218,8 +219,9 @@ struct ClinicianSelectionView: View {
                                                 }
                                             )
                                             
-                                            // v1.9.56: Inline appointment time picker - appears directly under selected clinician
-                                            if showAppointmentTimePicker && isSelectedClinician {
+                                        // v1.9.56: Inline appointment time picker - appears directly under selected clinician
+                                        // v1.9.61: Match by name since Firebase updates recreate objects with new IDs
+                                        if showAppointmentTimePicker && (pendingClinician?.fullTitle == clinician.fullTitle) {
                                                 AppointmentTimePickerCard(
                                                     clinician: clinician,
                                                     selectedTime: $selectedAppointmentTime,
