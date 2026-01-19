@@ -31,7 +31,7 @@ class LocationService: NSObject, ObservableObject {
     @Published var currentDirectionIndex: Int = 0
     @Published var isMonitoringDirections: Bool = false
     @Published var isSignificantlyOffRoute: Bool = false  // v1.9.15: Track if user has deviated significantly
-    private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String)] = []
+    private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String, routeIndex: Int)] = []  // v1.9.68: Store route index for accurate advancement
     private var notifiedDirectionIndices: Set<Int> = []
     private var cachedRoutePath: [CLLocationCoordinate2D] = []  // v1.9.15: Cache route path for deviation detection
     private let directionNotificationRadius: Double = 30 // meters - notify when within 30m of turn
@@ -202,7 +202,8 @@ class LocationService: NSObject, ObservableObject {
             directionWaypoints.append((
                 coordinate: waypointCoord,
                 instruction: direction.instruction,
-                distance: direction.distance
+                distance: direction.distance,
+                routeIndex: routeIndex  // v1.9.68: Store route index for accurate advancement
             ))
             
             cumulativeDistance += Double(direction.distanceMeters)
@@ -231,24 +232,13 @@ class LocationService: NSObject, ObservableObject {
             // Check each waypoint in order - skip any that are already behind the user along the route
             var skippedCount = 0
             for (index, waypoint) in directionWaypoints.enumerated() {
-                let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
-                
-                // Find closest point on route path to this waypoint
-                var closestWaypointRouteIndex = 0
-                var closestWaypointRouteDistance = Double.greatestFiniteMagnitude
-                for (routeIndex, routePoint) in routePath.enumerated() {
-                    let routeLocation = CLLocation(latitude: routePoint.latitude, longitude: routePoint.longitude)
-                    let distance = waypointLocation.distance(from: routeLocation)
-                    if distance < closestWaypointRouteDistance {
-                        closestWaypointRouteDistance = distance
-                        closestWaypointRouteIndex = routeIndex
-                    }
-                }
+                // v1.9.68: Use stored route index instead of recalculating
+                let waypointRouteIndex = waypoint.routeIndex
                 
                 // v1.9.66: Only skip if:
                 // 1. User is past this waypoint along the route path AND
                 // 2. User has made significant progress (not just at the start)
-                let isPastWaypointOnRoute = closestRouteIndex > closestWaypointRouteIndex
+                let isPastWaypointOnRoute = closestRouteIndex > waypointRouteIndex
                 let hasSignificantProgress = closestRouteIndex >= minRouteProgressToSkip
                 
                 if isPastWaypointOnRoute && hasSignificantProgress {
@@ -306,28 +296,22 @@ class LocationService: NSObject, ObservableObject {
             let waypoint = directionWaypoints[index]
             let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
             let distance = currentLocation.distance(from: waypointLocation)
+            let waypointRouteIndex = waypoint.routeIndex  // v1.9.68: Use stored route index
             
-            // v1.9.67: Find waypoint's position along the route path
-            var waypointRouteIndex = 0
-            var closestWaypointDistance = Double.greatestFiniteMagnitude
-            for (routeIndex, routePoint) in cachedRoutePath.enumerated() {
-                let routeLocation = CLLocation(latitude: routePoint.latitude, longitude: routePoint.longitude)
-                let dist = waypointLocation.distance(from: routeLocation)
-                if dist < closestWaypointDistance {
-                    closestWaypointDistance = dist
-                    waypointRouteIndex = routeIndex
-                }
-            }
+            // v1.9.68: Advancement logic - more lenient for far-apart waypoints
+            // Advance if:
+            // 1. User has PASSED the waypoint on the route (userRouteIndex > waypointRouteIndex)
+            //    AND user is reasonably close (< 100m) - prevents skipping when way off route
+            // 2. OR user is very close (< 30m) - for immediate turns
+            // 3. OR it's the first waypoint (index 0) at the start
+            let hasPassedWaypoint = userRouteIndex > waypointRouteIndex
+            let isCloseEnough = distance < 100  // More lenient for far waypoints
+            let isVeryClose = distance <= directionNotificationRadius  // 30m for immediate turns
+            let isFirstWaypointAtStart = (index == 0 && waypointRouteIndex <= 3)
             
-            // v1.9.67: Only advance if BOTH conditions are met:
-            // 1. User is within notification radius (30m) of waypoint
-            // 2. User has PASSED the waypoint along the route path
-            //    OR this is the first waypoint (index 0) and user is at the start
-            let isWithinRadius = distance <= directionNotificationRadius
-            let hasPassedWaypoint = userRouteIndex > waypointRouteIndex  // Strictly greater = passed
-            let isFirstWaypointAtStart = (index == 0 && waypointRouteIndex <= 3)  // First waypoint, user just starting
+            let shouldAdvance = (hasPassedWaypoint && isCloseEnough) || isVeryClose || isFirstWaypointAtStart
             
-            if isWithinRadius && (hasPassedWaypoint || isFirstWaypointAtStart) {
+            if shouldAdvance {
                 NotificationService.shared.sendDirectionNotification(
                     instruction: waypoint.instruction,
                     distance: waypoint.distance,
