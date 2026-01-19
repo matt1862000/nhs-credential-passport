@@ -86,8 +86,8 @@ struct ClinicianSelectionView: View {
                         .background(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.8))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         
-                        // Last updated info
-                        if !viewModel.availableClinicians.isEmpty {
+                        // Last updated info - hidden when time picker is shown (v1.9.59)
+                        if !viewModel.availableClinicians.isEmpty && !showAppointmentTimePicker {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.clockwise")
                                     .font(.caption2)
@@ -260,8 +260,8 @@ struct ClinicianSelectionView: View {
                             }
                         }
                         
-                        // Info note - only show when clinicians are available
-                        if !filteredClinicians.isEmpty {
+                        // Info note - only show when clinicians are available and time picker not shown (v1.9.59)
+                        if !filteredClinicians.isEmpty && !showAppointmentTimePicker {
                             HStack(spacing: 12) {
                                 Image(systemName: "info.circle.fill")
                                     .foregroundColor(.tealAccent)
@@ -274,7 +274,7 @@ struct ClinicianSelectionView: View {
                             .cardStyle()
                         }
                         
-                        Spacer(minLength: 100)
+                        Spacer(minLength: showAppointmentTimePicker ? 20 : 100)
                     }
                     .padding(.horizontal, 20)
                 }
