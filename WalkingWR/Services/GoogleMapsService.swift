@@ -351,6 +351,15 @@ class GoogleMapsService: ObservableObject {
     private var googlePlacesDisabledUntil: Date?
     private let googlePlacesCooldownMinutes: TimeInterval = 10 // 10 min cooldown on quota errors
     
+    // MARK: - Google Places Daily Call Cap (v1.9.52)
+    // Track daily usage to cap costs per user
+    // Conservative limit: 10 calls/day = ~£0.24/day max per user (~£7.20/month)
+    // Adjust based on your budget: 5 = £0.12/day, 20 = £0.48/day
+    private let googlePlacesDailyCap = 10  // Max calls per day per user
+    private var googlePlacesCallsToday = 0
+    private let googlePlacesCountKey = "googlePlacesCount"
+    private let googlePlacesDateKey = "googlePlacesDate"
+    
     /// Check if Google Places is currently disabled due to quota
     private var isGooglePlacesDisabled: Bool {
         guard let disabledUntil = googlePlacesDisabledUntil else { return false }
@@ -360,6 +369,53 @@ class GoogleMapsService: ObservableObject {
             return false
         }
         return true
+    }
+    
+    /// Check if we can make a Google Places API call (daily cap + quota check)
+    private var canMakeGooglePlacesCall: Bool {
+        // Check quota cooldown first
+        if isGooglePlacesDisabled {
+            return false
+        }
+        
+        // Check daily cap
+        resetGooglePlacesCountIfNewDay()
+        let canCall = googlePlacesCallsToday < googlePlacesDailyCap
+        
+        if !canCall {
+            print("🛑 [CAP] Google Places daily cap reached (\(googlePlacesCallsToday)/\(googlePlacesDailyCap)) - using Apple/OSM only")
+        }
+        
+        return canCall
+    }
+    
+    /// Reset daily call count if it's a new day
+    private func resetGooglePlacesCountIfNewDay() {
+        let today = Calendar.current.startOfDay(for: Date())
+        let lastDate = UserDefaults.standard.object(forKey: googlePlacesDateKey) as? Date ?? Date.distantPast
+        let lastDay = Calendar.current.startOfDay(for: lastDate)
+        
+        if today > lastDay {
+            googlePlacesCallsToday = 0
+            UserDefaults.standard.set(today, forKey: googlePlacesDateKey)
+            UserDefaults.standard.set(0, forKey: googlePlacesCountKey)
+            print("🌐 [CAP] Daily Google Places call count reset (new day)")
+        } else {
+            googlePlacesCallsToday = UserDefaults.standard.integer(forKey: googlePlacesCountKey)
+        }
+    }
+    
+    /// Record a Google Places API call
+    private func recordGooglePlacesCall() {
+        googlePlacesCallsToday += 1
+        UserDefaults.standard.set(googlePlacesCallsToday, forKey: googlePlacesCountKey)
+        print("🌐 [CAP] Google Places call recorded: \(googlePlacesCallsToday)/\(googlePlacesDailyCap) today")
+    }
+    
+    /// Get current Google Places call count (for diagnostics)
+    func getGooglePlacesCallCount() -> (today: Int, cap: Int) {
+        resetGooglePlacesCountIfNewDay()
+        return (googlePlacesCallsToday, googlePlacesDailyCap)
     }
     
     /// Disable Google Places temporarily after quota error
@@ -1284,10 +1340,14 @@ class GoogleMapsService: ObservableObject {
             
             print("🚀 SMART PARALLEL FETCH - Up to \(timeoutSeconds)s timeout, need \(minimumPOIsRequired)+ POIs...")
             
-            // Check if Google is temporarily disabled (429 cooldown)
-            let googleEnabled = !apiKey.isEmpty && !isGooglePlacesDisabled
-            if isGooglePlacesDisabled {
-                print("🌐 [QUOTA] Google Places temporarily disabled - using Apple/OSM only")
+            // Check if Google is available (API key, quota cooldown, and daily cap)
+            let googleEnabled = !apiKey.isEmpty && canMakeGooglePlacesCall
+            if !googleEnabled {
+                if isGooglePlacesDisabled {
+                    print("🌐 [QUOTA] Google Places temporarily disabled - using Apple/OSM only")
+                } else if !canMakeGooglePlacesCall {
+                    print("🌐 [CAP] Google Places daily cap reached - using Apple/OSM only")
+                }
             }
             
             // Track which sources contributed
@@ -1666,6 +1726,12 @@ class GoogleMapsService: ObservableObject {
         
         // ⚡ COST OPTIMIZATION: Make ONE API call with all types instead of 43 separate calls
         // This reduces requests from ~25,800/month to ~600/month (staying within free tier)
+        // v1.9.52: Check daily cap before making API call
+        guard canMakeGooglePlacesCall else {
+            print("🌐 [CAP] Skipping Google Places API call - daily cap reached (\(googlePlacesCallsToday)/\(googlePlacesDailyCap))")
+            return allResults  // Return empty, will use Apple/OSM results
+        }
+        
         do {
             let apiStartTime = Date()
             print("⏱️ [POI FETCH] [\(timeString)] 📡 Calling searchMultipleTypes...")
@@ -1675,6 +1741,9 @@ class GoogleMapsService: ObservableObject {
                 radiusMeters: radiusMeters,
                 types: placeTypesToSearch
             )
+            
+            // v1.9.52: Record successful API call
+            recordGooglePlacesCall()
             
             let apiElapsed = Date().timeIntervalSince(apiStartTime)
             print("⏱️ [POI FETCH] [\(timeString)]   API call took \(String(format: "%.2f", apiElapsed))s, returned \(results.count) POIs")

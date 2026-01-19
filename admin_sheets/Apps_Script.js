@@ -766,3 +766,223 @@ function midnightClearClinic() {
   
   Logger.log("✅ Midnight clear complete - clinic reset for new day");
 }
+
+// ========================================
+// 🎲 SIMULATE CLINIC ACTIVITY (Enhanced)
+// ========================================
+
+function simulateClinicActivity() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var todaysClinic = ss.getSheetByName(TODAYS_CLINIC_SHEET);
+  var allClinicians = ss.getSheetByName(ALL_CLINICIANS_SHEET);
+  
+  if (!todaysClinic || !allClinicians) {
+    Logger.log("❌ Sheets not found!");
+    return;
+  }
+  
+  // Ensure sheet has headers
+  if (todaysClinic.getLastRow() === 0) {
+    todaysClinic.appendRow(['Name', 'Title', 'Specialty', 'Delay', 'Finished?']);
+  }
+  
+  var data = todaysClinic.getDataRange().getValues();
+  var currentClinicians = [];
+  
+  // Build list of current clinicians (skip header)
+  for (var i = 1; i < data.length; i++) {
+    var name = data[i][0];
+    if (name && name.toString().trim() !== '') {
+      currentClinicians.push({
+        row: i + 1,
+        name: name.toString().trim()
+      });
+    }
+  }
+  
+  // ========================================
+  // STEP 1: Randomly remove all clinicians (5% chance)
+  // ========================================
+  if (Math.random() < 0.05 && currentClinicians.length > 0) {
+    Logger.log("🎲 Random event: Removing ALL clinicians");
+    var lastRow = todaysClinic.getLastRow();
+    if (lastRow > 1) {
+      todaysClinic.deleteRows(2, lastRow - 1);
+      SpreadsheetApp.flush();
+      syncToFirestore();
+      Logger.log("✅ Removed all clinicians");
+      return; // Exit early - clinic is now empty
+    }
+  }
+  
+  // ========================================
+  // STEP 2: Randomly remove some clinicians (30% chance, 1-3 clinicians)
+  // ========================================
+  if (Math.random() < 0.30 && currentClinicians.length > 0) {
+    var numToRemove = Math.min(
+      Math.floor(Math.random() * 3) + 1, // 1-3 clinicians
+      currentClinicians.length
+    );
+    
+    // Shuffle and pick random clinicians to remove
+    var shuffled = currentClinicians.slice().sort(function() { return 0.5 - Math.random(); });
+    var toRemove = shuffled.slice(0, numToRemove);
+    
+    // Sort by row number descending (delete from bottom to top)
+    toRemove.sort(function(a, b) { return b.row - a.row; });
+    
+    Logger.log("🎲 Random event: Removing " + numToRemove + " clinician(s)");
+    toRemove.forEach(function(clinician) {
+      todaysClinic.deleteRow(clinician.row);
+      Logger.log("  ❌ Removed: " + clinician.name);
+    });
+    
+    SpreadsheetApp.flush();
+    
+    // Rebuild current list after removals
+    data = todaysClinic.getDataRange().getValues();
+    currentClinicians = [];
+    for (var i = 1; i < data.length; i++) {
+      var name = data[i][0];
+      if (name && name.toString().trim() !== '') {
+        currentClinicians.push({
+          row: i + 1,
+          name: name.toString().trim()
+        });
+      }
+    }
+  }
+  
+  // ========================================
+  // STEP 3: Remove finished clinicians (checkbox checked)
+  // ========================================
+  var rowsToDelete = [];
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][4] === true) { // Column E (index 4) = Finished checkbox
+      rowsToDelete.push(i + 1);
+    }
+  }
+  
+  if (rowsToDelete.length > 0) {
+    rowsToDelete.reverse().forEach(function(row) {
+      todaysClinic.deleteRow(row);
+    });
+    SpreadsheetApp.flush();
+    Logger.log("✅ Removed " + rowsToDelete.length + " finished clinician(s)");
+  }
+  
+  // ========================================
+  // STEP 4: Add new clinicians (ensure uniqueness)
+  // ========================================
+  var allData = allClinicians.getDataRange().getValues();
+  if (allData.length <= 1) {
+    Logger.log("⚠️ No clinicians in All Clinicians sheet");
+    syncToFirestore();
+    return;
+  }
+  
+  // Get existing clinician names (for uniqueness check)
+  var existingNames = new Set();
+  var todaysData = todaysClinic.getDataRange().getValues();
+  for (var i = 1; i < todaysData.length; i++) {
+    var name = todaysData[i][0];
+    if (name && name.toString().trim() !== '') {
+      existingNames.add(name.toString().trim().toLowerCase());
+    }
+  }
+  
+  // Build column lookup
+  var headers = allData[0];
+  var cols = {};
+  for (var h = 0; h < headers.length; h++) {
+    var headerName = headers[h].toString().toLowerCase().trim().replace(/ /g, '_').replace(/[?]/g, '');
+    cols[headerName] = h;
+  }
+  
+  // Find available clinicians (not already in Today's Clinic)
+  var availableClinicians = [];
+  for (var j = 1; j < allData.length; j++) {
+    var name = allData[j][cols['name']] || '';
+    if (name && name.toString().trim() !== '') {
+      var normalizedName = name.toString().trim().toLowerCase();
+      // Check uniqueness by name only (not location+name)
+      if (!existingNames.has(normalizedName)) {
+        availableClinicians.push({
+          name: name,
+          title: allData[j][cols['title']] || '',
+          specialty: allData[j][cols['specialty']] || '',
+          row: j
+        });
+      }
+    }
+  }
+  
+  // Randomly add 0-3 new clinicians
+  var addCount = Math.min(
+    Math.floor(Math.random() * 4), // 0-3 clinicians
+    availableClinicians.length
+  );
+  
+  if (addCount > 0) {
+    // Shuffle and pick random clinicians
+    var shuffled = availableClinicians.slice().sort(function() { return 0.5 - Math.random(); });
+    var toAdd = shuffled.slice(0, addCount);
+    
+    var outputData = [];
+    toAdd.forEach(function(c) {
+      var delayOptions = [];
+      for (var d = 0; d <= 60; d += 5) delayOptions.push(d);
+      var delay = delayOptions[Math.floor(Math.random() * delayOptions.length)];
+      var delayDisplay = delay === 0 ? 'On Time' : delay;
+      
+      outputData.push([c.name, c.title, c.specialty, delayDisplay, false]);
+      
+      // Track added name for uniqueness
+      existingNames.add(c.name.toString().trim().toLowerCase());
+      Logger.log("  ✅ Added: " + c.name + " (delay: " + delayDisplay + ")");
+    });
+    
+    var nextRow = todaysClinic.getLastRow() + 1;
+    todaysClinic.getRange(nextRow, 1, outputData.length, outputData[0].length).setValues(outputData);
+    
+    // Insert checkboxes in Finished column
+    todaysClinic.getRange(nextRow, 5, outputData.length, 1).insertCheckboxes();
+    
+    SpreadsheetApp.flush();
+    Logger.log("✅ Added " + addCount + " new clinician(s)");
+  }
+  
+  // ========================================
+  // STEP 5: Randomly adjust delays (30% chance per clinician)
+  // ========================================
+  var remainingData = todaysClinic.getDataRange().getValues();
+  for (var i = 1; i < remainingData.length; i++) {
+    if (!remainingData[i][0]) continue; // Skip empty rows
+    
+    if (Math.random() < 0.30) {
+      var delayOptions = [];
+      for (var d = 0; d <= 60; d += 5) delayOptions.push(d);
+      var delay = delayOptions[Math.floor(Math.random() * delayOptions.length)];
+      var delayDisplay = delay === 0 ? 'On Time' : delay;
+      todaysClinic.getRange(i + 1, 4).setValue(delayDisplay);
+      Logger.log("  🔄 Updated delay for " + remainingData[i][0] + ": " + delayDisplay);
+    }
+  }
+  
+  SpreadsheetApp.flush();
+  
+  // ========================================
+  // STEP 6: Clean up any duplicates (safety net)
+  // ========================================
+  cleanupDuplicates();
+  
+  // ========================================
+  // STEP 7: Sync to Firebase
+  // ========================================
+  try {
+    syncToFirestore();
+    Logger.log("✅ Simulation complete - synced to Firebase");
+  } catch(e) {
+    Logger.log("❌ Sync error: " + e.message);
+  }
+}

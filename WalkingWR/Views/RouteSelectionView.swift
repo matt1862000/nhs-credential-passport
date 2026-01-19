@@ -6315,6 +6315,21 @@ struct ActiveWalkView: View {
         } message: {
             Text("Your steps and progress will be saved.")
         }
+        // v1.9.52: Present marker arrival sheet from within fullScreenCover
+        // iOS doesn't allow presenting sheets from parent view when child is in fullScreenCover
+        .sheet(isPresented: Binding(
+            get: { viewModel.showMarkerArrivalPrompt },
+            set: { viewModel.showMarkerArrivalPrompt = $0 }
+        )) {
+            MarkerArrivalSheet(viewModel: viewModel)
+        }
+        // v1.9.52: Present home arrival sheet from within fullScreenCover
+        .sheet(isPresented: Binding(
+            get: { viewModel.showHomeArrivalPrompt },
+            set: { viewModel.showHomeArrivalPrompt = $0 }
+        )) {
+            HomeArrivalSheet(viewModel: viewModel)
+        }
     }
     
     func formatElapsedTime(_ interval: TimeInterval) -> String {
