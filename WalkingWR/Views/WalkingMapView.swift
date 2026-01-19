@@ -2984,12 +2984,24 @@ private struct CombinedStatusBannerContent: View {
     }
     
     var urgencyColor: Color {
-        switch urgency {
-        case .relaxed: return .green
-        case .gentle: return .softAmber
-        case .warning: return .orange
-        case .urgent: return .red
-        case .walkMode: return .tealAccent
+        // In light mode, use darker versions for better contrast on white background
+        if colorScheme == .light {
+            switch urgency {
+            case .relaxed: return Color(red: 0.0, green: 0.6, blue: 0.3) // Darker green
+            case .gentle: return Color(red: 0.85, green: 0.55, blue: 0.1) // Darker amber/orange
+            case .warning: return Color(red: 1.0, green: 0.5, blue: 0.0) // Darker orange
+            case .urgent: return Color(red: 0.8, green: 0.0, blue: 0.0) // Darker red
+            case .walkMode: return Color(red: 0.0, green: 0.45, blue: 0.45) // Darker teal
+            }
+        } else {
+            // Dark mode: use original colors
+            switch urgency {
+            case .relaxed: return .green
+            case .gentle: return .softAmber
+            case .warning: return .orange
+            case .urgent: return .red
+            case .walkMode: return .tealAccent
+            }
         }
     }
     
@@ -3033,7 +3045,7 @@ private struct CombinedStatusBannerContent: View {
                     .foregroundColor(urgencyColor)
                 Text(displayLabel)
                     .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(urgencyColor.opacity(0.9))
             }
             
             Spacer()
@@ -3042,8 +3054,8 @@ private struct CombinedStatusBannerContent: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.darkCardBackground)
-                .shadow(color: Color.black.opacity(0.3), radius: 8, y: 4)
+                .fill(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.95))
+                .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 8, y: 4)
         )
     }
     
@@ -3053,33 +3065,33 @@ private struct CombinedStatusBannerContent: View {
                 // Walking icon
                 ZStack {
                     Circle()
-                        .fill(Color.tealAccent.opacity(0.3))
+                        .fill((colorScheme == .dark ? Color.tealAccent : Color(red: 0.0, green: 0.45, blue: 0.45)).opacity(0.3))
                         .frame(width: 36, height: 36)
                     
                     Image(systemName: "figure.walk")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.tealAccent)
+                        .foregroundColor(colorScheme == .dark ? .tealAccent : Color(red: 0.0, green: 0.45, blue: 0.45))
                 }
                 
                 // Text
                 Text("Tap to enable step tracking")
                     .font(.subheadline)
                     .fontWeight(.medium)
-                    .foregroundColor(.white)
+                    .foregroundColor(colorScheme == .dark ? .white : Color(red: 0.0, green: 0.45, blue: 0.45))
                 
                 Spacer()
                 
                 // Chevron to indicate tappable
                 Image(systemName: "chevron.right")
                     .font(.caption)
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor((colorScheme == .dark ? .tealAccent : Color(red: 0.0, green: 0.45, blue: 0.45)).opacity(0.8))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.darkCardBackground)
-                    .shadow(color: Color.black.opacity(0.3), radius: 8, y: 4)
+                    .fill(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.95))
+                    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 8, y: 4)
             )
         }
         .buttonStyle(.plain)
@@ -3143,6 +3155,7 @@ private struct CompactStatusPillContent: View {
     @Binding var showMotionExplainer: Bool
     @ObservedObject var healthKitService: HealthKitService
     let onEnableSteps: () -> Void
+    @Environment(\.colorScheme) var colorScheme
 
     // State for pill flipping
     @State private var showingStepsPrompt: Bool = false
@@ -3212,20 +3225,20 @@ private struct CompactStatusPillContent: View {
             HStack(spacing: 8) {
                 Image(systemName: "figure.walk")
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.tealAccent)
+                    .foregroundColor(colorScheme == .dark ? .tealAccent : Color(red: 0.0, green: 0.45, blue: 0.45))
                 Text("Track steps?")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.tealAccent)
+                    .foregroundColor(colorScheme == .dark ? .tealAccent : Color(red: 0.0, green: 0.45, blue: 0.45))
                 Image(systemName: "hand.tap.fill")
                     .font(.system(size: 12))
-                    .foregroundColor(.tealAccent.opacity(0.7))
+                    .foregroundColor((colorScheme == .dark ? .tealAccent : Color(red: 0.0, green: 0.45, blue: 0.45)).opacity(0.7))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(
                 Capsule()
-                    .fill(Color.darkCardBackground)
-                    .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
+                    .fill(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.95))
+                    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 4, y: 2)
             )
         }
         .buttonStyle(.plain)
@@ -3273,14 +3286,14 @@ private struct CompactStatusPillContent: View {
                     .monospacedDigit()
                 Text("mins left")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(urgencyColor.opacity(0.9))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(
                 Capsule()
-                    .fill(Color.darkCardBackground)
-                    .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
+                    .fill(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.95))
+                    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 4, y: 2)
             )
         }
         .buttonStyle(.plain)
@@ -3290,11 +3303,22 @@ private struct CompactStatusPillContent: View {
 
     // MARK: - Urgency color based on remaining minutes
     private var urgencyColor: Color {
-        switch walkRemaining {
-        case 11...: return .tealAccent
-        case 5...10: return .softAmber
-        case 2...4: return .orange
-        default: return .red
+        // In light mode, use darker versions for better contrast on white background
+        if colorScheme == .light {
+            switch walkRemaining {
+            case 11...: return Color(red: 0.0, green: 0.45, blue: 0.45) // Darker teal for visibility
+            case 5...10: return Color(red: 0.85, green: 0.55, blue: 0.1) // Darker amber/orange
+            case 2...4: return Color(red: 1.0, green: 0.5, blue: 0.0) // Darker orange
+            default: return Color(red: 0.8, green: 0.0, blue: 0.0) // Darker red
+            }
+        } else {
+            // Dark mode: use original colors
+            switch walkRemaining {
+            case 11...: return .tealAccent
+            case 5...10: return .softAmber
+            case 2...4: return .orange
+            default: return .red
+            }
         }
     }
 
@@ -3392,12 +3416,24 @@ private struct DelayBannerContent: View {
     }
     
     var urgencyColor: Color {
-        switch urgency {
-        case .relaxed: return .green
-        case .gentle: return .softAmber
-        case .warning: return .orange
-        case .urgent: return .red
-        case .walkMode: return .tealAccent
+        // In light mode, use darker versions for better contrast on white background
+        if colorScheme == .light {
+            switch urgency {
+            case .relaxed: return Color(red: 0.0, green: 0.6, blue: 0.3) // Darker green
+            case .gentle: return Color(red: 0.85, green: 0.55, blue: 0.1) // Darker amber/orange
+            case .warning: return Color(red: 1.0, green: 0.5, blue: 0.0) // Darker orange
+            case .urgent: return Color(red: 0.8, green: 0.0, blue: 0.0) // Darker red
+            case .walkMode: return Color(red: 0.0, green: 0.45, blue: 0.45) // Darker teal
+            }
+        } else {
+            // Dark mode: use original colors
+            switch urgency {
+            case .relaxed: return .green
+            case .gentle: return .softAmber
+            case .warning: return .orange
+            case .urgent: return .red
+            case .walkMode: return .tealAccent
+            }
         }
     }
     
@@ -3426,7 +3462,7 @@ private struct DelayBannerContent: View {
                     .foregroundColor(urgencyColor)
                 Text(displayLabel)
                     .font(.subheadline)
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(urgencyColor.opacity(0.9))
             }
             
             Spacer()
@@ -3435,8 +3471,8 @@ private struct DelayBannerContent: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.darkCardBackground)
-                .shadow(color: Color.black.opacity(0.3), radius: 8, y: 4)
+                .fill(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.95))
+                .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 8, y: 4)
         )
     }
 }
