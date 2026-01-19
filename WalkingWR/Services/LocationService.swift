@@ -31,7 +31,7 @@ class LocationService: NSObject, ObservableObject {
     @Published var currentDirectionIndex: Int = 0
     @Published var isMonitoringDirections: Bool = false
     @Published var isSignificantlyOffRoute: Bool = false  // v1.9.15: Track if user has deviated significantly
-    private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String, routeIndex: Int)] = []  // v1.9.68: Store route index for accurate advancement
+    private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String)] = []
     private var notifiedDirectionIndices: Set<Int> = []
     private var cachedRoutePath: [CLLocationCoordinate2D] = []  // v1.9.15: Cache route path for deviation detection
     private let directionNotificationRadius: Double = 30 // meters - notify when within 30m of turn
@@ -202,51 +202,26 @@ class LocationService: NSObject, ObservableObject {
             directionWaypoints.append((
                 coordinate: waypointCoord,
                 instruction: direction.instruction,
-                distance: direction.distance,
-                routeIndex: routeIndex  // v1.9.68: Store route index for accurate advancement
+                distance: direction.distance
             ))
             
             cumulativeDistance += Double(direction.distanceMeters)
         }
         
-        // v1.9.63/v1.9.65/v1.9.66: Check if user has already passed the first waypoint(s)
-        // Only do this for mid-walk direction changes, NOT for fresh walk starts
-        // This handles cases where return directions are switched and user is partway through
-        if skipPassedWaypoints, let currentLoc = currentLocation, !directionWaypoints.isEmpty, !routePath.isEmpty {
-            // Find closest point on route path to user's current location
-            var closestRouteIndex = 0
-            var closestRouteDistance = Double.greatestFiniteMagnitude
-            for (index, routePoint) in routePath.enumerated() {
-                let routeLocation = CLLocation(latitude: routePoint.latitude, longitude: routePoint.longitude)
-                let distance = currentLoc.distance(from: routeLocation)
-                if distance < closestRouteDistance {
-                    closestRouteDistance = distance
-                    closestRouteIndex = index
-                }
-            }
-            
-            // v1.9.66: Only skip if user is significantly along the route (past 10% of route points)
-            // This prevents skipping when user is at the START of return directions
-            let minRouteProgressToSkip = max(5, routePath.count / 10)  // At least 5 points or 10%
-            
-            // Check each waypoint in order - skip any that are already behind the user along the route
+        // v1.9.69: SIMPLIFIED - for mid-walk direction switches (like return route),
+        // just skip waypoints that are already within 30m (user is already past them)
+        if skipPassedWaypoints, let currentLoc = currentLocation, !directionWaypoints.isEmpty {
             var skippedCount = 0
             for (index, waypoint) in directionWaypoints.enumerated() {
-                // v1.9.68: Use stored route index instead of recalculating
-                let waypointRouteIndex = waypoint.routeIndex
+                let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
+                let distance = currentLoc.distance(from: waypointLocation)
                 
-                // v1.9.66: Only skip if:
-                // 1. User is past this waypoint along the route path AND
-                // 2. User has made significant progress (not just at the start)
-                let isPastWaypointOnRoute = closestRouteIndex > waypointRouteIndex
-                let hasSignificantProgress = closestRouteIndex >= minRouteProgressToSkip
-                
-                if isPastWaypointOnRoute && hasSignificantProgress {
+                // If user is already past this waypoint (very close or behind), skip it
+                if distance <= directionNotificationRadius * 2 {  // Within 60m = already reached
                     skippedCount = index + 1
-                    notifiedDirectionIndices.insert(index) // Mark as already notified
+                    notifiedDirectionIndices.insert(index)
                 } else {
-                    // User hasn't made enough progress or hasn't passed this waypoint
-                    break
+                    break  // Stop at first waypoint that's still ahead
                 }
             }
             
@@ -270,21 +245,9 @@ class LocationService: NSObject, ObservableObject {
     }
     
     /// Check if user is approaching any direction waypoint and send notification
-    /// v1.9.67: Fixed to use route-position-based advancement, not just distance
+    /// v1.9.69: SIMPLIFIED - just use distance-based advancement like it was before
     private func checkDirectionWaypoints(currentLocation: CLLocation) {
-        guard isMonitoringDirections, !directionWaypoints.isEmpty, !cachedRoutePath.isEmpty else { return }
-        
-        // v1.9.67: Find user's position along the route path
-        var userRouteIndex = 0
-        var closestDistanceToRoute = Double.greatestFiniteMagnitude
-        for (index, routePoint) in cachedRoutePath.enumerated() {
-            let routeLocation = CLLocation(latitude: routePoint.latitude, longitude: routePoint.longitude)
-            let distance = currentLocation.distance(from: routeLocation)
-            if distance < closestDistanceToRoute {
-                closestDistanceToRoute = distance
-                userRouteIndex = index
-            }
-        }
+        guard isMonitoringDirections, !directionWaypoints.isEmpty else { return }
         
         // Check upcoming waypoints (current and next few)
         let checkRange = currentDirectionIndex..<min(currentDirectionIndex + 3, directionWaypoints.count)
@@ -296,22 +259,9 @@ class LocationService: NSObject, ObservableObject {
             let waypoint = directionWaypoints[index]
             let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
             let distance = currentLocation.distance(from: waypointLocation)
-            let waypointRouteIndex = waypoint.routeIndex  // v1.9.68: Use stored route index
             
-            // v1.9.68: Advancement logic - more lenient for far-apart waypoints
-            // Advance if:
-            // 1. User has PASSED the waypoint on the route (userRouteIndex > waypointRouteIndex)
-            //    AND user is reasonably close (< 100m) - prevents skipping when way off route
-            // 2. OR user is very close (< 30m) - for immediate turns
-            // 3. OR it's the first waypoint (index 0) at the start
-            let hasPassedWaypoint = userRouteIndex > waypointRouteIndex
-            let isCloseEnough = distance < 100  // More lenient for far waypoints
-            let isVeryClose = distance <= directionNotificationRadius  // 30m for immediate turns
-            let isFirstWaypointAtStart = (index == 0 && waypointRouteIndex <= 3)
-            
-            let shouldAdvance = (hasPassedWaypoint && isCloseEnough) || isVeryClose || isFirstWaypointAtStart
-            
-            if shouldAdvance {
+            // Simple: if within 30m of waypoint, advance to next direction
+            if distance <= directionNotificationRadius {
                 NotificationService.shared.sendDirectionNotification(
                     instruction: waypoint.instruction,
                     distance: waypoint.distance,
@@ -327,7 +277,7 @@ class LocationService: NSObject, ObservableObject {
                     currentDirectionIndex = newIndex
                 }
                 
-                print("📍 Direction notification sent for step \(index + 1): \(waypoint.instruction) (userRouteIdx=\(userRouteIndex), waypointRouteIdx=\(waypointRouteIndex))")
+                print("📍 Direction: step \(index + 1)/\(directionWaypoints.count) - \(waypoint.instruction)")
                 break // Only send one notification at a time
             }
         }
