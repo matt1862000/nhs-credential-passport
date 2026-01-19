@@ -180,68 +180,72 @@ struct ClinicianSelectionView: View {
                                 .padding(.bottom, 20)
                             } else {
                                 ForEach(filteredClinicians) { clinician in
-                                    ClinicianCard(
-                                        clinician: clinician,
-                                        isSelected: viewModel.selectedClinician?.id == clinician.id,
-                                        userLocation: locationHelper.currentLocation,
-                                        onSelect: {
-                                            viewModel.selectClinician(clinician)
-                                            
-                                            // 🚀 Early prefetch POIs now that we have location + clinician
-                                            // This speeds up route generation when user wants to walk
-                                            if let location = locationHelper.currentLocation {
-                                                GoogleMapsService.shared.prefetchPOIsEarly(
-                                                    location: location.coordinate
-                                                )
+                                    VStack(spacing: 12) {
+                                        ClinicianCard(
+                                            clinician: clinician,
+                                            isSelected: viewModel.selectedClinician?.id == clinician.id,
+                                            userLocation: locationHelper.currentLocation,
+                                            onSelect: {
+                                                viewModel.selectClinician(clinician)
+                                                
+                                                // 🚀 Early prefetch POIs now that we have location + clinician
+                                                // This speeds up route generation when user wants to walk
+                                                if let location = locationHelper.currentLocation {
+                                                    GoogleMapsService.shared.prefetchPOIsEarly(
+                                                        location: location.coordinate
+                                                    )
+                                                }
+                                                
+                                                // v1.9.56: Show appointment time picker instead of immediate dismiss
+                                                pendingClinician = clinician
+                                                // Default to next quarter hour
+                                                let now = Date()
+                                                let calendar = Calendar.current
+                                                let minute = calendar.component(.minute, from: now)
+                                                let roundedMinute = ((minute / 15) + 1) * 15
+                                                if let defaultTime = calendar.date(bySettingHour: calendar.component(.hour, from: now), minute: roundedMinute % 60, second: 0, of: now) {
+                                                    selectedAppointmentTime = roundedMinute >= 60 
+                                                        ? calendar.date(byAdding: .hour, value: 1, to: defaultTime) ?? defaultTime
+                                                        : defaultTime
+                                                }
+                                                withAnimation(.easeOut(duration: 0.3)) {
+                                                    showAppointmentTimePicker = true
+                                                }
                                             }
-                                            
-                                            // v1.9.56: Show appointment time picker instead of immediate dismiss
-                                            pendingClinician = clinician
-                                            // Default to next quarter hour
-                                            let now = Date()
-                                            let calendar = Calendar.current
-                                            let minute = calendar.component(.minute, from: now)
-                                            let roundedMinute = ((minute / 15) + 1) * 15
-                                            if let defaultTime = calendar.date(bySettingHour: calendar.component(.hour, from: now), minute: roundedMinute % 60, second: 0, of: now) {
-                                                selectedAppointmentTime = roundedMinute >= 60 
-                                                    ? calendar.date(byAdding: .hour, value: 1, to: defaultTime) ?? defaultTime
-                                                    : defaultTime
-                                            }
-                                            withAnimation(.easeOut(duration: 0.3)) {
-                                                showAppointmentTimePicker = true
-                                            }
+                                        )
+                                        
+                                        // v1.9.56: Inline appointment time picker - appears directly under selected clinician
+                                        if showAppointmentTimePicker, 
+                                           let pending = pendingClinician,
+                                           pending.id == clinician.id {
+                                            AppointmentTimePickerCard(
+                                                clinician: clinician,
+                                                selectedTime: $selectedAppointmentTime,
+                                                onSetTime: {
+                                                    viewModel.setAppointmentTime(selectedAppointmentTime)
+                                                    withAnimation {
+                                                        showAppointmentTimePicker = false
+                                                    }
+                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                                        isPresented = false
+                                                    }
+                                                },
+                                                onSkip: {
+                                                    viewModel.clearAppointmentTime()
+                                                    withAnimation {
+                                                        showAppointmentTimePicker = false
+                                                    }
+                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                                        isPresented = false
+                                                    }
+                                                }
+                                            )
+                                            .transition(.asymmetric(
+                                                insertion: .move(edge: .top).combined(with: .opacity),
+                                                removal: .opacity
+                                            ))
                                         }
-                                    )
-                                }
-                                
-                                // v1.9.56: Inline appointment time picker
-                                if showAppointmentTimePicker, let clinician = pendingClinician {
-                                    AppointmentTimePickerCard(
-                                        clinician: clinician,
-                                        selectedTime: $selectedAppointmentTime,
-                                        onSetTime: {
-                                            viewModel.setAppointmentTime(selectedAppointmentTime)
-                                            withAnimation {
-                                                showAppointmentTimePicker = false
-                                            }
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                                isPresented = false
-                                            }
-                                        },
-                                        onSkip: {
-                                            viewModel.clearAppointmentTime()
-                                            withAnimation {
-                                                showAppointmentTimePicker = false
-                                            }
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                                isPresented = false
-                                            }
-                                        }
-                                    )
-                                    .transition(.asymmetric(
-                                        insertion: .move(edge: .bottom).combined(with: .opacity),
-                                        removal: .opacity
-                                    ))
+                                    }
                                 }
                             }
                         }
