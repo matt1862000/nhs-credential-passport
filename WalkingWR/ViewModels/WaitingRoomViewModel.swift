@@ -235,6 +235,9 @@ class WaitingRoomViewModel: ObservableObject {
         // Record app usage for streak tracking
         userProgress.recordAppUsage()
         
+        // v1.9.56: Restore appointment time from UserDefaults
+        restoreAppointmentTime()
+        
         // Clean up old topic subscriptions (do this after init is complete)
         DispatchQueue.main.async { [weak self] in
             self?.cleanupOldSubscriptions()
@@ -1238,6 +1241,50 @@ class WaitingRoomViewModel: ObservableObject {
                 // Small delay to let the clinician selection UI dismiss first
                 try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
                 _ = await notificationService.requestAuthorization()
+            }
+        }
+    }
+    
+    // MARK: - Appointment Time (v1.9.56)
+    
+    /// Set the user's appointment time for estimated time-to-be-seen calculation
+    func setAppointmentTime(_ time: Date?) {
+        waitTimeInfo.appointmentTime = time
+        
+        if let time = time {
+            // Persist to UserDefaults
+            UserDefaults.standard.set(time.timeIntervalSince1970, forKey: "appointmentTime")
+            let formatter = DateFormatter()
+            formatter.timeStyle = .short
+            print("📅 Appointment time set: \(formatter.string(from: time))")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "appointmentTime")
+            print("📅 Appointment time cleared")
+        }
+    }
+    
+    /// Clear the appointment time
+    func clearAppointmentTime() {
+        setAppointmentTime(nil)
+    }
+    
+    /// Restore appointment time from UserDefaults (called on init)
+    private func restoreAppointmentTime() {
+        let timestamp = UserDefaults.standard.double(forKey: "appointmentTime")
+        if timestamp > 0 {
+            let savedTime = Date(timeIntervalSince1970: timestamp)
+            // Only restore if the appointment time is today and in the future (or within last 2 hours)
+            let now = Date()
+            let calendar = Calendar.current
+            if calendar.isDateInToday(savedTime) && savedTime.timeIntervalSince(now) > -7200 { // -2 hours grace
+                waitTimeInfo.appointmentTime = savedTime
+                let formatter = DateFormatter()
+                formatter.timeStyle = .short
+                print("📅 Restored appointment time: \(formatter.string(from: savedTime))")
+            } else {
+                // Clear stale appointment time
+                UserDefaults.standard.removeObject(forKey: "appointmentTime")
+                print("📅 Cleared stale appointment time")
             }
         }
     }

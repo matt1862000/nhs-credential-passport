@@ -336,6 +336,37 @@ struct WaitTimeCard: View {
                 }
             }
             
+            // v1.9.56: Appointment time and estimated time to be seen
+            if let appointmentTime = waitInfo.formattedAppointmentTime {
+                VStack(spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock")
+                            .font(.caption)
+                            .foregroundColor(.tealAccent)
+                        Text("Your appointment: \(appointmentTime)")
+                            .font(.subheadline)
+                            .foregroundColor(.primary)
+                    }
+                    
+                    if let estimatedSeen = waitInfo.formattedEstimatedTimeToBeSeen {
+                        HStack(spacing: 6) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.caption)
+                                .foregroundColor(waitInfo.isPastAppointmentTime ? .coralPink : .softAmber)
+                            Text("Estimated to be seen: **\(estimatedSeen)**")
+                                .font(.subheadline)
+                                .foregroundColor(waitInfo.isPastAppointmentTime ? .coralPink : .primary)
+                        }
+                    }
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.tealAccent.opacity(0.1))
+                )
+            }
+            
             // Clinician info with change option
             if viewModel.hasNoClinicsAvailable {
                 // No clinics running - show button to check available clinicians

@@ -20,6 +20,11 @@ struct ClinicianSelectionView: View {
     // Location for sorting by proximity
     @StateObject private var locationHelper = ClinicianLocationHelper()
     
+    // v1.9.56: Appointment time picker state
+    @State private var showAppointmentTimePicker = false
+    @State private var selectedAppointmentTime = Date()
+    @State private var pendingClinician: Clinician? = nil
+    
     /// Clinicians sorted by proximity (if location available) then filtered by search
     var filteredClinicians: [Clinician] {
         // First sort by proximity if we have location
@@ -190,12 +195,53 @@ struct ClinicianSelectionView: View {
                                                 )
                                             }
                                             
-                                            // Dismiss after short delay
+                                            // v1.9.56: Show appointment time picker instead of immediate dismiss
+                                            pendingClinician = clinician
+                                            // Default to next quarter hour
+                                            let now = Date()
+                                            let calendar = Calendar.current
+                                            let minute = calendar.component(.minute, from: now)
+                                            let roundedMinute = ((minute / 15) + 1) * 15
+                                            if let defaultTime = calendar.date(bySettingHour: calendar.component(.hour, from: now), minute: roundedMinute % 60, second: 0, of: now) {
+                                                selectedAppointmentTime = roundedMinute >= 60 
+                                                    ? calendar.date(byAdding: .hour, value: 1, to: defaultTime) ?? defaultTime
+                                                    : defaultTime
+                                            }
+                                            withAnimation(.easeOut(duration: 0.3)) {
+                                                showAppointmentTimePicker = true
+                                            }
+                                        }
+                                    )
+                                }
+                                
+                                // v1.9.56: Inline appointment time picker
+                                if showAppointmentTimePicker, let clinician = pendingClinician {
+                                    AppointmentTimePickerCard(
+                                        clinician: clinician,
+                                        selectedTime: $selectedAppointmentTime,
+                                        onSetTime: {
+                                            viewModel.setAppointmentTime(selectedAppointmentTime)
+                                            withAnimation {
+                                                showAppointmentTimePicker = false
+                                            }
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                                isPresented = false
+                                            }
+                                        },
+                                        onSkip: {
+                                            viewModel.clearAppointmentTime()
+                                            withAnimation {
+                                                showAppointmentTimePicker = false
+                                            }
                                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                                 isPresented = false
                                             }
                                         }
                                     )
+                                    .transition(.asymmetric(
+                                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                                        removal: .opacity
+                                    ))
                                 }
                             }
                         }
@@ -447,6 +493,114 @@ struct FeatureShortcutButton: View {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Appointment Time Picker Card (v1.9.56)
+struct AppointmentTimePickerCard: View {
+    let clinician: Clinician
+    @Binding var selectedTime: Date
+    let onSetTime: () -> Void
+    let onSkip: () -> Void
+    @Environment(\.colorScheme) var colorScheme
+    
+    // Time formatter
+    private var timeFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter
+    }
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            // Header
+            HStack(spacing: 12) {
+                Image(systemName: "clock.badge.questionmark")
+                    .font(.title2)
+                    .foregroundColor(.tealAccent)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("What time is your appointment?")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    Text("Optional — helps us show when you'll be seen")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+            }
+            
+            // Time picker
+            DatePicker(
+                "Appointment Time",
+                selection: $selectedTime,
+                displayedComponents: .hourAndMinute
+            )
+            .datePickerStyle(.wheel)
+            .labelsHidden()
+            .frame(height: 120)
+            
+            // Preview of estimated time to be seen
+            if clinician.currentWaitMinutes > 0 {
+                let estimatedSeen = Calendar.current.date(byAdding: .minute, value: clinician.currentWaitMinutes, to: selectedTime) ?? selectedTime
+                
+                HStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.caption)
+                        .foregroundColor(.softAmber)
+                    
+                    Text("With \(clinician.currentWaitMinutes) min delay, estimated to be seen: **\(timeFormatter.string(from: estimatedSeen))**")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.softAmber.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            
+            // Buttons
+            HStack(spacing: 12) {
+                // Skip button
+                Button(action: onSkip) {
+                    Text("Skip")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(colorScheme == .dark ? Color.darkCardBackground : Color.gray.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                
+                // Set time button
+                Button(action: onSetTime) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption)
+                        Text("Set Time")
+                    }
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.tealAccent)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+        }
+        .padding(16)
+        .background(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.95))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.tealAccent.opacity(0.3), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.1), radius: 8, y: 4)
     }
 }
 

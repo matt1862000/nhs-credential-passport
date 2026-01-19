@@ -1124,16 +1124,28 @@ struct LocalRoutePickerSheet: View {
                                 if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
                                     let delayMinutes = viewModel.waitTimeInfo.estimatedMinutes
                                     let recommendedWalk = max(5, delayMinutes - 5)
+                                    let waitInfo = viewModel.waitTimeInfo
                                     
-                                    HStack(spacing: 12) {
-                                        Image(systemName: "clock.badge.checkmark")
-                                            .font(.title2)
-                                            .foregroundColor(.tealAccent)
-                                        
-                                        Text("Based on your **\(delayMinutes) min** wait, we recommend a **\(recommendedWalk) min** walk to get you back in time.")
-                                            .font(.subheadline)
-                                            .foregroundColor(.primary)
-                                            .multilineTextAlignment(.leading)
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        HStack(spacing: 12) {
+                                            Image(systemName: "clock.badge.checkmark")
+                                                .font(.title2)
+                                                .foregroundColor(.tealAccent)
+                                            
+                                            // v1.9.56: Show appointment time context if available
+                                            if let appointmentTime = waitInfo.formattedAppointmentTime,
+                                               let estimatedSeen = waitInfo.formattedEstimatedTimeToBeSeen {
+                                                Text("Your appointment is at **\(appointmentTime)**. With a **\(delayMinutes) min** delay, you'll be seen around **\(estimatedSeen)**. We recommend a **\(recommendedWalk) min** walk.")
+                                                    .font(.subheadline)
+                                                    .foregroundColor(.primary)
+                                                    .multilineTextAlignment(.leading)
+                                            } else {
+                                                Text("Based on your **\(delayMinutes) min** wait, we recommend a **\(recommendedWalk) min** walk to get you back in time.")
+                                                    .font(.subheadline)
+                                                    .foregroundColor(.primary)
+                                                    .multilineTextAlignment(.leading)
+                                            }
+                                        }
                                     }
                                     .padding(16)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -6241,7 +6253,8 @@ struct ActiveWalkView: View {
                         walkDurationMinutes: route.durationMinutes,
                         hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable && !viewModel.isClinicEnded && viewModel.waitTimeInfo.clinicianName != "Select your clinician",
                         distanceWalked: Int(viewModel.locationService.distanceWalked),
-                        halfwayAlert: viewModel.walkSession.halfwayAlertSent
+                        halfwayAlert: viewModel.walkSession.halfwayAlertSent,
+                        estimatedSeenTime: viewModel.waitTimeInfo.formattedEstimatedTimeToBeSeen
                     )
                 }
             }
@@ -6355,6 +6368,7 @@ struct WalkingDirectionsBanner: View {
     var hasClinicianSelected: Bool = true
     var distanceWalked: Int = 0
     var halfwayAlert: Bool = false
+    var estimatedSeenTime: String? = nil  // v1.9.56: Optional appointment-based estimated time
     
     // Darker forest green color
     private let bannerColor = Color(red: 0.13, green: 0.55, blue: 0.45)
@@ -6474,7 +6488,7 @@ struct WalkingDirectionsBanner: View {
                     
                     // Static clinic delay (only show if clinician selected, otherwise blank)
                     if hasClinicianSelected {
-                        VStack(alignment: .trailing, spacing: 0) {
+                        VStack(alignment: .trailing, spacing: 2) {
                             Text("\(delayMinutes)")
                                 .font(.title3)
                                 .fontWeight(.bold)
@@ -6483,6 +6497,14 @@ struct WalkingDirectionsBanner: View {
                             Text("mins delay")
                                 .font(.caption2)
                                 .foregroundColor(.white.opacity(0.7))
+                            
+                            // v1.9.56: Show estimated time to be seen if appointment time set
+                            if let seenTime = estimatedSeenTime {
+                                Text("~\(seenTime)")
+                                    .font(.caption2)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.softAmber)
+                            }
                         }
                     }
                     
