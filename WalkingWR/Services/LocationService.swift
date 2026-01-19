@@ -280,8 +280,21 @@ class LocationService: NSObject, ObservableObject {
     }
     
     /// Check if user is approaching any direction waypoint and send notification
+    /// v1.9.67: Fixed to use route-position-based advancement, not just distance
     private func checkDirectionWaypoints(currentLocation: CLLocation) {
-        guard isMonitoringDirections, !directionWaypoints.isEmpty else { return }
+        guard isMonitoringDirections, !directionWaypoints.isEmpty, !cachedRoutePath.isEmpty else { return }
+        
+        // v1.9.67: Find user's position along the route path
+        var userRouteIndex = 0
+        var closestDistanceToRoute = Double.greatestFiniteMagnitude
+        for (index, routePoint) in cachedRoutePath.enumerated() {
+            let routeLocation = CLLocation(latitude: routePoint.latitude, longitude: routePoint.longitude)
+            let distance = currentLocation.distance(from: routeLocation)
+            if distance < closestDistanceToRoute {
+                closestDistanceToRoute = distance
+                userRouteIndex = index
+            }
+        }
         
         // Check upcoming waypoints (current and next few)
         let checkRange = currentDirectionIndex..<min(currentDirectionIndex + 3, directionWaypoints.count)
@@ -294,8 +307,27 @@ class LocationService: NSObject, ObservableObject {
             let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
             let distance = currentLocation.distance(from: waypointLocation)
             
-            // If within notification radius, send notification
-            if distance <= directionNotificationRadius {
+            // v1.9.67: Find waypoint's position along the route path
+            var waypointRouteIndex = 0
+            var closestWaypointDistance = Double.greatestFiniteMagnitude
+            for (routeIndex, routePoint) in cachedRoutePath.enumerated() {
+                let routeLocation = CLLocation(latitude: routePoint.latitude, longitude: routePoint.longitude)
+                let dist = waypointLocation.distance(from: routeLocation)
+                if dist < closestWaypointDistance {
+                    closestWaypointDistance = dist
+                    waypointRouteIndex = routeIndex
+                }
+            }
+            
+            // v1.9.67: Only advance if BOTH conditions are met:
+            // 1. User is within notification radius (30m) of waypoint
+            // 2. User has PASSED the waypoint along the route path
+            //    OR this is the first waypoint (index 0) and user is at the start
+            let isWithinRadius = distance <= directionNotificationRadius
+            let hasPassedWaypoint = userRouteIndex > waypointRouteIndex  // Strictly greater = passed
+            let isFirstWaypointAtStart = (index == 0 && waypointRouteIndex <= 3)  // First waypoint, user just starting
+            
+            if isWithinRadius && (hasPassedWaypoint || isFirstWaypointAtStart) {
                 NotificationService.shared.sendDirectionNotification(
                     instruction: waypoint.instruction,
                     distance: waypoint.distance,
@@ -306,14 +338,12 @@ class LocationService: NSObject, ObservableObject {
                 notifiedDirectionIndices.insert(index)
                 
                 // Update current direction index
-                // v1.9.54: Fix race condition - update synchronously since we're already on main thread
-                // Previously async update allowed multiple location updates to skip ahead before index was updated
                 if index >= currentDirectionIndex {
                     let newIndex = min(index + 1, directionWaypoints.count - 1)
                     currentDirectionIndex = newIndex
                 }
                 
-                print("📍 Direction notification sent for step \(index + 1): \(waypoint.instruction)")
+                print("📍 Direction notification sent for step \(index + 1): \(waypoint.instruction) (userRouteIdx=\(userRouteIndex), waypointRouteIdx=\(waypointRouteIndex))")
                 break // Only send one notification at a time
             }
         }
