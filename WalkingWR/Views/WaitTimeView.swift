@@ -14,6 +14,7 @@ enum WaitTimeSheetType: Identifiable {
     case anxietyCheck
     case clinicianProfile
     case clinicianSelection
+    case appointmentTime  // v1.9.62: Appointment time picker
     
     var id: String {
         switch self {
@@ -22,6 +23,7 @@ enum WaitTimeSheetType: Identifiable {
         case .anxietyCheck: return "anxietyCheck"
         case .clinicianProfile: return "clinicianProfile"
         case .clinicianSelection: return "clinicianSelection"
+        case .appointmentTime: return "appointmentTime"
         }
     }
 }
@@ -48,7 +50,8 @@ struct WaitTimeView: View {
                         WaitTimeCard(
                             viewModel: viewModel,
                             onShowClinicianSelection: { activeSheet = .clinicianSelection },
-                            onShowClinicianProfile: { activeSheet = .clinicianProfile }
+                            onShowClinicianProfile: { activeSheet = .clinicianProfile },
+                            onShowAppointmentTime: { activeSheet = .appointmentTime }  // v1.9.62
                         )
                             .padding(.top, 20)
                         
@@ -152,6 +155,14 @@ struct WaitTimeView: View {
                                 }
                             }
                         )
+                    case .appointmentTime:  // v1.9.62
+                        AppointmentTimeSheet(
+                            viewModel: viewModel,
+                            isPresented: .init(
+                                get: { activeSheet == .appointmentTime },
+                                set: { if !$0 { activeSheet = nil } }
+                            )
+                        )
                     }
                 }
             }
@@ -206,6 +217,7 @@ struct WaitTimeCard: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     var onShowClinicianSelection: () -> Void
     var onShowClinicianProfile: () -> Void
+    var onShowAppointmentTime: () -> Void  // v1.9.62
     
     var waitInfo: WaitTimeInfo {
         viewModel.waitTimeInfo
@@ -337,34 +349,67 @@ struct WaitTimeCard: View {
             }
             
             // v1.9.56: Appointment time and estimated time to be seen
+            // v1.9.62: Make tappable to edit
             if let appointmentTime = waitInfo.formattedAppointmentTime {
-                VStack(spacing: 6) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock")
-                            .font(.caption)
-                            .foregroundColor(.tealAccent)
-                        Text("Your appointment: \(appointmentTime)")
-                            .font(.subheadline)
-                            .foregroundColor(.primary)
-                    }
-                    
-                    if let estimatedSeen = waitInfo.formattedEstimatedTimeToBeSeen {
+                Button(action: onShowAppointmentTime) {
+                    VStack(spacing: 6) {
                         HStack(spacing: 6) {
-                            Image(systemName: "clock.arrow.circlepath")
+                            Image(systemName: "clock")
                                 .font(.caption)
-                                .foregroundColor(waitInfo.isPastAppointmentTime ? .coralPink : .softAmber)
-                            Text("Estimated to be seen: **\(estimatedSeen)**")
+                                .foregroundColor(.tealAccent)
+                            Text("Your appointment: \(appointmentTime)")
                                 .font(.subheadline)
-                                .foregroundColor(waitInfo.isPastAppointmentTime ? .coralPink : .primary)
+                                .foregroundColor(.primary)
+                            Image(systemName: "pencil")
+                                .font(.caption2)
+                                .foregroundColor(.tealAccent.opacity(0.7))
+                        }
+                        
+                        if let estimatedSeen = waitInfo.formattedEstimatedTimeToBeSeen {
+                            HStack(spacing: 6) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .font(.caption)
+                                    .foregroundColor(waitInfo.isPastAppointmentTime ? .coralPink : .softAmber)
+                                Text("Estimated to be seen: **\(estimatedSeen)**")
+                                    .font(.subheadline)
+                                    .foregroundColor(waitInfo.isPastAppointmentTime ? .coralPink : .primary)
+                            }
                         }
                     }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.tealAccent.opacity(0.1))
+                    )
                 }
-                .padding(.vertical, 8)
-                .padding(.horizontal, 16)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.tealAccent.opacity(0.1))
-                )
+                .buttonStyle(.plain)
+            } else if viewModel.selectedClinician != nil {
+                // v1.9.62: Show button to set appointment time if not set
+                Button(action: onShowAppointmentTime) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock.badge.plus")
+                            .font(.subheadline)
+                            .foregroundColor(.tealAccent)
+                        Text("Set appointment time")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.tealAccent)
+                    }
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.tealAccent.opacity(0.1))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.tealAccent.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
             }
             
             // Clinician info with change option
@@ -1019,6 +1064,137 @@ struct AnxietyCheckSheet: View {
         wellbeingCategory: .constant(.breathing),
         wellbeingExercise: .constant(nil)
     )
+}
+
+// MARK: - Appointment Time Sheet (v1.9.62)
+struct AppointmentTimeSheet: View {
+    @ObservedObject var viewModel: WaitingRoomViewModel
+    @Binding var isPresented: Bool
+    @State private var selectedTime: Date
+    @Environment(\.colorScheme) var colorScheme
+    
+    init(viewModel: WaitingRoomViewModel, isPresented: Binding<Bool>) {
+        self.viewModel = viewModel
+        self._isPresented = isPresented
+        // Initialize with existing appointment time or default to next quarter hour
+        if let existingTime = viewModel.waitTimeInfo.appointmentTime {
+            _selectedTime = State(initialValue: existingTime)
+        } else {
+            let now = Date()
+            let calendar = Calendar.current
+            let minute = calendar.component(.minute, from: now)
+            let roundedMinute = ((minute / 15) + 1) * 15
+            if let defaultTime = calendar.date(bySettingHour: calendar.component(.hour, from: now), minute: roundedMinute % 60, second: 0, of: now) {
+                _selectedTime = State(initialValue: roundedMinute >= 60 
+                    ? calendar.date(byAdding: .hour, value: 1, to: defaultTime) ?? defaultTime
+                    : defaultTime)
+            } else {
+                _selectedTime = State(initialValue: now)
+            }
+        }
+    }
+    
+    private var timeFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                AnimatedGradientBackground()
+                
+                ScrollView {
+                    VStack(spacing: 24) {
+                        // Header
+                        VStack(spacing: 12) {
+                            Image(systemName: "clock.badge.questionmark")
+                                .font(.system(size: 50))
+                                .foregroundColor(.tealAccent)
+                            
+                            Text("Appointment Time")
+                                .font(.titleLarge)
+                                .fontWeight(.bold)
+                                .foregroundColor(.primary)
+                            
+                            if let clinician = viewModel.selectedClinician {
+                                Text("For \(clinician.fullTitle)")
+                                    .font(.bodyMedium)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Optional — helps us show when you'll be seen")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(.top, 20)
+                        
+                        // Time picker
+                        DatePicker(
+                            "Appointment Time",
+                            selection: $selectedTime,
+                            displayedComponents: .hourAndMinute
+                        )
+                        .datePickerStyle(.wheel)
+                        .labelsHidden()
+                        .frame(height: 200)
+                        .padding(.horizontal, 20)
+                        
+                        // Preview of estimated time to be seen
+                        if let clinician = viewModel.selectedClinician, clinician.currentWaitMinutes > 0 {
+                            let estimatedSeen = Calendar.current.date(byAdding: .minute, value: clinician.currentWaitMinutes, to: selectedTime) ?? selectedTime
+                            
+                            HStack(spacing: 8) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .font(.subheadline)
+                                    .foregroundColor(.softAmber)
+                                
+                                Text("With \(clinician.currentWaitMinutes) min delay, estimated to be seen: **\(timeFormatter.string(from: estimatedSeen))**")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .background(Color.softAmber.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        
+                        Spacer(minLength: 40)
+                    }
+                    .padding(.horizontal, 20)
+                }
+            }
+            .navigationTitle("Appointment Time")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        isPresented = false
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    HStack(spacing: 12) {
+                        // Clear button if time is already set
+                        if viewModel.waitTimeInfo.appointmentTime != nil {
+                            Button("Clear") {
+                                viewModel.clearAppointmentTime()
+                                isPresented = false
+                            }
+                            .foregroundColor(.secondary)
+                        }
+                        
+                        Button("Save") {
+                            viewModel.setAppointmentTime(selectedTime)
+                            isPresented = false
+                        }
+                        .fontWeight(.semibold)
+                    }
+                }
+            }
+        }
+    }
 }
 
 
