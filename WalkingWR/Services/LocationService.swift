@@ -242,12 +242,11 @@ class LocationService: NSObject, ObservableObject {
                 notifiedDirectionIndices.insert(index)
                 
                 // Update current direction index
+                // v1.9.54: Fix race condition - update synchronously since we're already on main thread
+                // Previously async update allowed multiple location updates to skip ahead before index was updated
                 if index >= currentDirectionIndex {
-                    DispatchQueue.main.async {
-                        // v1.9.15: Ensure index doesn't go out of bounds
-                        let newIndex = min(index + 1, self.directionWaypoints.count - 1)
-                        self.currentDirectionIndex = newIndex
-                    }
+                    let newIndex = min(index + 1, directionWaypoints.count - 1)
+                    currentDirectionIndex = newIndex
                 }
                 
                 print("📍 Direction notification sent for step \(index + 1): \(waypoint.instruction)")
