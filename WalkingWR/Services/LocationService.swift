@@ -202,8 +202,66 @@ class LocationService: NSObject, ObservableObject {
             cumulativeDistance += Double(direction.distanceMeters)
         }
         
+        // v1.9.63: Check if user has already passed the first waypoint(s)
+        // This handles cases where the user is already on the road mentioned in the first instruction
+        if let currentLoc = currentLocation, !directionWaypoints.isEmpty, !routePath.isEmpty {
+            // Find closest point on route path to user's current location
+            var closestRouteIndex = 0
+            var closestRouteDistance = Double.greatestFiniteMagnitude
+            for (index, routePoint) in routePath.enumerated() {
+                let routeLocation = CLLocation(latitude: routePoint.latitude, longitude: routePoint.longitude)
+                let distance = currentLoc.distance(from: routeLocation)
+                if distance < closestRouteDistance {
+                    closestRouteDistance = distance
+                    closestRouteIndex = index
+                }
+            }
+            
+            // Check each waypoint in order - skip any that are already behind the user along the route
+            var skippedCount = 0
+            for (index, waypoint) in directionWaypoints.enumerated() {
+                let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
+                let distanceToWaypoint = currentLoc.distance(from: waypointLocation)
+                
+                // Find closest point on route path to this waypoint
+                var closestWaypointRouteIndex = 0
+                var closestWaypointRouteDistance = Double.greatestFiniteMagnitude
+                for (routeIndex, routePoint) in routePath.enumerated() {
+                    let routeLocation = CLLocation(latitude: routePoint.latitude, longitude: routePoint.longitude)
+                    let distance = waypointLocation.distance(from: routeLocation)
+                    if distance < closestWaypointRouteDistance {
+                        closestWaypointRouteDistance = distance
+                        closestWaypointRouteIndex = routeIndex
+                    }
+                }
+                
+                // If user is already past this waypoint along the route path, skip it
+                // OR if user is very close to the route (< 30m) and the waypoint is far ahead (> 100m)
+                // This handles the case where user is already on the road but first waypoint is ahead
+                let isPastWaypointOnRoute = closestRouteIndex > closestWaypointRouteIndex
+                let isCloseToRouteButWaypointFar = closestRouteDistance < 30 && distanceToWaypoint > 100
+                
+                if isPastWaypointOnRoute || (index == 0 && isCloseToRouteButWaypointFar) {
+                    skippedCount = index + 1
+                    notifiedDirectionIndices.insert(index) // Mark as already notified
+                } else if distanceToWaypoint <= 50 {
+                    // User is at or very close to this waypoint, skip it
+                    skippedCount = index + 1
+                    notifiedDirectionIndices.insert(index) // Mark as already notified
+                } else {
+                    // User hasn't reached this waypoint yet, stop checking
+                    break
+                }
+            }
+            
+            if skippedCount > 0 {
+                currentDirectionIndex = min(skippedCount, directionWaypoints.count - 1)
+                print("📍 Skipped \(skippedCount) waypoint(s) - user already past. Starting at index \(currentDirectionIndex)")
+            }
+        }
+        
         isMonitoringDirections = true
-        print("📍 Started direction monitoring with \(directionWaypoints.count) waypoints")
+        print("📍 Started direction monitoring with \(directionWaypoints.count) waypoints, starting at index \(currentDirectionIndex)")
     }
     
     /// Stop monitoring for directions
