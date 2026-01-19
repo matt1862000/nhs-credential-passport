@@ -558,23 +558,23 @@ struct AppointmentTimePickerCard: View {
             .labelsHidden()
             .frame(height: 120)
             
-            // Preview of estimated time to be seen
-            if clinician.currentWaitMinutes > 0 {
-                let estimatedSeen = Calendar.current.date(byAdding: .minute, value: clinician.currentWaitMinutes, to: selectedTime) ?? selectedTime
-                
-                HStack(spacing: 8) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.caption)
-                        .foregroundColor(.softAmber)
-                    
-                    Text("With \(clinician.currentWaitMinutes) min delay, estimated to be seen: **\(timeFormatter.string(from: estimatedSeen))**")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+            // v1.9.60: Wrong clinician? Change button - more prominent, above action buttons
+            if let onChangeClinician = onChangeClinician {
+                Button(action: onChangeClinician) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.subheadline)
+                        Text("Wrong clinician? Change")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(colorScheme == .dark ? Color.darkCardBackground.opacity(0.5) : Color.gray.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.softAmber.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.bottom, 4)
             }
             
             // Buttons
@@ -606,20 +606,6 @@ struct AppointmentTimePickerCard: View {
                     .background(Color.tealAccent)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
-            }
-            
-            // v1.9.58: Wrong clinician? Change button
-            if let onChangeClinician = onChangeClinician {
-                Button(action: onChangeClinician) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.left.arrow.right")
-                            .font(.caption)
-                        Text("Wrong clinician? Change")
-                    }
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                }
-                .padding(.top, 4)
             }
         }
         .padding(16)
