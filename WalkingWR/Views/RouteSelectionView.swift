@@ -6328,7 +6328,7 @@ struct ActiveWalkView: View {
             get: { viewModel.showHomeArrivalPrompt },
             set: { viewModel.showHomeArrivalPrompt = $0 }
         )) {
-            HomeArrivalSheet(viewModel: viewModel)
+            HomeArrivalSheet(viewModel: viewModel, isPresented: isPresented)
         }
     }
     
@@ -6914,6 +6914,7 @@ struct MarkerArrivalSheet: View {
 // MARK: - Home Arrival Sheet (v1.9.13)
 struct HomeArrivalSheet: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
+    var isPresented: Binding<Bool>? = nil  // v1.9.52: Binding to dismiss fullScreenCover
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -7026,6 +7027,12 @@ struct HomeArrivalSheet: View {
                             viewModel.endWalk(completed: true)
                             viewModel.dismissHomeArrivalPrompt()
                             dismiss()
+                            // v1.9.52: Dismiss fullScreenCover after ending walk
+                            if let isPresented = isPresented {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    isPresented.wrappedValue = false
+                                }
+                            }
                         }) {
                             HStack {
                                 Image(systemName: "checkmark.circle.fill")
@@ -8129,7 +8136,7 @@ extension View {
                 get: { viewModel.showHomeArrivalPrompt },
                 set: { viewModel.showHomeArrivalPrompt = $0 }
             )) {
-                HomeArrivalSheet(viewModel: viewModel)
+                HomeArrivalSheet(viewModel: viewModel, isPresented: showActiveWalk)
             }
             .sheet(isPresented: Binding(
                 get: { viewModel.showPreWalkWellbeing },
