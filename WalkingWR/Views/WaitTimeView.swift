@@ -361,7 +361,7 @@ struct WaitTimeCard: View {
                                 .font(.subheadline)
                                 .foregroundColor(.primary)
                             Image(systemName: "pencil")
-                                .font(.caption)
+                                .font(.subheadline)
                                 .foregroundColor(.tealAccent.opacity(0.7))
                         }
                         
