@@ -132,6 +132,7 @@ class WaitingRoomViewModel: ObservableObject {
         
         if let clinician = foundClinician {
             self.selectedClinician = clinician
+            // Create waitTimeInfo first, appointment time will be restored after init
             self.waitTimeInfo = WaitTimeInfo(from: clinician)
             
             // Default to notifications enabled unless explicitly disabled
@@ -375,7 +376,10 @@ class WaitingRoomViewModel: ObservableObject {
             }) {
                 let restoredClinician = createClinicianFromFirebase(matchingData)
                 selectedClinician = restoredClinician
+                // Preserve appointment time when updating waitTimeInfo from Firebase
+                let preservedAppointmentTime = waitTimeInfo.appointmentTime
                 waitTimeInfo = WaitTimeInfo(from: restoredClinician)
+                waitTimeInfo.appointmentTime = preservedAppointmentTime
                 
                 // Re-subscribe if notifications are enabled
                 // v1.7.12: Run on background thread to avoid main thread blocking
@@ -1204,7 +1208,10 @@ class WaitingRoomViewModel: ObservableObject {
         }
         
         selectedClinician = clinician
+        // Preserve appointment time when updating waitTimeInfo
+        let preservedAppointmentTime = waitTimeInfo.appointmentTime
         waitTimeInfo = WaitTimeInfo(from: clinician)
+        waitTimeInfo.appointmentTime = preservedAppointmentTime
         
         // Reset clinic ended flag - user selected an active clinician
         isClinicEnded = false
