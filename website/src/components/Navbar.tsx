@@ -18,6 +18,18 @@ export default function Navbar() {
     return () => window.removeEventListener('scroll', handleScroll)
   }, [])
 
+  // Prevent body scroll when mobile menu is open
+  useEffect(() => {
+    if (isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = 'unset'
+    }
+    return () => {
+      document.body.style.overflow = 'unset'
+    }
+  }, [isMobileMenuOpen])
+
   const navLinks = [
     { href: '#features', label: 'Features' },
     { href: '#how-it-works', label: 'How It Works' },
@@ -30,10 +42,10 @@ export default function Navbar() {
       initial={{ y: -100 }}
       animate={{ y: 0 }}
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        isScrolled ? 'glass-dark py-4' : 'py-6'
+        isScrolled ? 'glass-dark py-3 sm:py-4' : 'py-4 sm:py-6'
       }`}
     >
-      <div className="max-w-7xl mx-auto px-6 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-3 group">
           <div className="relative">
@@ -46,7 +58,7 @@ export default function Navbar() {
             </div>
             <div className="absolute inset-0 rounded-xl bg-teal-accent/20 blur-xl group-hover:blur-2xl transition-all -z-10" />
           </div>
-          <span className="text-xl font-bold dark:text-white text-slate-800">
+          <span className="text-lg sm:text-xl font-bold dark:text-white text-slate-800">
             Wait<span className="text-teal-accent dark:text-teal-accent text-teal-600">Well</span>
           </span>
         </Link>
@@ -108,57 +120,104 @@ export default function Navbar() {
         </button>
       </div>
 
-      {/* Mobile Menu */}
+      {/* Mobile Menu Overlay */}
       <AnimatePresence>
         {isMobileMenuOpen && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="md:hidden glass-dark mt-4 mx-6 rounded-2xl overflow-hidden"
-          >
-            <div className="p-6 flex flex-col gap-4">
-              {navLinks.map((link) => (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className="text-white/70 dark:text-white/70 text-slate-600 hover:text-white dark:hover:text-white hover:text-slate-900 transition-colors py-2"
-                >
-                  {link.label}
-                </Link>
-              ))}
-              <div className="pt-4 border-t border-white/10 space-y-3">
-                <button
-                  onClick={toggleTheme}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-full glass dark:text-white text-slate-700 font-semibold hover:bg-white/10 dark:hover:bg-white/10 hover:bg-slate-100"
-                  aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-                >
-                  {theme === 'dark' ? (
-                    <>
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                      </svg>
-                      Light Mode
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                      </svg>
-                      Dark Mode
-                    </>
-                  )}
-                </button>
-                <Link
-                  href="#download"
-                  className="block w-full text-center px-6 py-3 rounded-full bg-gradient-to-r from-teal-accent to-teal-accent/80 text-midnight font-semibold"
-                >
-                  Download App
-                </Link>
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden"
+            />
+            
+            {/* Menu Panel */}
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.2 }}
+              className="fixed top-0 left-0 right-0 glass-dark z-50 md:hidden shadow-2xl"
+            >
+              <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+                {/* Header with close button */}
+                <div className="flex items-center justify-between mb-6">
+                  <Link href="/" className="flex items-center gap-3" onClick={() => setIsMobileMenuOpen(false)}>
+                    <div className="w-10 h-10 rounded-xl overflow-hidden">
+                      <img 
+                        src="/WalkingWR-Logo.png" 
+                        alt="WaitWell Logo" 
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                    <span className="text-lg font-bold dark:text-white text-slate-800">
+                      Wait<span className="text-teal-accent dark:text-teal-accent text-teal-600">Well</span>
+                    </span>
+                  </Link>
+                  <button
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className="p-2 dark:text-white text-slate-700"
+                    aria-label="Close menu"
+                  >
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
+                {/* Navigation Links */}
+                <div className="flex flex-col gap-1 mb-6">
+                  {navLinks.map((link) => (
+                    <Link
+                      key={link.href}
+                      href={link.href}
+                      onClick={() => setIsMobileMenuOpen(false)}
+                      className="text-white/90 dark:text-white/90 text-slate-800 hover:text-white dark:hover:text-white hover:text-slate-900 transition-colors py-3 px-4 rounded-lg hover:bg-white/10 dark:hover:bg-white/10 hover:bg-slate-100 text-base font-medium"
+                    >
+                      {link.label}
+                    </Link>
+                  ))}
+                </div>
+
+                {/* Actions */}
+                <div className="pt-4 border-t border-white/10 dark:border-white/10 border-slate-200 space-y-3">
+                  <button
+                    onClick={() => {
+                      toggleTheme()
+                      setIsMobileMenuOpen(false)
+                    }}
+                    className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-full glass dark:text-white text-slate-700 font-semibold hover:bg-white/10 dark:hover:bg-white/10 hover:bg-slate-100 transition-colors"
+                    aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+                  >
+                    {theme === 'dark' ? (
+                      <>
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                        </svg>
+                        Light Mode
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                        </svg>
+                        Dark Mode
+                      </>
+                    )}
+                  </button>
+                  <Link
+                    href="#download"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className="block w-full text-center px-6 py-3 rounded-full bg-gradient-to-r from-teal-accent to-teal-accent/80 text-midnight font-semibold hover:shadow-lg hover:shadow-teal-accent/30 transition-all"
+                  >
+                    Download App
+                  </Link>
+                </div>
               </div>
-            </div>
-          </motion.div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </motion.nav>
