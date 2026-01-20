@@ -1114,7 +1114,7 @@ class WaitingRoomViewModel: ObservableObject {
                 userProgress.addPoints(marker.pointsValue)
                 
                 // v1.9.84: If this is the last marker, clear arrival instruction for return leg
-                if marker == route.qrMarkers.last, let arrivalInst = arrivalInstruction {
+                if marker.id == route.qrMarkers.last?.id, let arrivalInst = arrivalInstruction {
                     // Remove arrival instruction from cached directions
                     if let arrivalIndex = cachedOriginalDirections.firstIndex(where: { $0.id == arrivalInst.id }) {
                         cachedOriginalDirections.remove(at: arrivalIndex)
