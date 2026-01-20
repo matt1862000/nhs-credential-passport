@@ -27,8 +27,8 @@ const footerLinks = {
 export default function Footer() {
   return (
     <footer className="relative bg-midnight dark:bg-midnight bg-slate-100 border-t border-white/5 dark:border-white/5 border-slate-300">
-      <div className="max-w-7xl mx-auto px-6 py-16">
-        <div className="grid md:grid-cols-2 lg:grid-cols-5 gap-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 sm:py-16">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-8 sm:gap-10 md:gap-12">
           {/* Brand */}
           <div className="lg:col-span-2">
             <Link href="/" className="flex items-center gap-3 mb-6">
@@ -91,13 +91,13 @@ export default function Footer() {
         </div>
 
         {/* Bottom bar */}
-        <div className="mt-16 pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="dark:text-white/40 text-slate-700 text-sm">
+        <div className="mt-12 sm:mt-16 pt-6 sm:pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 text-center md:text-left">
+          <div className="dark:text-white/40 text-slate-700 text-xs sm:text-sm">
             © {new Date().getFullYear()} WaitWell. All rights reserved.
           </div>
           
-          <div className="dark:text-white/40 text-slate-700 text-sm">
-            Supported by the Topol Fellowship
+          <div className="dark:text-white/40 text-slate-700 text-xs sm:text-sm">
+            Supported by the Topol Fellowship (NHS Digital Academy)
           </div>
 
           {/* Social Links */}

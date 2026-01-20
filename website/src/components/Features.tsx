@@ -78,30 +78,30 @@ export default function Features() {
   const isInView = useInView(ref, { once: true, margin: '-100px' })
 
   return (
-    <section id="features" className="relative py-32 overflow-hidden">
+    <section id="features" className="relative py-16 sm:py-24 md:py-32 overflow-hidden">
       {/* Background */}
       <div className="absolute inset-0 bg-midnight dark:bg-midnight bg-white">
         <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-teal-accent/30 to-transparent" />
         <div className="absolute bottom-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-teal-accent/30 to-transparent" />
       </div>
 
-      <div className="relative max-w-7xl mx-auto px-6" ref={ref}>
+      <div className="relative max-w-7xl mx-auto px-4 sm:px-6" ref={ref}>
         {/* Section Header */}
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={isInView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.6 }}
-          className="text-center mb-20"
+          className="text-center mb-12 sm:mb-16 md:mb-20"
         >
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass mb-6">
-            <span className="text-teal-accent dark:text-teal-accent text-teal-700 text-sm font-medium">Features</span>
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass mb-4 sm:mb-6">
+            <span className="text-teal-accent dark:text-teal-accent text-teal-700 text-xs sm:text-sm font-medium">Features</span>
           </div>
-          <h2 className="text-4xl md:text-5xl font-bold mb-6 text-slate-900 dark:text-white">
+          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold mb-4 sm:mb-6 text-slate-900 dark:text-white px-2 sm:px-0">
             Everything You Need to
             <br />
             <span className="gradient-text">Walk with Confidence</span>
           </h2>
-          <p className="dark:text-white/50 text-slate-800 text-lg max-w-2xl mx-auto">
+          <p className="dark:text-white/50 text-slate-800 text-base sm:text-lg max-w-2xl mx-auto px-2 sm:px-0">
             From smart route planning to real-time clinic updates, we've thought of everything 
             to make your waiting time productive and relaxing.
           </p>
@@ -115,18 +115,18 @@ export default function Features() {
               initial={{ opacity: 0, y: 30 }}
               animate={isInView ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: 0.6, delay: feature.delay }}
-              className="feature-card glass rounded-2xl p-8 group cursor-pointer"
+              className="feature-card glass rounded-2xl p-6 sm:p-8 group cursor-pointer"
             >
               {/* Icon */}
-              <div className={`w-14 h-14 rounded-xl bg-gradient-to-br ${feature.color} p-3 text-white dark:text-white mb-6 group-hover:scale-110 transition-transform`}>
+              <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-gradient-to-br ${feature.color} p-3 text-white dark:text-white mb-4 sm:mb-6 group-hover:scale-110 transition-transform`}>
                 {feature.icon}
               </div>
 
               {/* Content */}
-              <h3 className="text-xl font-semibold dark:text-white text-slate-900 mb-3 group-hover:text-teal-accent dark:group-hover:text-teal-accent group-hover:text-teal-700 transition-colors">
+              <h3 className="text-lg sm:text-xl font-semibold dark:text-white text-slate-900 mb-2 sm:mb-3 group-hover:text-teal-accent dark:group-hover:text-teal-accent group-hover:text-teal-700 transition-colors">
                 {feature.title}
               </h3>
-              <p className="dark:text-white/50 text-slate-800 leading-relaxed">
+              <p className="dark:text-white/50 text-slate-800 text-sm sm:text-base leading-relaxed">
                 {feature.description}
               </p>
 
