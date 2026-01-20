@@ -676,8 +676,34 @@ class WaitingRoomViewModel: ObservableObject {
         
         // Start direction monitoring for turn-by-turn notifications (non-indoor routes only)
         if !route.isIndoor && !route.walkingDirections.isEmpty {
+            // v1.9.81: Filter out final arrival instructions before monitoring
+            // This prevents showing "The destination is on your right" at the start of the walk
+            let originalCount = route.walkingDirections.count
+            let filteredDirections = route.walkingDirections.enumerated().compactMap { (index, direction) -> WalkingDirection? in
+                let lowercased = direction.instruction.lowercased()
+                let isLast = index == route.walkingDirections.count - 1
+                
+                // Only filter the last direction if it contains arrival keywords
+                if isLast {
+                    if lowercased.contains("arrive") || 
+                       lowercased.contains("destination") || 
+                       lowercased.contains("your destination") ||
+                       lowercased.contains("on your right") ||
+                       lowercased.contains("on your left") {
+                        // Skip this final arrival instruction
+                        DebugLogger.shared.log("🚫 Filtered out final arrival instruction: '\(direction.instruction)'", category: "DIRECTION_FILTER")
+                        return nil
+                    }
+                }
+                return direction
+            }
+            
+            if filteredDirections.count < originalCount {
+                DebugLogger.shared.log("✅ Filtered \(originalCount - filteredDirections.count) arrival instruction(s). Passing \(filteredDirections.count) directions to monitoring", category: "DIRECTION_FILTER")
+            }
+            
             locationService.startDirectionMonitoring(
-                directions: route.walkingDirections,
+                directions: filteredDirections,
                 routePath: route.routePath
             )
         }
