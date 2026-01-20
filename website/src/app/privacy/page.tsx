@@ -8,7 +8,7 @@ export default function PrivacyPolicy() {
   return (
     <>
       <Navbar />
-      <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 dark:from-deep-navy dark:to-midnight pt-24 sm:pt-28">
+      <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 dark:from-deep-navy dark:to-midnight pt-20 sm:pt-24">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12 sm:py-16">
           <Link href="/" className="inline-flex items-center gap-2 text-teal-600 dark:text-teal-accent hover:text-teal-700 dark:hover:text-teal-400 mb-8">
             ← Back to Home
