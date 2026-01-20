@@ -37,13 +37,13 @@ class LocationService: NSObject, ObservableObject {
     private let directionNotificationRadius: Double = 30 // meters - notify when within 30m of turn
     private let deviationThreshold: Double = 50.0  // v1.9.15: Consider off-route if >50m from route
     
-    // v1.9.24: GPS consistency tracking - require consistent forward movement over time
+    // v1.9.25: GPS consistency tracking - relaxed for realistic walking scenarios
     private var recentProjectedPositions: [(segmentIndex: Int, t: Double, timestamp: Date)] = []
-    private let maxGPSAccuracy: Double = 15.0 // Reject GPS readings with accuracy worse than 15m
-    private let minMovementAlongRoute: Double = 20.0 // Require 20m of actual movement along route before advancing
-    private let positionHistoryWindow: TimeInterval = 10.0 // Keep last 10 seconds of positions
-    private let minConsistentReadings: Int = 5 // Need at least 5 consistent readings
-    private let consistencyThreshold: Double = 0.7 // 70% of readings must show forward progress
+    private let maxGPSAccuracy: Double = 20.0 // Accept GPS up to 20m accuracy (relaxed from 15m)
+    private let minMovementAlongRoute: Double = 15.0 // Require 15m movement (relaxed from 20m)
+    private let positionHistoryWindow: TimeInterval = 30.0 // Keep last 30 seconds (increased from 10s to get more readings)
+    private let minConsistentReadings: Int = 2 // Need at least 2 readings (relaxed from 5 - realistic with distanceFilter=10m)
+    private let consistencyThreshold: Double = 0.5 // 50% forward progress (relaxed from 70%)
     
     // MARK: - Polyline Projection Helpers (v1.9.70)
     
@@ -420,7 +420,7 @@ class LocationService: NSObject, ObservableObject {
             let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
             let distance = currentLocation.distance(from: waypointLocation)
             
-            // v1.9.24: Consistency-based waypoint advancement
+            // v1.9.25: Balanced waypoint advancement - consistency check is a bonus, not a blocker
             let waypointSegment = max(0, waypoint.polylineIndex - 1)
             let waypointT: Double = 0.5 // Consider waypoint at midpoint of its segment
             
@@ -432,34 +432,25 @@ class LocationService: NSObject, ObservableObject {
                 t2: waypointT
             ) || userProjection.segmentIndex >= waypoint.polylineIndex
             
-            // v1.9.24: NEW - Check for CONSISTENT forward movement over time
-            // This is the key improvement - GPS must show consistent forward progress
+            // v1.9.25: Check for consistent forward movement (soft check - helps but not required)
             let hasConsistentMovement = hasConsistentForwardMovement(
                 towardWaypoint: waypointSegment,
                 recentPositions: recentProjectedPositions
             )
             
-            // v1.9.24: Check if user has transitioned from before to after the waypoint
-            let hasTransitionedPast = hasPassedWaypointConsistently(
-                waypointSegment: waypointSegment,
-                waypointT: waypointT,
-                recentPositions: recentProjectedPositions,
-                currentProjection: userProjection
-            )
-            
-            // v1.9.24: Require movement along route
-            let hasMovedEnough = distanceMovedAlongRoute >= minMovementAlongRoute
+            // v1.9.25: Require some movement along route (but relaxed)
+            let hasMovedEnough = distanceMovedAlongRoute >= minMovementAlongRoute || distance <= 15
             
             // Trigger notification if:
-            // 1. CONSISTENT approach: Within 25m AND consistent forward movement AND transitioned past waypoint AND moved enough
-            // 2. FAILSAFE: Within 8m (very close, definitely there)
-            let consistentApproach = distance <= 25 && hasConsistentMovement && (hasTransitionedPast || userIsAtOrPastOnPolyline) && hasMovedEnough
-            let veryClose = distance <= 8  // Reduced from 10m - must be VERY close
+            // 1. PRIMARY: Within 25m AND past on polyline AND (has movement OR consistent movement)
+            // 2. FAILSAFE: Within 12m (close enough, definitely there)
+            let primaryCondition = distance <= 25 && userIsAtOrPastOnPolyline && (hasMovedEnough || hasConsistentMovement)
+            let closeEnough = distance <= 12
             
-            let shouldTrigger = consistentApproach || veryClose
+            let shouldTrigger = primaryCondition || closeEnough
             
             if shouldTrigger {
-                print("📍 [Trigger] Waypoint \(index): dist=\(Int(distance))m, consistent=\(hasConsistentMovement), transitioned=\(hasTransitionedPast), moved=\(String(format: "%.1f", distanceMovedAlongRoute))m")
+                print("📍 [Trigger] Waypoint \(index): dist=\(Int(distance))m, pastOnPolyline=\(userIsAtOrPastOnPolyline), consistent=\(hasConsistentMovement), moved=\(String(format: "%.1f", distanceMovedAlongRoute))m")
             }
             
             if shouldTrigger {
