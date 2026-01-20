@@ -4,7 +4,7 @@ import Link from 'next/link'
 import Navbar from '@/components/Navbar'
 import Footer from '@/components/Footer'
 
-export default function PrivacyPolicy() {
+export default function Accessibility() {
   return (
     <>
       <Navbar />
@@ -14,108 +14,115 @@ export default function PrivacyPolicy() {
             ← Back to Home
           </Link>
           
-          <h1 className="text-4xl sm:text-5xl font-bold dark:text-white text-slate-900 mb-4">Privacy Policy</h1>
+          <h1 className="text-4xl sm:text-5xl font-bold dark:text-white text-slate-900 mb-4">Accessibility Statement</h1>
           <p className="text-slate-600 dark:text-white/60 mb-8">Last updated: {new Date().toLocaleDateString('en-GB', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
 
           <div className="prose prose-slate dark:prose-invert max-w-none space-y-6 text-slate-700 dark:text-white/80">
             <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">1. Introduction</h2>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Our Commitment</h2>
               <p>
-                WaitWell ("we", "our", or "us") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our mobile application and related services.
+                WaitWell is committed to ensuring digital accessibility for people with disabilities. We are continually improving the user experience for everyone and applying the relevant accessibility standards to achieve these goals.
               </p>
-              <p>
-                WaitWell is a health and wellness application designed to support NHS patients during clinic wait times. We are committed to maintaining the highest standards of data protection in accordance with UK data protection laws, including the UK GDPR and Data Protection Act 2018.
+              <p className="mt-4">
+                This accessibility statement applies to the WaitWell mobile application and website. We aim to conform to the Web Content Accessibility Guidelines (WCAG) 2.1 Level AA standards where applicable.
               </p>
             </section>
 
             <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">2. Information We Collect</h2>
-              <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">2.1 Personal Information</h3>
-              <p>We may collect the following types of personal information:</p>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Accessibility Features</h2>
+              <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">Mobile App</h3>
+              <p>The WaitWell iOS app includes the following accessibility features:</p>
               <ul className="list-disc pl-6 space-y-2">
-                <li>Location data (GPS coordinates) when you use the walking route features</li>
-                <li>Health and fitness data (steps, distance walked) through HealthKit integration</li>
-                <li>Appointment information (clinic location, clinician details) that you provide</li>
-                <li>Device information (device type, operating system, app version)</li>
-                <li>Usage data (features used, time spent in app)</li>
+                <li><strong>VoiceOver Support:</strong> Full VoiceOver compatibility for users with visual impairments</li>
+                <li><strong>Dynamic Type:</strong> Support for iOS Dynamic Type, allowing users to adjust text size to their preference</li>
+                <li><strong>High Contrast:</strong> Support for iOS accessibility settings including increased contrast and reduced transparency</li>
+                <li><strong>Color Blindness:</strong> Color choices designed to be distinguishable for users with color vision deficiencies</li>
+                <li><strong>Haptic Feedback:</strong> Tactile feedback for important interactions</li>
+                <li><strong>Large Touch Targets:</strong> Interactive elements are sized appropriately for easy tapping</li>
               </ul>
 
-              <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">2.2 Health Data</h3>
-              <p>
-                WaitWell integrates with Apple HealthKit to track your physical activity. All health data remains on your device and is never transmitted to our servers without your explicit consent. You can revoke HealthKit access at any time through your device settings.
-              </p>
+              <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">Website</h3>
+              <p>Our website includes:</p>
+              <ul className="list-disc pl-6 space-y-2">
+                <li>Semantic HTML structure for screen reader compatibility</li>
+                <li>Keyboard navigation support</li>
+                <li>Alt text for images</li>
+                <li>Sufficient color contrast ratios</li>
+                <li>Responsive design that works on various screen sizes</li>
+                <li>Skip to main content link for keyboard users</li>
+              </ul>
             </section>
 
             <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">3. How We Use Your Information</h2>
-              <p>We use the information we collect to:</p>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Known Limitations</h2>
+              <p>
+                While we strive to ensure accessibility, we are aware that some parts of the app may not be fully accessible. We are working to address these issues:
+              </p>
               <ul className="list-disc pl-6 space-y-2">
-                <li>Provide and improve our services, including route navigation and wellness features</li>
-                <li>Personalize your experience within the app</li>
-                <li>Ensure app functionality and troubleshoot technical issues</li>
-                <li>Comply with legal obligations and protect our legal rights</li>
-                <li>Send you important updates about the app (with your consent)</li>
+                <li>Some map visualizations may be challenging for users with visual impairments - we provide text-based alternatives where possible</li>
+                <li>Route navigation relies on visual cues - we are working to enhance audio and haptic feedback</li>
+                <li>Some third-party content may not meet accessibility standards</li>
+              </ul>
+            </section>
+
+            <section>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Feedback and Reporting Issues</h2>
+              <p>
+                We welcome feedback on the accessibility of WaitWell. If you encounter accessibility barriers, please contact us:
+              </p>
+              <ul className="list-disc pl-6 space-y-2 mt-4">
+                <li><strong>Email:</strong> accessibility@waitwell.app</li>
+                <li><strong>In-App:</strong> Use the feedback feature within the app</li>
               </ul>
               <p className="mt-4">
-                <strong>We do not sell, rent, or share your personal information with third parties for marketing purposes.</strong>
+                When contacting us, please include:
               </p>
-            </section>
-
-            <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">4. Data Storage and Security</h2>
-              <p>
-                Your data is stored securely using industry-standard encryption. Location data and route information are cached locally on your device to enable offline functionality. We use Firebase for backend services, which complies with international data protection standards.
-              </p>
-              <p className="mt-4">
-                We implement appropriate technical and organizational measures to protect your personal information against unauthorized access, alteration, disclosure, or destruction.
-              </p>
-            </section>
-
-            <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">5. Your Rights</h2>
-              <p>Under UK data protection law, you have the right to:</p>
               <ul className="list-disc pl-6 space-y-2">
-                <li><strong>Access:</strong> Request a copy of the personal data we hold about you</li>
-                <li><strong>Rectification:</strong> Request correction of inaccurate data</li>
-                <li><strong>Erasure:</strong> Request deletion of your personal data</li>
-                <li><strong>Restriction:</strong> Request limitation of processing</li>
-                <li><strong>Portability:</strong> Request transfer of your data to another service</li>
-                <li><strong>Objection:</strong> Object to processing of your personal data</li>
+                <li>Description of the accessibility issue</li>
+                <li>The page or feature where you encountered the issue</li>
+                <li>Your device and operating system version</li>
+                <li>Any assistive technology you are using</li>
               </ul>
               <p className="mt-4">
-                To exercise these rights, please contact us using the information provided in Section 8.
+                We aim to respond to accessibility feedback within 5 business days.
               </p>
             </section>
 
             <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">6. Data Retention</h2>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Ongoing Improvements</h2>
               <p>
-                We retain your personal information only for as long as necessary to provide our services and comply with legal obligations. Location data is typically retained for the duration of your active use of route features. You can delete your data at any time by uninstalling the app or contacting us.
+                We are committed to continuously improving the accessibility of WaitWell. Our development process includes:
+              </p>
+              <ul className="list-disc pl-6 space-y-2">
+                <li>Regular accessibility audits and testing</li>
+                <li>User testing with people with disabilities</li>
+                <li>Training for our development team on accessibility best practices</li>
+                <li>Following WCAG guidelines in our design and development process</li>
+              </ul>
+            </section>
+
+            <section>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Third-Party Content</h2>
+              <p>
+                WaitWell may include third-party content or links to external websites. We are not responsible for the accessibility of third-party content. If you encounter accessibility issues with third-party content, please contact the provider directly.
               </p>
             </section>
 
             <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">7. Children's Privacy</h2>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Enforcement Procedure</h2>
               <p>
-                WaitWell is not intended for children under the age of 13. We do not knowingly collect personal information from children. If you believe we have inadvertently collected information from a child, please contact us immediately.
+                The Equality and Human Rights Commission (EHRC) is responsible for enforcing the Public Sector Bodies (Websites and Mobile Applications) (No. 2) Accessibility Regulations 2018 (the 'accessibility regulations'). If you are not happy with how we respond to your complaint, contact the <a href="https://www.equalityadvisoryservice.com/" className="text-teal-600 dark:text-teal-accent hover:underline" target="_blank" rel="noopener noreferrer">Equality Advisory and Support Service (EASS)</a>.
               </p>
             </section>
 
             <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">8. Contact Us</h2>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Contact Us</h2>
               <p>
-                If you have questions about this Privacy Policy or wish to exercise your data protection rights, please contact us:
+                For questions or concerns about accessibility, please contact us:
               </p>
               <p className="mt-4">
-                <strong>Email:</strong> privacy@waitwell.app<br />
+                <strong>Email:</strong> accessibility@waitwell.app<br />
                 <strong>Address:</strong> NHS Innovation, Sheffield, UK
-              </p>
-            </section>
-
-            <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">9. Changes to This Policy</h2>
-              <p>
-                We may update this Privacy Policy from time to time. We will notify you of any material changes by posting the new policy on this page and updating the "Last updated" date. Your continued use of the app after such changes constitutes acceptance of the updated policy.
               </p>
             </section>
           </div>
