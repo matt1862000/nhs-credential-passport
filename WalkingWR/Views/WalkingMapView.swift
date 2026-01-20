@@ -3116,14 +3116,19 @@ struct CompactStatusRing: View {
     @Binding var showMotionExplainer: Bool
     var hasClinicianSelected: Bool = true  // v1.6.45: Hide time when no clinic
     let onEnableSteps: () -> Void  // Full enable logic from parent
+    
+    // Cache motion status to avoid accessing during view rendering (prevents infinite loop)
+    @State private var isMotionAuthorized: Bool = false
+    @State private var isMotionDenied: Bool = false
+    @State private var isPedometerAvailable: Bool = false
 
     // v1.9.33: If Motion is already authorized, don't alternate - just show "Time left"
     // User will see HealthKit offer at end of walk
     private var shouldAlternate: Bool {
         !isStepTrackingEnabled &&
-        healthKitService.isPedometerAvailable &&
-        !healthKitService.isMotionDenied &&
-        !healthKitService.isMotionAuthorized // If Motion authorized, skip "Track steps?" prompt
+        isPedometerAvailable &&
+        !isMotionDenied &&
+        !isMotionAuthorized // If Motion authorized, skip "Track steps?" prompt
     }
 
     private var showStepsOnly: Bool {
@@ -3143,6 +3148,12 @@ struct CompactStatusRing: View {
             onEnableSteps: onEnableSteps
         )
         .onAppear {
+            // Cache motion status on appear to avoid accessing during rendering
+            // These values are computed properties, so we cache them once on appear
+            // Motion authorization status doesn't change during view lifetime
+            isMotionAuthorized = healthKitService.isMotionAuthorized
+            isMotionDenied = healthKitService.isMotionDenied
+            isPedometerAvailable = healthKitService.isPedometerAvailable
             print("🟢 CompactStatusRing: onAppear - shouldAlternate=\(shouldAlternate), isStepTrackingEnabled=\(isStepTrackingEnabled), showStepsOnly=\(showStepsOnly)")
         }
     }
