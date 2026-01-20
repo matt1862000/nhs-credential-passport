@@ -31,10 +31,10 @@ export default function Navbar() {
   }, [isMobileMenuOpen])
 
   const navLinks = [
-    { href: '#features', label: 'Features' },
-    { href: '#how-it-works', label: 'How It Works' },
-    { href: '#for-clinicians', label: 'For Clinicians' },
-    { href: '#testimonials', label: 'Testimonials' },
+    { href: '/#features', label: 'Features' },
+    { href: '/#how-it-works', label: 'How It Works' },
+    { href: '/#for-clinicians', label: 'For Clinicians' },
+    { href: '/#testimonials', label: 'Testimonials' },
   ]
 
   return (
@@ -97,7 +97,7 @@ export default function Navbar() {
           </button>
           
           <Link
-            href="#download"
+            href="/#download"
             className="px-6 py-2.5 rounded-full bg-gradient-to-r from-teal-accent to-teal-accent/80 text-midnight font-semibold hover:shadow-lg hover:shadow-teal-accent/30 transition-all hover:scale-105"
           >
             Download App
@@ -208,7 +208,7 @@ export default function Navbar() {
                     )}
                   </button>
                   <Link
-                    href="#download"
+                    href="/#download"
                     onClick={() => setIsMobileMenuOpen(false)}
                     className="block w-full text-center px-6 py-3 rounded-full bg-gradient-to-r from-teal-accent to-teal-accent/80 text-white dark:text-white dark:text-midnight font-semibold hover:shadow-lg hover:shadow-teal-accent/30 transition-all"
                   >
