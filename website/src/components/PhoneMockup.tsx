@@ -271,7 +271,7 @@ export default function PhoneMockup() {
                 </div>
               </div>
               
-              {/* Time remaining - positioned below notch with proper spacing - moved higher on mobile */}
+              {/* Time remaining - positioned just under the notch */}
               <div className="absolute top-12 sm:top-16 left-4 right-4 z-30">
                 <div className="bg-white/95 dark:bg-white/10 backdrop-blur-sm dark:backdrop-blur-xl rounded-xl p-3 flex items-center justify-between border-2 border-slate-400 dark:border-white/20 shadow-2xl">
                   <div className="flex items-center gap-2">
