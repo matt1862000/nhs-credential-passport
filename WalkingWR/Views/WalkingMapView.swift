@@ -278,7 +278,8 @@ struct WalkingInfoCard: View {
             DelayBanner(
                 delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
                 walkDurationMinutes: viewModel.selectedRoute?.durationMinutes ?? 0,
-                hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable
+                hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable,
+                estimatedSeenTime: viewModel.waitTimeInfo.formattedEstimatedTimeToBeSeen
             )
             .padding(.top, 8)
         }
@@ -3338,6 +3339,7 @@ struct DelayBanner: View {
     let delayMinutes: Int
     var walkDurationMinutes: Int = 0  // Used when no clinician selected
     var hasClinicianSelected: Bool = true
+    var estimatedSeenTime: String? = nil  // v1.9.56: Optional appointment-based estimated time
     @Environment(\.colorScheme) var colorScheme
     
     var body: some View {
@@ -3345,6 +3347,7 @@ struct DelayBanner: View {
             delayMinutes: delayMinutes,
             walkDurationMinutes: walkDurationMinutes,
             hasClinicianSelected: hasClinicianSelected,
+            estimatedSeenTime: estimatedSeenTime,
             colorScheme: colorScheme
         )
     }
@@ -3356,6 +3359,7 @@ private struct DelayBannerContent: View {
     let delayMinutes: Int
     var walkDurationMinutes: Int = 0
     var hasClinicianSelected: Bool = true
+    var estimatedSeenTime: String? = nil  // v1.9.56: Optional appointment-based estimated time
     let colorScheme: ColorScheme
     
     /// Value to display (delay or walk duration)
@@ -3426,6 +3430,16 @@ private struct DelayBannerContent: View {
             }
             
             Spacer()
+            
+            // v1.9.56: Show estimated time to be seen if appointment time set
+            if hasClinicianSelected, let seenTime = estimatedSeenTime {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("~\(seenTime)")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundColor(.softAmber)
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
