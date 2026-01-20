@@ -1,4 +1,5 @@
 'use client'
+// Test deployment - auto-update check
 
 import {
   Navbar,
