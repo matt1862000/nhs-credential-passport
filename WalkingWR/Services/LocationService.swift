@@ -523,6 +523,13 @@ class LocationService: NSObject, ObservableObject {
             let shouldTrigger = (distance <= 20 && userIsAtOrPastOnPolyline && hasMovedEnough && hasConsistentMovement && hasGoodAccuracy) ||
                                 (distance <= 8)  // Failsafe: if very close, always trigger (stricter)
             
+            // v1.9.74: Log trigger conditions for debugging
+            if distance <= 20 {
+                print("📍 [WAYPOINT CHECK] [\(timeString)] Waypoint \(index + 1): distance=\(String(format: "%.1f", distance))m")
+                print("📍 [WAYPOINT CHECK] [\(timeString)]   Conditions: atOrPast=\(userIsAtOrPastOnPolyline), movedEnough=\(hasMovedEnough), consistent=\(hasConsistentMovement), goodAccuracy=\(hasGoodAccuracy)")
+                print("📍 [WAYPOINT CHECK] [\(timeString)]   Network: \(currentNetworkType), shouldTrigger=\(shouldTrigger)")
+            }
+            
             if shouldTrigger {
                 NotificationService.shared.sendDirectionNotification(
                     instruction: waypoint.instruction,
