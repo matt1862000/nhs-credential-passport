@@ -11,7 +11,7 @@ const benefits = [
   },
   {
     title: 'Simple Setup',
-    description: 'Just display a QR code. No complex integrations or staff training required.',
+    description: 'Delays are automatically updated from your EPR system. No manual entry or staff training required.',
   },
   {
     title: 'Real-Time Updates',

@@ -48,35 +48,42 @@ export default function PhoneMockup() {
             className="absolute inset-0"
           >
             {/* Map Background */}
-            <div className="absolute inset-0 bg-gradient-to-b from-deep-navy to-midnight dark:from-deep-navy dark:to-midnight bg-gradient-to-b from-blue-50 via-white to-slate-50">
+            <div className="absolute inset-0 bg-gradient-to-b from-deep-navy to-midnight dark:from-deep-navy dark:to-midnight bg-gradient-to-b from-blue-50 via-white to-slate-50 overflow-hidden">
+              {/* Sheffield Map Background - Using static map image */}
+              <div className="absolute inset-0 z-0">
+                <img 
+                  src="https://staticmap.openstreetmap.de/staticmap.php?center=53.3800,-1.4700&zoom=13&size=400x800&maptype=mapnik"
+                  alt="Sheffield Map"
+                  className="w-full h-full object-cover"
+                  style={{ 
+                    opacity: 1,
+                    filter: 'brightness(1.3) contrast(1.3) saturate(1.2)',
+                  }}
+                  loading="eager"
+                />
+              </div>
+              
+              {/* Overlay for dark mode - minimal so map shows through */}
+              <div className="absolute inset-0 bg-deep-navy/0 dark:bg-deep-navy/5 bg-transparent z-0" />
+              
               {/* Simulated map with route */}
-              <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 200">
-                {/* Street grid - dark in dark mode, light in light mode */}
-                <g className="stroke-white/5 dark:stroke-white/5 stroke-slate-300" strokeWidth="0.5">
-                  {[...Array(10)].map((_, i) => (
-                    <line key={`h${i}`} x1="0" y1={i * 20} x2="100" y2={i * 20} />
-                  ))}
-                  {[...Array(5)].map((_, i) => (
-                    <line key={`v${i}`} x1={i * 25} y1="0" x2={i * 25} y2="200" />
-                  ))}
-                </g>
-                
-                {/* Walking route */}
+              <svg className="absolute inset-0 w-full h-full z-10" viewBox="0 0 100 200">
+                {/* Walking route - darker and thicker in light mode for visibility - stops well before top card */}
                 <motion.path
-                  d="M 20 180 C 20 150, 50 140, 50 100 S 80 60, 50 40 S 30 20, 50 10"
+                  d="M 20 180 C 20 150, 50 140, 50 100 S 80 60, 50 40 S 30 50, 50 45"
                   fill="none"
-                  className="stroke-teal-accent dark:stroke-teal-accent stroke-teal-800"
-                  strokeWidth="4"
+                  className="stroke-teal-accent dark:stroke-teal-accent stroke-teal-700"
+                  strokeWidth="5"
                   strokeLinecap="round"
                   initial={{ pathLength: 0 }}
                   animate={{ pathLength: activeScreen === 0 ? 1 : 0 }}
                   transition={{ duration: 2, ease: "easeInOut" }}
                 />
                 
-                {/* POI markers */}
-                <circle cx="50" cy="100" r="6" className="fill-coral-pink dark:fill-coral-pink fill-red-600 animate-pulse" />
-                <circle cx="50" cy="40" r="6" className="fill-soft-amber dark:fill-soft-amber fill-orange-600 animate-pulse" />
-                <circle cx="20" cy="180" r="7" className="fill-teal-accent dark:fill-teal-accent fill-teal-800" />
+                {/* POI markers - larger and more vibrant in light mode */}
+                <circle cx="50" cy="100" r="7" className="fill-coral-pink dark:fill-coral-pink fill-red-600 animate-pulse" />
+                <circle cx="50" cy="40" r="7" className="fill-soft-amber dark:fill-soft-amber fill-orange-600 animate-pulse" />
+                <circle cx="20" cy="180" r="8" className="fill-teal-accent dark:fill-teal-accent fill-teal-700" />
               </svg>
               
               {/* Direction card */}

@@ -8,7 +8,7 @@ const steps = [
   {
     number: '01',
     title: 'Check In',
-    description: 'Arrive at your clinic and scan the QR code or select your clinician from the app.',
+    description: 'Arrive at your clinic and select your clinician from the app.',
     icon: (
       <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
@@ -28,7 +28,7 @@ const steps = [
   {
     number: '03',
     title: 'Choose Your Walk',
-    description: 'Select from AI-generated routes tailored to your time. Explore parks, trails, and local landmarks.',
+    description: 'Select from routes tailored to your time. Explore parks, trails, and local landmarks.',
     icon: (
       <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
