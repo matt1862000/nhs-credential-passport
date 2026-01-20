@@ -301,64 +301,41 @@ class LocationService: NSObject, ObservableObject {
             cumulativeDistance += Double(direction.distanceMeters)
         }
         
-        // v1.9.72: More conservative waypoint skipping for cached routes
-        // Only skip waypoints if:
-        // 1. GPS accuracy is very good (<10m)
-        // 2. User is actually close to the waypoint (within 40m straight-line)
-        // 3. User is clearly past the waypoint on the polyline (not just barely past)
+        // v1.9.70: Use polyline projection to determine which waypoints are ahead/behind
+        // This handles cached routes where start position may differ from user's actual position
         if skipPassedWaypoints, let currentLoc = currentLocation, !directionWaypoints.isEmpty, !routePath.isEmpty {
-            // Require very good GPS accuracy for initial skip decisions
-            let requiredAccuracyForSkip: Double = 10.0
-            
-            if currentLoc.horizontalAccuracy > requiredAccuracyForSkip || currentLoc.horizontalAccuracy < 0 {
-                print("📍 [Polyline] GPS accuracy \(String(format: "%.1f", currentLoc.horizontalAccuracy))m too poor for waypoint skipping (need <\(requiredAccuracyForSkip)m) - starting at index 0")
-            } else if let userProjection = projectOntoPolyline(coordinate: currentLoc.coordinate, polyline: routePath) {
+            // Project user's current position onto the polyline
+            if let userProjection = projectOntoPolyline(coordinate: currentLoc.coordinate, polyline: routePath) {
                 var skippedCount = 0
                 
                 for (index, waypoint) in directionWaypoints.enumerated() {
-                    let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
-                    let straightLineDistance = currentLoc.distance(from: waypointLocation)
+                    // Check if this waypoint is BEHIND the user on the polyline
+                    // Waypoint is behind if its polyline index is less than or equal to user's projected position
+                    let waypointSegment = max(0, waypoint.polylineIndex - 1)  // Segment index (waypoint is at end of this segment)
                     
-                    // v1.9.72: Only consider skipping if within reasonable distance (40m)
-                    // This prevents GPS projection errors from skipping distant waypoints
-                    let maxDistanceForSkip: Double = 40.0
-                    
-                    if straightLineDistance > maxDistanceForSkip {
-                        // Waypoint is too far away to confidently skip
-                        print("📍 [Polyline] Waypoint \(index) is \(Int(straightLineDistance))m away - too far to skip")
-                        break
-                    }
-                    
-                    let waypointSegment = max(0, waypoint.polylineIndex - 1)
-                    
-                    // v1.9.72: Require user to be WELL past the waypoint (t > 0.7, not 0.5)
-                    // This makes it harder to accidentally skip waypoints
+                    // User is past this waypoint if:
+                    // 1. User's segment index is greater than waypoint's segment, OR
+                    // 2. User is on the same segment but further along (t > 0.5)
                     let isPast = isAhead(
                         segmentIndex1: userProjection.segmentIndex,
                         t1: userProjection.t,
                         segmentIndex2: waypointSegment,
-                        t2: 0.7  // Require being 70% through the waypoint's segment
+                        t2: 0.5  // Consider waypoint at midpoint of its segment
                     )
                     
-                    // v1.9.72: Also require user to be CLOSE to the waypoint (within 30m)
-                    // Can't skip a waypoint if we're far from it
-                    let isCloseEnough = straightLineDistance <= 30.0
-                    
-                    if isPast && isCloseEnough {
+                    if isPast {
                         skippedCount = index + 1
                         notifiedDirectionIndices.insert(index)
-                        print("📍 [Polyline] Waypoint \(index) skipped: \(Int(straightLineDistance))m away, past on polyline")
                     } else {
-                        print("📍 [Polyline] Waypoint \(index) NOT skipped: \(Int(straightLineDistance))m away, isPast=\(isPast), isClose=\(isCloseEnough)")
                         break  // Stop at first waypoint that's still ahead
                     }
                 }
                 
                 if skippedCount > 0 {
                     currentDirectionIndex = min(skippedCount, directionWaypoints.count - 1)
-                    print("📍 [Polyline] Skipped \(skippedCount) waypoint(s) - starting at index \(currentDirectionIndex)")
+                    print("📍 [Polyline] Skipped \(skippedCount) waypoint(s) - user already past (segment \(userProjection.segmentIndex), t=\(String(format: "%.2f", userProjection.t))). Starting at index \(currentDirectionIndex)")
                 } else {
-                    print("📍 [Polyline] No waypoints to skip - starting at index 0")
+                    print("📍 [Polyline] User at segment \(userProjection.segmentIndex) - no waypoints to skip")
                 }
             } else {
                 print("📍 [Polyline] Could not project user position - starting at index 0")
@@ -400,7 +377,7 @@ class LocationService: NSObject, ObservableObject {
         let now = Date()
         recentProjectedPositions.append((userProjection.segmentIndex, userProjection.t, now))
         
-        // Clean up old positions (keep last 10 seconds)
+        // Clean up old positions (keep last 30 seconds)
         recentProjectedPositions = recentProjectedPositions.filter { now.timeIntervalSince($0.timestamp) <= positionHistoryWindow }
         
         // v1.9.71: Calculate distance moved along route (not straight-line, but along the polyline)
@@ -596,41 +573,6 @@ class LocationService: NSObject, ObservableObject {
         print("📍 [Consistency] Forward: \(forwardCount), Backward: \(backwardCount), Ratio: \(String(format: "%.1f", consistencyRatio * 100))% - \(isConsistent ? "CONSISTENT" : "INCONSISTENT")")
         
         return isConsistent
-    }
-    
-    /// v1.9.24: Check if the position history shows the user has passed a waypoint
-    /// Requires: oldest reading BEFORE waypoint, newest reading AFTER waypoint
-    private func hasPassedWaypointConsistently(
-        waypointSegment: Int,
-        waypointT: Double,
-        recentPositions: [(segmentIndex: Int, t: Double, timestamp: Date)],
-        currentProjection: (segmentIndex: Int, t: Double, distanceToPolyline: Double)
-    ) -> Bool {
-        guard let oldestPosition = recentPositions.first else { return false }
-        
-        // Check if oldest position was BEFORE the waypoint
-        let wasBeforeWaypoint = !isAhead(
-            segmentIndex1: oldestPosition.segmentIndex,
-            t1: oldestPosition.t,
-            segmentIndex2: waypointSegment,
-            t2: waypointT
-        )
-        
-        // Check if current position is AFTER the waypoint
-        let isNowPastWaypoint = isAhead(
-            segmentIndex1: currentProjection.segmentIndex,
-            t1: currentProjection.t,
-            segmentIndex2: waypointSegment,
-            t2: waypointT
-        )
-        
-        let hasPassed = wasBeforeWaypoint && isNowPastWaypoint
-        
-        if hasPassed {
-            print("📍 [Waypoint] Transitioned from before to after waypoint over \(recentPositions.count) readings")
-        }
-        
-        return hasPassed
     }
     
     // v1.9.0: Get next turn coordinate for map annotation
