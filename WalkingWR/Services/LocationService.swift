@@ -38,7 +38,24 @@ class LocationService: NSObject, ObservableObject {
     private let debugLogger = DebugLogger.shared
     
     // Direction monitoring
-    @Published var currentDirectionIndex: Int = 0
+    @Published var currentDirectionIndex: Int = 0 {
+        didSet {
+            // v1.9.78: Log every time direction index changes
+            if currentDirectionIndex != oldValue {
+                let logMsg = "🔄 Direction index changed: \(oldValue) → \(currentDirectionIndex) (total: \(directionWaypoints.count))"
+                print("📍 [DIRECTION INDEX] \(logMsg)")
+                debugLogger.log(logMsg, category: "DIRECTION_INDEX")
+                
+                // Log what instruction is now being shown
+                if currentDirectionIndex < directionWaypoints.count {
+                    let currentWaypoint = directionWaypoints[currentDirectionIndex]
+                    let instructionLog = "📋 Now showing instruction: '\(currentWaypoint.instruction)' (index \(currentDirectionIndex))"
+                    print("📍 [DIRECTION INDEX] \(instructionLog)")
+                    debugLogger.log(instructionLog, category: "DIRECTION_INDEX")
+                }
+            }
+        }
+    }
     @Published var isMonitoringDirections: Bool = false
     @Published var isSignificantlyOffRoute: Bool = false  // v1.9.15: Track if user has deviated significantly
     private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String, polylineIndex: Int)] = []
@@ -431,6 +448,16 @@ class LocationService: NSObject, ObservableObject {
         }
         
         isMonitoringDirections = true
+        
+        // v1.9.78: Log all directions for debugging
+        var allDirectionsLog = "📋 All directions (\(directionWaypoints.count) total):\n"
+        for (idx, waypoint) in directionWaypoints.enumerated() {
+            let marker = idx == currentDirectionIndex ? "👉" : "  "
+            allDirectionsLog += "\(marker) [\(idx)] \(waypoint.instruction) (polylineIndex: \(waypoint.polylineIndex))\n"
+        }
+        print("📍 [DIRECTION_MONITORING] \(allDirectionsLog)")
+        debugLogger.log(allDirectionsLog, category: "DIRECTION_MONITORING")
+        
         let monitoringLog = "Started direction monitoring with \(directionWaypoints.count) waypoints, starting at index \(currentDirectionIndex), routePath points: \(cachedRoutePath.count)"
         print("📍 \(monitoringLog)")
         debugLogger.log(monitoringLog, category: "DIRECTION_MONITORING")
@@ -470,6 +497,19 @@ class LocationService: NSObject, ObservableObject {
             return
         }
         
+        // v1.9.78: Enhanced GPS location logging
+        let gpsLog = "📍 GPS: (\(String(format: "%.6f", currentLocation.coordinate.latitude)), \(String(format: "%.6f", currentLocation.coordinate.longitude))), Accuracy: \(String(format: "%.1f", currentLocation.horizontalAccuracy))m, Speed: \(String(format: "%.2f", currentLocation.speed))m/s, Network: \(currentNetworkType)"
+        print("📍 [GPS] [\(timeString)] \(gpsLog)")
+        debugLogger.log(gpsLog, category: "GPS")
+        
+        // v1.9.78: Log current direction being shown
+        if currentDirectionIndex < directionWaypoints.count {
+            let currentWaypoint = directionWaypoints[currentDirectionIndex]
+            let directionLog = "📋 Current direction shown: Index \(currentDirectionIndex)/\(directionWaypoints.count) - '\(currentWaypoint.instruction)'"
+            print("📍 [CURRENT DIRECTION] [\(timeString)] \(directionLog)")
+            debugLogger.log(directionLog, category: "CURRENT_DIRECTION")
+        }
+        
         let checkLog = "Checking waypoints (index: \(currentDirectionIndex)/\(directionWaypoints.count)), Network: \(currentNetworkType), Accuracy: \(String(format: "%.1f", currentLocation.horizontalAccuracy))m"
         print("📍 [WAYPOINT CHECK] [\(timeString)] \(checkLog)")
         debugLogger.log(checkLog, category: "WAYPOINT")
@@ -482,7 +522,18 @@ class LocationService: NSObject, ObservableObject {
             return
         }
         
-        debugLogger.log("Projected position: segment=\(userProjection.segmentIndex), t=\(String(format: "%.3f", userProjection.t)), distanceToPolyline=\(String(format: "%.1f", userProjection.distanceToPolyline))m", category: "WAYPOINT")
+        // v1.9.78: Enhanced projection logging with route segment info
+        let segmentInfo: String
+        if userProjection.segmentIndex < cachedRoutePath.count - 1 {
+            let segmentStart = cachedRoutePath[userProjection.segmentIndex]
+            let segmentEnd = cachedRoutePath[min(userProjection.segmentIndex + 1, cachedRoutePath.count - 1)]
+            segmentInfo = "Segment \(userProjection.segmentIndex): (\(String(format: "%.6f", segmentStart.latitude)), \(String(format: "%.6f", segmentStart.longitude))) → (\(String(format: "%.6f", segmentEnd.latitude)), \(String(format: "%.6f", segmentEnd.longitude)))"
+        } else {
+            segmentInfo = "Segment \(userProjection.segmentIndex): (last segment)"
+        }
+        
+        let projectionLog = "Projected position: segment=\(userProjection.segmentIndex), t=\(String(format: "%.3f", userProjection.t)), distanceToPolyline=\(String(format: "%.1f", userProjection.distanceToPolyline))m | \(segmentInfo)"
+        debugLogger.log(projectionLog, category: "WAYPOINT")
         
         // v1.9.71: Add to position history for movement tracking
         let now = Date()
@@ -938,7 +989,15 @@ extension LocationService: CLLocationManagerDelegate {
             timeSinceLastUpdate = 0
         }
         
-        let locationLog = "Location: (\(String(format: "%.6f", newLocation.coordinate.latitude)), \(String(format: "%.6f", newLocation.coordinate.longitude))), Accuracy: \(String(format: "%.1f", accuracy))m, Speed: \(String(format: "%.2f", speed))m/s, Network: \(currentNetworkType), TimeSinceLast: \(String(format: "%.2f", timeSinceLastUpdate))s"
+        // v1.9.78: Enhanced location logging with direction context
+        var locationLog = "Location: (\(String(format: "%.6f", newLocation.coordinate.latitude)), \(String(format: "%.6f", newLocation.coordinate.longitude))), Accuracy: \(String(format: "%.1f", accuracy))m, Speed: \(String(format: "%.2f", speed))m/s, Course: \(String(format: "%.1f", course))°, Network: \(currentNetworkType), TimeSinceLast: \(String(format: "%.2f", timeSinceLastUpdate))s"
+        
+        // Add current direction info if monitoring
+        if isMonitoringDirections && currentDirectionIndex < directionWaypoints.count {
+            let currentWaypoint = directionWaypoints[currentDirectionIndex]
+            locationLog += " | Current direction: [\(currentDirectionIndex)] '\(currentWaypoint.instruction)'"
+        }
+        
         print("📍 [LOCATION UPDATE] [\(timeString)] \(locationLog)")
         debugLogger.log(locationLog, category: "LOCATION")
         
