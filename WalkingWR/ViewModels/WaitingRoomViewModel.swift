@@ -793,6 +793,9 @@ class WaitingRoomViewModel: ObservableObject {
         cachedReturnDirections = []
         isUsingReturnDirections = false
         
+        // v1.9.85: Reset arrival instruction
+        arrivalInstruction = nil
+        
         // v1.9.16: Reset cached return route
         cachedReturnRoutePolyline = []
         hasCachedReturnRoute = false
