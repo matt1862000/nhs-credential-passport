@@ -25,16 +25,104 @@ class LocationService: NSObject, ObservableObject {
     @Published var isFetchingLocation: Bool = false
     @Published var locationRetryCount: Int = 0
     @Published var isRetrying: Bool = false
+    private var locationRequestStartTime: Date?
     
     // Direction monitoring
     @Published var currentDirectionIndex: Int = 0
     @Published var isMonitoringDirections: Bool = false
     @Published var isSignificantlyOffRoute: Bool = false  // v1.9.15: Track if user has deviated significantly
-    private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String)] = []
+    private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String, polylineIndex: Int)] = []
     private var notifiedDirectionIndices: Set<Int> = []
     private var cachedRoutePath: [CLLocationCoordinate2D] = []  // v1.9.15: Cache route path for deviation detection
     private let directionNotificationRadius: Double = 30 // meters - notify when within 30m of turn
     private let deviationThreshold: Double = 50.0  // v1.9.15: Consider off-route if >50m from route
+    
+    // v1.9.71: GPS stability tracking to prevent jitter from advancing waypoints
+    private var recentProjectedPositions: [(segmentIndex: Int, t: Double, timestamp: Date)] = []
+    private let maxGPSAccuracy: Double = 20.0 // Reject GPS readings with accuracy worse than 20m
+    private let minMovementAlongRoute: Double = 15.0 // Require 15m of actual movement along route before advancing
+    private let positionHistoryWindow: TimeInterval = 10.0 // Keep last 10 seconds of positions
+    
+    // MARK: - Polyline Projection Helpers (v1.9.70)
+    
+    /// Project a point onto a polyline segment and return the closest point
+    private func closestPointOnSegment(
+        point: CLLocationCoordinate2D,
+        segmentStart: CLLocationCoordinate2D,
+        segmentEnd: CLLocationCoordinate2D
+    ) -> (closestPoint: CLLocationCoordinate2D, t: Double) {
+        // Vector from start to end
+        let dx = segmentEnd.longitude - segmentStart.longitude
+        let dy = segmentEnd.latitude - segmentStart.latitude
+        
+        // Handle zero-length segment
+        let segmentLengthSq = dx * dx + dy * dy
+        if segmentLengthSq < 1e-12 {
+            return (segmentStart, 0.0)
+        }
+        
+        // Vector from start to point
+        let px = point.longitude - segmentStart.longitude
+        let py = point.latitude - segmentStart.latitude
+        
+        // Project point onto line, clamped to [0, 1]
+        let t = max(0, min(1, (px * dx + py * dy) / segmentLengthSq))
+        
+        // Return the closest point on the segment
+        let closestPoint = CLLocationCoordinate2D(
+            latitude: segmentStart.latitude + t * dy,
+            longitude: segmentStart.longitude + t * dx
+        )
+        
+        return (closestPoint, t)
+    }
+    
+    /// Project a coordinate onto the cached route polyline
+    /// Returns: (segmentIndex, fractionalPosition along that segment, distance to polyline)
+    private func projectOntoPolyline(
+        coordinate: CLLocationCoordinate2D,
+        polyline: [CLLocationCoordinate2D]
+    ) -> (segmentIndex: Int, t: Double, distanceToPolyline: Double)? {
+        guard polyline.count >= 2 else { return nil }
+        
+        var bestSegmentIndex = 0
+        var bestT: Double = 0
+        var bestDistance: Double = .greatestFiniteMagnitude
+        
+        for i in 0..<(polyline.count - 1) {
+            let (closestPoint, t) = closestPointOnSegment(
+                point: coordinate,
+                segmentStart: polyline[i],
+                segmentEnd: polyline[i + 1]
+            )
+            
+            let closestLocation = CLLocation(latitude: closestPoint.latitude, longitude: closestPoint.longitude)
+            let pointLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            let distance = pointLocation.distance(from: closestLocation)
+            
+            if distance < bestDistance {
+                bestDistance = distance
+                bestSegmentIndex = i
+                bestT = t
+            }
+        }
+        
+        return (bestSegmentIndex, bestT, bestDistance)
+    }
+    
+    /// Compare two positions along the polyline
+    /// Returns true if position1 is AHEAD of position2 (further along the route)
+    private func isAhead(
+        segmentIndex1: Int, t1: Double,
+        segmentIndex2: Int, t2: Double
+    ) -> Bool {
+        if segmentIndex1 > segmentIndex2 {
+            return true
+        } else if segmentIndex1 == segmentIndex2 {
+            return t1 > t2
+        }
+        return false
+    }
     
     // Starting point for walk
     private var startLocation: CLLocation?
@@ -100,10 +188,20 @@ class LocationService: NSObject, ObservableObject {
     // MARK: - Tracking
     
     func startTracking() {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [LOCATION] [\(timeString)] 🚶 startTracking() called")
+        
         guard isAuthorized else {
+            print("⏱️ [LOCATION] [\(timeString)] ❌ Not authorized - requesting permission")
             requestPermission()
             return
         }
+        
+        print("⏱️ [LOCATION] [\(timeString)] ✅ Starting location tracking...")
         
         isTracking = true
         distanceWalked = 0
@@ -118,10 +216,7 @@ class LocationService: NSObject, ObservableObject {
         locationManager.startUpdatingLocation()
         locationManager.startUpdatingHeading()
         
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        let timeString = formatter.string(from: Date())
-        
+        print("⏱️ [LOCATION] [\(timeString)] 📡 startUpdatingLocation() and startUpdatingHeading() called")
         
         // Start monitoring for heading update stops
         startHeadingUpdateMonitoring()
@@ -149,7 +244,13 @@ class LocationService: NSObject, ObservableObject {
     // MARK: - Direction Monitoring
     
     /// Start monitoring for direction waypoints to send turn-by-turn notifications
-    func startDirectionMonitoring(directions: [WalkingDirection], routePath: [CLLocationCoordinate2D]) {
+    /// v1.9.70: Uses polyline projection to correctly determine which waypoints are ahead/behind
+    /// - Parameters:
+    ///   - directions: Walking directions
+    ///   - routePath: Full route polyline
+    ///   - skipPassedWaypoints: If true, check current location and skip already-passed waypoints.
+    ///                          Use false for fresh walk start (index 0), true for mid-walk direction changes.
+    func startDirectionMonitoring(directions: [WalkingDirection], routePath: [CLLocationCoordinate2D], skipPassedWaypoints: Bool = false) {
         // Build waypoints from directions
         // Each direction corresponds to a step - we'll use approximate positions along the route
         directionWaypoints = []
@@ -170,6 +271,7 @@ class LocationService: NSObject, ObservableObject {
             // Walk through route points until we reach the target distance
             var accumulatedDist: Double = 0
             var waypointCoord = routePath.first ?? CLLocationCoordinate2D()
+            var waypointPolylineIndex = 0
             
             for i in routeIndex..<(totalRoutePoints - 1) {
                 let from = CLLocation(latitude: routePath[i].latitude, longitude: routePath[i].longitude)
@@ -179,23 +281,67 @@ class LocationService: NSObject, ObservableObject {
                 if accumulatedDist + segmentDist >= targetDistance - cumulativeDistance {
                     // This segment contains our waypoint
                     waypointCoord = routePath[i + 1]
+                    waypointPolylineIndex = i + 1  // v1.9.70: Store polyline index
                     routeIndex = i + 1
                     break
                 }
                 accumulatedDist += segmentDist
             }
             
+            // v1.9.70: Store polyline index for each waypoint
             directionWaypoints.append((
                 coordinate: waypointCoord,
                 instruction: direction.instruction,
-                distance: direction.distance
+                distance: direction.distance,
+                polylineIndex: waypointPolylineIndex
             ))
             
             cumulativeDistance += Double(direction.distanceMeters)
         }
         
+        // v1.9.70: Use polyline projection to determine which waypoints are ahead/behind
+        // This handles cached routes where start position may differ from user's actual position
+        if skipPassedWaypoints, let currentLoc = currentLocation, !directionWaypoints.isEmpty, !routePath.isEmpty {
+            // Project user's current position onto the polyline
+            if let userProjection = projectOntoPolyline(coordinate: currentLoc.coordinate, polyline: routePath) {
+                var skippedCount = 0
+                
+                for (index, waypoint) in directionWaypoints.enumerated() {
+                    // Check if this waypoint is BEHIND the user on the polyline
+                    // Waypoint is behind if its polyline index is less than or equal to user's projected position
+                    let waypointSegment = max(0, waypoint.polylineIndex - 1)  // Segment index (waypoint is at end of this segment)
+                    
+                    // User is past this waypoint if:
+                    // 1. User's segment index is greater than waypoint's segment, OR
+                    // 2. User is on the same segment but further along (t > 0.5)
+                    let isPast = isAhead(
+                        segmentIndex1: userProjection.segmentIndex,
+                        t1: userProjection.t,
+                        segmentIndex2: waypointSegment,
+                        t2: 0.5  // Consider waypoint at midpoint of its segment
+                    )
+                    
+                    if isPast {
+                        skippedCount = index + 1
+                        notifiedDirectionIndices.insert(index)
+                    } else {
+                        break  // Stop at first waypoint that's still ahead
+                    }
+                }
+                
+                if skippedCount > 0 {
+                    currentDirectionIndex = min(skippedCount, directionWaypoints.count - 1)
+                    print("📍 [Polyline] Skipped \(skippedCount) waypoint(s) - user already past (segment \(userProjection.segmentIndex), t=\(String(format: "%.2f", userProjection.t))). Starting at index \(currentDirectionIndex)")
+                } else {
+                    print("📍 [Polyline] User at segment \(userProjection.segmentIndex) - no waypoints to skip")
+                }
+            } else {
+                print("📍 [Polyline] Could not project user position - starting at index 0")
+            }
+        }
+        
         isMonitoringDirections = true
-        print("📍 Started direction monitoring with \(directionWaypoints.count) waypoints")
+        print("📍 Started direction monitoring with \(directionWaypoints.count) waypoints, starting at index \(currentDirectionIndex)")
     }
     
     /// Stop monitoring for directions
@@ -204,12 +350,39 @@ class LocationService: NSObject, ObservableObject {
         directionWaypoints = []
         notifiedDirectionIndices = []
         currentDirectionIndex = 0
+        recentProjectedPositions = []  // v1.9.71: Clear position history
         NotificationService.shared.cancelDirectionNotifications()
     }
     
     /// Check if user is approaching any direction waypoint and send notification
+    /// v1.9.71: Adds GPS accuracy filtering and movement confirmation to prevent jitter from advancing waypoints
     private func checkDirectionWaypoints(currentLocation: CLLocation) {
-        guard isMonitoringDirections, !directionWaypoints.isEmpty else { return }
+        guard isMonitoringDirections, !directionWaypoints.isEmpty, !cachedRoutePath.isEmpty else { return }
+        
+        // v1.9.71: Filter out poor GPS readings
+        // Reject readings with accuracy worse than maxGPSAccuracy (default 20m)
+        if currentLocation.horizontalAccuracy > maxGPSAccuracy || currentLocation.horizontalAccuracy < 0 {
+            print("📍 [GPS Filter] Rejecting location: accuracy=\(String(format: "%.1f", currentLocation.horizontalAccuracy))m (max: \(maxGPSAccuracy)m)")
+            return
+        }
+        
+        // Project user's current position onto the polyline
+        guard let userProjection = projectOntoPolyline(coordinate: currentLocation.coordinate, polyline: cachedRoutePath) else {
+            return
+        }
+        
+        // v1.9.71: Add to position history for movement tracking
+        let now = Date()
+        recentProjectedPositions.append((userProjection.segmentIndex, userProjection.t, now))
+        
+        // Clean up old positions (keep last 10 seconds)
+        recentProjectedPositions = recentProjectedPositions.filter { now.timeIntervalSince($0.timestamp) <= positionHistoryWindow }
+        
+        // v1.9.71: Calculate distance moved along route (not straight-line, but along the polyline)
+        let distanceMovedAlongRoute = calculateDistanceMovedAlongRoute(
+            currentProjection: userProjection,
+            recentPositions: recentProjectedPositions
+        )
         
         // Check upcoming waypoints (current and next few)
         let checkRange = currentDirectionIndex..<min(currentDirectionIndex + 3, directionWaypoints.count)
@@ -222,8 +395,31 @@ class LocationService: NSObject, ObservableObject {
             let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
             let distance = currentLocation.distance(from: waypointLocation)
             
-            // If within notification radius, send notification
-            if distance <= directionNotificationRadius {
+            // v1.9.70: Determine waypoint's position on the polyline
+            let waypointSegment = max(0, waypoint.polylineIndex - 1)
+            
+            // Check if user has reached/passed this waypoint using polyline position
+            // User is at/past waypoint if:
+            // 1. Within 30m straight-line distance, AND
+            // 2. User's polyline position is at or past the waypoint's position
+            let userIsAtOrPastOnPolyline = isAhead(
+                segmentIndex1: userProjection.segmentIndex,
+                t1: userProjection.t,
+                segmentIndex2: waypointSegment,
+                t2: 0.3  // User should be at least 30% into the waypoint's segment
+            ) || userProjection.segmentIndex >= waypoint.polylineIndex
+            
+            // v1.9.71: Require actual movement along route before advancing (prevents GPS jitter)
+            // Exception: if very close (<15m), always trigger (user is definitely there)
+            let hasMovedEnough = distanceMovedAlongRoute >= minMovementAlongRoute || distance <= 15
+            
+            // Trigger notification if:
+            // - Within 30m distance AND past on polyline AND has moved enough, OR
+            // - Within 15m distance (very close, definitely there regardless of movement)
+            let shouldTrigger = (distance <= directionNotificationRadius && userIsAtOrPastOnPolyline && hasMovedEnough) ||
+                                (distance <= 15)  // Failsafe: if very close, always trigger
+            
+            if shouldTrigger {
                 NotificationService.shared.sendDirectionNotification(
                     instruction: waypoint.instruction,
                     distance: waypoint.distance,
@@ -235,17 +431,81 @@ class LocationService: NSObject, ObservableObject {
                 
                 // Update current direction index
                 if index >= currentDirectionIndex {
-                    DispatchQueue.main.async {
-                        // v1.9.15: Ensure index doesn't go out of bounds
-                        let newIndex = min(index + 1, self.directionWaypoints.count - 1)
-                        self.currentDirectionIndex = newIndex
-                    }
+                    let newIndex = min(index + 1, directionWaypoints.count - 1)
+                    currentDirectionIndex = newIndex
                 }
                 
-                print("📍 Direction notification sent for step \(index + 1): \(waypoint.instruction)")
+                // Clear position history after advancing (fresh start for next waypoint)
+                recentProjectedPositions.removeAll()
+                
+                print("📍 Direction: step \(index + 1)/\(directionWaypoints.count) - \(waypoint.instruction) (segment \(userProjection.segmentIndex), dist \(Int(distance))m, moved \(String(format: "%.1f", distanceMovedAlongRoute))m)")
                 break // Only send one notification at a time
             }
         }
+    }
+    
+    /// v1.9.71: Calculate distance moved along the route polyline (not straight-line)
+    /// This helps distinguish real movement from GPS jitter
+    private func calculateDistanceMovedAlongRoute(
+        currentProjection: (segmentIndex: Int, t: Double, distanceToPolyline: Double),
+        recentPositions: [(segmentIndex: Int, t: Double, timestamp: Date)]
+    ) -> Double {
+        guard recentPositions.count >= 2 else { return 0 }
+        
+        // Get the oldest position in history
+        guard let oldestPosition = recentPositions.first else { return 0 }
+        
+        // Calculate distance along polyline from oldest to current
+        var totalDistance: Double = 0
+        
+        let startSegment = oldestPosition.segmentIndex
+        let startT = oldestPosition.t
+        let endSegment = currentProjection.segmentIndex
+        let endT = currentProjection.t
+        
+        if startSegment == endSegment {
+            // Same segment - calculate fractional distance
+            let segmentStart = cachedRoutePath[startSegment]
+            let segmentEnd = cachedRoutePath[min(startSegment + 1, cachedRoutePath.count - 1)]
+            let segmentLength = CLLocation(latitude: segmentStart.latitude, longitude: segmentStart.longitude)
+                .distance(from: CLLocation(latitude: segmentEnd.latitude, longitude: segmentEnd.longitude))
+            totalDistance = abs(endT - startT) * segmentLength
+        } else {
+            // Different segments - sum up intermediate segments
+            let minSegment = min(startSegment, endSegment)
+            let maxSegment = max(startSegment, endSegment)
+            
+            // Distance from start position to end of its segment
+            if startSegment < cachedRoutePath.count - 1 {
+                let segStart = cachedRoutePath[startSegment]
+                let segEnd = cachedRoutePath[startSegment + 1]
+                let segLength = CLLocation(latitude: segStart.latitude, longitude: segStart.longitude)
+                    .distance(from: CLLocation(latitude: segEnd.latitude, longitude: segEnd.longitude))
+                totalDistance += (1.0 - startT) * segLength
+            }
+            
+            // Distance through intermediate segments
+            for i in (minSegment + 1)..<maxSegment {
+                if i < cachedRoutePath.count - 1 {
+                    let segStart = cachedRoutePath[i]
+                    let segEnd = cachedRoutePath[i + 1]
+                    let segLength = CLLocation(latitude: segStart.latitude, longitude: segStart.longitude)
+                        .distance(from: CLLocation(latitude: segEnd.latitude, longitude: segEnd.longitude))
+                    totalDistance += segLength
+                }
+            }
+            
+            // Distance from start of end segment to end position
+            if endSegment < cachedRoutePath.count - 1 {
+                let segStart = cachedRoutePath[endSegment]
+                let segEnd = cachedRoutePath[endSegment + 1]
+                let segLength = CLLocation(latitude: segStart.latitude, longitude: segStart.longitude)
+                    .distance(from: CLLocation(latitude: segEnd.latitude, longitude: segEnd.longitude))
+                totalDistance += endT * segLength
+            }
+        }
+        
+        return totalDistance
     }
     
     // v1.9.0: Get next turn coordinate for map annotation
@@ -323,16 +583,29 @@ class LocationService: NSObject, ObservableObject {
     }
     
     func requestCurrentLocation() {
+        let startTime = Date()
+        locationRequestStartTime = startTime
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [LOCATION] [\(timeString)] requestCurrentLocation() called")
+        
         if !isAuthorized {
+            print("⏱️ [LOCATION] [\(timeString)] ❌ Not authorized - requesting permission")
             requestPermission()
             return
         }
+        
+        print("⏱️ [LOCATION] [\(timeString)] ✅ Authorized - requesting location...")
         
         // Show fetching state
         isFetchingLocation = true
         
         // Use requestLocation() for faster one-shot location
         locationManager.requestLocation()
+        
+        print("⏱️ [LOCATION] [\(timeString)] 📡 locationManager.requestLocation() called")
         
         // Start retry timer - if no location after 30 seconds, retry automatically
         startRetryTimer()
@@ -375,6 +648,7 @@ class LocationService: NSObject, ObservableObject {
         cancelRetryTimer()
         isFetchingLocation = false
         isRetrying = false
+        locationRequestStartTime = nil
     }
     
     // MARK: - Distance Calculations
@@ -439,15 +713,36 @@ extension LocationService: CLLocationManagerDelegate {
     }
     
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let newLocation = locations.last else { return }
+        let updateTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: updateTime)
+        
+        guard let newLocation = locations.last else {
+            print("⏱️ [LOCATION] [\(timeString)] ⚠️ didUpdateLocations called but locations array is empty")
+            return
+        }
+        
+        let isFirstLocation = currentLocation == nil
+        
+        print("⏱️ [LOCATION] [\(timeString)] 📍 didUpdateLocations: lat=\(String(format: "%.5f", newLocation.coordinate.latitude)), lon=\(String(format: "%.5f", newLocation.coordinate.longitude)), accuracy=\(String(format: "%.1f", newLocation.horizontalAccuracy))m\(isFirstLocation ? " (FIRST LOCATION)" : "")")
         
         DispatchQueue.main.async {
             // Mark fetching complete and cancel retry timer
+            let wasFetching = self.isFetchingLocation
+            let requestStartTime = self.locationRequestStartTime
             self.locationObtained()
+            
+            if wasFetching, let startTime = requestStartTime {
+                let elapsed = updateTime.timeIntervalSince(startTime)
+                print("⏱️ [LOCATION] [\(timeString)] ✅ Location obtained in \(String(format: "%.2f", elapsed))s")
+                self.locationRequestStartTime = nil
+            }
             
             // Set start location on first update
             if self.startLocation == nil {
                 self.startLocation = newLocation
+                print("⏱️ [LOCATION] [\(timeString)] 🎯 Start location set")
             }
             
             // Calculate distance walked

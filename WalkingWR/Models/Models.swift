@@ -276,6 +276,9 @@ struct WaitTimeInfo: Identifiable {
     var clinicianName: String
     var queuePosition: Int
     
+    // v1.9.56: Optional appointment time for estimated time-to-be-seen calculation
+    var appointmentTime: Date?
+    
     var formattedTime: String {
         if estimatedMinutes == 0 {
             return "On Time"
@@ -292,20 +295,50 @@ struct WaitTimeInfo: Identifiable {
         estimatedMinutes == 0
     }
     
+    // v1.9.56: Computed estimated time to be seen (appointment time + delay)
+    var estimatedTimeToBeSeen: Date? {
+        guard let appointmentTime = appointmentTime else { return nil }
+        return Calendar.current.date(byAdding: .minute, value: estimatedMinutes, to: appointmentTime)
+    }
+    
+    // v1.9.56: Formatted appointment time string
+    var formattedAppointmentTime: String? {
+        guard let appointmentTime = appointmentTime else { return nil }
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: appointmentTime)
+    }
+    
+    // v1.9.56: Formatted estimated time to be seen string
+    var formattedEstimatedTimeToBeSeen: String? {
+        guard let estimatedTime = estimatedTimeToBeSeen else { return nil }
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: estimatedTime)
+    }
+    
+    // v1.9.56: Check if past appointment time
+    var isPastAppointmentTime: Bool {
+        guard let appointmentTime = appointmentTime else { return false }
+        return Date() > appointmentTime
+    }
+    
     // Create from clinician
     init(from clinician: Clinician) {
         self.estimatedMinutes = clinician.currentWaitMinutes
         self.lastUpdated = clinician.lastUpdated
         self.clinicianName = clinician.fullTitle
         self.queuePosition = clinician.queuePosition
+        self.appointmentTime = nil
     }
     
     // Original init
-    init(estimatedMinutes: Int, lastUpdated: Date, clinicianName: String, queuePosition: Int) {
+    init(estimatedMinutes: Int, lastUpdated: Date, clinicianName: String, queuePosition: Int, appointmentTime: Date? = nil) {
         self.estimatedMinutes = estimatedMinutes
         self.lastUpdated = lastUpdated
         self.clinicianName = clinicianName
         self.queuePosition = queuePosition
+        self.appointmentTime = appointmentTime
     }
 }
 

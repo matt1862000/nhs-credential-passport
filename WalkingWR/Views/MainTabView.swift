@@ -95,7 +95,13 @@ struct MainTabView: View {
         }
         .animation(.easeInOut(duration: 0.5), value: showOnboarding)
         .fullScreenCover(isPresented: .init(
-            get: { !showOnboarding && (viewModel.showClinicianSelection || (!viewModel.hasSelectedClinician && !viewModel.hasSkippedClinicianSelection)) },
+            get: { 
+                // v1.9.61: Prevent showing clinician selection if one is already selected
+                // This fixes issue where Firebase updates cause screen to appear
+                guard !showOnboarding else { return false }
+                // Only show if explicitly requested OR if no clinician selected and not skipped
+                return viewModel.showClinicianSelection || (!viewModel.hasSelectedClinician && !viewModel.hasSkippedClinicianSelection && !viewModel.isClinicEnded)
+            },
             set: { if !$0 { viewModel.showClinicianSelection = false } }
         )) {
             ClinicianSelectionView(

@@ -35,6 +35,8 @@ class WaitingRoomViewModel: ObservableObject {
     // v1.6.28: Post-walk HealthKit sync offer (only shown if Motion was granted)
     @Published var showHealthKitSyncOffer: Bool = false
     @Published var stepTrackingWasEnabled: Bool = false  // Track if user opted into steps during walk
+    @Published var motionWasAuthorizedAtWalkStart: Bool = false  // v1.9.33: Track if Motion was authorized when walk started
+    @Published var pendingActiveWalk: Bool = false  // v1.9.36: Delays map until after pre-walk anxiety check (iOS 17 compatible)
     
     // Location-based marker detection
     @Published var showMarkerArrivalPrompt: Bool = false
@@ -232,6 +234,9 @@ class WaitingRoomViewModel: ObservableObject {
         
         // Record app usage for streak tracking
         userProgress.recordAppUsage()
+        
+        // v1.9.56: Restore appointment time from UserDefaults
+        restoreAppointmentTime()
         
         // Clean up old topic subscriptions (do this after init is complete)
         DispatchQueue.main.async { [weak self] in
@@ -622,6 +627,10 @@ class WaitingRoomViewModel: ObservableObject {
         // v1.6.28: Reset step tracking flag for new walk
         stepTrackingWasEnabled = false
         
+        // v1.9.33: Track if Motion was authorized at walk start (for HealthKit offer logic)
+        motionWasAuthorizedAtWalkStart = healthKitService.isMotionAuthorized
+        print("🚶 startWalk - motionWasAuthorizedAtWalkStart: \(motionWasAuthorizedAtWalkStart)")
+        
         // v1.9.17: Reset walking alerts for new walk
         walkingAlertsEnabled = true
         
@@ -673,6 +682,19 @@ class WaitingRoomViewModel: ObservableObject {
     }
     
     func endWalk(completed: Bool) {
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+        
+        print("🔍 [MOTION DEBUG] [\(timeString)] 🏁 endWalk(completed: \(completed)) CALLED")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(stepTrackingWasEnabled)")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   Current Motion auth status: \(healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
+        print("🔍 [MOTION DEBUG] [\(timeString)]   Call stack:")
+        Thread.callStackSymbols.prefix(10).enumerated().forEach { index, symbol in
+            print("🔍 [MOTION DEBUG] [\(timeString)]     [\(index)] \(symbol)")
+        }
+        
         walkSession.isActive = false
         
         // v1.7.5: Clear flag so app knows walk has ended
@@ -689,14 +711,19 @@ class WaitingRoomViewModel: ObservableObject {
         userProgress.recordSteps(walkSession.stepsThisSession)
         
         // Stop tracking
+        print("🔍 [MOTION DEBUG] [\(timeString)]   🛑 About to call healthKitService.stopObserving()")
         healthKitService.stopObserving()
         locationService.stopTracking()
         notificationService.cancelAllWalkingNotifications()
         stopSessionTimer()
         
         // Prompt for post-walk wellbeing score
+        // v1.9.34: Motion permission is now requested AFTER anxiety check dismisses (in RouteSelectionView onDismiss)
         if completed && userProgress.anxietyLevelBefore != nil {
+            print("🔍 [MOTION DEBUG] [\(timeString)]   📋 Setting showPostWalkWellbeing = true")
             showPostWalkWellbeing = true
+        } else {
+            print("🔍 [MOTION DEBUG] [\(timeString)]   📋 NOT showing post-walk wellbeing (completed: \(completed), anxietyLevelBefore: \(userProgress.anxietyLevelBefore != nil))")
         }
         
         // Reset session
@@ -719,6 +746,8 @@ class WaitingRoomViewModel: ObservableObject {
         // (stepTrackingWasEnabled is used to determine if HealthKit offer should be shown)
         // Note: We don't reset it here because we need it for the post-walk flow
         // It will be reset at the start of the next walk
+        
+        print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ endWalk() completed")
     }
     
     // v1.9.16: Pre-calculate return route from last waypoint to start (for offline fallback)
@@ -1212,6 +1241,50 @@ class WaitingRoomViewModel: ObservableObject {
                 // Small delay to let the clinician selection UI dismiss first
                 try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
                 _ = await notificationService.requestAuthorization()
+            }
+        }
+    }
+    
+    // MARK: - Appointment Time (v1.9.56)
+    
+    /// Set the user's appointment time for estimated time-to-be-seen calculation
+    func setAppointmentTime(_ time: Date?) {
+        waitTimeInfo.appointmentTime = time
+        
+        if let time = time {
+            // Persist to UserDefaults
+            UserDefaults.standard.set(time.timeIntervalSince1970, forKey: "appointmentTime")
+            let formatter = DateFormatter()
+            formatter.timeStyle = .short
+            print("📅 Appointment time set: \(formatter.string(from: time))")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "appointmentTime")
+            print("📅 Appointment time cleared")
+        }
+    }
+    
+    /// Clear the appointment time
+    func clearAppointmentTime() {
+        setAppointmentTime(nil)
+    }
+    
+    /// Restore appointment time from UserDefaults (called on init)
+    private func restoreAppointmentTime() {
+        let timestamp = UserDefaults.standard.double(forKey: "appointmentTime")
+        if timestamp > 0 {
+            let savedTime = Date(timeIntervalSince1970: timestamp)
+            // Only restore if the appointment time is today and in the future (or within last 2 hours)
+            let now = Date()
+            let calendar = Calendar.current
+            if calendar.isDateInToday(savedTime) && savedTime.timeIntervalSince(now) > -7200 { // -2 hours grace
+                waitTimeInfo.appointmentTime = savedTime
+                let formatter = DateFormatter()
+                formatter.timeStyle = .short
+                print("📅 Restored appointment time: \(formatter.string(from: savedTime))")
+            } else {
+                // Clear stale appointment time
+                UserDefaults.standard.removeObject(forKey: "appointmentTime")
+                print("📅 Cleared stale appointment time")
             }
         }
     }

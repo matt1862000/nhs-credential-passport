@@ -124,7 +124,8 @@ class GeminiService {
         difficulty: RouteDifficulty?,
         originCoordinate: (lat: Double, lon: Double)? = nil  // For privacy filtering
     ) async -> RouteContent {
-        // Try Gemini first if API key available, with 1 second timeout
+        // Try Gemini first if API key available, with 3 second timeout
+        // Gemini typically takes 1-3 seconds, so 3s gives enough time without blocking too long
         if !apiKey.isEmpty {
             let startTime = Date()
             
@@ -138,24 +139,28 @@ class GeminiService {
                 )
             }
             
-            // Wait up to 1 second for Gemini response
+            // Wait up to 3 seconds for Gemini response
             let timeoutTask = Task {
-                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
                 geminiTask.cancel()
             }
             
+            // Check if task was cancelled or completed
             if let geminiContent = await geminiTask.value {
                 timeoutTask.cancel()
                 let elapsed = Date().timeIntervalSince(startTime)
-                print("🤖 Gemini generated: \(geminiContent.name) (in \(String(format: "%.2f", elapsed))s)")
+                print("🤖 ✅ Gemini generated: \(geminiContent.name) (in \(String(format: "%.2f", elapsed))s)")
                 return geminiContent
             }
             
+            // If we get here, Gemini didn't return content (timeout or error)
             let elapsed = Date().timeIntervalSince(startTime)
-            if elapsed >= 1.0 {
-                print("🤖 Gemini timed out after \(String(format: "%.2f", elapsed))s, using local template")
+            if geminiTask.isCancelled {
+                print("🤖 ⏱️  Gemini request cancelled after \(String(format: "%.2f", elapsed))s (timeout), using local template")
+            } else if elapsed >= 3.0 {
+                print("🤖 ⏱️  Gemini timed out after \(String(format: "%.2f", elapsed))s, using local template")
             } else {
-            print("🤖 Gemini failed, falling back to template")
+                print("🤖 ⚠️  Gemini failed (no response), falling back to template")
             }
         } else {
             print("🤖 No Gemini API key, using template")

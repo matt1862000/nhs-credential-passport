@@ -6,6 +6,33 @@
 //
 
 import SwiftUI
+import UserNotifications
+
+// MARK: - Timeout Helper (shared with GoogleMapsService)
+/// Wraps an async operation with a timeout, throwing TimeoutError if exceeded
+private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+    return try await withThrowingTaskGroup(of: T.self) { group in
+        // Start the operation
+        group.addTask {
+            try await operation()
+        }
+        
+        // Start timeout task
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw TimeoutError.timeout
+        }
+        
+        // Return first completed task, cancel the other
+        guard let result = try await group.next() else {
+            throw TimeoutError.timeout
+        }
+        group.cancelAll()
+        return result
+    }
+}
+
+// TimeoutError is defined in GoogleMapsService.swift
 import MapKit
 import CoreLocation
 
@@ -24,6 +51,7 @@ struct RouteSelectionView: View {
     @State private var showIndoorOnly = false
     @State private var showAccessibleOnly = false
     @State private var showActiveWalk = false
+    // v1.9.36: pendingActiveWalk moved to ViewModel for iOS 17 compatibility
     @State private var showHelpSheet = false
     @State private var localRouteDuration: Int = 10
     @State private var localRouteUseCustom = false
@@ -127,11 +155,7 @@ struct RouteSelectionView: View {
         ZStack {
             AnimatedGradientBackground()
             
-            if viewModel.walkSession.isActive {
-                ActiveWalkView(viewModel: viewModel)
-            } else {
-                routeListContent
-            }
+            routeListContent
         }
     }
     
@@ -202,6 +226,13 @@ struct RouteSelectionView: View {
     
     var body: some View {
         mainNavigationView
+            .fullScreenCover(isPresented: $showActiveWalk, onDismiss: {
+                print("🔍 [iOS17 DEBUG] fullScreenCover DISMISSED")
+            }) {
+                // v1.9.28: Immersive full-screen presentation - no navigation context
+                let _ = print("🔍 [iOS17 DEBUG] fullScreenCover PRESENTING ActiveWalkView")
+                ActiveWalkView(viewModel: viewModel, locationService: viewModel.locationService, isPresented: $showActiveWalk)
+            }
             .addSheets(
                 showHelpSheet: $showHelpSheet,
                 showLocalRoutePicker: $showLocalRoutePicker,
@@ -209,9 +240,81 @@ struct RouteSelectionView: View {
                 locationService: viewModel.locationService,
                 localRouteDuration: $localRouteDuration,
                 localRouteUseCustom: $localRouteUseCustom,
-                pendingBatchTest: $pendingBatchTest
+                pendingBatchTest: $pendingBatchTest,
+                showActiveWalk: $showActiveWalk
             )
             .addAlerts(viewModel: viewModel)
+            .onChange(of: showActiveWalk) { oldValue, newValue in
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                print("🔍 [iOS17 DEBUG] [\(timeString)] 🗺️ showActiveWalk changed: \(oldValue) → \(newValue)")
+            }
+            // v1.9.38: iOS 17 fix - onDismiss doesn't reliably fire for sheets
+            // Use onChange to detect when pre-walk anxiety sheet is dismissed
+            .onChange(of: viewModel.showPreWalkWellbeing) { oldValue, newValue in
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                print("🔍 [iOS17 FIX] [\(timeString)] showPreWalkWellbeing changed: \(oldValue) → \(newValue)")
+                print("🔍 [iOS17 FIX] [\(timeString)]   pendingActiveWalk: \(viewModel.pendingActiveWalk)")
+                
+                // When sheet dismisses (true → false) AND we have a pending walk, show the map
+                if oldValue == true && newValue == false && viewModel.pendingActiveWalk {
+                    print("🔍 [iOS17 FIX] [\(timeString)]   ✅ Pre-walk sheet dismissed with pending walk - showing map")
+                    viewModel.pendingActiveWalk = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        showActiveWalk = true
+                    }
+                }
+            }
+            // v1.9.40: iOS 17 fix - onDismiss doesn't reliably fire for post-walk sheet
+            // Use onChange to detect when post-walk anxiety sheet is dismissed
+            .onChange(of: viewModel.showPostWalkWellbeing) { oldValue, newValue in
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                print("🔍 [iOS17 FIX] [\(timeString)] showPostWalkWellbeing changed: \(oldValue) → \(newValue)")
+                
+                // When sheet dismisses (true → false), trigger HealthKit offer logic
+                if oldValue == true && newValue == false {
+                    print("🔍 [iOS17 FIX] [\(timeString)]   Post-walk sheet dismissed - checking HealthKit offer")
+                    
+                    let hasDeclinedOffer = UserDefaults.standard.bool(forKey: "healthKitSyncOfferDeclined")
+                    let stepTrackingWasEnabled = viewModel.stepTrackingWasEnabled
+                    let motionWasAuthorizedAtWalkStart = viewModel.motionWasAuthorizedAtWalkStart
+                    let isMotionAuthorized = viewModel.healthKitService.isMotionAuthorized
+                    let isMotionDenied = viewModel.healthKitService.isMotionDenied
+                    let isHealthKitAuthorized = viewModel.healthKitService.isAuthorized
+                    
+                    print("🔍 [iOS17 FIX] [\(timeString)]   stepTrackingWasEnabled: \(stepTrackingWasEnabled)")
+                    print("🔍 [iOS17 FIX] [\(timeString)]   motionWasAuthorizedAtWalkStart: \(motionWasAuthorizedAtWalkStart)")
+                    print("🔍 [iOS17 FIX] [\(timeString)]   isMotionAuthorized: \(isMotionAuthorized)")
+                    print("🔍 [iOS17 FIX] [\(timeString)]   isMotionDenied: \(isMotionDenied)")
+                    print("🔍 [iOS17 FIX] [\(timeString)]   isHealthKitAuthorized: \(isHealthKitAuthorized)")
+                    print("🔍 [iOS17 FIX] [\(timeString)]   hasDeclinedOffer: \(hasDeclinedOffer)")
+                    
+                    // Same logic as onDismiss handler in addSheets
+                    if !stepTrackingWasEnabled && !isMotionAuthorized && !isMotionDenied {
+                        // Flow 2, Walk 1: Absent-minded user - request Motion permission
+                        print("🔍 [iOS17 FIX] [\(timeString)]   📲 Requesting Motion permission (Flow 2, Walk 1)")
+                        viewModel.healthKitService.requestMotionAuthorization { authorized in
+                            print("🔍 [iOS17 FIX] Motion authorization result: \(authorized ? "authorized" : "denied")")
+                        }
+                    } else if (stepTrackingWasEnabled || motionWasAuthorizedAtWalkStart) && !isHealthKitAuthorized && !hasDeclinedOffer {
+                        // Flow 1 or Flow 2 Walk 2: Motion is authorized → show HealthKit offer
+                        print("🔍 [iOS17 FIX] [\(timeString)]   ✅ Showing HealthKit sync offer")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            viewModel.showHealthKitSyncOffer = true
+                        }
+                    } else {
+                        print("🔍 [iOS17 FIX] [\(timeString)]   ❌ No permission dialog needed")
+                    }
+                }
+            }
             .onChange(of: showLocalRoutePicker) { _, isShowing in
                 if isShowing {
                     // Pre-select duration based on delay time
@@ -921,11 +1024,16 @@ struct LocalRoutePickerSheet: View {
     @Binding var useCustomTime: Bool
     @Binding var isPresented: Bool
     @Binding var pendingBatchTest: PendingBatchTest  // v1.6.45: Auto-run test when sheet opens
+    @Binding var showActiveWalk: Bool  // v1.9.28: Show fullscreen ActiveWalkView
+    // v1.9.36: pendingActiveWalk now in viewModel for iOS 17 compatibility
     @State private var isGenerating = false  // Button shows spinner
     @State private var showLoadingScreen = false  // v1.8.3: Separate flag for loading screen transition
     @State private var routeGenerationComplete = false  // v1.8.5: Signals route is ready (triggers stage animation completion)
     @State private var isShuffling = false  // Separate state for shuffle loading
     @State private var isStartingWalk = false  // v1.6.45: Loading state for Let's Go button
+    @State private var routeRefreshStatus: String? = nil  // v1.9.22: Status message during route refresh
+    @State private var shouldCancelBackgroundWork = false  // v1.9.22: Flag to cancel background generation
+    @State private var isRouteRefreshed = false  // v1.9.22: Track if route has been refreshed
     @State private var generatedRoute: WalkingRoute?
     @State private var generatedRouteData: GeneratedRoute?
     @State private var showMapPreview = false
@@ -1016,16 +1124,28 @@ struct LocalRoutePickerSheet: View {
                                 if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
                                     let delayMinutes = viewModel.waitTimeInfo.estimatedMinutes
                                     let recommendedWalk = max(5, delayMinutes - 5)
+                                    let waitInfo = viewModel.waitTimeInfo
                                     
-                                    HStack(spacing: 12) {
-                                        Image(systemName: "clock.badge.checkmark")
-                                            .font(.title2)
-                                            .foregroundColor(.tealAccent)
-                                        
-                                        Text("Based on your **\(delayMinutes) min** wait, we recommend a **\(recommendedWalk) min** walk to get you back in time.")
-                                            .font(.subheadline)
-                                            .foregroundColor(.primary)
-                                            .multilineTextAlignment(.leading)
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        HStack(spacing: 12) {
+                                            Image(systemName: "clock.badge.checkmark")
+                                                .font(.title2)
+                                                .foregroundColor(.tealAccent)
+                                            
+                                            // v1.9.56: Show appointment time context if available
+                                            if let appointmentTime = waitInfo.formattedAppointmentTime,
+                                               let estimatedSeen = waitInfo.formattedEstimatedTimeToBeSeen {
+                                                Text("Your appointment is at **\(appointmentTime)**. With a **\(delayMinutes) min** delay, you'll be seen around **\(estimatedSeen)**. We recommend a **\(recommendedWalk) min** walk.")
+                                                    .font(.subheadline)
+                                                    .foregroundColor(.primary)
+                                                    .multilineTextAlignment(.leading)
+                                            } else {
+                                                Text("Based on your **\(delayMinutes) min** wait, we recommend a **\(recommendedWalk) min** walk to get you back in time.")
+                                                    .font(.subheadline)
+                                                    .foregroundColor(.primary)
+                                                    .multilineTextAlignment(.leading)
+                                            }
+                                        }
                                     }
                                     .padding(16)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1297,7 +1417,34 @@ struct LocalRoutePickerSheet: View {
                     }
                 }
             }
+            .fullScreenCover(isPresented: $showActiveWalk) {
+                // v1.9.28: Immersive full-screen presentation - no navigation context
+                ActiveWalkView(viewModel: viewModel, locationService: viewModel.locationService, isPresented: $showActiveWalk)
+            }
+            .onChange(of: showActiveWalk) { oldValue, newValue in
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                if !newValue && oldValue {
+                    print("🔍 [MOTION DEBUG] [\(timeString)] 🚪 showActiveWalk changed: true → false (fullscreen dismissed)")
+                    print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
+                    print("🔍 [MOTION DEBUG] [\(timeString)]   showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
+                    print("🔍 [MOTION DEBUG] [\(timeString)]   showPostWalkWellbeing: \(viewModel.showPostWalkWellbeing)")
+                    print("🔍 [MOTION DEBUG] [\(timeString)]   Motion auth status: \(viewModel.healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
+                }
+            }
             .onAppear {
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                print("🔍 [MOTION DEBUG] [\(timeString)] 📱 RouteSelectionView.onAppear()")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   showPostWalkWellbeing: \(viewModel.showPostWalkWellbeing)")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
+                print("🔍 [MOTION DEBUG] [\(timeString)]   Motion auth status: \(viewModel.healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
+                
                 locationService.requestFreshLocation()
                 // Sync customTimeValue with selectedDuration if in custom mode
                 if useCustomTime {
@@ -1619,16 +1766,25 @@ struct LocalRoutePickerSheet: View {
             routeGenerationComplete = false
             return
         }
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: generateStartTime)
+        
+        print("⏱️ [ROUTE GENERATION] [\(timeString)] 🚀 generateRoutes() STARTED")
         print("📍 Location: (\(String(format: "%.5f", userLocation.coordinate.latitude)), \(String(format: "%.5f", userLocation.coordinate.longitude)))")
         print("🔑 mapsService.hasAPIKey: \(mapsService.hasAPIKey)")
+        print("⏱️ [ROUTE GENERATION] [\(timeString)]   Target duration: \(selectedDuration)min")
         
         // v1.8.14: Move all cache checks into async Task to prevent main thread blocking
         // This allows the button to show "Finding places..." immediately
         if mapsService.hasAPIKey {
             // Use Google APIs for smart routing
-            print("🚀 Starting async Task for route generation...")
+            print("⏱️ [ROUTE GENERATION] [\(timeString)] 🚀 Starting async Task for route generation...")
             Task {
-                print("📥 Task started")
+                let taskStartTime = Date()
+                let taskTimeString = formatter.string(from: taskStartTime)
+                print("⏱️ [ROUTE GENERATION] [\(taskTimeString)] 📥 Task started")
                 // v1.8.14: Check location limit INSIDE Task to prevent main thread blocking
                 let cacheService = POICacheService.shared
                 let hasCachedPOIs = cacheService.getCachedPOIs(near: userLocation.coordinate) != nil
@@ -1698,120 +1854,320 @@ struct LocalRoutePickerSheet: View {
                     
                     // v1.6.45: Load ALL cached routes, not just the first one
                     // v1.6.47: Include isDeadZoneFallback per-route for accurate warning display
+                    // v1.9.23: OPTIMIZED - Load first route immediately, rest in background
                     var loadedRoutes: [(route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool)] = []
                     var loadedPlaceIdSets: [Set<String>] = []
                     
-                    for (index, cached) in cachedRoutes.enumerated() {
-                    let markers = await MainActor.run {
-                        createMarkersFromPlaces(cached.route.places, origin: userLocation.coordinate)
-                    }
-                        
-                        // v1.6.45: Use cached directions if available (instant!)
-                        var directions: [WalkingDirection] = []
-                        if let cachedDirections = cached.directions, !cachedDirections.isEmpty {
-                            directions = cachedDirections
-                            if index == 0 {
-                                print("⚡ Using cached directions - instant load!")
-                            }
-                        } else {
-                            // Fallback: extract from legs
-                            directions = await MainActor.run {
-                        extractWalkingDirections(from: cached.route.legs)
-                    }
-                    
-                            // Get MapKit directions if not in cache (only for first route to save time)
-                            if directions.isEmpty && !cached.route.places.isEmpty && index == 0 {
-                        print("🍎 Cached route has no directions - getting from MapKit...")
-                        let waypointCoords = cached.route.places.map { $0.coordinate }
-                        directions = await mapsService.getMapKitDirectionsForRoute(
-                            origin: userLocation.coordinate,
-                            waypoints: waypointCoords,
-                            destination: userLocation.coordinate
-                        )
-                            }
-                    }
-                    
-                    let routeDifficulty: RouteDifficulty = cached.route.durationMinutes <= 10 ? .easy : (cached.route.durationMinutes <= 20 ? .moderate : .challenging)
-                    
-                    let localRoute = WalkingRoute(
-                        name: cached.name ?? "Local Discovery",
-                        description: cached.description ?? "A \(cached.route.formattedDuration) walk passing \(cached.route.places.count) local points of interest.",
-                        durationMinutes: max(1, cached.route.durationMinutes),
-                        distanceMeters: cached.route.distanceMeters,
-                        difficulty: routeDifficulty,
-                        isIndoor: false,
-                        isAccessible: true,
-                        landmarks: ["Start"] + cached.route.places.map { $0.name } + ["Return"],
-                        icon: "location.fill",
-                        color: .tealAccent,
-                        qrMarkers: markers,
-                        routeType: .local,
-                        encodedPolyline: cached.route.polyline,
-                            walkingDirections: directions,
-                            usedOSRMRouting: cached.route.usedOSRM  // v1.7.1: Track OSRM usage for polyline refresh
-                        )
-                        
-                        loadedRoutes.append((route: localRoute, data: cached.route, isDeadZoneFallback: cached.isDeadZoneFallback))
-                        loadedPlaceIdSets.append(Set(cached.route.places.map { $0.placeId }))
-                    }
-                    
-                    let firstRoute = loadedRoutes[0]
+                    let totalCached = cachedRoutes.count
                     let firstCached = cachedRoutes[0]
                     
+                    // v1.9.24: Load FIRST route IMMEDIATELY with minimal processing (<0.1s)
+                    let firstLoadStartTime = Date()
+                    print("⏱️ [CACHE] Loading first route immediately...")
+                    
+                    // Use cached directions if available (instant), otherwise empty array (will enhance in background)
+                    let firstDirections: [WalkingDirection] = firstCached.directions ?? []
+                    if !firstDirections.isEmpty {
+                        print("⚡ Using cached directions - instant load!")
+                    }
+                    
+                    // Create minimal markers (quick creation, will enhance in background)
+                    let firstMarkers = await MainActor.run {
+                        // Quick marker creation - minimal processing for instant display
+                        firstCached.route.places.enumerated().map { index, place in
+                            let content = WellbeingContent.breathingExercises.randomElement() ?? WellbeingContent.breathingExercises[0]
+                            return QRMarker(
+                                code: "POI\(index + 1)",
+                                name: place.name,
+                                location: place.vicinity ?? "Local POI",
+                                coordinate: place.coordinate,
+                                contentType: .breathingExercise,
+                                content: content,
+                                pointsValue: 20 + (index * 5)
+                            )
+                        }
+                    }
+                    
+                    let firstRouteDifficulty: RouteDifficulty = firstCached.route.durationMinutes <= 10 ? .easy : (firstCached.route.durationMinutes <= 20 ? .moderate : .challenging)
+                    
+                    let firstRoute = WalkingRoute(
+                        name: firstCached.name ?? "Local Discovery",
+                        description: firstCached.description ?? "A \(firstCached.route.formattedDuration) walk passing \(firstCached.route.places.count) local points of interest.",
+                        durationMinutes: max(1, firstCached.route.durationMinutes),
+                        distanceMeters: firstCached.route.distanceMeters,
+                        difficulty: firstRouteDifficulty,
+                        isIndoor: false,
+                        isAccessible: true,
+                        landmarks: ["Start"] + firstCached.route.places.map { $0.name } + ["Return"],
+                        icon: "location.fill",
+                        color: .tealAccent,
+                        qrMarkers: firstMarkers,
+                        routeType: .local,
+                        encodedPolyline: firstCached.route.polyline,
+                        walkingDirections: firstDirections,
+                        usedOSRMRouting: firstCached.route.usedOSRM
+                    )
+                    
+                    loadedRoutes.append((route: firstRoute, data: firstCached.route, isDeadZoneFallback: firstCached.isDeadZoneFallback))
+                    loadedPlaceIdSets.append(Set(firstCached.route.places.map { $0.placeId }))
+                    
+                    // v1.9.24: Show first route IMMEDIATELY (<0.1s), enhance in background
                     await MainActor.run {
                         isGenerating = false
-                        routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
+                        routeGenerationComplete = true  // Mark complete so user can see first route
                         allRoutes = loadedRoutes
                         
-                        // v1.6.45: Auto-advance to route 2 if available (skip template Route 1)
-                        if loadedRoutes.count >= 2 {
+                        // Auto-advance to route 2 if available (skip template Route 1)
+                        if cachedRoutes.count >= 2 {
                             currentRouteIndex = 1
-                            let secondRoute = loadedRoutes[1]
-                            generatedRoute = secondRoute.route
-                            generatedRouteData = secondRoute.data
-                            lastValidRoute = secondRoute.route
-                            lastValidRouteData = secondRoute.data
-                            viewedRouteIndices = [1]
-                            print("🚀 Auto-advanced to route 2 (skipped template Route 1)")
+                            // We'll update this when second route loads
                         } else {
-                        currentRouteIndex = 0
-                            generatedRoute = firstRoute.route
-                            generatedRouteData = firstRoute.data
-                            lastValidRoute = firstRoute.route
-                            lastValidRouteData = firstRoute.data
-                        viewedRouteIndices = [0]
+                            currentRouteIndex = 0
+                            generatedRoute = firstRoute
+                            generatedRouteData = firstCached.route
+                            lastValidRoute = firstRoute
+                            lastValidRouteData = firstCached.route
+                            viewedRouteIndices = [0]
                         }
                         
                         isRecycledRoute = false
                         isDeadZoneFallback = firstCached.isDeadZoneFallback
                         shownPlaceIdSets = loadedPlaceIdSets
-                        preGenerationComplete = loadedRoutes.count >= maxRoutesToGenerate
-                        
-                        // v1.8.0: Register ALL cached route signatures to prevent duplicates!
-                        for cachedRoute in cachedRoutes {
-                            registerRouteSignature(places: cachedRoute.route.places, distanceMeters: cachedRoute.route.distanceMeters)
+                    }
+                    
+                    let firstLoadTime = Date().timeIntervalSince(firstLoadStartTime)
+                    print("═══════════════════════════════════════════════════════════")
+                    print("✅ FIRST ROUTE LOADED in \(String(format: "%.2f", firstLoadTime))s - showing immediately")
+                    print("   📍 Route: \(firstRoute.name), \(firstRoute.durationMinutes)min, \(firstRoute.qrMarkers.count) POIs")
+                    if cachedRoutes.count > 1 {
+                        print("   ⏳ Loading \(cachedRoutes.count - 1) more routes in background...")
+                    }
+                    print("═══════════════════════════════════════════════════════════")
+                    
+                    // v1.9.24: Enhance first route in background (markers, directions if missing)
+                    // v1.9.25: Check cancellation flag to stop if user taps "Let's Go"
+                    Task {
+                        // Check if user action cancelled background work
+                        let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
+                        if shouldCancel {
+                            print("⏱️ [CACHE] First route enhancement cancelled - user initiated action")
+                            return
                         }
                         
-                        // v1.8.13: Don't show map preview immediately - let stage animations complete first
-                        // showMapPreview will be set to true when onAnimationComplete() is called
-                        // showMapPreview = true  // REMOVED - this was causing stages to be skipped
+                        var needsUpdate = false
+                        var enhancedMarkers = firstMarkers
+                        var enhancedDirections = firstDirections
                         
-                        let totalTime = Date().timeIntervalSince(generateStartTime)
-                        print("═══════════════════════════════════════════════════════════")
-                        print("✅ CACHE LOADED - \(loadedRoutes.count) routes in \(String(format: "%.2f", totalTime))s (signatures: \(routeSignatures.count))")
-                        print("   📍 Showing route \(currentRouteIndex + 1): \(generatedRouteData?.places.count ?? 0) POIs, \(generatedRouteData?.durationMinutes ?? 0)min")
-                        print("═══════════════════════════════════════════════════════════")
+                        // Enhance markers if needed (full processing for better quality)
+                        if firstMarkers.isEmpty || firstMarkers.count != firstCached.route.places.count {
+                            // Check cancellation before heavy work
+                            let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
+                            if shouldCancel {
+                                print("⏱️ [CACHE] Marker enhancement cancelled")
+                                return
+                            }
+                            
+                            enhancedMarkers = await MainActor.run {
+                                createMarkersFromPlaces(firstCached.route.places, origin: userLocation.coordinate)
+                            }
+                            needsUpdate = true
+                        }
                         
-                        // Only pre-generate more if we don't have enough
-                        if loadedRoutes.count < maxRoutesToGenerate {
-                            print("📦 Only \(loadedRoutes.count)/\(maxRoutesToGenerate) routes cached - will pre-generate more")
-                        preGenerateRemainingRoutes()
-                        } else {
-                            print("📦 All \(loadedRoutes.count) routes loaded from cache")
-                            // v1.6.46: Background refresh - search for potentially better routes
-                            backgroundRefreshRoutes(at: userLocation.coordinate, duration: selectedDuration)
+                        // Enhance directions if missing
+                        if enhancedDirections.isEmpty {
+                            // Check cancellation before MapKit call
+                            let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
+                            if shouldCancel {
+                                print("⏱️ [CACHE] Direction enhancement cancelled")
+                                return
+                            }
+                            
+                            enhancedDirections = await MainActor.run {
+                                extractWalkingDirections(from: firstCached.route.legs)
+                            }
+                            
+                            // Get MapKit directions if still empty
+                            if enhancedDirections.isEmpty && !firstCached.route.places.isEmpty {
+                                // Final cancellation check before expensive MapKit call
+                                let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
+                                if shouldCancel {
+                                    print("⏱️ [CACHE] MapKit enhancement cancelled - freeing quota")
+                                    return
+                                }
+                                
+                                print("🍎 Enhancing first route with MapKit directions...")
+                                let waypointCoords = firstCached.route.places.map { $0.coordinate }
+                                enhancedDirections = await mapsService.getMapKitDirectionsForRoute(
+                                    origin: userLocation.coordinate,
+                                    waypoints: waypointCoords,
+                                    destination: userLocation.coordinate
+                                )
+                            }
+                            
+                            if !enhancedDirections.isEmpty {
+                                needsUpdate = true
+                            }
+                        }
+                        
+                        // Update route with enhanced data
+                        if needsUpdate {
+                            await MainActor.run {
+                                if let index = allRoutes.firstIndex(where: { $0.route.name == firstRoute.name }) {
+                                    let existingRoute = allRoutes[index].route
+                                    let updatedRoute = WalkingRoute(
+                                        name: existingRoute.name,
+                                        description: existingRoute.description,
+                                        durationMinutes: existingRoute.durationMinutes,
+                                        distanceMeters: existingRoute.distanceMeters,
+                                        difficulty: existingRoute.difficulty,
+                                        isIndoor: existingRoute.isIndoor,
+                                        isAccessible: existingRoute.isAccessible,
+                                        landmarks: existingRoute.landmarks,
+                                        icon: existingRoute.icon,
+                                        color: existingRoute.color,
+                                        qrMarkers: enhancedMarkers,
+                                        routeType: existingRoute.routeType,
+                                        encodedPolyline: existingRoute.encodedPolyline,
+                                        walkingDirections: enhancedDirections,
+                                        usedOSRMRouting: existingRoute.usedOSRMRouting
+                                    )
+                                    allRoutes[index] = (route: updatedRoute, data: allRoutes[index].data, isDeadZoneFallback: allRoutes[index].isDeadZoneFallback)
+                                    
+                                    if currentRouteIndex == index {
+                                        generatedRoute = updatedRoute
+                                    }
+                                }
+                                print("⏱️ [CACHE] First route enhanced with full markers/directions")
+                            }
                         }
                     }
+                    
+                    // v1.9.23: Load remaining routes in background (parallel processing)
+                    if cachedRoutes.count > 1 {
+                        print("⏱️ [CACHE] Loading remaining \(cachedRoutes.count - 1) routes in background...")
+                        await MainActor.run {
+                            mapsService.retryStatus = "Loading \(cachedRoutes.count - 1) more routes..."
+                        }
+                        
+                        // Process remaining routes in parallel
+                        await withTaskGroup(of: (route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool, placeIds: Set<String>).self) { group in
+                            for (index, cached) in cachedRoutes.dropFirst().enumerated() {
+                                group.addTask {
+                                    let markers = await MainActor.run {
+                                        createMarkersFromPlaces(cached.route.places, origin: userLocation.coordinate)
+                                    }
+                                    
+                                    var directions: [WalkingDirection] = []
+                                    if let cachedDirections = cached.directions, !cachedDirections.isEmpty {
+                                        directions = cachedDirections
+                                    } else {
+                                        directions = await MainActor.run {
+                                            extractWalkingDirections(from: cached.route.legs)
+                                        }
+                                    }
+                                    
+                                    let routeDifficulty: RouteDifficulty = cached.route.durationMinutes <= 10 ? .easy : (cached.route.durationMinutes <= 20 ? .moderate : .challenging)
+                                    
+                                    let localRoute = WalkingRoute(
+                                        name: cached.name ?? "Local Discovery",
+                                        description: cached.description ?? "A \(cached.route.formattedDuration) walk passing \(cached.route.places.count) local points of interest.",
+                                        durationMinutes: max(1, cached.route.durationMinutes),
+                                        distanceMeters: cached.route.distanceMeters,
+                                        difficulty: routeDifficulty,
+                                        isIndoor: false,
+                                        isAccessible: true,
+                                        landmarks: ["Start"] + cached.route.places.map { $0.name } + ["Return"],
+                                        icon: "location.fill",
+                                        color: .tealAccent,
+                                        qrMarkers: markers,
+                                        routeType: .local,
+                                        encodedPolyline: cached.route.polyline,
+                                        walkingDirections: directions,
+                                        usedOSRMRouting: cached.route.usedOSRM
+                                    )
+                                    
+                                    let placeIds = Set(cached.route.places.map { $0.placeId })
+                                    return (route: localRoute, data: cached.route, isDeadZoneFallback: cached.isDeadZoneFallback, placeIds: placeIds)
+                                }
+                            }
+                            
+                            // Collect results as they complete
+                            var backgroundRoutes: [(route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool)] = []
+                            var backgroundPlaceIdSets: [Set<String>] = []
+                            
+                            for await result in group {
+                                backgroundRoutes.append((route: result.route, data: result.data, isDeadZoneFallback: result.isDeadZoneFallback))
+                                backgroundPlaceIdSets.append(result.placeIds)
+                            }
+                            
+                            // Update UI with all loaded routes
+                            await MainActor.run {
+                                allRoutes.append(contentsOf: backgroundRoutes)
+                                shownPlaceIdSets.append(contentsOf: backgroundPlaceIdSets)
+                                
+                                // If we auto-advanced to route 2, make sure it's set
+                                if currentRouteIndex == 1 && allRoutes.count > 1 {
+                                    let secondRoute = allRoutes[1]
+                                    generatedRoute = secondRoute.route
+                                    generatedRouteData = secondRoute.data
+                                    lastValidRoute = secondRoute.route
+                                    lastValidRouteData = secondRoute.data
+                                    viewedRouteIndices = [1]
+                                }
+                                
+                                mapsService.retryStatus = nil  // Clear status
+                                print("⏱️ [CACHE] Background loading complete - \(allRoutes.count) total routes")
+                            }
+                        }
+                    }
+                    
+                    // v1.9.24: Register route signatures for all cached routes
+                    for cachedRoute in cachedRoutes {
+                        registerRouteSignature(places: cachedRoute.route.places, distanceMeters: cachedRoute.route.distanceMeters)
+                    }
+                    
+                    // v1.9.22: Front-load route refresh for first route before showing "Complete"
+                    // This ensures navigation is ready when user taps "Let's Go"
+                    let userLoc = userLocation.coordinate
+                    print("⏱️ [FRONT-LOAD] Starting route refresh for first route before showing Complete...")
+                    // Start route refresh in background, but don't wait for it
+                    Task {
+                        let refreshedRoute = await mapsService.refreshRouteWithGoogleThenMapKit(
+                            route: firstRoute,
+                            userLocation: userLoc
+                        )
+                        // Update the route with refreshed data
+                        await MainActor.run {
+                            if let index = allRoutes.firstIndex(where: { $0.route.name == firstRoute.name }) {
+                                // Update the route in allRoutes with refreshed data
+                                allRoutes[index].route = refreshedRoute
+                                if currentRouteIndex == index {
+                                    generatedRoute = refreshedRoute
+                                }
+                            }
+                            isRouteRefreshed = true  // Mark as refreshed
+                            routeRefreshStatus = nil  // v1.9.28: Clear status - route is ready
+                            print("⏱️ [FRONT-LOAD] Route refresh complete")
+                        }
+                    }
+                    
+                    // v1.9.28: Clear any status messages - routes are ready to use
+                    routeRefreshStatus = nil
+                    
+                    // Mark complete immediately (don't wait for refresh or background loading)
+                    // Refresh happens in background and updates route when ready
+                    routeGenerationComplete = true
+                    
+                    // Only pre-generate more if we don't have enough
+                    if cachedRoutes.count < maxRoutesToGenerate {
+                        print("📦 Only \(cachedRoutes.count)/\(maxRoutesToGenerate) routes cached - will pre-generate more")
+                        preGenerateRemainingRoutes()
+                    } else {
+                        print("📦 All \(cachedRoutes.count) routes loaded from cache")
+                        // v1.6.46: Background refresh - search for potentially better routes
+                        backgroundRefreshRoutes(at: userLocation.coordinate, duration: selectedDuration)
+                    }
+                    
                     return
                 }
                 
@@ -1866,9 +2222,28 @@ struct LocalRoutePickerSheet: View {
                         return
                     }
                     
+                    // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
+                    // Start naming as soon as we have POIs, in parallel with directions/markers
+                    let waypointInfos = result.places.map { place in
+                        GeminiService.WaypointInfo(
+                            name: place.name,
+                            types: place.types ?? [],
+                            vicinity: place.vicinity
+                        )
+                    }
+                    
+                    // Start template generation in parallel (Route 1 uses template)
+                    let namingTask = Task {
+                        GeminiService.shared.generateTemplateContent(
+                            waypoints: waypointInfos,
+                            durationMinutes: result.durationMinutes,
+                            distanceMeters: result.distanceMeters
+                        )
+                    }
+                    
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Extracting directions...")
                     
-                    // Extract walking directions from OSRM/Google legs
+                    // Extract walking directions from OSRM/Google legs (in parallel with naming)
                     var directions = await MainActor.run {
                         extractWalkingDirections(from: result.legs)
                     }
@@ -1889,24 +2264,10 @@ struct LocalRoutePickerSheet: View {
                     // Determine difficulty based on duration
                     let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
                     
-                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Generating route name (template)...")
-                    
-                    // v1.6.45: Use INSTANT template for Route 1 (saves 1-3 sec)
-                    // AI naming happens for subsequent routes in background
-                    let waypointInfos = result.places.map { place in
-                        GeminiService.WaypointInfo(
-                            name: place.name,
-                            types: place.types ?? [],
-                            vicinity: place.vicinity
-                        )
-                    }
-                    // Use template directly - no network call, instant response
-                    let templateContent = GeminiService.shared.generateTemplateContent(
-                        waypoints: waypointInfos,
-                        durationMinutes: result.durationMinutes,
-                        distanceMeters: result.distanceMeters
-                    )
-                    print("⚡ Route 1: '\(templateContent.name)' (instant template)")
+                    // Get route name (should be ready by now since template is instant)
+                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Getting route name (parallel)...")
+                    let templateContent = await namingTask.value
+                    print("⚡ Route 1: '\(templateContent.name)' (instant template, generated in parallel)")
                     
                     let routeName = templateContent.name
                     let description = templateContent.description
@@ -1982,6 +2343,9 @@ struct LocalRoutePickerSheet: View {
                         print("═══════════════════════════════════════════════════════════")
                         print("")
                         
+                        // v1.9.28: Clear any status messages - routes are ready
+                        routeRefreshStatus = nil
+                        
                         // Start pre-generating more routes in background
                         preGenerateRemainingRoutes()
                     }
@@ -1989,6 +2353,7 @@ struct LocalRoutePickerSheet: View {
                     await MainActor.run {
                         isGenerating = false
                         showLoadingScreen = false  // Dismiss immediately on error
+                        routeRefreshStatus = nil  // v1.9.28: Clear status on error
                         routeGenerationComplete = false
                         errorMessage = "Could not find a route within time limit. Try different options."
                         print("❌ Smart routing error: \(error)")
@@ -2224,6 +2589,7 @@ struct LocalRoutePickerSheet: View {
                 varietyExhausted: varietyExhausted,
                 isDeadZoneFallback: isDeadZoneFallback,
                 isStartingWalk: isStartingWalk,  // v1.6.45: Loading state
+                routeRefreshStatus: routeRefreshStatus,  // v1.9.22: Status message during refresh
                 onStartWalk: { handleStartWalk(route: route) },
                 onShuffle: { shuffleToNextRoute() },
                 onBack: { handleBackFromPreview() },
@@ -2241,78 +2607,153 @@ struct LocalRoutePickerSheet: View {
     }
     
     private func handleStartWalk(route: WalkingRoute) {
-        // v1.9.1: ALWAYS refresh route with Google Directions first (quality assurance)
-        // Then fallback to Apple MapKit if Google quota is reached
-        // This ensures best route quality and proper walking paths
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
         
-        isStartingWalk = true
-        print("🌐 Let's Go: Refreshing route with Google Directions first (quality assurance)...")
+        print("⏱️ [LET'S GO] [\(timeString)] 🚶 handleStartWalk() STARTED")
+        print("⏱️ [LET'S GO] [\(timeString)]   Route: '\(route.name)'")
+        print("⏱️ [LET'S GO] [\(timeString)]   Duration: \(route.durationMinutes)min, Waypoints: \(route.qrMarkers.count)")
+        
+        // v1.9.22: Cancel background generation immediately to free up MapKit quota
+        shouldCancelBackgroundWork = true
+        print("⏱️ [LET'S GO] [\(timeString)] 🛑 Cancelling background generation to prioritize user action")
+        
+        // v1.9.22: Check if route was already refreshed (front-loaded)
+        if isRouteRefreshed && generatedRoute?.name == route.name {
+            print("⏱️ [LET'S GO] [\(timeString)] ⚡ Route already refreshed (front-loaded) - using cached refresh")
+            // Route was already refreshed, use it directly
+            Task { @MainActor in
+                isStartingWalk = false
+                routeRefreshStatus = nil  // v1.9.28: Clear status
+                viewModel.selectRoute(route)
+                viewModel.startWalk()
+                // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
+                print("🔍 [iOS17 DEBUG] [\(timeString)] showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
+                print("🔍 [iOS17 DEBUG] [\(timeString)] pendingActiveWalk BEFORE: \(viewModel.pendingActiveWalk)")
+                if viewModel.showPreWalkWellbeing {
+                    viewModel.pendingActiveWalk = true
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] pendingActiveWalk AFTER set: \(viewModel.pendingActiveWalk)")
+                    print("⏱️ [LET'S GO] [\(timeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
+                    isPresented = false
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] isPresented set to false")
+                } else {
+                    isPresented = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        print("🔍 [iOS17 DEBUG] Setting showActiveWalk = true (no pre-walk check)")
+                        showActiveWalk = true
+                    }
+                    print("⏱️ [LET'S GO] [\(timeString)] 🗺️ Walk started (front-loaded) - showing fullscreen ActiveWalkView")
+                }
+            }
+            return
+        }
+        
+        // v1.9.39: Only refresh if Google API is available and working
+        // If Google fails or unavailable, use original route immediately (instant start)
+        // This avoids the 15-50s MapKit fallback wait
         
         Task {
-            if let userLocation = locationService.currentLocation?.coordinate {
-                // v1.8.9: Use Google Directions first (better quality), fallback to Apple
-                let refreshedRoute = await mapsService.refreshRouteWithGoogleThenMapKit(
-                    route: route,
-                    userLocation: userLocation
-                )
+            let taskStartTime = Date()
+            let taskTimeString = formatter.string(from: taskStartTime)
+            
+            // Get user location for potential refresh
+            let userLocation = locationService.currentLocation?.coordinate
+            
+            // v1.9.39: Try Google-only refresh (no MapKit fallback)
+            // If Google fails, just use the original route
+            var routeToUse = route
+            var usedGoogleRefresh = false
+            
+            if let location = userLocation, mapsService.hasAPIKey {
+                print("⏱️ [LET'S GO] [\(taskTimeString)] 🌐 Trying Google-only refresh...")
                 await MainActor.run {
-                    isStartingWalk = false
-                    
-                    // Print comprehensive route quality summary
-                    print("")
-                    print("╔═══════════════════════════════════════════════════════════╗")
-                    print("║       🚶 ROUTE QUALITY SUMMARY (Copy & Paste)             ║")
-                    print("╠═══════════════════════════════════════════════════════════╣")
-                    print("║ Route: \(refreshedRoute.name.prefix(45))")
-                    print("║ Duration: \(refreshedRoute.durationMinutes)min | Distance: \(refreshedRoute.distanceMeters)m")
-                    print("║ Waypoints: \(refreshedRoute.qrMarkers.count)")
-                    print("║ Directions: \(refreshedRoute.walkingDirections.count) steps")
-                    
-                    // Polyline quality
-                    let polylinePoints = mapsService.decodePolyline(refreshedRoute.encodedPolyline ?? "")
-                    let pointsPerKm = refreshedRoute.distanceMeters > 0 
-                        ? Double(polylinePoints.count) / (Double(refreshedRoute.distanceMeters) / 1000.0) 
-                        : 0
-                    print("║ Polyline: \(polylinePoints.count) points (\(String(format: "%.1f", pointsPerKm)) pts/km)")
-                    
-                    if pointsPerKm < 20 {
-                        print("║ ⚠️  LOW DENSITY - polyline may not follow roads")
-                    } else if pointsPerKm < 50 {
-                        print("║ ⚡ MEDIUM DENSITY - should follow main roads")
-                    } else {
-                        print("║ ✅ HIGH DENSITY - follows roads accurately")
-                    }
-                    
-                    // First few direction steps
-                    print("╠═══════════════════════════════════════════════════════════╣")
-                    print("║ First 3 directions:")
-                    for (i, dir) in refreshedRoute.walkingDirections.prefix(3).enumerated() {
-                        let instruction = dir.instruction.prefix(50)
-                        print("║   \(i+1). \(instruction)")
-                    }
-                    
-                    print("╠═══════════════════════════════════════════════════════════╣")
-                    print("║ API CALLS:")
-                    mapsService.printAPICallSummary()
-                    GeminiService.shared.printAPICallSummary()
-                    print("╚═══════════════════════════════════════════════════════════╝")
-                    print("")
-                    
-                    viewModel.selectRoute(refreshedRoute)
-                    viewModel.startWalk()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        isPresented = false
-                    }
+                    isStartingWalk = true
+                    // No status text - just show spinner
+                }
+                
+                // Try Google refresh with 5s timeout - if fails, use original route
+                if let refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
+                    route: route,
+                    userLocation: location
+                ) {
+                    routeToUse = refreshedRoute
+                    usedGoogleRefresh = true
+                    print("⏱️ [LET'S GO] [\(taskTimeString)] ✅ Google refresh succeeded!")
+                } else {
+                    print("⏱️ [LET'S GO] [\(taskTimeString)] ⚡ Google unavailable/failed - using original route (instant start)")
                 }
             } else {
-                // Fallback: use original route if no location
-                await MainActor.run {
-                    isStartingWalk = false
-                    viewModel.selectRoute(route)
-                    viewModel.startWalk()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        isPresented = false
+                if userLocation == nil {
+                    print("⏱️ [LET'S GO] [\(taskTimeString)] ⚡ No location - using original route (instant start)")
+                } else {
+                    print("⏱️ [LET'S GO] [\(taskTimeString)] ⚡ No Google API key - using original route (instant start)")
+                }
+            }
+            
+            // Start walk with either refreshed or original route
+            await MainActor.run {
+                let mainActorTime = Date()
+                let mainActorTimeString = formatter.string(from: mainActorTime)
+                
+                isStartingWalk = false
+                routeRefreshStatus = nil
+                
+                // Print route quality summary
+                print("")
+                print("╔═══════════════════════════════════════════════════════════╗")
+                print("║       🚶 ROUTE QUALITY SUMMARY                            ║")
+                print("╠═══════════════════════════════════════════════════════════╣")
+                print("║ Route: \(routeToUse.name.prefix(45))")
+                print("║ Duration: \(routeToUse.durationMinutes)min | Distance: \(routeToUse.distanceMeters)m")
+                print("║ Waypoints: \(routeToUse.qrMarkers.count)")
+                print("║ Directions: \(routeToUse.walkingDirections.count) steps")
+                print("║ Refresh: \(usedGoogleRefresh ? "✅ Google" : "⚡ Skipped (instant start)")")
+                print("╚═══════════════════════════════════════════════════════════╝")
+                print("")
+                
+                viewModel.selectRoute(routeToUse)
+                viewModel.startWalk()
+                
+                // v1.9.41: Background MapKit refresh when Google API wasn't available
+                // This gives instant start + better navigation from refreshed route
+                if !usedGoogleRefresh {
+                    print("⏱️ [BG REFRESH] [\(mainActorTimeString)] 🔄 Launching background MapKit refresh...")
+                    let routeForRefresh = routeToUse
+                    let viewModelRef = viewModel
+                    let locationServiceRef = locationService
+                    let mapsServiceRef = mapsService
+                    
+                    Task.detached(priority: .utility) {
+                        await self.refreshRouteInBackground(
+                            route: routeForRefresh,
+                            viewModel: viewModelRef,
+                            locationService: locationServiceRef,
+                            mapsService: mapsServiceRef
+                        )
                     }
+                }
+                
+                let totalElapsed = Date().timeIntervalSince(startTime)
+                print("⏱️ [LET'S GO] [\(mainActorTimeString)] ✅ Total time: \(String(format: "%.2f", totalElapsed))s")
+                
+                // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
+                print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
+                print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] pendingActiveWalk BEFORE: \(viewModel.pendingActiveWalk)")
+                if viewModel.showPreWalkWellbeing {
+                    viewModel.pendingActiveWalk = true
+                    print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] pendingActiveWalk AFTER set: \(viewModel.pendingActiveWalk)")
+                    print("⏱️ [LET'S GO] [\(mainActorTimeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
+                    isPresented = false
+                    print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] isPresented set to false")
+                } else {
+                    isPresented = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        print("🔍 [iOS17 DEBUG] Setting showActiveWalk = true (no pre-walk check)")
+                        showActiveWalk = true
+                    }
+                    print("⏱️ [LET'S GO] [\(mainActorTimeString)] 🗺️ Walk started - showing fullscreen ActiveWalkView")
                 }
             }
         }
@@ -2381,6 +2822,96 @@ struct LocalRoutePickerSheet: View {
         }
     }
     
+    // MARK: - v1.9.41: Background MapKit Route Refresh
+    
+    /// Refreshes the route with MapKit in the background after walk starts
+    /// This is called when Google API was unavailable/failed, giving instant start + better navigation
+    /// The rate limiter ensures this doesn't conflict with other MapKit operations
+    private func refreshRouteInBackground(
+        route: WalkingRoute,
+        viewModel: WaitingRoomViewModel,
+        locationService: LocationService,
+        mapsService: GoogleMapsService
+    ) async {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        
+        // Wait a moment for walk to fully start and location to stabilize
+        try? await Task.sleep(nanoseconds: 1_500_000_000)  // 1.5 seconds
+        
+        let startTime = Date()
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [BG REFRESH] [\(timeString)] 🚀 Background MapKit refresh starting...")
+        
+        // Check if walk is still active
+        let isActive = await MainActor.run { viewModel.walkSession.isActive }
+        guard isActive else {
+            print("⏱️ [BG REFRESH] [\(timeString)] ❌ Walk ended - skipping refresh")
+            return
+        }
+        
+        // Get current user location
+        let userLocation = await MainActor.run { locationService.currentLocation?.coordinate }
+        guard let location = userLocation else {
+            print("⏱️ [BG REFRESH] [\(timeString)] ❌ No location available - skipping refresh")
+            return
+        }
+        
+        print("⏱️ [BG REFRESH] [\(timeString)] 📍 User location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))")
+        print("⏱️ [BG REFRESH] [\(timeString)] 🎯 Waypoints: \(route.qrMarkers.count)")
+        
+        // Refresh route with MapKit (uses rate limiter internally)
+        let refreshedRoute = await mapsService.refreshRouteWithMapKit(
+            route: route,
+            userLocation: location
+        )
+        
+        let elapsed = Date().timeIntervalSince(startTime)
+        let endTimeString = formatter.string(from: Date())
+        
+        print("⏱️ [BG REFRESH] [\(endTimeString)] ⏱️ MapKit refresh took \(String(format: "%.2f", elapsed))s")
+        
+        // Check again if walk is still active before updating
+        let stillActive = await MainActor.run { viewModel.walkSession.isActive }
+        guard stillActive else {
+            print("⏱️ [BG REFRESH] [\(endTimeString)] ⚠️ Walk ended during refresh - not updating route")
+            return
+        }
+        
+        // Update route on main thread
+        await MainActor.run {
+            let updateTimeString = formatter.string(from: Date())
+            
+            // Compare quality - only update if refreshed route is valid
+            let oldDirections = route.walkingDirections.count
+            let newDirections = refreshedRoute.walkingDirections.count
+            let oldDistance = route.distanceMeters
+            let newDistance = refreshedRoute.distanceMeters
+            
+            print("⏱️ [BG REFRESH] [\(updateTimeString)] 📊 Route comparison:")
+            print("⏱️ [BG REFRESH] [\(updateTimeString)]   Original: \(oldDirections) directions, \(oldDistance)m")
+            print("⏱️ [BG REFRESH] [\(updateTimeString)]   Refreshed: \(newDirections) directions, \(newDistance)m")
+            
+            // Only update if refreshed route has valid directions
+            if newDirections > 0 {
+                viewModel.walkSession.currentRoute = refreshedRoute
+                viewModel.selectedRoute = refreshedRoute
+                
+                print("⏱️ [BG REFRESH] [\(updateTimeString)] ✅ Route updated successfully!")
+                print("╔═══════════════════════════════════════════════════════════╗")
+                print("║  🔄 BACKGROUND ROUTE REFRESH COMPLETE                     ║")
+                print("╠═══════════════════════════════════════════════════════════╣")
+                print("║  Duration: \(String(format: "%.1f", elapsed))s")
+                print("║  Directions: \(oldDirections) → \(newDirections)")
+                print("║  Distance: \(oldDistance)m → \(newDistance)m")
+                print("╚═══════════════════════════════════════════════════════════╝")
+            } else {
+                print("⏱️ [BG REFRESH] [\(updateTimeString)] ⚠️ Refreshed route has no directions - keeping original")
+            }
+        }
+    }
+    
     /// Wrapper for shuffle that manages the shuffle loading state
     func generateRouteForShuffle() {
         guard let userLocation = locationService.currentLocation else {
@@ -2445,7 +2976,27 @@ struct LocalRoutePickerSheet: View {
                         extractWalkingDirections(from: result.legs)
                     }
                     
-                    // v1.6.14: If no directions, get them from Apple MapKit
+                    // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
+                    // Start naming as soon as we have POIs, in parallel with directions
+                    let waypointInfos = result.places.map { place in
+                        GeminiService.WaypointInfo(
+                            name: place.name,
+                            types: place.types ?? [],
+                            vicinity: place.vicinity
+                        )
+                    }
+                    
+                    // Start Gemini naming in parallel (has 3s timeout, template fallback)
+                    let namingTask = Task {
+                        await GeminiService.shared.generateRouteContent(
+                            waypoints: waypointInfos,
+                            durationMinutes: result.durationMinutes,
+                            distanceMeters: result.distanceMeters,
+                            difficulty: nil
+                        )
+                    }
+                    
+                    // v1.6.14: If no directions, get them from Apple MapKit (in parallel with naming)
                     if directions.isEmpty && !result.places.isEmpty {
                         let waypointCoords = result.places.map { $0.coordinate }
                         directions = await mapsService.getMapKitDirectionsForRoute(
@@ -2458,20 +3009,8 @@ struct LocalRoutePickerSheet: View {
                     // Determine difficulty based on duration
                     let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
                     
-                    let waypointInfos = result.places.map { place in
-                        GeminiService.WaypointInfo(
-                            name: place.name,
-                            types: place.types ?? [],
-                            vicinity: place.vicinity
-                        )
-                    }
-                    // Generate route name (always succeeds with template fallback)
-                    let aiContent = await GeminiService.shared.generateRouteContent(
-                        waypoints: waypointInfos,
-                        durationMinutes: result.durationMinutes,
-                        distanceMeters: result.distanceMeters,
-                        difficulty: nil
-                    )
+                    // Get route name (should be ready or nearly ready by now)
+                    let aiContent = await namingTask.value
                     
                     let routeName = aiContent.name
                     let description = aiContent.description
@@ -2609,6 +3148,7 @@ struct LocalRoutePickerSheet: View {
         
         isPreGeneratingRoutes = true
         varietyExhausted = false
+        shouldCancelBackgroundWork = false  // v1.9.22: Reset cancel flag
         print("🚀 Starting background pre-generation of up to \(maxRoutesToGenerate) routes...")
         
         Task {
@@ -2622,6 +3162,14 @@ struct LocalRoutePickerSheet: View {
             let poisToUse = await MainActor.run { prefetchedPOIs.isEmpty ? nil : prefetchedPOIs }
             
             while routesGenerated < maxRoutesToGenerate && consecutiveFailures < maxConsecutiveFailures && consecutiveDuplicates < maxConsecutiveDuplicates {
+                // v1.9.22: Check if user action cancelled background work
+                let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
+                if shouldCancel {
+                    print("🛑 Background generation cancelled - user initiated action")
+                    await MainActor.run { isPreGeneratingRoutes = false }
+                    return
+                }
+                
                 // v1.6.33: Check rate limit - pause briefly if too high
                 if await mapsService.shouldPauseBackgroundGeneration() {
                     // Wait 5 seconds then continue (quota refreshes over time)
@@ -2699,10 +3247,7 @@ struct LocalRoutePickerSheet: View {
                         )
                     }
                     
-                    // Determine difficulty based on duration
-                    let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
-                    
-                    // Generate AI content
+                    // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
                     let waypointInfos = result.places.map { place in
                         GeminiService.WaypointInfo(
                             name: place.name,
@@ -2710,13 +3255,22 @@ struct LocalRoutePickerSheet: View {
                             vicinity: place.vicinity
                         )
                     }
-                    // Generate route name (always succeeds with template fallback)
-                    let aiContent = await GeminiService.shared.generateRouteContent(
-                        waypoints: waypointInfos,
-                        durationMinutes: result.durationMinutes,
-                        distanceMeters: result.distanceMeters,
-                        difficulty: nil
-                    )
+                    
+                    // Start Gemini naming in parallel (has 3s timeout, template fallback)
+                    let namingTask = Task {
+                        await GeminiService.shared.generateRouteContent(
+                            waypoints: waypointInfos,
+                            durationMinutes: result.durationMinutes,
+                            distanceMeters: result.distanceMeters,
+                            difficulty: nil
+                        )
+                    }
+                    
+                    // Determine difficulty based on duration
+                    let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                    
+                    // Get route name (should be ready or nearly ready by now)
+                    let aiContent = await namingTask.value
                     
                     let routeName = aiContent.name
                     let description = aiContent.description
@@ -2894,8 +3448,7 @@ struct LocalRoutePickerSheet: View {
                                 )
                             }
                             
-                            let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
-                            
+                            // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
                             let waypointInfos = result.places.map { place in
                                 GeminiService.WaypointInfo(
                                     name: place.name,
@@ -2903,12 +3456,21 @@ struct LocalRoutePickerSheet: View {
                                     vicinity: place.vicinity
                                 )
                             }
-                            let aiContent = await GeminiService.shared.generateRouteContent(
-                                waypoints: waypointInfos,
-                                durationMinutes: result.durationMinutes,
-                                distanceMeters: result.distanceMeters,
-                                difficulty: nil
-                            )
+                            
+                            // Start Gemini naming in parallel (has 3s timeout, template fallback)
+                            let namingTask = Task {
+                                await GeminiService.shared.generateRouteContent(
+                                    waypoints: waypointInfos,
+                                    durationMinutes: result.durationMinutes,
+                                    distanceMeters: result.distanceMeters,
+                                    difficulty: nil
+                                )
+                            }
+                            
+                            let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                            
+                            // Get route name (should be ready or nearly ready by now)
+                            let aiContent = await namingTask.value
                             
                             let route = WalkingRoute(
                                 name: aiContent.name,
@@ -3112,12 +3674,26 @@ struct LocalRoutePickerSheet: View {
             // Wait a bit before starting background refresh (let UI settle)
             try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
             
+            // v1.9.22: Check if cancelled before starting
+            let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
+            if shouldCancel {
+                print("🛑 Background refresh cancelled - user initiated action")
+                return
+            }
+            
             print("🔄 Background refresh: searching for new routes at \(duration)min...")
             
             // Try to generate 1-2 new routes
             var newRoutes: [(route: WalkingRoute, data: GeneratedRoute)] = []
             
             for attempt in 1...2 {
+                // v1.9.22: Check if cancelled on each iteration
+                let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
+                if shouldCancel {
+                    print("🛑 Background refresh cancelled - user initiated action")
+                    break
+                }
+                
                 do {
                     // v1.6.33: Check rate limit
                     if await mapsService.shouldPauseBackgroundGeneration() {
@@ -3148,7 +3724,7 @@ struct LocalRoutePickerSheet: View {
                     if isUnique {
                         print("🔄 Background refresh: found unique route (attempt \(attempt))")
                         
-                        // Create waypoint infos for Gemini
+                        // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
                         let waypointInfos = result.places.map { place in
                             GeminiService.WaypointInfo(
                                 name: place.name,
@@ -3157,14 +3733,17 @@ struct LocalRoutePickerSheet: View {
                             )
                         }
                         
-                        // Generate route name (always succeeds with template fallback)
-                        let aiContent = await GeminiService.shared.generateRouteContent(
-                            waypoints: waypointInfos,
-                            durationMinutes: result.durationMinutes,
-                            distanceMeters: result.distanceMeters,
-                            difficulty: nil
-                        )
+                        // Start Gemini naming in parallel (has 3s timeout, template fallback)
+                        let namingTask = Task {
+                            await GeminiService.shared.generateRouteContent(
+                                waypoints: waypointInfos,
+                                durationMinutes: result.durationMinutes,
+                                distanceMeters: result.distanceMeters,
+                                difficulty: nil
+                            )
+                        }
                         
+                        // Get directions and markers in parallel with naming
                         let directions = await mapsService.getMapKitDirectionsForRoute(
                             origin: coordinate,
                             waypoints: result.places.map { $0.coordinate },
@@ -3175,6 +3754,9 @@ struct LocalRoutePickerSheet: View {
                             createMarkersFromPlaces(result.places, origin: coordinate)
                         }
                         let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                        
+                        // Get route name (should be ready or nearly ready by now)
+                        let aiContent = await namingTask.value
                         
                         let localRoute = WalkingRoute(
                             name: aiContent.name,
@@ -4234,6 +4816,7 @@ struct LocalRouteMapPreview: View {
     var varietyExhausted: Bool = false  // v1.6.25: True when no more unique routes available
     var isDeadZoneFallback: Bool = false  // v1.6.39: True when route is 70-74% (closest available)
     var isStartingWalk: Bool = false  // v1.6.45: Loading state for Let's Go button
+    var routeRefreshStatus: String? = nil  // v1.9.22: Status message during route refresh
     
     // v1.6.45: Track map loading state
     @State private var isMapLoading = true
@@ -4252,11 +4835,13 @@ struct LocalRouteMapPreview: View {
     // and AFTER the walk (HealthKit sync option)
     
     var primaryButtonText: String {
-        isStartingWalk ? "Starting..." : "Let's Go!"
+        // Always show "Let's Go!" - spinner will appear at end if loading
+        return "Let's Go!"
     }
     
     var primaryButtonIcon: String {
-        isStartingWalk ? "arrow.trianglehead.2.clockwise" : "figure.walk"
+        // Always show walk icon - spinner indicates loading
+        "figure.walk"
     }
     
     var primaryButtonColor: Color {
@@ -4767,14 +5352,14 @@ struct LocalRouteMapPreview: View {
                         onStartWalk()
                     } label: {
                         HStack {
+                            Image(systemName: primaryButtonIcon)
+                            Text(primaryButtonText)
                             if isStartingWalk {
                                 ProgressView()
                                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                     .scaleEffect(0.8)
-                            } else {
-                            Image(systemName: primaryButtonIcon)
+                                    .padding(.leading, 4)
                             }
-                            Text(primaryButtonText)
                         }
                     }
                     .buttonStyle(PrimaryButtonStyle(color: primaryButtonColor))
@@ -5575,10 +6160,13 @@ struct StatBadge: View {
 // MARK: - Active Walk View
 struct ActiveWalkView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
+    @ObservedObject var locationService: LocationService  // v1.9.63: Observe directly for responsive direction updates
+    var isPresented: Binding<Bool>? = nil  // v1.9.28: Optional - only needed when shown in a sheet
     @State private var showAllDirections: Bool = false
     @State private var showEndConfirmation: Bool = false
     
     var body: some View {
+        // v1.9.28: Immersive full-screen - no navigation wrapper
         VStack(spacing: 0) {
             // Compact header with route info
             if let route = viewModel.walkSession.currentRoute {
@@ -5591,7 +6179,7 @@ struct ActiveWalkView: View {
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
                             
-                            Text("\(Int(viewModel.locationService.distanceWalked))m walked")
+                            Text("\(Int(locationService.distanceWalked))m walked")
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.9))
                         }
@@ -5647,14 +6235,15 @@ struct ActiveWalkView: View {
                 
                 if !route.isIndoor && !directionsToShow.isEmpty {
                     // v1.9.15: Clamp direction index to prevent out-of-bounds when switching directions
+                    // v1.9.63: Use locationService directly (now observed) for responsive updates
                     let clampedIndex = Binding(
                         get: { 
-                            let idx = viewModel.locationService.currentDirectionIndex
+                            let idx = locationService.currentDirectionIndex
                             return min(max(0, idx), directionsToShow.count - 1)
                         },
                         set: { newValue in
                             let clamped = min(max(0, newValue), directionsToShow.count - 1)
-                            viewModel.locationService.currentDirectionIndex = clamped
+                            locationService.currentDirectionIndex = clamped
                         }
                     )
                     
@@ -5665,8 +6254,9 @@ struct ActiveWalkView: View {
                         delayMinutes: viewModel.waitTimeInfo.estimatedMinutes,
                         walkDurationMinutes: route.durationMinutes,
                         hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable && !viewModel.isClinicEnded && viewModel.waitTimeInfo.clinicianName != "Select your clinician",
-                        distanceWalked: Int(viewModel.locationService.distanceWalked),
-                        halfwayAlert: viewModel.walkSession.halfwayAlertSent
+                        distanceWalked: Int(locationService.distanceWalked),
+                        halfwayAlert: viewModel.walkSession.halfwayAlertSent,
+                        estimatedSeenTime: viewModel.waitTimeInfo.formattedEstimatedTimeToBeSeen
                     )
                 }
             }
@@ -5693,8 +6283,8 @@ struct ActiveWalkView: View {
                     ExpandedDirectionsList(
                         directions: directionsToShow,
                         currentIndex: Binding(
-                            get: { viewModel.locationService.currentDirectionIndex },
-                            set: { viewModel.locationService.currentDirectionIndex = $0 }
+                            get: { locationService.currentDirectionIndex },
+                            set: { locationService.currentDirectionIndex = $0 }
                         ),
                         showAllDirections: $showAllDirections
                     )
@@ -5722,16 +6312,38 @@ struct ActiveWalkView: View {
                 }
                 .buttonStyle(SecondaryButtonStyle(color: .coralPink))
                 .padding(.horizontal, 40)
-                .padding(.bottom, 12)
+                .padding(.bottom, 40)  // v1.9.36: Increased from 12 to 40 for home indicator clearance
             }
         }
+        .ignoresSafeArea(.container, edges: .bottom)  // v1.9.28: Extend to bottom edge only (preserve status bar)
         .confirmationDialog("End Walk?", isPresented: $showEndConfirmation) {
             Button("End & Save Progress") {
                 viewModel.endWalk(completed: true)
+                // v1.9.28: Dismiss fullscreen cover after ending walk
+                if let isPresented = isPresented {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        isPresented.wrappedValue = false
+                    }
+                }
             }
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("Your steps and progress will be saved.")
+        }
+        // v1.9.52: Present marker arrival sheet from within fullScreenCover
+        // iOS doesn't allow presenting sheets from parent view when child is in fullScreenCover
+        .sheet(isPresented: Binding(
+            get: { viewModel.showMarkerArrivalPrompt },
+            set: { viewModel.showMarkerArrivalPrompt = $0 }
+        )) {
+            MarkerArrivalSheet(viewModel: viewModel)
+        }
+        // v1.9.52: Present home arrival sheet from within fullScreenCover
+        .sheet(isPresented: Binding(
+            get: { viewModel.showHomeArrivalPrompt },
+            set: { viewModel.showHomeArrivalPrompt = $0 }
+        )) {
+            HomeArrivalSheet(viewModel: viewModel, isPresented: isPresented)
         }
     }
     
@@ -5758,6 +6370,7 @@ struct WalkingDirectionsBanner: View {
     var hasClinicianSelected: Bool = true
     var distanceWalked: Int = 0
     var halfwayAlert: Bool = false
+    var estimatedSeenTime: String? = nil  // v1.9.56: Optional appointment-based estimated time
     
     // Darker forest green color
     private let bannerColor = Color(red: 0.13, green: 0.55, blue: 0.45)
@@ -5877,7 +6490,7 @@ struct WalkingDirectionsBanner: View {
                     
                     // Static clinic delay (only show if clinician selected, otherwise blank)
                     if hasClinicianSelected {
-                        VStack(alignment: .trailing, spacing: 0) {
+                        VStack(alignment: .trailing, spacing: 2) {
                             Text("\(delayMinutes)")
                                 .font(.title3)
                                 .fontWeight(.bold)
@@ -5886,6 +6499,14 @@ struct WalkingDirectionsBanner: View {
                             Text("mins delay")
                                 .font(.caption2)
                                 .foregroundColor(.white.opacity(0.7))
+                            
+                            // v1.9.56: Show estimated time to be seen if appointment time set
+                            if let seenTime = estimatedSeenTime {
+                                Text("~\(seenTime)")
+                                    .font(.caption2)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.softAmber)
+                            }
                         }
                     }
                     
@@ -6317,6 +6938,7 @@ struct MarkerArrivalSheet: View {
 // MARK: - Home Arrival Sheet (v1.9.13)
 struct HomeArrivalSheet: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
+    var isPresented: Binding<Bool>? = nil  // v1.9.52: Binding to dismiss fullScreenCover
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -6429,6 +7051,12 @@ struct HomeArrivalSheet: View {
                             viewModel.endWalk(completed: true)
                             viewModel.dismissHomeArrivalPrompt()
                             dismiss()
+                            // v1.9.52: Dismiss fullScreenCover after ending walk
+                            if let isPresented = isPresented {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    isPresented.wrappedValue = false
+                                }
+                            }
                         }) {
                             HStack {
                                 Image(systemName: "checkmark.circle.fill")
@@ -6572,15 +7200,19 @@ struct RouteExplorationLoadingView: View {
     let isComplete: Bool  // v1.8.5: Signal that route is ready
     let onAnimationComplete: () -> Void  // v1.8.5: Callback when all stages animated
     
+    // Notification service for permission request
+    @StateObject private var notificationService = NotificationService.shared
+    
     // Animation state for polylines and POI markers
     @State private var visiblePolylines: [(id: UUID, coordinates: [CLLocationCoordinate2D], opacity: Double, isValid: Bool, poiName: String)] = []
     @State private var visiblePOIMarkers: [(id: UUID, coordinate: CLLocationCoordinate2D, name: String, opacity: Double)] = []
     @State private var mapCameraPosition: MapCameraPosition = .automatic
     
     // v1.8.9: Stage display state - advances based on actual progress with minimum gaps
-    @State private var displayedStageIndex: Int = 0  // 0 = none complete, 1-4 = stages complete
+    @State private var displayedStageIndex: Int = 0  // 0-4 = stages active, 5 = all complete
     @State private var lastStageAdvanceTime: Date = Date()
     @State private var hasCompletedAllStages: Bool = false
+    @State private var notificationPermissionRequested: Bool = false
     
     // Stage-specific animation states
     @State private var radarPulseScale: CGFloat = 1.0  // Stage 0: Radar pulse
@@ -6591,7 +7223,7 @@ struct RouteExplorationLoadingView: View {
     @State private var sparklePositions: [(id: UUID, offset: CGSize, opacity: Double, scale: CGFloat)] = []
     @State private var sparkleOrbitAngle: Double = 0    // Stage 3: Orbiting sparkles
     
-    // Countdown timer for stage 1
+    // Countdown timer for stage 2 (Calculating routes)
     @State private var countdownSeconds: Int = 60
     @State private var countdownExpired: Bool = false
     
@@ -6603,17 +7235,25 @@ struct RouteExplorationLoadingView: View {
     private let postCompletionDelay: TimeInterval = 0.3  // Reduced: Pause after stage 4 before preview
     
     // v1.8.10: Dynamic help text based on current stage
+    // v1.9.22: Use actual status text if available (state-driven)
     private var loadingHelpText: String {
+        // If we have actual status text, use it (more accurate)
+        if !statusText.isEmpty && statusText != "Finding the best route..." {
+            return statusText
+        }
+        
+        // Otherwise use stage-based text
         switch displayedStageIndex {
-        case 0: return "Scanning the area around you..."
-        case 1: 
+        case 0: return "Get updates on walking status and clinic delays."
+        case 1: return "Scanning the area around you..."
+        case 2: 
             if countdownExpired {
                 return "Taking longer than expected. Please wait..."
             } else {
                 return "This may take up to a minute..."
             }
-        case 2: return "Almost there! Getting walking directions..."
-        case 3: return "Adding the finishing touches..."
+        case 3: return "Almost there! Getting walking directions..."
+        case 4: return "Adding the finishing touches..."
         default: return "Your route is ready!"
         }
     }
@@ -6682,37 +7322,46 @@ struct RouteExplorationLoadingView: View {
                 VStack(spacing: 16) {
                     // Stage progress card - v1.8.5: Sequential stage animation
                     VStack(alignment: .leading, spacing: 12) {
+                        // Stage 0: Enabling notifications
+                        stageRow(
+                            icon: "bell.badge",
+                            title: "Enabling notifications",
+                            isComplete: displayedStageIndex >= 1,
+                            isActive: displayedStageIndex == 0,
+                            activeColor: .orange
+                        )
+                        
                         // Stage 1: Finding places
                         stageRow(
                             icon: "mappin.and.ellipse",
                             title: "Finding places nearby",
-                            isComplete: displayedStageIndex >= 1,
-                            isActive: displayedStageIndex == 0
+                            isComplete: displayedStageIndex >= 2,
+                            isActive: displayedStageIndex == 1
                         )
                         
                         // Stage 2: Calculating routes
                         stageRow(
                             icon: "point.topright.arrow.triangle.backward.to.point.bottomleft.scurvepath",
                             title: "Calculating routes",
-                            isComplete: displayedStageIndex >= 2,
-                            isActive: displayedStageIndex == 1,
-                            subtitle: displayedStageIndex == 1 ? (countdownExpired ? "Sorry for the delay..." : "\(countdownSeconds)s remaining") : nil
+                            isComplete: displayedStageIndex >= 3,
+                            isActive: displayedStageIndex == 2,
+                            subtitle: displayedStageIndex == 2 ? (countdownExpired ? "Sorry for the delay..." : "\(countdownSeconds)s remaining") : nil
                         )
                         
                         // Stage 3: Getting directions
                         stageRow(
                             icon: "arrow.triangle.turn.up.right.diamond",
                             title: "Getting directions",
-                            isComplete: displayedStageIndex >= 3,
-                            isActive: displayedStageIndex == 2
+                            isComplete: displayedStageIndex >= 4,
+                            isActive: displayedStageIndex == 3
                         )
                         
                         // Stage 4: Naming route
                         stageRow(
                             icon: "sparkles",
                             title: "Naming your route",
-                            isComplete: displayedStageIndex >= 4,
-                            isActive: displayedStageIndex == 3
+                            isComplete: displayedStageIndex >= 5,
+                            isActive: displayedStageIndex == 4
                         )
                     }
                     .padding(20)
@@ -6741,57 +7390,88 @@ struct RouteExplorationLoadingView: View {
             showFootsteps = false
             countdownSeconds = 60
             countdownExpired = false
-            print("🎬 Loading view appeared - starting at stage 0")
+            notificationPermissionRequested = false
+            print("🎬 Loading view appeared - starting at stage 0 (Enabling notifications)")
             
-            // Start radar pulse animation for Stage 0
+            // IMPORTANT: Route generation (stages 1-4) runs independently in the background.
+            // It started when generateRoute() was called and continues regardless of notification permission.
+            // This view only displays progress - it does NOT control when route generation happens.
+            
+            // Check notification authorization status
+            notificationService.checkAuthorization()
+            
+            // If already authorized, quickly advance past Stage 0
+            if notificationService.isAuthorized {
+                print("🔔 Notifications already authorized - skipping Stage 0")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    if displayedStageIndex == 0 && !hasCompletedAllStages {
+                        advanceToStageWithMinDelay(1)
+                        startPOIIconsAnimation()
+                        startRadarPulseAnimation()
+                    }
+                }
+            } else {
+                // Request notification permission when Stage 0 is active
+                // NOTE: This does NOT block route generation - it runs in a separate Task
+                requestNotificationPermissionIfNeeded()
+            }
+            
+            // Start radar pulse animation for Stage 1 (Finding places)
             startRadarPulseAnimation()
-            // Start POI icons popping in for Stage 0
-            startPOIIconsAnimation()
-            
-            // After minimum time, advance to stage 1
-            advanceToStageWithMinDelay(1)
             
             // Stages advance based on actual progress, not time
-            // Stage 0→1: After POI fetch (initial delay to show radar animation)
-            // Stage 1→2: When route attempts start (triggered by attemptCount change)
-            // Stage 2→3: When route is complete and directions fetched
-            // Stage 3→4: When naming is complete
+            // Stage 0→1: After notifications enabled (or already authorized) - UI only, doesn't block route gen
+            // Stage 1→2: After POI fetch starts or timeout (triggered by attemptCount change or 5s timeout) - route gen already running
+            // Stage 2→3: When route attempts complete - route gen already running
+            // Stage 3→4: When route is complete and directions fetched - route gen already running
+            // Stage 4→5: When naming is complete - route gen already running
             
-            // Initial advance from stage 0 to 1 after radar animation
-            DispatchQueue.main.asyncAfter(deadline: .now() + minStageDisplayTime) {
-                if displayedStageIndex == 0 && !hasCompletedAllStages {
-                    print("🎬 Stage 0 → 1 (POI fetch assumed complete)")
-                    advanceToStageWithMinDelay(1)
+            // Add timeout for Stage 1: If POI fetch takes too long, advance to Stage 2 anyway
+            // This prevents Stage 1 from staying active for 15-20 seconds when OSM is slow
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+                if displayedStageIndex == 1 && !hasCompletedAllStages && attemptCount == 0 {
+                    print("🎬 Stage 1 timeout (5s) - POI fetch still in progress, advancing to Stage 2")
+                    advanceToStageWithMinDelay(2)
                 }
             }
         }
         .onChange(of: displayedStageIndex) { oldValue, newValue in
-            let stageNames = ["Finding places", "Calculating routes", "Getting directions", "Naming your route", "Complete"]
+            let stageNames = ["Enabling notifications", "Finding places", "Calculating routes", "Getting directions", "Naming your route", "Complete"]
             let stageName = newValue < stageNames.count ? stageNames[newValue] : "Unknown"
             print("🎬 Stage changed: \(oldValue) → \(newValue) (\(stageName))")
             
             // Trigger stage-specific animations
             if newValue == 0 {
-                // Stage 0: POI icons pop in
-                startPOIIconsAnimation()
+                // Stage 0: Enabling notifications - request permission if needed
+                requestNotificationPermissionIfNeeded()
             }
             if newValue == 1 {
-                // Stage 1: Route calculation spinning rings
-                startRouteCalculationAnimation()
+                // Stage 1: POI icons pop in
+                startPOIIconsAnimation()
             }
             if newValue == 2 {
-                // Stage 2: Footsteps walking
-                startFootstepAnimation()
+                // Stage 2: Route calculation spinning rings
+                startRouteCalculationAnimation()
             }
             if newValue == 3 {
-                // Stage 3: Sparkle burst with orbiting
+                // Stage 3: Footsteps walking
+                startFootstepAnimation()
+            }
+            if newValue == 4 {
+                // Stage 4: Sparkle burst with orbiting
                 triggerSparkleAnimation()
             }
         }
         .onChange(of: attemptCount) { oldValue, newValue in
-            // When route attempts start, POI fetch is done → stay on stage 1 (Calculating routes)
-            // Stage 1 shows "This may take up to a minute..." during the long MapKit wait
-            // We DON'T advance to stage 2 here - that happens when route is complete
+            // When route attempts start, POI fetch is done → advance to stage 2 (Calculating routes)
+            // Stage 2 shows "This may take up to a minute..." during the long MapKit wait
+            // We DON'T advance to stage 3 here - that happens when route is complete
+            
+            // Advance to Stage 2 when route attempts start
+            if newValue > 0 && displayedStageIndex == 1 && !hasCompletedAllStages {
+                print("🎬 Route attempts started (count: \(newValue)) - advancing to Stage 2")
+                advanceToStageWithMinDelay(2)
+            }
             
             // Add polyline animation with POI marker (visual feedback during calculation)
             if let attempt = currentAttempt, !attempt.polylineCoordinates.isEmpty {
@@ -6799,10 +7479,77 @@ struct RouteExplorationLoadingView: View {
             }
         }
         .onChange(of: isComplete) { _, newValue in
-            // v1.8.9: When route is ready, advance through remaining stages with minimum gaps
+            // v1.9.22: When route is ready, advance through remaining stages with minimum gaps
+            // Only advance if we're actually complete (state-driven, not time-driven)
             if newValue && !hasCompletedAllStages {
                 print("🎬 Route complete → advancing through remaining stages")
                 advanceToCompletionWithMinGaps()
+            }
+        }
+        .onChange(of: statusText) { oldValue, newValue in
+            // v1.9.22: Update displayed stage based on actual work status
+            // If status indicates we're in a specific stage, ensure UI reflects it
+            if newValue.contains("Loading routes") && displayedStageIndex < 2 {
+                // Still in Stage 2 (Calculating routes)
+                if displayedStageIndex != 2 {
+                    advanceToStageWithMinDelay(2)
+                }
+            }
+        }
+        .onChange(of: notificationService.isAuthorized) { oldValue, newValue in
+            // When notification permission is granted, advance to Stage 1
+            if newValue && displayedStageIndex == 0 && !hasCompletedAllStages {
+                print("🔔 Notification permission granted - advancing to Stage 1")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    advanceToStageWithMinDelay(1)
+                    startPOIIconsAnimation()
+                }
+            }
+        }
+    }
+    
+    // MARK: - Notification Permission Request
+    
+    /// Requests notification permission if needed. This runs independently and does NOT block route generation.
+    /// Route generation (stages 1-4: Finding places, Calculating routes, etc.) continues in the background
+    /// regardless of whether the user has responded to the notification permission dialog.
+    private func requestNotificationPermissionIfNeeded() {
+        // Only request once
+        guard !notificationPermissionRequested else { return }
+        
+        // Check current authorization status
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                if settings.authorizationStatus == .notDetermined {
+                    // Permission not yet requested - request it now
+                    // NOTE: This Task runs independently - route generation continues in background
+                    self.notificationPermissionRequested = true
+                    print("🔔 Requesting notification permission...")
+                    
+                    Task {
+                        let granted = await self.notificationService.requestAuthorization()
+                        print("🔔 Notification permission result: \(granted ? "granted" : "denied")")
+                        // The onChange handler will advance to Stage 1 if granted
+                        // Route generation (stages 1-4) continues regardless of this result
+                    }
+                } else if settings.authorizationStatus == .authorized {
+                    // Already authorized - advance immediately
+                    print("🔔 Notifications already authorized")
+                    if self.displayedStageIndex == 0 && !self.hasCompletedAllStages {
+                        self.advanceToStageWithMinDelay(1)
+                        self.startPOIIconsAnimation()
+                    }
+                } else {
+                    // Denied or other status - still advance after delay (user can enable later)
+                    // Route generation continues in background during this delay
+                    print("🔔 Notification permission denied or unavailable - advancing anyway")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        if self.displayedStageIndex == 0 && !self.hasCompletedAllStages {
+                            self.advanceToStageWithMinDelay(1)
+                            self.startPOIIconsAnimation()
+                        }
+                    }
+                }
             }
         }
     }
@@ -6810,7 +7557,7 @@ struct RouteExplorationLoadingView: View {
     // MARK: - Stage Row Helper
     
     @ViewBuilder
-    private func stageRow(icon: String, title: String, isComplete: Bool, isActive: Bool, subtitle: String? = nil) -> some View {
+    private func stageRow(icon: String, title: String, isComplete: Bool, isActive: Bool, subtitle: String? = nil, activeColor: Color = .tealAccent) -> some View {
         HStack(spacing: 12) {
             // Status indicator (checkmark or spinner)
             if isComplete {
@@ -6820,7 +7567,7 @@ struct RouteExplorationLoadingView: View {
             } else if isActive {
                 ProgressView()
                     .scaleEffect(0.8)
-                    .tint(.tealAccent)
+                    .tint(activeColor)
             } else {
                 Image(systemName: "circle")
                     .foregroundColor(.secondary.opacity(0.5))
@@ -6829,7 +7576,7 @@ struct RouteExplorationLoadingView: View {
             
             // Stage icon
             Image(systemName: icon)
-                .foregroundColor(isComplete ? .green : (isActive ? .tealAccent : .secondary.opacity(0.5)))
+                .foregroundColor(isComplete ? .green : (isActive ? activeColor : .secondary.opacity(0.5)))
                 .font(.subheadline)
                 .frame(width: 20)
             
@@ -6895,22 +7642,22 @@ struct RouteExplorationLoadingView: View {
         print("🏁 Initial delay (current stage remaining): \(String(format: "%.2f", cumulativeDelay))s")
         
         // Schedule each remaining stage with explicit timing
-        // Must go through stages 2, 3, 4 regardless of current stage
+        // Must go through stages 3, 4, 5 regardless of current stage
         let stagesToSchedule: [Int]
-        if currentStage < 2 {
-            stagesToSchedule = [2, 3, 4]  // From stage 0 or 1, go through 2, 3, 4
-        } else if currentStage < 3 {
-            stagesToSchedule = [3, 4]      // From stage 2, go through 3, 4
+        if currentStage < 3 {
+            stagesToSchedule = [3, 4, 5]  // From stage 0, 1, or 2, go through 3, 4, 5
         } else if currentStage < 4 {
-            stagesToSchedule = [4]          // From stage 3, just show 4
+            stagesToSchedule = [4, 5]      // From stage 3, go through 4, 5
+        } else if currentStage < 5 {
+            stagesToSchedule = [5]          // From stage 4, just show 5
         } else {
-            stagesToSchedule = []           // Already at 4
+            stagesToSchedule = []           // Already at 5
         }
         print("🏁 Stages to schedule: \(stagesToSchedule) (from current stage \(currentStage))")
         
         for targetStage in stagesToSchedule {
             let delay = cumulativeDelay
-            let stageNames = ["Finding places", "Calculating routes", "Getting directions", "Naming your route", "Complete"]
+            let stageNames = ["Enabling notifications", "Finding places", "Calculating routes", "Getting directions", "Naming your route", "Complete"]
             let stageName = targetStage < stageNames.count ? stageNames[targetStage] : "Unknown"
             
             print("🏁 Stage \(targetStage) (\(stageName)) scheduled at +\(String(format: "%.2f", delay))s")
@@ -7016,12 +7763,12 @@ struct RouteExplorationLoadingView: View {
             
             // Route calculation animation (Stage 1 - Calculating routes)
             // Shows expanding/contracting rings to indicate processing
-            if displayedStageIndex == 1 {
+            if displayedStageIndex == 2 {
                 routeCalculationView
             }
             
-            // Footstep animation (Stage 2 - Getting directions)
-            if displayedStageIndex == 2 && showFootsteps {
+            // Footstep animation (Stage 3 - Getting directions)
+            if displayedStageIndex == 3 && showFootsteps {
                 footstepsView
             }
             
@@ -7217,7 +7964,7 @@ struct RouteExplorationLoadingView: View {
         }
     }
     
-    /// Start route calculation animation for Stage 1 (Calculating routes)
+    /// Start route calculation animation for Stage 2 (Calculating routes)
     private func startRouteCalculationAnimation() {
         footstepAngle = 0  // Reusing footstepAngle for rotation
         countdownSeconds = 60  // Reset countdown
@@ -7225,7 +7972,7 @@ struct RouteExplorationLoadingView: View {
         
         // Continuous rotation animation - faster for more active feel
         func rotate() {
-            guard displayedStageIndex == 1 else { return }
+            guard displayedStageIndex == 2 else { return }
             
             withAnimation(.linear(duration: 2.0)) {
                 footstepAngle += 2 * .pi
@@ -7241,10 +7988,10 @@ struct RouteExplorationLoadingView: View {
         startCountdownTimer()
     }
     
-    /// Countdown timer for stage 1
+    /// Countdown timer for stage 2 (Calculating routes)
     private func startCountdownTimer() {
         func tick() {
-            guard displayedStageIndex == 1 && !hasCompletedAllStages else { return }
+            guard displayedStageIndex == 2 && !hasCompletedAllStages else { return }
             
             if countdownSeconds > 0 {
                 countdownSeconds -= 1
@@ -7269,7 +8016,7 @@ struct RouteExplorationLoadingView: View {
         
         // Continuous rotation animation
         func rotate() {
-            guard displayedStageIndex == 2 else {
+            guard displayedStageIndex == 3 else {
                 showFootsteps = false
                 return
             }
@@ -7382,7 +8129,9 @@ extension View {
         locationService: LocationService,
         localRouteDuration: Binding<Int>,
         localRouteUseCustom: Binding<Bool>,
-        pendingBatchTest: Binding<PendingBatchTest>
+        pendingBatchTest: Binding<PendingBatchTest>,
+        showActiveWalk: Binding<Bool>  // v1.9.28: Show fullscreen ActiveWalkView
+        // v1.9.36: pendingActiveWalk now in viewModel for iOS 17 compatibility
     ) -> some View {
         self
             .sheet(isPresented: showHelpSheet) {
@@ -7397,7 +8146,8 @@ extension View {
                     selectedDuration: localRouteDuration,
                     useCustomTime: localRouteUseCustom,
                     isPresented: showLocalRoutePicker,
-                    pendingBatchTest: pendingBatchTest
+                    pendingBatchTest: pendingBatchTest,
+                    showActiveWalk: showActiveWalk
                 )
             }
             .sheet(isPresented: Binding(
@@ -7410,12 +8160,45 @@ extension View {
                 get: { viewModel.showHomeArrivalPrompt },
                 set: { viewModel.showHomeArrivalPrompt = $0 }
             )) {
-                HomeArrivalSheet(viewModel: viewModel)
+                HomeArrivalSheet(viewModel: viewModel, isPresented: showActiveWalk)
             }
             .sheet(isPresented: Binding(
                 get: { viewModel.showPreWalkWellbeing },
-                set: { viewModel.showPreWalkWellbeing = $0 }
-            )) {
+                set: { 
+                    let timestamp = Date()
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "HH:mm:ss.SSS"
+                    let timeString = formatter.string(from: timestamp)
+                    print("🔍 [PRE-WALK] [\(timeString)] 📋 showPreWalkWellbeing binding changed to: \($0)")
+                    viewModel.showPreWalkWellbeing = $0
+                }
+            ), onDismiss: {
+                // v1.9.36: Show map after pre-walk anxiety check completes (iOS 17 compatible)
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                print("🔍 [iOS17 DEBUG] [\(timeString)] ========== PRE-WALK SHEET ONDISMISS ==========")
+                print("🔍 [iOS17 DEBUG] [\(timeString)] viewModel.pendingActiveWalk: \(viewModel.pendingActiveWalk)")
+                print("🔍 [iOS17 DEBUG] [\(timeString)] showActiveWalk.wrappedValue: \(showActiveWalk.wrappedValue)")
+                print("🔍 [iOS17 DEBUG] [\(timeString)] viewModel.walkSession.isActive: \(viewModel.walkSession.isActive)")
+                
+                if viewModel.pendingActiveWalk {
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] ✅ Condition TRUE - will show map")
+                    viewModel.pendingActiveWalk = false
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] Set pendingActiveWalk = false")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        let afterTimestamp = Date()
+                        let afterTimeString = formatter.string(from: afterTimestamp)
+                        print("🔍 [iOS17 DEBUG] [\(afterTimeString)] About to set showActiveWalk = true")
+                        showActiveWalk.wrappedValue = true
+                        print("🔍 [iOS17 DEBUG] [\(afterTimeString)] showActiveWalk is now: \(showActiveWalk.wrappedValue)")
+                    }
+                } else {
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] ❌ Condition FALSE - NOT showing map")
+                    print("🔍 [iOS17 DEBUG] [\(timeString)] This is the iOS 17 bug - pendingActiveWalk was not propagated!")
+                }
+            }) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: Binding(
                     get: { viewModel.showPreWalkWellbeing },
                     set: { viewModel.showPreWalkWellbeing = $0 }
@@ -7425,11 +8208,44 @@ extension View {
                 get: { viewModel.showPostWalkWellbeing },
                 set: { viewModel.showPostWalkWellbeing = $0 }
             ), onDismiss: {
+                let timestamp = Date()
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm:ss.SSS"
+                let timeString = formatter.string(from: timestamp)
+                
                 let hasDeclinedOffer = UserDefaults.standard.bool(forKey: "healthKitSyncOfferDeclined")
-                if viewModel.stepTrackingWasEnabled && !viewModel.healthKitService.isAuthorized && !hasDeclinedOffer {
+                let stepTrackingWasEnabled = viewModel.stepTrackingWasEnabled
+                let motionWasAuthorizedAtWalkStart = viewModel.motionWasAuthorizedAtWalkStart
+                let isMotionAuthorized = viewModel.healthKitService.isMotionAuthorized
+                let isMotionDenied = viewModel.healthKitService.isMotionDenied
+                let isHealthKitAuthorized = viewModel.healthKitService.isAuthorized
+                
+                print("🔍 [POST-WALK] [\(timeString)] Anxiety check sheet dismissed")
+                print("🔍 [POST-WALK] [\(timeString)]   stepTrackingWasEnabled: \(stepTrackingWasEnabled)")
+                print("🔍 [POST-WALK] [\(timeString)]   motionWasAuthorizedAtWalkStart: \(motionWasAuthorizedAtWalkStart)")
+                print("🔍 [POST-WALK] [\(timeString)]   isMotionAuthorized: \(isMotionAuthorized)")
+                print("🔍 [POST-WALK] [\(timeString)]   isMotionDenied: \(isMotionDenied)")
+                print("🔍 [POST-WALK] [\(timeString)]   isHealthKitAuthorized: \(isHealthKitAuthorized)")
+                print("🔍 [POST-WALK] [\(timeString)]   hasDeclinedOffer: \(hasDeclinedOffer)")
+                
+                // v1.9.34: Permission flow after anxiety check:
+                // Flow 2, Walk 1: User didn't enable steps, Motion not authorized → request Motion
+                // Flow 1 or Flow 2 Walk 2: Motion authorized → show HealthKit offer
+                
+                if !stepTrackingWasEnabled && !isMotionAuthorized && !isMotionDenied {
+                    // Flow 2, Walk 1: Absent-minded user - request Motion permission
+                    print("🔍 [POST-WALK] [\(timeString)]   📲 Requesting Motion permission (Flow 2, Walk 1)")
+                    viewModel.healthKitService.requestMotionAuthorization { authorized in
+                        print("🔍 [POST-WALK] Motion authorization result: \(authorized ? "authorized" : "denied")")
+                    }
+                } else if (stepTrackingWasEnabled || motionWasAuthorizedAtWalkStart) && !isHealthKitAuthorized && !hasDeclinedOffer {
+                    // Flow 1 or Flow 2 Walk 2: Motion is authorized → show HealthKit offer
+                    print("🔍 [POST-WALK] [\(timeString)]   ✅ Showing HealthKit sync offer")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         viewModel.showHealthKitSyncOffer = true
                     }
+                } else {
+                    print("🔍 [POST-WALK] [\(timeString)]   ❌ No permission dialog needed")
                 }
             }) {
                 AnxietyCheckSheet(viewModel: viewModel, isPresented: Binding(

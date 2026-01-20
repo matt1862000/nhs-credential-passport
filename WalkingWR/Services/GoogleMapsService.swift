@@ -10,15 +10,64 @@ import CoreLocation
 import MapKit
 import Combine
 
+// MARK: - Async Semaphore (Simple Implementation)
+/// Simple async semaphore to limit concurrency
+private actor AsyncSemaphore {
+    private let maxConcurrent: Int
+    private var currentCount: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    
+    init(value: Int) {
+        self.maxConcurrent = value
+        self.currentCount = value
+    }
+    
+    func wait() async {
+        if currentCount > 0 {
+            currentCount -= 1
+            return
+        }
+        
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+    
+    func signal() async {
+        if let waiter = waiters.first {
+            waiters.removeFirst()
+            waiter.resume()
+        } else {
+            // v1.9.27: Cap to prevent over-release
+            currentCount = min(currentCount + 1, maxConcurrent)
+        }
+    }
+}
+
 // MARK: - MapKit Rate Limiter Actor (Thread-Safe)
 /// Actor to manage MapKit rate limiting with thread-safe access from concurrent tasks
 private actor MapKitRateLimiter {
     private var timestamps: [Date] = []
+    private let semaphore: AsyncSemaphore  // v1.9.25: Limit concurrency to prevent rate limit cascades
+    
+    init() {
+        self.semaphore = AsyncSemaphore(value: 1)  // Only 1 MapKit-heavy operation at a time
+    }
     
     struct RateLimitStatus {
         let currentCount: Int
         let shouldWait: Bool
         let waitTime: TimeInterval?
+    }
+    
+    /// Acquire semaphore before MapKit operation (prevents concurrent calls)
+    func acquire() async {
+        await semaphore.wait()
+    }
+    
+    /// Release semaphore after MapKit operation
+    func release() async {
+        await semaphore.signal()
     }
     
     /// Check rate limit status and clean up old timestamps
@@ -46,6 +95,49 @@ private actor MapKitRateLimiter {
         let now = Date()
         return timestamps.filter { now.timeIntervalSince($0) < window }.count
     }
+}
+
+// MARK: - Timeout Helper
+/// Wraps an async operation with a timeout, throwing TimeoutError if exceeded
+private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+    return try await withThrowingTaskGroup(of: T.self) { group in
+        // Start the operation
+        group.addTask {
+            try await operation()
+        }
+        
+        // Start timeout task
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw TimeoutError.timeout
+        }
+        
+        // Return first completed task, cancel the other
+        guard let result = try await group.next() else {
+            throw TimeoutError.timeout
+        }
+        group.cancelAll()
+        return result
+    }
+}
+
+// v1.9.26: Timeout error for timeout guards
+enum TimeoutError: Error {
+    case timeout
+}
+
+// v1.9.48: POI source tracking for debugging and quality control
+enum POISource: String, Codable {
+    case google = "google"
+    case apple = "apple"
+    case osm = "osm"
+    case unknown = "unknown"
+}
+
+// v1.9.48: Wrapper for POI results with source tracking
+private struct SourcedPOIs {
+    let source: POISource
+    let pois: [PlaceResult]
 }
 
 // MARK: - Google Maps Service
@@ -253,6 +345,84 @@ class GoogleMapsService: ObservableObject {
     private var googleDirectionsCallsToday = 0
     private let googleDirectionsCountKey = "googleDirectionsCount"
     private let googleDirectionsDateKey = "googleDirectionsDate"
+    
+    // MARK: - v1.9.48: Google Places Quota Protection
+    // Temporarily disable Google Places on 429/quota errors
+    private var googlePlacesDisabledUntil: Date?
+    private let googlePlacesCooldownMinutes: TimeInterval = 10 // 10 min cooldown on quota errors
+    
+    // MARK: - Google Places Daily Call Cap (v1.9.52)
+    // Track daily usage to cap costs per user
+    // Conservative limit: 10 calls/day = ~£0.24/day max per user (~£7.20/month)
+    // Adjust based on your budget: 5 = £0.12/day, 20 = £0.48/day
+    private let googlePlacesDailyCap = 10  // Max calls per day per user
+    private var googlePlacesCallsToday = 0
+    private let googlePlacesCountKey = "googlePlacesCount"
+    private let googlePlacesDateKey = "googlePlacesDate"
+    
+    /// Check if Google Places is currently disabled due to quota
+    private var isGooglePlacesDisabled: Bool {
+        guard let disabledUntil = googlePlacesDisabledUntil else { return false }
+        if Date() >= disabledUntil {
+            googlePlacesDisabledUntil = nil // Cooldown expired
+            print("🌐 [QUOTA] Google Places cooldown expired - re-enabling")
+            return false
+        }
+        return true
+    }
+    
+    /// Check if we can make a Google Places API call (daily cap + quota check)
+    private var canMakeGooglePlacesCall: Bool {
+        // Check quota cooldown first
+        if isGooglePlacesDisabled {
+            return false
+        }
+        
+        // Check daily cap
+        resetGooglePlacesCountIfNewDay()
+        let canCall = googlePlacesCallsToday < googlePlacesDailyCap
+        
+        if !canCall {
+            print("🛑 [CAP] Google Places daily cap reached (\(googlePlacesCallsToday)/\(googlePlacesDailyCap)) - using Apple/OSM only")
+        }
+        
+        return canCall
+    }
+    
+    /// Reset daily call count if it's a new day
+    private func resetGooglePlacesCountIfNewDay() {
+        let today = Calendar.current.startOfDay(for: Date())
+        let lastDate = UserDefaults.standard.object(forKey: googlePlacesDateKey) as? Date ?? Date.distantPast
+        let lastDay = Calendar.current.startOfDay(for: lastDate)
+        
+        if today > lastDay {
+            googlePlacesCallsToday = 0
+            UserDefaults.standard.set(today, forKey: googlePlacesDateKey)
+            UserDefaults.standard.set(0, forKey: googlePlacesCountKey)
+            print("🌐 [CAP] Daily Google Places call count reset (new day)")
+        } else {
+            googlePlacesCallsToday = UserDefaults.standard.integer(forKey: googlePlacesCountKey)
+        }
+    }
+    
+    /// Record a Google Places API call
+    private func recordGooglePlacesCall() {
+        googlePlacesCallsToday += 1
+        UserDefaults.standard.set(googlePlacesCallsToday, forKey: googlePlacesCountKey)
+        print("🌐 [CAP] Google Places call recorded: \(googlePlacesCallsToday)/\(googlePlacesDailyCap) today")
+    }
+    
+    /// Get current Google Places call count (for diagnostics)
+    func getGooglePlacesCallCount() -> (today: Int, cap: Int) {
+        resetGooglePlacesCountIfNewDay()
+        return (googlePlacesCallsToday, googlePlacesDailyCap)
+    }
+    
+    /// Disable Google Places temporarily after quota error
+    private func disableGooglePlacesTemporarily() {
+        googlePlacesDisabledUntil = Date().addingTimeInterval(googlePlacesCooldownMinutes * 60)
+        print("🛑 [QUOTA] Google Places disabled for \(Int(googlePlacesCooldownMinutes)) minutes due to quota/rate limit")
+    }
     
     private var canUseGoogleDirectionsRefresh: Bool {
         resetGoogleDirectionsCountIfNewDay()
@@ -1108,14 +1278,19 @@ class GoogleMapsService: ObservableObject {
         radiusMeters: Int = 2500,  // Increased from 500m for better coverage
         types: [String] = ["point_of_interest"]
     ) async throws -> [PlaceResult] {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
         
-        var allResults: [PlaceResult] = []
-        var seenPlaceIds = Set<String>()
-        
+        print("⏱️ [POI SEARCH] [\(timeString)] 🔍 findNearbyPlaces() STARTED")
         print("═══════════════════════════════════════════════════════════")
         print("🔍 POI FETCH START - Location: (\(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude)))")
         print("🔍 Search radius: \(radiusMeters)m")
         print("═══════════════════════════════════════════════════════════")
+        
+        var allResults: [PlaceResult] = []
+        var seenPlaceIds = Set<String>()
         
         // 🎯 PRIORITY 1: Check cached POI data
         if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: location) {
@@ -1153,104 +1328,152 @@ class GoogleMapsService: ObservableObject {
             print("📭 CACHE MISS - No cached POIs within 1km")
             
             // ═══════════════════════════════════════════════════════════════
-            // 🚀 v1.7.1: PARALLEL FETCH FOR NEW LOCATIONS
-            // Fetch ALL sources simultaneously for best first-time experience
-            // Cost: ~$0.02 per NEW location (cached locations are free)
+            // 🚀 v1.9.48: SMART PARALLEL FETCH WITH EARLY EXIT
+            // - Fetches from all sources simultaneously
+            // - Exits early when we have enough POIs (6+)
+            // - Hard timeout at 3 seconds - never waits for slow OSM
+            // - Gracefully handles Google quota exhaustion
             // ═══════════════════════════════════════════════════════════════
-            print("🚀 PARALLEL FETCH - Fetching OSM + Apple + Google simultaneously...")
-            let parallelStartTime = Date()
+            let timeoutSeconds: Double = 3.0
+            let minimumPOIsRequired = 6
+            let startTime = Date()
             
-            // Launch all fetches in parallel
-            // v1.8.3: Use FAST mode for Apple (40 queries) instead of Complete (120+ queries)
-            // This reduces initial load from 2-3 minutes to ~10 seconds
-            async let osmTask = searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
-            async let appleTask = searchAppleMapsForPOIsFast(location: location, radiusMeters: radiusMeters)
-            async let googleTask: [PlaceResult] = apiKey.isEmpty ? [] : fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
+            print("🚀 SMART PARALLEL FETCH - Up to \(timeoutSeconds)s timeout, need \(minimumPOIsRequired)+ POIs...")
             
-            // Await all results
-            let osmPOIs = await osmTask
-            let applePOIs = await appleTask
-            let googlePOIs = await googleTask
-            
-            let parallelTime = Date().timeIntervalSince(parallelStartTime)
-            print("⏱️ PARALLEL FETCH completed in \(String(format: "%.2f", parallelTime))s")
-            print("   🗺️ OSM:    \(osmPOIs.count) POIs")
-            print("   🍎 Apple:  \(applePOIs.count) POIs")
-            print("   🌐 Google: \(googlePOIs.count) POIs")
-            
-            // Merge results with deduplication
-            // Priority: Google > Apple > OSM (Google has best verification)
-            var mergedResults: [PlaceResult] = []
-            var mergedPlaceIds = Set<String>()
-            
-            // Add Google first (highest quality)
-            for poi in googlePOIs {
-                if !mergedPlaceIds.contains(poi.placeId) {
-                    mergedPlaceIds.insert(poi.placeId)
-                    mergedResults.append(poi)
-                }
-            }
-            let googleCount = mergedResults.count
-            
-            // Add Apple (check for duplicates by name/location)
-            // v1.6.47: Correct deduplication rules:
-            // - Same name AND within 50m → dedupe (actual duplicate from different source)
-            // - Very close (<20m) regardless of name → dedupe (same physical location)
-            // - Otherwise → keep as distinct POI
-            var appleAdded = 0
-            for poi in applePOIs {
-                let isDuplicate = mergedResults.contains { existing in
-                    let distance = distanceBetween(existing.coordinate, poi.coordinate)
-                    let sameNameAndClose = existing.name.lowercased() == poi.name.lowercased() && distance < 50
-                    let veryClose = distance < 20  // Same physical location regardless of name
-                    return sameNameAndClose || veryClose
-                }
-                if !isDuplicate {
-                    mergedResults.append(poi)
-                    appleAdded += 1
+            // Check if Google is available (API key, quota cooldown, and daily cap)
+            let googleEnabled = !apiKey.isEmpty && canMakeGooglePlacesCall
+            if !googleEnabled {
+                if isGooglePlacesDisabled {
+                    print("🌐 [QUOTA] Google Places temporarily disabled - using Apple/OSM only")
+                } else if !canMakeGooglePlacesCall {
+                    print("🌐 [CAP] Google Places daily cap reached - using Apple/OSM only")
                 }
             }
             
-            // Add OSM (check for duplicates by name/location)
-            var osmAdded = 0
-            for poi in osmPOIs {
-                let isDuplicate = mergedResults.contains { existing in
-                    let distance = distanceBetween(existing.coordinate, poi.coordinate)
-                    let sameNameAndClose = existing.name.lowercased() == poi.name.lowercased() && distance < 50
-                    let veryClose = distance < 20  // Same physical location regardless of name
-                    return sameNameAndClose || veryClose
+            // Track which sources contributed
+            var googleCount = 0
+            var appleCount = 0
+            var osmCount = 0
+            var timedOut = false
+            
+            // v1.9.50: Calculate maxRealisticDistance for early filtering (Optimization 5: Aggressive POI Pre-filtering)
+            // Filter out obviously too-far POIs during fetch, not after
+            let maxRealisticDistance = Double(radiusMeters) * 2.0  // Allows for winding walking paths
+            
+            allResults = await withTaskGroup(of: SourcedPOIs.self) { group in
+                var collected: [PlaceResult] = []
+                
+                // 🍎 Apple Maps (FREE, reliable, usually fast)
+                group.addTask { [self] in
+                    let pois = await self.searchAppleMapsForPOIsFast(location: location, radiusMeters: radiusMeters)
+                    // Tag with source
+                    let taggedPOIs = pois.map { poi -> PlaceResult in
+                        var tagged = poi
+                        tagged.source = .apple
+                        return tagged
+                    }
+                    return SourcedPOIs(source: .apple, pois: taggedPOIs)
                 }
-                if !isDuplicate {
-                    mergedResults.append(poi)
-                    osmAdded += 1
+                
+                // 🗺️ OpenStreetMap (FREE, can be slow 15-50s, best-effort)
+                group.addTask { [self] in
+                    let pois = await self.searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
+                    // Tag with source
+                    let taggedPOIs = pois.map { poi -> PlaceResult in
+                        var tagged = poi
+                        tagged.source = .osm
+                        return tagged
+                    }
+                    return SourcedPOIs(source: .osm, pois: taggedPOIs)
                 }
+                
+                // 🌐 Google Places (PAID Pro SKU - displayName, optional)
+                if googleEnabled {
+                    group.addTask { [self] in
+                        let pois = await self.fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
+                        // Tag with source
+                        let taggedPOIs = pois.map { poi -> PlaceResult in
+                            var tagged = poi
+                            tagged.source = .google
+                            return tagged
+                        }
+                        return SourcedPOIs(source: .google, pois: taggedPOIs)
+                    }
+                }
+                
+                // Collect results as they arrive - first to finish wins
+                while let result = await group.next() {
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    
+                    // v1.9.50: Filter by distance immediately as POIs arrive (Optimization 5)
+                    // Filter out obviously too-far POIs before deduplication and expensive checks
+                    let filteredPOIs = result.pois.filter { poi in
+                        let distance = distanceBetween(location, poi.coordinate)
+                        if distance > maxRealisticDistance {
+                            return false  // Filter out unrealistic distances
+                        }
+                        return true
+                    }
+                    
+                    // Merge filtered POIs with deduplication
+                    let beforeCount = collected.count
+                    collected.append(contentsOf: filteredPOIs)
+                    collected = self.deduplicatePOIs(collected)
+                    let added = collected.count - beforeCount
+                    
+                    // Track filtered count for logging
+                    let filteredCount = result.pois.count - filteredPOIs.count
+                    if filteredCount > 0 {
+                        print("   🚫 Filtered \(filteredCount) distant POIs from \(result.source.rawValue) (>\(Int(maxRealisticDistance))m)")
+                    }
+                    
+                    // Track source contribution (use filtered count)
+                    switch result.source {
+                    case .google:
+                        googleCount = filteredPOIs.count
+                        print("   🌐 Google: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                    case .apple:
+                        appleCount = filteredPOIs.count
+                        print("   🍎 Apple: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                    case .osm:
+                        osmCount = filteredPOIs.count
+                        print("   🗺️ OSM: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                    case .unknown:
+                        print("   ❓ Unknown: \(filteredPOIs.count) POIs @ \(String(format: "%.2f", elapsed))s")
+                    }
+                    
+                    // 🚀 EXIT EARLY: We have enough POIs!
+                    if collected.count >= minimumPOIsRequired {
+                        print("⚡ Got \(collected.count) POIs - exiting early @ \(String(format: "%.2f", elapsed))s")
+                        group.cancelAll()
+                        break
+                    }
+                    
+                    // ⏱️ HARD TIMEOUT: Don't wait for slow sources (OSM can take 50s)
+                    if elapsed >= timeoutSeconds {
+                        timedOut = true
+                        print("⏱️ Timeout reached (\(timeoutSeconds)s) with \(collected.count) POIs - proceeding")
+                        group.cancelAll()
+                        break
+                    }
+                }
+                
+                return collected
             }
             
-            allResults = mergedResults
-            print("📊 RAW FETCHED: Google=\(googlePOIs.count), Apple=\(applePOIs.count), OSM=\(osmPOIs.count)")
-            print("📊 AFTER DEDUP: Google=\(googleCount), Apple=\(appleAdded)/\(applePOIs.count), OSM=\(osmAdded)/\(osmPOIs.count)")
-            print("📊 TOTAL: \(allResults.count) unique POIs")
+            let totalTime = Date().timeIntervalSince(startTime)
+            print("═══════════════════════════════════════════════════════════════")
+            print("📊 SMART FETCH COMPLETE in \(String(format: "%.2f", totalTime))s\(timedOut ? " (timeout)" : "")")
+            print("📊 Sources: Google=\(googleCount), Apple=\(appleCount), OSM=\(osmCount)")
+            print("📊 Total unique POIs: \(allResults.count)")
+            if allResults.count < minimumPOIsRequired {
+                print("⚠️ Low POI count (\(allResults.count) < \(minimumPOIsRequired)) - route options may be limited")
+            }
+            print("═══════════════════════════════════════════════════════════════")
         }
         
-        // 🚫 FILTER: Remove POIs that are unrealistically far away
-        // APIs (especially Google) can return "popular" places way outside the search radius
-        // Max realistic distance = radiusMeters * 2 (allows for winding walking paths)
-        let maxRealisticDistance = Double(radiusMeters) * 2.0
-        let beforeFilterCount = allResults.count
-        
-        allResults = allResults.filter { poi in
-            let distance = distanceBetween(location, poi.coordinate)
-            if distance > maxRealisticDistance {
-                print("🚫 FILTERED: '\(poi.name)' at \(Int(distance))m (max: \(Int(maxRealisticDistance))m)")
-                return false
-            }
-            return true
-        }
-        
-        let filteredCount = beforeFilterCount - allResults.count
-        if filteredCount > 0 {
-            print("🚫 Distance filter removed \(filteredCount) unrealistic POIs (>\(Int(maxRealisticDistance))m)")
-        }
+        // v1.9.50: Distance filtering now happens during parallel fetch (Optimization 5)
+        // No need to filter again here - already filtered as POIs arrived
         
         // v1.6.47: Filter POIs inside restricted areas (schools, hospitals, etc.) without road access
         let beforeRestrictedFilter = allResults.count
@@ -1265,12 +1488,17 @@ class GoogleMapsService: ObservableObject {
             POICacheService.shared.cachePOIs(allResults, for: location)
         }
         
+        let endTime = Date()
+        let endTimeString = formatter.string(from: endTime)
+        let totalElapsed = endTime.timeIntervalSince(startTime)
+        
         print("═══════════════════════════════════════════════════════════")
         print("📊 POI FETCH COMPLETE - Total: \(allResults.count) POIs")
         print("   📍 Google: \(allResults.filter { !$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") }.count)")
         print("   🍎 Apple:  \(allResults.filter { $0.placeId.hasPrefix("apple_") }.count)")
         print("   🗺️ OSM:    \(allResults.filter { $0.placeId.hasPrefix("osm_") }.count)")
         print("═══════════════════════════════════════════════════════════")
+        print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalElapsed))s")
         
         return allResults
     }
@@ -1411,6 +1639,14 @@ class GoogleMapsService: ObservableObject {
         location: CLLocationCoordinate2D,
         radiusMeters: Int
     ) async -> [PlaceResult] {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [POI FETCH] [\(timeString)] 🔍 fetchGooglePOIs() STARTED")
+        print("⏱️ [POI FETCH] [\(timeString)]   Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))")
+        print("⏱️ [POI FETCH] [\(timeString)]   Radius: \(radiusMeters)m")
         
         // Search multiple specific types in parallel to maximize POI variety
         let placeTypesToSearch = [
@@ -1484,18 +1720,33 @@ class GoogleMapsService: ObservableObject {
         print("🌐 GOOGLE NEW PLACES API - Searching \(placeTypesToSearch.count) categories in SINGLE REQUEST...")
         print("🌐 Categories: \(placeTypesToSearch.joined(separator: ", "))")
         print("🌐 Endpoint: places.googleapis.com/v1/places:searchNearby")
-        print("🌐 Field Mask: places.id, places.displayName, places.location (Essentials SKU)")
+        print("🌐 Field Mask: places.id, places.displayName, places.location (Pro SKU - displayName required)")
         print("🌐 API Key present: \(!apiKey.isEmpty), key prefix: \(String(apiKey.prefix(10)))...")
         print("🌐 ⚡ OPTIMIZATION: Using single request with all types (was 43 separate calls, now 1)")
         
         // ⚡ COST OPTIMIZATION: Make ONE API call with all types instead of 43 separate calls
         // This reduces requests from ~25,800/month to ~600/month (staying within free tier)
+        // v1.9.52: Check daily cap before making API call
+        guard canMakeGooglePlacesCall else {
+            print("🌐 [CAP] Skipping Google Places API call - daily cap reached (\(googlePlacesCallsToday)/\(googlePlacesDailyCap))")
+            return allResults  // Return empty, will use Apple/OSM results
+        }
+        
         do {
+            let apiStartTime = Date()
+            print("⏱️ [POI FETCH] [\(timeString)] 📡 Calling searchMultipleTypes...")
+            
             let results = try await searchMultipleTypes(
                 location: location,
                 radiusMeters: radiusMeters,
                 types: placeTypesToSearch
             )
+            
+            // v1.9.52: Record successful API call
+            recordGooglePlacesCall()
+            
+            let apiElapsed = Date().timeIntervalSince(apiStartTime)
+            print("⏱️ [POI FETCH] [\(timeString)]   API call took \(String(format: "%.2f", apiElapsed))s, returned \(results.count) POIs")
             
             for place in results {
                 if !seenPlaceIds.contains(place.placeId) {
@@ -1504,10 +1755,17 @@ class GoogleMapsService: ObservableObject {
                 }
             }
         } catch {
-            print("   ❌ GOOGLE PLACES API FAILED: \(error.localizedDescription)")
+            let errorTime = Date()
+            let errorTimeString = formatter.string(from: errorTime)
+            let elapsed = errorTime.timeIntervalSince(startTime)
+            print("⏱️ [POI FETCH] [\(errorTimeString)] ❌ GOOGLE PLACES API FAILED after \(String(format: "%.2f", elapsed))s: \(error.localizedDescription)")
             // Return empty array on failure (app will use Apple/OSM results)
         }
         
+        let endTime = Date()
+        let endTimeString = formatter.string(from: endTime)
+        let totalElapsed = endTime.timeIntervalSince(startTime)
+        print("⏱️ [POI FETCH] [\(endTimeString)] ✅ fetchGooglePOIs() COMPLETED in \(String(format: "%.2f", totalElapsed))s")
         print("🌐 GOOGLE COMPLETE: \(allResults.count) unique POIs from 1 API call (was \(placeTypesToSearch.count) calls)")
         
         return allResults
@@ -1516,12 +1774,12 @@ class GoogleMapsService: ObservableObject {
     /// Search for multiple place types in a SINGLE API call (v1.9.16 cost optimization)
     /// 
     /// ⚡ CRITICAL FIX: Changed from 43 separate calls to 1 call with all types
-    /// - Reduces monthly requests from ~25,800 to ~600 (stays within 10,000 free tier)
-    /// - Uses Essentials SKU only (places.id, places.displayName, places.location)
-    /// - Removed expensive fields: rating, user_ratings_total, opening_hours, price_level, reviews
+    /// - Reduces monthly requests from ~25,800 to ~600 (stays within $200 credit)
+    /// - Uses Pro SKU (places.displayName required for readable place names)
+    /// - Removed expensive fields: rating, user_ratings_total, opening_hours, price_level, reviews (Enterprise SKU)
     /// - API supports up to 50 types per request (we use 43)
     /// 
-    /// Cost: Essentials ~$2-5/1k requests, but now only ~600 requests/month = FREE
+    /// Cost: Pro SKU $32/1k requests, but only ~600 requests/month = FREE (within $200 credit)
     private func searchMultipleTypes(
         location: CLLocationCoordinate2D,
         radiusMeters: Int,
@@ -1562,14 +1820,15 @@ class GoogleMapsService: ObservableObject {
         } else {
             bundleIdSent = false
         }
-        // ⚠️ COST OPTIMIZATION: Use Essentials SKU only (FREE with $200 monthly credit)
-        // Requesting only: places.id, places.displayName, places.location
-        // REMOVED: places.formattedAddress and places.types (trigger Pro SKU at $32/1000 requests)
-        // REMOVED: rating, user_ratings_total, opening_hours, price_level, reviews (Enterprise SKU - very expensive!)
-        // These fields are optional in PlaceResult, so we can safely omit them
+        // ⚠️ SKU TIER: Pro SKU ($32/1k) - displayName required for readable place names
+        // Field mask: places.id, places.displayName, places.location
+        // - displayName triggers Pro SKU billing (but provides actual place names)
+        // - REMOVED: places.formattedAddress and places.types (not needed)
+        // - REMOVED: rating, user_ratings_total, opening_hours, price_level, reviews (Enterprise SKU - very expensive!)
+        // Cost: ~$0.032 per request, but FREE within $200 monthly credit (~6,250 requests/month)
         let fieldMask = "places.id,places.displayName,places.location"
         request.setValue(fieldMask, forHTTPHeaderField: "X-Goog-FieldMask")
-        print("   🔒 FieldMask: \(fieldMask) (Essentials SKU only - no expensive fields)")
+        print("   🔒 FieldMask: \(fieldMask) (Pro SKU - displayName required for place names)")
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
         let startTime = Date()
@@ -1607,6 +1866,13 @@ class GoogleMapsService: ObservableObject {
                 print("   ❌ \(errorMessage!)")
             }
             
+            // v1.9.48: Detect quota/rate limit errors and disable Google temporarily
+            if httpResponse.statusCode == 429 || 
+               (errorMessage?.contains("RESOURCE_EXHAUSTED") == true) ||
+               (errorMessage?.contains("quota") == true) {
+                disableGooglePlacesTemporarily()
+            }
+            
             recordAPICall(
                 apiName: "Places API (New)",
                 success: false,
@@ -1639,18 +1905,20 @@ class GoogleMapsService: ObservableObject {
         
         // Convert to PlaceResult format
         // Note: vicinity and types are nil because we're using Essentials SKU (cost optimization)
+        // v1.9.48: Tag with .google source for tracking
         return newPlacesResponse.places?.map { place in
             PlaceResult(
                 placeId: place.id ?? "unknown",
                 name: place.displayName?.text ?? "Unknown",
-                vicinity: nil, // Not requested (Essentials SKU only - saves ~£0.025 per request)
+                vicinity: nil, // Not requested (Pro SKU - displayName required for good names)
                 geometry: PlaceGeometry(
                     location: PlaceLocation(
                         lat: place.location?.latitude ?? 0,
                         lng: place.location?.longitude ?? 0
                     )
                 ),
-                types: nil // Not requested (Essentials SKU only - saves ~£0.025 per request)
+                types: nil, // Not requested (Pro SKU - displayName required for good names)
+                source: .google
             )
         } ?? []
     }
@@ -3026,6 +3294,10 @@ class GoogleMapsService: ObservableObject {
         }
         
         // 🍎 Use MapKit for directions
+        // v1.9.25: Acquire semaphore to prevent concurrent MapKit calls
+        await rateLimiter.acquire()
+        defer { Task { await rateLimiter.release() } }
+        
         // Check if we should do opportunistic calibration on first leg
         let samples = UserDefaults.standard.array(forKey: osrmCalibrationSamplesKey) as? [Double] ?? []
         let shouldOpportunisticallyCalibrate = samples.count < minSamplesForConfidence && allPoints.count >= 2
@@ -3049,7 +3321,10 @@ class GoogleMapsService: ObservableObject {
             
             let response: MKDirections.Response
             do {
-                response = try await directions.calculate()
+                // v1.9.26: Add timeout guard (30s) with retry
+                response = try await withTimeout(seconds: 30) {
+                    try await directions.calculate()
+                }
                 
                 // Opportunistically calibrate on first leg when we need samples
                 if i == 0 && shouldOpportunisticallyCalibrate {
@@ -3227,6 +3502,10 @@ class GoogleMapsService: ObservableObject {
         waypoints: [CLLocationCoordinate2D],
         destination: CLLocationCoordinate2D
     ) async -> [WalkingDirection] {
+        // v1.9.25: Acquire semaphore to prevent concurrent MapKit calls
+        await rateLimiter.acquire()
+        defer { Task { await rateLimiter.release() } }
+        
         var allDirections: [WalkingDirection] = []
         
         // Build the list of points: origin → waypoints → destination
@@ -3251,11 +3530,39 @@ class GoogleMapsService: ObservableObject {
             recordMapKitRequest()
             
             do {
-                let response = try await directions.calculate()
-                guard let route = response.routes.first else { continue }
+                // v1.9.26: Add timeout guard (30s) with retry
+                var response: MKDirections.Response? = nil
+                var retryCount = 0
+                let maxRetries = 1
+                var succeeded = false
+                
+                while retryCount <= maxRetries && !succeeded {
+                    do {
+                        response = try await withTimeout(seconds: 30) {
+                            try await directions.calculate()
+                        }
+                        succeeded = true
+                        break  // Success, exit retry loop
+                    } catch TimeoutError.timeout {
+                        retryCount += 1
+                        if retryCount <= maxRetries {
+                            print("🍎 ⏱️ MapKit timeout for leg \(i+1) (30s) - retrying (\(retryCount)/\(maxRetries))...")
+                            // Notify UI about timeout (if we have a way to do so)
+                            continue
+                        } else {
+                            print("🍎 ⏱️ MapKit timeout for leg \(i+1) after \(maxRetries) retries - skipping leg")
+                            throw TimeoutError.timeout
+                        }
+                    } catch {
+                        // Other errors, don't retry
+                        throw error
+                    }
+                }
+                
+                guard let finalResponse = response, let route = finalResponse.routes.first else { continue }
                 
                 // Extract step-by-step directions
-                for step in route.steps {
+                for step in finalResponse.routes.first!.steps {
                     guard !step.instructions.isEmpty else { continue }
                     
                     let stepDistance = Int(step.distance)
@@ -3275,6 +3582,9 @@ class GoogleMapsService: ObservableObject {
                     )
                     allDirections.append(direction)
                 }
+            } catch TimeoutError.timeout {
+                print("🍎 ⏱️ MapKit timeout for leg \(i+1) after retries - continuing with other legs")
+                // Continue with other legs even if one times out
             } catch {
                 print("🍎 MapKit directions failed for leg \(i): \(error.localizedDescription)")
                 // Continue with other legs even if one fails
@@ -3296,22 +3606,33 @@ class GoogleMapsService: ObservableObject {
         route: WalkingRoute,
         userLocation: CLLocationCoordinate2D
     ) async -> WalkingRoute {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [ROUTE REFRESH] [\(timeString)] 🍎 refreshRouteWithMapKit() STARTED")
         print("🍎 REFRESH: Getting fresh MapKit directions for navigation...")
         
         // Extract waypoint coordinates from QR markers
         let waypoints = route.qrMarkers.map { $0.coordinate }
         
         guard !waypoints.isEmpty else {
-            print("🍎 REFRESH: No waypoints, keeping original route")
+            print("⏱️ [ROUTE REFRESH] [\(timeString)] ⚠️ No waypoints, keeping original route")
             return route
         }
         
+        print("⏱️ [ROUTE REFRESH] [\(timeString)] 📍 Getting MapKit directions for \(waypoints.count) waypoints...")
+        
         // Get fresh MapKit directions
+        let directionsStartTime = Date()
         let freshDirections = await getMapKitDirectionsForRoute(
             origin: userLocation,
             waypoints: waypoints,
             destination: userLocation  // Round trip
         )
+        let directionsElapsed = Date().timeIntervalSince(directionsStartTime)
+        print("⏱️ [ROUTE REFRESH] [\(timeString)]   getMapKitDirectionsForRoute() took \(String(format: "%.2f", directionsElapsed))s")
         
         // Get fresh polyline from MapKit
         var freshPolylinePoints: [CLLocationCoordinate2D] = []
@@ -3462,6 +3783,11 @@ class GoogleMapsService: ObservableObject {
             walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
         )
         
+        let endTime = Date()
+        let endTimeString = formatter.string(from: endTime)
+        let totalElapsed = endTime.timeIntervalSince(startTime)
+        print("⏱️ [ROUTE REFRESH] [\(endTimeString)] ✅ refreshRouteWithMapKit() COMPLETED in \(String(format: "%.2f", totalElapsed))s")
+        
         return refreshedRoute
     }
     
@@ -3471,32 +3797,49 @@ class GoogleMapsService: ObservableObject {
         route: WalkingRoute,
         userLocation: CLLocationCoordinate2D
     ) async -> WalkingRoute {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [ROUTE REFRESH] [\(timeString)] 🚀 refreshRouteWithGoogleThenMapKit() STARTED")
+        print("⏱️ [ROUTE REFRESH] [\(timeString)]   Route: '\(route.name)'")
+        print("⏱️ [ROUTE REFRESH] [\(timeString)]   Waypoints: \(route.qrMarkers.count)")
+        
         // Check if we can use Google Directions
         if canUseGoogleDirectionsRefresh {
+            print("⏱️ [ROUTE REFRESH] [\(timeString)] ✅ Can use Google Directions")
             print("🌐 ═══════════════════════════════════════════════════════")
             print("🌐 REFRESH: Starting Google Directions API call...")
             print("🌐   📍 Origin: (\(String(format: "%.5f", userLocation.latitude)), \(String(format: "%.5f", userLocation.longitude)))")
             
             // Extract waypoint coordinates from QR markers
-            let waypoints = route.qrMarkers.map { $0.coordinate }
+            let rawWaypoints = route.qrMarkers.map { $0.coordinate }
             
-            guard !waypoints.isEmpty else {
+            guard !rawWaypoints.isEmpty else {
                 print("🌐 REFRESH: No waypoints, using Apple MapKit")
                 return await refreshRouteWithMapKit(route: route, userLocation: userLocation)
             }
             
-            print("🌐   🎯 Waypoints: \(waypoints.count)")
+            // Optimize waypoint order locally (Nearest Neighbor) to stay in Essentials SKU
+            let waypoints = performLocalOptimization(origin: userLocation, waypoints: rawWaypoints)
+            
+            print("🌐   🎯 Waypoints: \(waypoints.count) (optimized locally)")
             for (index, waypoint) in waypoints.enumerated() {
                 print("🌐      [\(index + 1)] (\(String(format: "%.5f", waypoint.latitude)), \(String(format: "%.5f", waypoint.longitude)))")
             }
             
-            // Build waypoints string
-            let waypointsParam = waypoints.map { "\($0.latitude),\($0.longitude)" }.joined(separator: "|")
+            // Build waypoints string (already optimized, no optimize:true parameter needed)
+            // Format: lat,lng|lat,lng|lat,lng (using 6 decimal places for precision)
+            let waypointsParam = waypoints.map { 
+                String(format: "%.6f,%.6f", $0.latitude, $0.longitude)
+            }.joined(separator: "|")
             
-            // Google Directions API URL (no optimize:true to stay in free tier)
+            // Google Directions API URL (no optimize:true to stay in Essentials SKU)
+            // Format: origin and destination are the same (loop route), waypoints are intermediate POIs only
             var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
-            urlString += "origin=\(userLocation.latitude),\(userLocation.longitude)"
-            urlString += "&destination=\(userLocation.latitude),\(userLocation.longitude)"
+            urlString += "origin=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
+            urlString += "&destination=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
             urlString += "&waypoints=\(waypointsParam)"
             urlString += "&mode=walking"
             urlString += "&key=\(apiKey)"
@@ -3678,7 +4021,7 @@ class GoogleMapsService: ObservableObject {
                         )
                         
                         // Create updated route with Google data (using detailed polyline if available)
-                        return WalkingRoute(
+                        let googleRoute = WalkingRoute(
                             name: route.name,
                             description: route.description,
                             durationMinutes: durationMinutes,
@@ -3694,6 +4037,13 @@ class GoogleMapsService: ObservableObject {
                             encodedPolyline: polylineToUse.isEmpty ? route.encodedPolyline : polylineToUse,
                             walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
                         )
+                        
+                        let endTime = Date()
+                        let endTimeString = formatter.string(from: endTime)
+                        let totalElapsed = endTime.timeIntervalSince(startTime)
+                        print("⏱️ [ROUTE REFRESH] [\(endTimeString)] ✅ refreshRouteWithGoogleThenMapKit() COMPLETED in \(String(format: "%.2f", totalElapsed))s (used Google)")
+                        
+                        return googleRoute
                         } else {
                             print("🌐   ⚠️  WARNING: Status OK but no routes array or empty routes")
                             if let rawResponse = String(data: data, encoding: .utf8) {
@@ -3729,7 +4079,211 @@ class GoogleMapsService: ObservableObject {
         }
         
         // Fallback to Apple MapKit
-        return await refreshRouteWithMapKit(route: route, userLocation: userLocation)
+        let fallbackTime = Date()
+        let fallbackTimeString = formatter.string(from: fallbackTime)
+        let elapsedSoFar = fallbackTime.timeIntervalSince(startTime)
+        print("⏱️ [ROUTE REFRESH] [\(fallbackTimeString)] ⚠️ Falling back to MapKit (elapsed: \(String(format: "%.2f", elapsedSoFar))s)")
+        
+        let mapKitResult = await refreshRouteWithMapKit(route: route, userLocation: userLocation)
+        
+        let endTime = Date()
+        let endTimeString = formatter.string(from: endTime)
+        let totalElapsed = endTime.timeIntervalSince(startTime)
+        print("⏱️ [ROUTE REFRESH] [\(endTimeString)] ✅ refreshRouteWithGoogleThenMapKit() COMPLETED in \(String(format: "%.2f", totalElapsed))s (used MapKit fallback)")
+        
+        return mapKitResult
+    }
+    
+    // MARK: - v1.9.39: Google-Only Refresh (no MapKit fallback)
+    /// Tries Google Directions only. Returns nil if Google fails (caller uses original route).
+    /// This avoids the 15-50s MapKit fallback wait - if Google fails, just use original route.
+    func refreshRouteWithGoogleOnly(
+        route: WalkingRoute,
+        userLocation: CLLocationCoordinate2D
+    ) async -> WalkingRoute? {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] 🚀 refreshRouteWithGoogleOnly() STARTED")
+        print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)]   Route: '\(route.name)'")
+        print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)]   Waypoints: \(route.qrMarkers.count)")
+        
+        // Check if we can use Google Directions
+        guard canUseGoogleDirectionsRefresh else {
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Google quota exhausted - returning nil")
+            return nil
+        }
+        
+        guard hasAPIKey else {
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ No API key - returning nil")
+            return nil
+        }
+        
+        // Extract waypoint coordinates from QR markers
+        let rawWaypoints = route.qrMarkers.map { $0.coordinate }
+        
+        guard !rawWaypoints.isEmpty else {
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ No waypoints - returning nil")
+            return nil
+        }
+        
+        // Optimize waypoint order locally (Nearest Neighbor) to stay in Essentials SKU
+        let waypoints = performLocalOptimization(origin: userLocation, waypoints: rawWaypoints)
+        
+        // Build waypoints string
+        let waypointsParam = waypoints.map { 
+            String(format: "%.6f,%.6f", $0.latitude, $0.longitude)
+        }.joined(separator: "|")
+        
+        // Google Directions API URL
+        var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
+        urlString += "origin=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
+        urlString += "&destination=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
+        urlString += "&waypoints=\(waypointsParam)"
+        urlString += "&mode=walking"
+        urlString += "&key=\(apiKey)"
+        
+        guard let url = URL(string: urlString) else {
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Invalid URL - returning nil")
+            return nil
+        }
+        
+        // Log the API call (truncate URL for security)
+        let truncatedURL = urlString.prefix(100) + (urlString.count > 100 ? "..." : "")
+        print("🌐 [GOOGLE-ONLY REFRESH] 📡 Calling Google Directions API...")
+        print("🌐 [GOOGLE-ONLY REFRESH]   🔗 URL: \(truncatedURL)")
+        print("🌐 [GOOGLE-ONLY REFRESH]   📍 Origin: (\(String(format: "%.5f", userLocation.latitude)), \(String(format: "%.5f", userLocation.longitude)))")
+        print("🌐 [GOOGLE-ONLY REFRESH]   🎯 Waypoints: \(waypoints.count)")
+        
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 5.0 // Short 5 second timeout
+            if let bundleId = Bundle.main.bundleIdentifier {
+                request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+                print("🌐 [GOOGLE-ONLY REFRESH]   📱 Bundle ID: \(bundleId)")
+            }
+            
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 5.0
+            config.timeoutIntervalForResource = 10.0
+            let session = URLSession(configuration: config)
+            let (data, response) = try await session.data(for: request)
+            let elapsed = Date().timeIntervalSince(startTime)
+            
+            print("🌐 [GOOGLE-ONLY REFRESH]   ⏱️  Response received in \(String(format: "%.2f", elapsed))s")
+            
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ HTTP error - status: \(statusCode) - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
+                return nil
+            }
+            
+            print("🌐 [GOOGLE-ONLY REFRESH]   ✅ HTTP 200 OK")
+            
+            recordGoogleDirectionsCall()
+            print("🌐 [GOOGLE-ONLY REFRESH]   📊 Google Directions quota: \(googleDirectionsCallsToday)/\(googleDirectionsDailyCap) calls today")
+            
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let status = json["status"] as? String,
+                  status == "OK",
+                  let routes = json["routes"] as? [[String: Any]],
+                  let firstRoute = routes.first else {
+                let errorStatus = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["status"] as? String ?? "unknown"
+                print("🌐 [GOOGLE-ONLY REFRESH]   ❌ API status: \(errorStatus)")
+                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ API status: \(errorStatus) - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
+                return nil
+            }
+            
+            print("🌐 [GOOGLE-ONLY REFRESH]   ✅ API status: OK - \(routes.count) route(s) found")
+            
+            // Parse the response (same logic as refreshRouteWithGoogleThenMapKit)
+            var polyline = ""
+            var polylinePointCount = 0
+            if let overviewPolyline = firstRoute["overview_polyline"] as? [String: Any],
+               let points = overviewPolyline["points"] as? String {
+                polyline = points
+                polylinePointCount = decodePolyline(points).count
+            }
+            
+            var stepPolylinePointCount = 0
+            var combinedStepPolyline: [CLLocationCoordinate2D] = []
+            var freshDirections: [WalkingDirection] = []
+            var totalDistance = 0
+            var totalDuration = 0
+            
+            if let legs = firstRoute["legs"] as? [[String: Any]] {
+                for leg in legs {
+                    if let distance = leg["distance"] as? [String: Any],
+                       let distValue = distance["value"] as? Int {
+                        totalDistance += distValue
+                    }
+                    if let duration = leg["duration"] as? [String: Any],
+                       let durValue = duration["value"] as? Int {
+                        totalDuration += durValue
+                    }
+                    
+                    if let steps = leg["steps"] as? [[String: Any]] {
+                        for step in steps {
+                            let instruction = (step["html_instructions"] as? String)?
+                                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) ?? "Continue"
+                            let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
+                            let stepDistValue = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
+                            let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
+                            let maneuver = step["maneuver"] as? String ?? "straight"
+                            
+                            if let stepPolyline = step["polyline"] as? [String: Any],
+                               let stepPoints = stepPolyline["points"] as? String {
+                                let decodedStepPoints = decodePolyline(stepPoints)
+                                stepPolylinePointCount += decodedStepPoints.count
+                                combinedStepPolyline.append(contentsOf: decodedStepPoints)
+                            }
+                            
+                            freshDirections.append(WalkingDirection(
+                                instruction: instruction,
+                                distance: stepDistText,
+                                distanceMeters: stepDistValue,
+                                duration: stepDurText,
+                                maneuver: maneuver
+                            ))
+                        }
+                    }
+                }
+            }
+            
+            // Use detailed step polyline if available
+            var finalPolyline = polyline
+            if stepPolylinePointCount > polylinePointCount && !combinedStepPolyline.isEmpty {
+                finalPolyline = encodePolyline(combinedStepPolyline)
+            }
+            
+            let durationMinutes = max(1, totalDuration / 60)
+            
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ✅ SUCCESS: \(durationMinutes)min, \(totalDistance)m, \(freshDirections.count) steps (elapsed: \(String(format: "%.2f", elapsed))s)")
+            
+            return WalkingRoute(
+                name: route.name,
+                description: route.description,
+                durationMinutes: durationMinutes,
+                distanceMeters: totalDistance > 0 ? totalDistance : route.distanceMeters,
+                difficulty: route.difficulty,
+                isIndoor: route.isIndoor,
+                isAccessible: route.isAccessible,
+                landmarks: route.landmarks,
+                icon: route.icon,
+                color: route.color,
+                qrMarkers: route.qrMarkers,
+                routeType: route.routeType,
+                encodedPolyline: finalPolyline.isEmpty ? route.encodedPolyline : finalPolyline,
+                walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
+            )
+            
+        } catch {
+            let elapsed = Date().timeIntervalSince(startTime)
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Error: \(error.localizedDescription) - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
+            return nil
+        }
     }
     
     /// Extract maneuver type from instruction text
@@ -3953,7 +4507,12 @@ class GoogleMapsService: ObservableObject {
         excludePlaceIds: Set<String> = [],
         prefetchedPOIs: [PlaceResult]? = nil
     ) async throws -> GeneratedRoute {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
         
+        print("⏱️ [ROUTE RETRY] [\(timeString)] 🔄 generateLocalRouteWithRetry() STARTED")
         print("╔══════════════════════════════════════════════════════════════╗")
         print("║              🚶 ROUTE GENERATION STARTED                     ║")
         print("╠══════════════════════════════════════════════════════════════╣")
@@ -3965,6 +4524,7 @@ class GoogleMapsService: ObservableObject {
         
         // Stage 1: Random selection (current behavior)
         print("\n📍 STAGE 1: Random Selection")
+        let stage1StartTime = Date()
         do {
             let route = try await generateLocalRoute(
                 from: location,
@@ -3974,8 +4534,14 @@ class GoogleMapsService: ObservableObject {
                 prefetchedPOIs: prefetchedPOIs,
                 useSystematicSelection: false
             )
+            let stage1Elapsed = Date().timeIntervalSince(stage1StartTime)
+            let endTime = Date()
+            let endTimeString = formatter.string(from: endTime)
+            let totalElapsed = endTime.timeIntervalSince(startTime)
+            
             await MainActor.run { retryStatus = nil }
             print("✅ STAGE 1 SUCCESS: \(route.durationSeconds / 60) min route with \(route.places.count) waypoints")
+            print("⏱️ [ROUTE RETRY] [\(endTimeString)] ✅ generateLocalRouteWithRetry() COMPLETED in \(String(format: "%.2f", totalElapsed))s (Stage 1 took \(String(format: "%.2f", stage1Elapsed))s)")
             return route
         } catch GoogleMapsError.rateLimited(let waitTime) {
             // Rate limited - wait and retry once
@@ -4456,8 +5022,24 @@ class GoogleMapsService: ObservableObject {
         useEndpointFirst: Bool = false,  // Use single endpoint approach (better for Route 1)
         preferMultiWaypoint: Bool = false  // v1.6.49: Force 2+ waypoints for variety (routes 2-4)
     ) async throws -> GeneratedRoute {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("⏱️ [ROUTE GEN] [\(timeString)] 🗺️ generateLocalRoute() STARTED")
+        print("⏱️ [ROUTE GEN] [\(timeString)]   Target: \(targetDurationMinutes)min")
+        print("⏱️ [ROUTE GEN] [\(timeString)]   Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))")
+        print("⏱️ [ROUTE GEN] [\(timeString)]   Mode: \(useSystematicSelection ? "systematic" : "quick"), expandedSearch: \(expandedSearch)")
+        
         await MainActor.run { isLoading = true }
-        defer { Task { @MainActor in isLoading = false } }
+        defer { 
+            let endTime = Date()
+            let elapsed = endTime.timeIntervalSince(startTime)
+            let endTimeString = formatter.string(from: endTime)
+            print("⏱️ [ROUTE GEN] [\(endTimeString)] ✅ generateLocalRoute() COMPLETED in \(String(format: "%.2f", elapsed))s")
+            Task { @MainActor in isLoading = false } 
+        }
         
         // ADAPTIVE TIMING: More flexible for short routes in dense urban areas
         // Short routes (≤15 min): 50-100% acceptable (dense areas have clustered POIs)
@@ -6805,6 +7387,64 @@ class GoogleMapsService: ObservableObject {
         return loc1.distance(from: loc2)
     }
     
+    // MARK: - v1.9.48: POI Deduplication Helper
+    /// Deduplicates POIs by location proximity
+    /// - Same name AND within 50m → dedupe (actual duplicate from different source)
+    /// - Very close (<20m) regardless of name → dedupe (same physical location)
+    private func deduplicatePOIs(_ pois: [PlaceResult]) -> [PlaceResult] {
+        var result: [PlaceResult] = []
+        for poi in pois {
+            let isDuplicate = result.contains { existing in
+                let distance = distanceBetween(existing.coordinate, poi.coordinate)
+                let sameNameAndClose = existing.name.lowercased() == poi.name.lowercased() && distance < 50
+                let veryClose = distance < 20  // Same physical location regardless of name
+                return sameNameAndClose || veryClose
+            }
+            if !isDuplicate {
+                result.append(poi)
+            }
+        }
+        return result
+    }
+    
+    // MARK: - Local Waypoint Optimization (Nearest Neighbor)
+    /// Optimizes waypoint order using Nearest Neighbor (Greedy) algorithm
+    /// This keeps Google Directions API calls in the "Essentials" SKU ($5/1k) instead of "Advanced" SKU ($10+/1k)
+    /// by doing the optimization locally instead of using Google's optimize:true parameter
+    /// 
+    /// - Parameters:
+    ///   - origin: Starting location (user's current location)
+    ///   - waypoints: Array of waypoint coordinates to optimize
+    /// - Returns: Optimized array of waypoints in efficient visiting order
+    private func performLocalOptimization(origin: CLLocationCoordinate2D, waypoints: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+        guard !waypoints.isEmpty else { return waypoints }
+        
+        // Cap at 10 waypoints to stay within Essentials SKU billing tier
+        let cappedWaypoints = Array(waypoints.prefix(10))
+        if waypoints.count > 10 {
+            print("🌐 ⚠️  Waypoints capped at 10 (was \(waypoints.count)) to stay in Essentials SKU")
+        }
+        
+        // Nearest Neighbor (Greedy) algorithm
+        var remaining = cappedWaypoints
+        var optimized: [CLLocationCoordinate2D] = []
+        var current = origin
+        
+        while !remaining.isEmpty {
+            // Find nearest unvisited waypoint
+            let nearest = remaining.min { wp1, wp2 in
+                distanceBetween(current, wp1) < distanceBetween(current, wp2)
+            }!
+            
+            optimized.append(nearest)
+            remaining.removeAll { $0.latitude == nearest.latitude && $0.longitude == nearest.longitude }
+            current = nearest
+        }
+        
+        print("🌐 ✅ Local optimization: \(cappedWaypoints.count) waypoints reordered using Nearest Neighbor")
+        return optimized
+    }
+    
     /// Check if two POI names are similar (likely the same place, different naming)
     /// v1.6.47: Used for deduplication - only dedupe very close POIs if names are similar
     private func namesAreSimilar(_ name1: String, _ name2: String) -> Bool {
@@ -6852,15 +7492,25 @@ class GoogleMapsService: ObservableObject {
         
         print("🌐 Google Directions: Attempting fallback route (PAID API)...")
         
-        // Build waypoints string for Google API using coordinate property
-        let waypointCoords = waypoints.map { "\($0.coordinate.latitude),\($0.coordinate.longitude)" }
+        // Extract waypoint coordinates
+        let rawWaypointCoords = waypoints.map { $0.coordinate }
+        
+        // Optimize waypoint order locally (Nearest Neighbor) to stay in Essentials SKU
+        let optimizedWaypointCoords = performLocalOptimization(origin: origin, waypoints: rawWaypointCoords)
+        
+        // Build waypoints string for Google API (already optimized, no optimize:true parameter needed)
+        // Format: lat,lng|lat,lng|lat,lng (using 6 decimal places for precision)
+        let waypointCoords = optimizedWaypointCoords.map { 
+            String(format: "%.6f,%.6f", $0.latitude, $0.longitude)
+        }
         let waypointsParam = waypointCoords.joined(separator: "|")
         
         // Google Directions API URL
+        // Format: origin and destination are the same (loop route), waypoints are intermediate POIs only
         var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
-        urlString += "origin=\(origin.latitude),\(origin.longitude)"
-        urlString += "&destination=\(origin.latitude),\(origin.longitude)"  // Round trip
-        urlString += "&waypoints=\(waypointsParam)"  // v1.8.9: Removed optimize:true to stay in free Essentials tier
+        urlString += "origin=\(String(format: "%.6f,%.6f", origin.latitude, origin.longitude))"
+        urlString += "&destination=\(String(format: "%.6f,%.6f", origin.latitude, origin.longitude))"  // Round trip
+        urlString += "&waypoints=\(waypointsParam)"  // v1.9.30: Locally optimized, no optimize:true to stay in Essentials SKU
         urlString += "&mode=walking"
         urlString += "&key=\(apiKey)"
         
@@ -7030,8 +7680,8 @@ struct NewPlace: Codable {
     let id: String?
     let displayName: DisplayName?
     let location: NewPlaceLocation?
-    // ⚠️ REMOVED: formattedAddress and types to prevent Pro SKU billing
-    // These fields trigger Enterprise/Pro SKU charges even if not in FieldMask
+    // ⚠️ SKU TIER: Using Pro SKU - displayName triggers Pro billing ($32/1k)
+    // We accept Pro SKU cost for readable place names (better UX)
     // Only decode the fields we explicitly request: id, displayName, location
 }
 
@@ -7051,6 +7701,8 @@ struct PlaceResult: Codable, Identifiable {
     let vicinity: String?
     let geometry: PlaceGeometry
     let types: [String]?
+    // v1.9.48: Track POI source for debugging and quality control
+    var source: POISource = .unknown
     
     var id: String { placeId }
     
@@ -7063,7 +7715,28 @@ struct PlaceResult: Codable, Identifiable {
     
     enum CodingKeys: String, CodingKey {
         case placeId = "place_id"
-        case name, vicinity, geometry, types
+        case name, vicinity, geometry, types, source
+    }
+    
+    // v1.9.48: Custom decoder to handle missing source in cached data
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        placeId = try container.decode(String.self, forKey: .placeId)
+        name = try container.decode(String.self, forKey: .name)
+        vicinity = try container.decodeIfPresent(String.self, forKey: .vicinity)
+        geometry = try container.decode(PlaceGeometry.self, forKey: .geometry)
+        types = try container.decodeIfPresent([String].self, forKey: .types)
+        source = try container.decodeIfPresent(POISource.self, forKey: .source) ?? .unknown
+    }
+    
+    // v1.9.48: Convenience initializer for creating POIs with source
+    init(placeId: String, name: String, vicinity: String?, geometry: PlaceGeometry, types: [String]?, source: POISource = .unknown) {
+        self.placeId = placeId
+        self.name = name
+        self.vicinity = vicinity
+        self.geometry = geometry
+        self.types = types
+        self.source = source
     }
 }
 

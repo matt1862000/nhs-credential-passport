@@ -20,6 +20,11 @@ struct ClinicianSelectionView: View {
     // Location for sorting by proximity
     @StateObject private var locationHelper = ClinicianLocationHelper()
     
+    // v1.9.56: Appointment time picker state
+    @State private var showAppointmentTimePicker = false
+    @State private var selectedAppointmentTime = Date()
+    @State private var pendingClinician: Clinician? = nil
+    
     /// Clinicians sorted by proximity (if location available) then filtered by search
     var filteredClinicians: [Clinician] {
         // First sort by proximity if we have location
@@ -81,8 +86,8 @@ struct ClinicianSelectionView: View {
                         .background(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.8))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         
-                        // Last updated info
-                        if !viewModel.availableClinicians.isEmpty {
+                        // Last updated info - hidden when time picker is shown (v1.9.59)
+                        if !viewModel.availableClinicians.isEmpty && !showAppointmentTimePicker {
                             HStack(spacing: 4) {
                                 Image(systemName: "arrow.clockwise")
                                     .font(.caption2)
@@ -175,33 +180,90 @@ struct ClinicianSelectionView: View {
                                 .padding(.bottom, 20)
                             } else {
                                 ForEach(filteredClinicians) { clinician in
-                                    ClinicianCard(
-                                        clinician: clinician,
-                                        isSelected: viewModel.selectedClinician?.id == clinician.id,
-                                        userLocation: locationHelper.currentLocation,
-                                        onSelect: {
-                                            viewModel.selectClinician(clinician)
+                                    // v1.9.61: Match by name instead of ID since Firebase updates recreate objects
+                                    let isSelectedClinician = pendingClinician?.fullTitle == clinician.fullTitle
+                                    let shouldShow = !showAppointmentTimePicker || isSelectedClinician
+                                    
+                                    if shouldShow {
+                                        VStack(spacing: 12) {
+                                            ClinicianCard(
+                                                clinician: clinician,
+                                                isSelected: viewModel.selectedClinician?.id == clinician.id,
+                                                userLocation: locationHelper.currentLocation,
+                                                onSelect: {
+                                                    viewModel.selectClinician(clinician)
+                                                    
+                                                    // 🚀 Early prefetch POIs now that we have location + clinician
+                                                    // This speeds up route generation when user wants to walk
+                                                    if let location = locationHelper.currentLocation {
+                                                        GoogleMapsService.shared.prefetchPOIsEarly(
+                                                            location: location.coordinate
+                                                        )
+                                                    }
+                                                    
+                                                    // v1.9.56: Show appointment time picker instead of immediate dismiss
+                                                    pendingClinician = clinician
+                                                    // Default to next quarter hour
+                                                    let now = Date()
+                                                    let calendar = Calendar.current
+                                                    let minute = calendar.component(.minute, from: now)
+                                                    let roundedMinute = ((minute / 15) + 1) * 15
+                                                    if let defaultTime = calendar.date(bySettingHour: calendar.component(.hour, from: now), minute: roundedMinute % 60, second: 0, of: now) {
+                                                        selectedAppointmentTime = roundedMinute >= 60 
+                                                            ? calendar.date(byAdding: .hour, value: 1, to: defaultTime) ?? defaultTime
+                                                            : defaultTime
+                                                    }
+                                                    withAnimation(.easeOut(duration: 0.3)) {
+                                                        showAppointmentTimePicker = true
+                                                    }
+                                                }
+                                            )
                                             
-                                            // 🚀 Early prefetch POIs now that we have location + clinician
-                                            // This speeds up route generation when user wants to walk
-                                            if let location = locationHelper.currentLocation {
-                                                GoogleMapsService.shared.prefetchPOIsEarly(
-                                                    location: location.coordinate
+                                        // v1.9.56: Inline appointment time picker - appears directly under selected clinician
+                                        // v1.9.61: Match by name since Firebase updates recreate objects with new IDs
+                                        if showAppointmentTimePicker && (pendingClinician?.fullTitle == clinician.fullTitle) {
+                                                AppointmentTimePickerCard(
+                                                    clinician: clinician,
+                                                    selectedTime: $selectedAppointmentTime,
+                                                    onSetTime: {
+                                                        viewModel.setAppointmentTime(selectedAppointmentTime)
+                                                        withAnimation {
+                                                            showAppointmentTimePicker = false
+                                                        }
+                                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                                            isPresented = false
+                                                        }
+                                                    },
+                                                    onSkip: {
+                                                        viewModel.clearAppointmentTime()
+                                                        withAnimation {
+                                                            showAppointmentTimePicker = false
+                                                        }
+                                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                                            isPresented = false
+                                                        }
+                                                    },
+                                                    onChangeClinician: {
+                                                        // v1.9.58: Allow changing clinician
+                                                        withAnimation(.easeOut(duration: 0.3)) {
+                                                            showAppointmentTimePicker = false
+                                                            pendingClinician = nil
+                                                        }
+                                                    }
                                                 )
-                                            }
-                                            
-                                            // Dismiss after short delay
-                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                                isPresented = false
+                                                .transition(.asymmetric(
+                                                    insertion: .move(edge: .top).combined(with: .opacity),
+                                                    removal: .opacity
+                                                ))
                                             }
                                         }
-                                    )
+                                    }
                                 }
                             }
                         }
                         
-                        // Info note - only show when clinicians are available
-                        if !filteredClinicians.isEmpty {
+                        // Info note - only show when clinicians are available and time picker not shown (v1.9.59)
+                        if !filteredClinicians.isEmpty && !showAppointmentTimePicker {
                             HStack(spacing: 12) {
                                 Image(systemName: "info.circle.fill")
                                     .foregroundColor(.tealAccent)
@@ -214,7 +276,7 @@ struct ClinicianSelectionView: View {
                             .cardStyle()
                         }
                         
-                        Spacer(minLength: 100)
+                        Spacer(minLength: showAppointmentTimePicker ? 20 : 100)
                     }
                     .padding(.horizontal, 20)
                 }
@@ -447,6 +509,115 @@ struct FeatureShortcutButton: View {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Appointment Time Picker Card (v1.9.56)
+struct AppointmentTimePickerCard: View {
+    let clinician: Clinician
+    @Binding var selectedTime: Date
+    let onSetTime: () -> Void
+    let onSkip: () -> Void
+    var onChangeClinician: (() -> Void)? = nil  // v1.9.58: Optional callback to change clinician
+    @Environment(\.colorScheme) var colorScheme
+    
+    // Time formatter
+    private var timeFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter
+    }
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            // Header
+            HStack(spacing: 12) {
+                Image(systemName: "clock.badge.questionmark")
+                    .font(.title2)
+                    .foregroundColor(.tealAccent)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("What time is your appointment?")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    Text("Optional — helps us show when you'll be seen")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+            }
+            
+            // Time picker
+            DatePicker(
+                "Appointment Time",
+                selection: $selectedTime,
+                displayedComponents: .hourAndMinute
+            )
+            .datePickerStyle(.wheel)
+            .labelsHidden()
+            .frame(height: 120)
+            
+            // v1.9.60: Wrong clinician? Change button - more prominent, above action buttons
+            if let onChangeClinician = onChangeClinician {
+                Button(action: onChangeClinician) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.subheadline)
+                        Text("Wrong clinician? Change")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(colorScheme == .dark ? Color.darkCardBackground.opacity(0.5) : Color.gray.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                .padding(.bottom, 4)
+            }
+            
+            // Buttons
+            HStack(spacing: 12) {
+                // Skip button
+                Button(action: onSkip) {
+                    Text("Skip")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(colorScheme == .dark ? Color.darkCardBackground : Color.gray.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                
+                // Set time button
+                Button(action: onSetTime) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption)
+                        Text("Set Time")
+                    }
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.tealAccent)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+        }
+        .padding(16)
+        .background(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.95))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.tealAccent.opacity(0.3), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.1), radius: 8, y: 4)
     }
 }
 
