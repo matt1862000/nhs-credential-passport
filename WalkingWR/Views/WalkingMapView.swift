@@ -1232,11 +1232,15 @@ struct EmbeddedWalkMapViewSwiftUI: View {
         hasPlayedIntro = true
         showingIntroOverlay = true
         
+        // Ensure userInteractedWithMap is false at start of intro animation
+        userInteractedWithMap = false
+        
         // Very slow, ultra-smooth easeInOut animation
         let verySlowAnimation = Animation.easeInOut(duration: 2.5)
         
         // Phase 1: Slowly zoom to first waypoint
         introPhase = .showingFirstWaypoint
+        isProgrammaticCameraUpdate = true  // Mark as programmatic to prevent interaction detection
         withAnimation(verySlowAnimation) {
             cameraPosition = .region(MKCoordinateRegion(
                 center: firstWaypoint,
@@ -1244,10 +1248,19 @@ struct EmbeddedWalkMapViewSwiftUI: View {
                 longitudinalMeters: 100
             ))
         }
+        // Reset flag after animation completes
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            isProgrammaticCameraUpdate = false
+        }
         
         // Phase 2: Slowly zoom out to show full route (after 4 seconds)
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-            guard !userInteractedWithMap else { return }  // Skip if user interacted
+            // Only skip if user explicitly interacted (not just from camera updates)
+            guard !userInteractedWithMap else {
+                print("🎬 [INTRO] Phase 2 blocked: userInteractedWithMap=true")
+                return
+            }
+            print("🎬 [INTRO] Phase 2: Transitioning to showingFullRoute")
             introPhase = .showingFullRoute
             
             // Calculate bounds for full route
@@ -1262,11 +1275,16 @@ struct EmbeddedWalkMapViewSwiftUI: View {
                 let latSpan = (lats.max()! - lats.min()!) * 1.5
                 let lngSpan = (lngs.max()! - lngs.min()!) * 1.5
                 
+                isProgrammaticCameraUpdate = true  // Mark as programmatic to prevent interaction detection
                 withAnimation(verySlowAnimation) {
                     cameraPosition = .region(MKCoordinateRegion(
                         center: center,
                         span: MKCoordinateSpan(latitudeDelta: max(0.01, latSpan), longitudeDelta: max(0.01, lngSpan))
                     ))
+                }
+                // Reset flag after animation completes
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    isProgrammaticCameraUpdate = false
                 }
             }
         }
@@ -1274,9 +1292,11 @@ struct EmbeddedWalkMapViewSwiftUI: View {
         // Phase 3: Switch to auto-follow user location with active zoom (after 8 seconds)
         DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
             guard !userInteractedWithMap else {
+                print("🎬 [INTRO] Phase 3 blocked: userInteractedWithMap=true")
                 return // Skip if user interacted
             }
             
+            print("🎬 [INTRO] Phase 3: Transitioning to followingUser")
             // v1.9.13: Animate transition to user location smoothly
             withAnimation(verySlowAnimation) {
                 introPhase = .followingUser
