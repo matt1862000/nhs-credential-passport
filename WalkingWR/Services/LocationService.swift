@@ -34,6 +34,9 @@ class LocationService: NSObject, ObservableObject {
     private var currentNetworkType: String = "Unknown"
     private var lastNetworkChangeTime: Date?
     
+    // v1.9.74: File-based debug logging
+    private let debugLogger = DebugLogger.shared
+    
     // Direction monitoring
     @Published var currentDirectionIndex: Int = 0
     @Published var isMonitoringDirections: Bool = false
@@ -152,6 +155,11 @@ class LocationService: NSObject, ObservableObject {
         // v1.9.74: Start network monitoring
         startNetworkMonitoring()
         
+        // v1.9.74: Log initialization
+        debugLogger.log("LocationService initialized", category: "INIT")
+        debugLogger.log("GPS Settings: maxAccuracy=\(maxGPSAccuracy)m, minMovement=\(minMovementAlongRoute)m, historyWindow=\(positionHistoryWindow)s", category: "CONFIG")
+        debugLogger.log("GPS Settings: minConsistentReadings=\(minConsistentReadings), consistencyThreshold=\(consistencyThreshold)", category: "CONFIG")
+        
         // Listen for app returning to foreground to re-check permissions
         NotificationCenter.default.addObserver(
             self,
@@ -198,15 +206,15 @@ class LocationService: NSObject, ObservableObject {
             self.currentNetworkType = networkType
             self.lastNetworkChangeTime = timestamp
             
-            print("🌐 [NETWORK] [\(timeString)] Network changed: \(previousType) → \(networkType)")
-            print("🌐 [NETWORK] [\(timeString)]   Status: \(status == .satisfied ? "Connected" : status == .requiresConnection ? "Requires Connection" : "Unsatisfied")")
-            print("🌐 [NETWORK] [\(timeString)]   Expensive: \(isExpensive), Constrained: \(isConstrained)")
-            print("🌐 [NETWORK] [\(timeString)]   Location tracking: \(self.isTracking), Monitoring directions: \(self.isMonitoringDirections)")
-            print("🌐 [NETWORK] [\(timeString)]   Current location: \(self.currentLocation != nil ? "Yes" : "No"), Accuracy: \(self.currentLocation?.horizontalAccuracy ?? -1)m")
+            let networkLog = "Network changed: \(previousType) → \(networkType), Status: \(status == .satisfied ? "Connected" : "Unsatisfied"), Expensive: \(isExpensive), Tracking: \(self.isTracking), Monitoring: \(self.isMonitoringDirections)"
+            print("🌐 [NETWORK] [\(timeString)] \(networkLog)")
+            self.debugLogger.log(networkLog, category: "NETWORK")
             
             // Log if transitioning during active walk
             if self.isTracking {
-                print("🌐 [NETWORK] [\(timeString)] ⚠️ Network transition during active walk!")
+                let warning = "⚠️ Network transition during active walk! \(previousType) → \(networkType)"
+                print("🌐 [NETWORK] [\(timeString)] \(warning)")
+                self.debugLogger.log(warning, category: "NETWORK")
             }
         }
         networkMonitor.start(queue: networkQueue)
@@ -445,39 +453,51 @@ class LocationService: NSObject, ObservableObject {
         let timeString = formatter.string(from: timestamp)
         
         guard isMonitoringDirections, !directionWaypoints.isEmpty, !cachedRoutePath.isEmpty else {
-            print("📍 [WAYPOINT CHECK] [\(timeString)] Skipping - Monitoring: \(isMonitoringDirections), Waypoints: \(directionWaypoints.count), Route: \(cachedRoutePath.count)")
+            let skipLog = "Skipping waypoint check - Monitoring: \(isMonitoringDirections), Waypoints: \(directionWaypoints.count), Route: \(cachedRoutePath.count)"
+            print("📍 [WAYPOINT CHECK] [\(timeString)] \(skipLog)")
+            debugLogger.log(skipLog, category: "WAYPOINT")
             return
         }
         
         // v1.9.71: Filter out poor GPS readings
         // Reject readings with accuracy worse than maxGPSAccuracy (default 20m)
         if currentLocation.horizontalAccuracy > maxGPSAccuracy || currentLocation.horizontalAccuracy < 0 {
-            print("📍 [GPS Filter] [\(timeString)] Rejecting location: accuracy=\(String(format: "%.1f", currentLocation.horizontalAccuracy))m (max: \(maxGPSAccuracy)m)")
-            print("📍 [GPS Filter] [\(timeString)]   Network: \(currentNetworkType)")
+            let rejectLog = "Rejecting location: accuracy=\(String(format: "%.1f", currentLocation.horizontalAccuracy))m (max: \(maxGPSAccuracy)m), Network: \(currentNetworkType)"
+            print("📍 [GPS Filter] [\(timeString)] \(rejectLog)")
+            debugLogger.log(rejectLog, category: "GPS_FILTER")
             return
         }
         
-        print("📍 [WAYPOINT CHECK] [\(timeString)] Checking waypoints (current index: \(currentDirectionIndex)/\(directionWaypoints.count))")
-        print("📍 [WAYPOINT CHECK] [\(timeString)]   Network: \(currentNetworkType), Accuracy: \(String(format: "%.1f", currentLocation.horizontalAccuracy))m")
+        let checkLog = "Checking waypoints (index: \(currentDirectionIndex)/\(directionWaypoints.count)), Network: \(currentNetworkType), Accuracy: \(String(format: "%.1f", currentLocation.horizontalAccuracy))m"
+        print("📍 [WAYPOINT CHECK] [\(timeString)] \(checkLog)")
+        debugLogger.log(checkLog, category: "WAYPOINT")
         
         // Project user's current position onto the polyline
         guard let userProjection = projectOntoPolyline(coordinate: currentLocation.coordinate, polyline: cachedRoutePath) else {
-            print("📍 [WAYPOINT CHECK] [\(timeString)] ⚠️ Failed to project location onto polyline")
+            let projectionFailLog = "⚠️ Failed to project location onto polyline"
+            print("📍 [WAYPOINT CHECK] [\(timeString)] \(projectionFailLog)")
+            debugLogger.log(projectionFailLog, category: "WAYPOINT")
             return
         }
+        
+        debugLogger.log("Projected position: segment=\(userProjection.segmentIndex), t=\(String(format: "%.3f", userProjection.t)), distanceToPolyline=\(String(format: "%.1f", userProjection.distanceToPolyline))m", category: "WAYPOINT")
         
         // v1.9.71: Add to position history for movement tracking
         let now = Date()
         recentProjectedPositions.append((userProjection.segmentIndex, userProjection.t, now))
         
-        // Clean up old positions (keep last 10 seconds)
+        // Clean up old positions (keep last 30 seconds)
         recentProjectedPositions = recentProjectedPositions.filter { now.timeIntervalSince($0.timestamp) <= positionHistoryWindow }
+        
+        debugLogger.log("Position history: \(recentProjectedPositions.count) positions in last \(positionHistoryWindow)s", category: "WAYPOINT")
         
         // v1.9.71: Calculate distance moved along route (not straight-line, but along the polyline)
         let distanceMovedAlongRoute = calculateDistanceMovedAlongRoute(
             currentProjection: userProjection,
             recentPositions: recentProjectedPositions
         )
+        
+        debugLogger.log("Distance moved along route: \(String(format: "%.1f", distanceMovedAlongRoute))m (required: \(minMovementAlongRoute)m)", category: "WAYPOINT")
         
         // Check upcoming waypoints (current and next few)
         let checkRange = currentDirectionIndex..<min(currentDirectionIndex + 3, directionWaypoints.count)
@@ -523,14 +543,45 @@ class LocationService: NSObject, ObservableObject {
             let shouldTrigger = (distance <= 20 && userIsAtOrPastOnPolyline && hasMovedEnough && hasConsistentMovement && hasGoodAccuracy) ||
                                 (distance <= 8)  // Failsafe: if very close, always trigger (stricter)
             
-            // v1.9.74: Log trigger conditions for debugging
-            if distance <= 20 {
-                print("📍 [WAYPOINT CHECK] [\(timeString)] Waypoint \(index + 1): distance=\(String(format: "%.1f", distance))m")
-                print("📍 [WAYPOINT CHECK] [\(timeString)]   Conditions: atOrPast=\(userIsAtOrPastOnPolyline), movedEnough=\(hasMovedEnough), consistent=\(hasConsistentMovement), goodAccuracy=\(hasGoodAccuracy)")
-                print("📍 [WAYPOINT CHECK] [\(timeString)]   Network: \(currentNetworkType), shouldTrigger=\(shouldTrigger)")
+            // v1.9.74: Comprehensive logging for direction advancement debugging
+            let waypointLog = """
+            Waypoint \(index + 1)/\(directionWaypoints.count): "\(waypoint.instruction)"
+            - Distance: \(String(format: "%.1f", distance))m (threshold: 20m, failsafe: 8m)
+            - User segment: \(userProjection.segmentIndex), t: \(String(format: "%.3f", userProjection.t))
+            - Waypoint segment: \(waypointSegment), polylineIndex: \(waypoint.polylineIndex)
+            - Conditions:
+              * atOrPastOnPolyline: \(userIsAtOrPastOnPolyline) (user segment > waypoint OR t > 0.6)
+              * hasMovedEnough: \(hasMovedEnough) (moved \(String(format: "%.1f", distanceMovedAlongRoute))m >= \(minMovementAlongRoute)m)
+              * hasConsistentMovement: \(hasConsistentMovement) (needs \(minConsistentReadings) readings, \(consistencyThreshold*100)% forward)
+              * hasGoodAccuracy: \(hasGoodAccuracy) (accuracy: \(String(format: "%.1f", currentLocation.horizontalAccuracy))m <= \(maxGPSAccuracy)m)
+            - Network: \(currentNetworkType)
+            - shouldTrigger: \(shouldTrigger)
+            """
+            
+            // Always log when checking waypoints within range
+            if distance <= 30 {  // Log for waypoints within 30m
+                print("📍 [WAYPOINT CHECK] [\(timeString)] \(waypointLog)")
+                debugLogger.log(waypointLog, category: "DIRECTION_ADVANCE")
+                
+                // Log why it's NOT triggering if it should be close
+                if !shouldTrigger && distance <= 20 {
+                    var failureReasons: [String] = []
+                    if distance > 20 { failureReasons.append("Distance too far (\(String(format: "%.1f", distance))m > 20m)") }
+                    if !userIsAtOrPastOnPolyline { failureReasons.append("Not past waypoint on polyline (user segment \(userProjection.segmentIndex) vs waypoint \(waypointSegment), t=\(String(format: "%.3f", userProjection.t)) < 0.6)") }
+                    if !hasMovedEnough { failureReasons.append("Not moved enough (\(String(format: "%.1f", distanceMovedAlongRoute))m < \(minMovementAlongRoute)m)") }
+                    if !hasConsistentMovement { failureReasons.append("No consistent forward movement") }
+                    if !hasGoodAccuracy { failureReasons.append("Poor GPS accuracy (\(String(format: "%.1f", currentLocation.horizontalAccuracy))m > \(maxGPSAccuracy)m)") }
+                    
+                    let failureLog = "❌ NOT TRIGGERING waypoint \(index + 1) - Reasons: \(failureReasons.joined(separator: ", "))"
+                    print("📍 [WAYPOINT CHECK] [\(timeString)] \(failureLog)")
+                    debugLogger.log(failureLog, category: "DIRECTION_ADVANCE")
+                }
             }
             
             if shouldTrigger {
+                let triggerLog = "✅ TRIGGERED waypoint \(index + 1): '\(waypoint.instruction)' - Advancing from index \(currentDirectionIndex) to \(min(index + 1, directionWaypoints.count - 1))"
+                print("📍 [WAYPOINT TRIGGER] [\(timeString)] \(triggerLog)")
+                debugLogger.log(triggerLog, category: "DIRECTION_ADVANCE")
                 NotificationService.shared.sendDirectionNotification(
                     instruction: waypoint.instruction,
                     distance: waypoint.distance,
@@ -543,7 +594,9 @@ class LocationService: NSObject, ObservableObject {
                 // Update current direction index
                 if index >= currentDirectionIndex {
                     let newIndex = min(index + 1, directionWaypoints.count - 1)
+                    let oldIndex = currentDirectionIndex
                     currentDirectionIndex = newIndex
+                    debugLogger.log("Direction index updated: \(oldIndex) → \(newIndex)", category: "DIRECTION_ADVANCE")
                 }
                 
                 // Clear position history after advancing (fresh start for next waypoint)
@@ -878,17 +931,15 @@ extension LocationService: CLLocationManagerDelegate {
             timeSinceLastUpdate = 0
         }
         
-        print("📍 [LOCATION UPDATE] [\(timeString)] New location received")
-        print("📍 [LOCATION UPDATE] [\(timeString)]   Coordinates: (\(String(format: "%.6f", newLocation.coordinate.latitude)), \(String(format: "%.6f", newLocation.coordinate.longitude)))")
-        print("📍 [LOCATION UPDATE] [\(timeString)]   Accuracy: \(String(format: "%.1f", accuracy))m (max: \(maxGPSAccuracy)m)")
-        print("📍 [LOCATION UPDATE] [\(timeString)]   Speed: \(String(format: "%.2f", speed))m/s, Course: \(String(format: "%.1f", course))°, Altitude: \(String(format: "%.1f", altitude))m")
-        print("📍 [LOCATION UPDATE] [\(timeString)]   Time since last: \(String(format: "%.2f", timeSinceLastUpdate))s")
-        print("📍 [LOCATION UPDATE] [\(timeString)]   Network: \(currentNetworkType)")
-        print("📍 [LOCATION UPDATE] [\(timeString)]   Tracking: \(isTracking), Monitoring: \(isMonitoringDirections)")
+        let locationLog = "Location: (\(String(format: "%.6f", newLocation.coordinate.latitude)), \(String(format: "%.6f", newLocation.coordinate.longitude))), Accuracy: \(String(format: "%.1f", accuracy))m, Speed: \(String(format: "%.2f", speed))m/s, Network: \(currentNetworkType), TimeSinceLast: \(String(format: "%.2f", timeSinceLastUpdate))s"
+        print("📍 [LOCATION UPDATE] [\(timeString)] \(locationLog)")
+        debugLogger.log(locationLog, category: "LOCATION")
         
         // Log if accuracy is poor (might indicate network transition issue)
         if accuracy > maxGPSAccuracy {
-            print("📍 [LOCATION UPDATE] [\(timeString)] ⚠️ POOR ACCURACY - Rejecting location (accuracy: \(String(format: "%.1f", accuracy))m > max: \(maxGPSAccuracy)m)")
+            let poorAccuracyLog = "⚠️ POOR ACCURACY - Rejecting: \(String(format: "%.1f", accuracy))m > max \(maxGPSAccuracy)m, Network: \(currentNetworkType)"
+            print("📍 [LOCATION UPDATE] [\(timeString)] \(poorAccuracyLog)")
+            debugLogger.log(poorAccuracyLog, category: "GPS_FILTER")
         }
         
         let isFirstLocation = currentLocation == nil
