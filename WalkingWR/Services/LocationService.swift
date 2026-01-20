@@ -431,7 +431,9 @@ class LocationService: NSObject, ObservableObject {
         }
         
         isMonitoringDirections = true
-        print("📍 Started direction monitoring with \(directionWaypoints.count) waypoints, starting at index \(currentDirectionIndex)")
+        let monitoringLog = "Started direction monitoring with \(directionWaypoints.count) waypoints, starting at index \(currentDirectionIndex), routePath points: \(cachedRoutePath.count)"
+        print("📍 \(monitoringLog)")
+        debugLogger.log(monitoringLog, category: "DIRECTION_MONITORING")
     }
     
     /// Stop monitoring for directions
