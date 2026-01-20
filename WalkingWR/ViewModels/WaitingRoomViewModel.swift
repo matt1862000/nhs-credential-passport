@@ -378,8 +378,14 @@ class WaitingRoomViewModel: ObservableObject {
                 selectedClinician = restoredClinician
                 // Preserve appointment time when updating waitTimeInfo from Firebase
                 let preservedAppointmentTime = waitTimeInfo.appointmentTime
-                waitTimeInfo = WaitTimeInfo(from: restoredClinician)
-                waitTimeInfo.appointmentTime = preservedAppointmentTime
+                // Create WaitTimeInfo with appointment time already set to avoid publishing during view updates
+                waitTimeInfo = WaitTimeInfo(
+                    estimatedMinutes: restoredClinician.currentWaitMinutes,
+                    lastUpdated: restoredClinician.lastUpdated,
+                    clinicianName: restoredClinician.fullTitle,
+                    queuePosition: restoredClinician.queuePosition,
+                    appointmentTime: preservedAppointmentTime
+                )
                 
                 // Re-subscribe if notifications are enabled
                 // v1.7.12: Run on background thread to avoid main thread blocking
@@ -1210,8 +1216,14 @@ class WaitingRoomViewModel: ObservableObject {
         selectedClinician = clinician
         // Preserve appointment time when updating waitTimeInfo
         let preservedAppointmentTime = waitTimeInfo.appointmentTime
-        waitTimeInfo = WaitTimeInfo(from: clinician)
-        waitTimeInfo.appointmentTime = preservedAppointmentTime
+        // Create WaitTimeInfo with appointment time already set to avoid publishing during view updates
+        waitTimeInfo = WaitTimeInfo(
+            estimatedMinutes: clinician.currentWaitMinutes,
+            lastUpdated: clinician.lastUpdated,
+            clinicianName: clinician.fullTitle,
+            queuePosition: clinician.queuePosition,
+            appointmentTime: preservedAppointmentTime
+        )
         
         // Reset clinic ended flag - user selected an active clinician
         isClinicEnded = false
