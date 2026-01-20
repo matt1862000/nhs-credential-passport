@@ -88,7 +88,7 @@ export default function PhoneMockup() {
 
       {/* Phone Frame */}
       <motion.div 
-        className="phone-mockup w-[280px] md:w-[320px] float-animation relative z-10"
+        className="phone-mockup w-[240px] sm:w-[280px] md:w-[320px] float-animation relative z-10"
         whileHover={{ scale: 1.02 }}
       >
         {/* Dynamic Island / Notch */}
@@ -132,9 +132,9 @@ export default function PhoneMockup() {
               
               {/* Simulated map with route */}
               <svg className="absolute inset-0 w-full h-full z-10" viewBox="0 0 100 200">
-                {/* Outbound route - Start/End to Dentist - disappears when return route begins */}
+                {/* Outbound route - Start/End to Dentist - disappears when return route begins - adjusted for waypoint positions */}
                 <motion.path
-                  d="M 20 160 C 20 150, 50 140, 50 100 S 80 60, 50 40"
+                  d="M 20 155 C 20 145, 50 135, 50 105 S 80 60, 50 40"
                   fill="none"
                   className="stroke-teal-600 dark:stroke-teal-accent"
                   strokeWidth="6"
@@ -150,9 +150,9 @@ export default function PhoneMockup() {
                   }}
                 />
                 
-                {/* Return route - Dentist directly to End (bypassing Pharmacy) */}
+                {/* Return route - Dentist directly to End (bypassing Pharmacy) - adjusted for waypoint positions */}
                 <motion.path
-                  d="M 50 40 C 40 60, 25 100, 20 160"
+                  d="M 50 40 C 40 60, 25 105, 20 155"
                   fill="none"
                   className="stroke-blue-600 dark:stroke-blue-400"
                   strokeWidth="6"
@@ -165,23 +165,23 @@ export default function PhoneMockup() {
                   transition={{ duration: 2, ease: "easeInOut", repeat: 0, delay: routePhase === 'return' ? 0 : 0 }}
                 />
                 
-                {/* POI markers - larger and more vibrant in light mode */}
+                {/* POI markers - positioned to avoid overlapping cards, lower z-index */}
                 {/* White background circle to cover any map markers underneath */}
-                <circle cx="50" cy="100" r="10" className="fill-white dark:fill-deep-navy" />
-                <circle cx="50" cy="100" r="8" className="fill-red-600 dark:fill-coral-pink animate-pulse" />
+                <circle cx="50" cy="105" r="10" className="fill-white dark:fill-deep-navy z-10" />
+                <circle cx="50" cy="105" r="8" className="fill-red-600 dark:fill-coral-pink animate-pulse z-10" />
                 {/* White background circle to cover any map markers underneath */}
-                <circle cx="50" cy="40" r="10" className="fill-white dark:fill-deep-navy" />
-                <circle cx="50" cy="40" r="8" className="fill-orange-600 dark:fill-soft-amber animate-pulse" />
-                {/* White background circle to cover any map markers underneath */}
-                <circle cx="20" cy="160" r="11" className="fill-white dark:fill-deep-navy" />
-                <circle cx="20" cy="160" r="9" className="fill-teal-600 dark:fill-teal-accent" />
+                <circle cx="50" cy="40" r="10" className="fill-white dark:fill-deep-navy z-10" />
+                <circle cx="50" cy="40" r="8" className="fill-orange-600 dark:fill-soft-amber animate-pulse z-10" />
+                {/* White background circle to cover any map markers underneath - moved up to avoid direction card */}
+                <circle cx="20" cy="155" r="11" className="fill-white dark:fill-deep-navy z-10" />
+                <circle cx="20" cy="155" r="9" className="fill-teal-600 dark:fill-teal-accent z-10" />
                 
                 {/* Waypoint labels - appear as route reaches each point, positioned to the side */}
-                {/* Start label - to the right of start point (outbound phase) */}
+                {/* Start label - to the right of start point (outbound phase) - adjusted position */}
                 <motion.text
                   x="30"
-                  y="160"
-                  className="fill-slate-900 dark:fill-white text-[7px] font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.3)] dark:drop-shadow-none"
+                  y="155"
+                  className="fill-slate-900 dark:fill-white text-[7px] font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.3)] dark:drop-shadow-none z-10"
                   textAnchor="start"
                   initial={{ opacity: 0 }}
                   animate={{ 
@@ -196,11 +196,11 @@ export default function PhoneMockup() {
                   Start
                 </motion.text>
                 
-                {/* Pharmacy label - to the right of middle waypoint (outbound only) */}
+                {/* Pharmacy label - to the right of middle waypoint (outbound only) - adjusted position */}
                 <motion.text
                   x="60"
-                  y="100"
-                  className="fill-slate-900 dark:fill-white text-[7px] font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.3)] dark:drop-shadow-none"
+                  y="105"
+                  className="fill-slate-900 dark:fill-white text-[7px] font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.3)] dark:drop-shadow-none z-10"
                   textAnchor="start"
                   initial={{ opacity: 0 }}
                   animate={{ 
@@ -234,11 +234,11 @@ export default function PhoneMockup() {
                   Dentist
                 </motion.text>
                 
-                {/* End label - appears when return route approaches destination */}
+                {/* End label - appears when return route approaches destination - adjusted position */}
                 <motion.text
                   x="30"
-                  y="160"
-                  className="fill-slate-900 dark:fill-white text-[7px] font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.3)] dark:drop-shadow-none"
+                  y="155"
+                  className="fill-slate-900 dark:fill-white text-[7px] font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,0.3)] dark:drop-shadow-none z-10"
                   textAnchor="start"
                   initial={{ opacity: 0 }}
                   animate={{ 
@@ -254,8 +254,8 @@ export default function PhoneMockup() {
                 </motion.text>
               </svg>
               
-              {/* Direction card - higher z-index to ensure it's above route line */}
-              <div className="absolute bottom-6 left-4 right-4 z-20">
+              {/* Direction card - higher z-index to ensure it's above route line and waypoints */}
+              <div className="absolute bottom-6 left-4 right-4 z-30">
                 <div className="bg-white/95 dark:bg-white/10 backdrop-blur-sm dark:backdrop-blur-xl rounded-2xl p-4 border-2 border-slate-400 dark:border-white/20 shadow-2xl">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-teal-200 dark:bg-teal-accent/20 flex items-center justify-center">
@@ -271,8 +271,8 @@ export default function PhoneMockup() {
                 </div>
               </div>
               
-              {/* Time remaining */}
-              <div className="absolute top-16 left-4 right-4">
+              {/* Time remaining - positioned below notch with proper spacing */}
+              <div className="absolute top-20 sm:top-16 left-4 right-4 z-30">
                 <div className="bg-white/95 dark:bg-white/10 backdrop-blur-sm dark:backdrop-blur-xl rounded-xl p-3 flex items-center justify-between border-2 border-slate-400 dark:border-white/20 shadow-2xl">
                   <div className="flex items-center gap-2">
                     <svg className="w-5 h-5 text-teal-700 dark:text-teal-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -298,22 +298,22 @@ export default function PhoneMockup() {
               scale: activeScreen === 1 ? 1 : 0.9
             }}
             transition={{ duration: 0.5 }}
-            className="absolute inset-0 bg-gradient-to-b from-blue-50 via-white to-slate-50 dark:from-deep-navy dark:to-midnight p-5 flex flex-col justify-center"
+            className="absolute inset-0 bg-gradient-to-b from-blue-50 via-white to-slate-50 dark:from-deep-navy dark:to-midnight pt-12 sm:pt-8 pb-5 px-5 flex flex-col justify-center overflow-hidden"
           >
             <div className="text-center">
-              <div className="text-slate-600 dark:text-white/60 text-base mb-2 font-bold tracking-wide">Current Wait Time</div>
-              <div className="text-7xl font-bold text-teal-600 dark:text-teal-accent mb-1">15</div>
-              <div className="text-slate-600 dark:text-white/60 text-xl font-bold">minutes</div>
+              <div className="text-slate-600 dark:text-white/60 text-sm sm:text-base mb-2 font-bold tracking-wide">Current Wait Time</div>
+              <div className="text-6xl sm:text-7xl font-bold text-teal-600 dark:text-teal-accent mb-1">15</div>
+              <div className="text-slate-600 dark:text-white/60 text-lg sm:text-xl font-bold">minutes</div>
               
-              {/* Clinician Card - larger */}
-              <div className="mt-6 bg-white dark:bg-white/10 backdrop-blur-sm dark:backdrop-blur-xl shadow-xl rounded-2xl p-5 border-2 border-slate-200 dark:border-white/20">
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 dark:from-nhs-blue dark:to-nhs-dark-blue flex items-center justify-center flex-shrink-0">
-                    <span className="text-white font-bold text-lg">EW</span>
+              {/* Clinician Card - larger, with overflow protection */}
+              <div className="mt-4 sm:mt-6 bg-white dark:bg-white/10 backdrop-blur-sm dark:backdrop-blur-xl shadow-xl rounded-2xl p-4 sm:p-5 border-2 border-slate-200 dark:border-white/20 mx-auto max-w-full">
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 dark:from-nhs-blue dark:to-nhs-dark-blue flex items-center justify-center flex-shrink-0">
+                    <span className="text-white font-bold text-base sm:text-lg">EW</span>
                   </div>
-                  <div className="text-left">
-                    <div className="font-bold text-lg text-slate-900 dark:text-white">Dr. Emma Wilson</div>
-                    <div className="text-base font-semibold text-slate-500 dark:text-white/70">Psychiatry</div>
+                  <div className="text-left min-w-0 flex-1">
+                    <div className="font-bold text-base sm:text-lg text-slate-900 dark:text-white truncate">Dr. Emma Wilson</div>
+                    <div className="text-sm sm:text-base font-semibold text-slate-500 dark:text-white/70 truncate">Psychiatry</div>
                   </div>
                 </div>
               </div>
