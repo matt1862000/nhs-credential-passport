@@ -172,8 +172,16 @@ class LocationService: NSObject, ObservableObject {
         // v1.9.74: Start network monitoring
         startNetworkMonitoring()
         
-        // v1.9.74: Log initialization
+        // v1.9.80: Log initialization with app session info
         debugLogger.log("LocationService initialized", category: "INIT")
+        debugLogger.log("App session started - Log file: \(DebugLogger.shared.logFile.lastPathComponent)", category: "INIT")
+        
+        // v1.9.80: Check if previous walk was active (crash detection)
+        let hadActiveWalk = UserDefaults.standard.bool(forKey: "hasActiveWalk")
+        if hadActiveWalk {
+            debugLogger.log("⚠️ Detected previous walk was active - app may have crashed", category: "INIT")
+        }
+        
         debugLogger.log("GPS Settings: maxAccuracy=\(maxGPSAccuracy)m, minMovement=\(minMovementAlongRoute)m, historyWindow=\(positionHistoryWindow)s", category: "CONFIG")
         debugLogger.log("GPS Settings: minConsistentReadings=\(minConsistentReadings), consistencyThreshold=\(consistencyThreshold)", category: "CONFIG")
         

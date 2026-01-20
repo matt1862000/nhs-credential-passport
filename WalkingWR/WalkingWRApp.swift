@@ -26,6 +26,15 @@ struct WalkingWRApp: App {
         // Configure tab bar
         UITabBar.appearance().unselectedItemTintColor = .darkGray
         
+        // v1.9.80: Detect if app crashed during a walk
+        let hadActiveWalk = UserDefaults.standard.bool(forKey: "hasActiveWalk")
+        if hadActiveWalk {
+            // Log crash detection immediately (before clearing flag)
+            DebugLogger.shared.log("💥💥💥 APP CRASHED DURING WALK 💥💥💥", category: "WALK_LIFECYCLE")
+            DebugLogger.shared.log("⚠️ Previous walk session was not properly ended - app likely crashed", category: "WALK_LIFECYCLE")
+            DebugLogger.shared.log("🔄 App relaunched - previous walk session terminated", category: "WALK_LIFECYCLE")
+        }
+        
         // v1.7.13: ALWAYS cancel stale walk notifications on launch
         // This handles force-close scenario where hasActiveWalk flag is stale
         // Only cancels walk-specific notifications, preserves delay notifications
