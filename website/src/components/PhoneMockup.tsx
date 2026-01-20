@@ -254,8 +254,8 @@ export default function PhoneMockup() {
                 </motion.text>
               </svg>
               
-              {/* Direction card - higher z-index to ensure it's above route line and waypoints */}
-              <div className="absolute bottom-6 left-4 right-4 z-30">
+              {/* Direction card - higher z-index to ensure it's above route line and waypoints - moved lower on mobile */}
+              <div className="absolute bottom-3 sm:bottom-6 left-4 right-4 z-30">
                 <div className="bg-white/95 dark:bg-white/10 backdrop-blur-sm dark:backdrop-blur-xl rounded-2xl p-4 border-2 border-slate-400 dark:border-white/20 shadow-2xl">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-teal-200 dark:bg-teal-accent/20 flex items-center justify-center">
@@ -271,8 +271,8 @@ export default function PhoneMockup() {
                 </div>
               </div>
               
-              {/* Time remaining - positioned below notch with proper spacing */}
-              <div className="absolute top-20 sm:top-16 left-4 right-4 z-30">
+              {/* Time remaining - positioned below notch with proper spacing - moved higher on mobile */}
+              <div className="absolute top-14 sm:top-16 left-4 right-4 z-30">
                 <div className="bg-white/95 dark:bg-white/10 backdrop-blur-sm dark:backdrop-blur-xl rounded-xl p-3 flex items-center justify-between border-2 border-slate-400 dark:border-white/20 shadow-2xl">
                   <div className="flex items-center gap-2">
                     <svg className="w-5 h-5 text-teal-700 dark:text-teal-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
