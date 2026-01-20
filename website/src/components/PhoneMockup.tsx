@@ -298,22 +298,22 @@ export default function PhoneMockup() {
               scale: activeScreen === 1 ? 1 : 0.9
             }}
             transition={{ duration: 0.5 }}
-            className="absolute inset-0 bg-gradient-to-b from-blue-50 via-white to-slate-50 dark:from-deep-navy dark:to-midnight pt-12 sm:pt-8 pb-5 px-5 flex flex-col justify-center overflow-hidden"
+            className="absolute inset-0 bg-gradient-to-b from-blue-50 via-white to-slate-50 dark:from-deep-navy dark:to-midnight pt-16 sm:pt-8 pb-5 px-4 sm:px-5 flex flex-col justify-center overflow-hidden"
           >
-            <div className="text-center">
+            <div className="text-center w-full">
               <div className="text-slate-600 dark:text-white/60 text-sm sm:text-base mb-2 font-bold tracking-wide">Current Wait Time</div>
               <div className="text-6xl sm:text-7xl font-bold text-teal-600 dark:text-teal-accent mb-1">15</div>
               <div className="text-slate-600 dark:text-white/60 text-lg sm:text-xl font-bold">minutes</div>
               
-              {/* Clinician Card - larger, with overflow protection */}
-              <div className="mt-4 sm:mt-6 bg-white dark:bg-white/10 backdrop-blur-sm dark:backdrop-blur-xl shadow-xl rounded-2xl p-4 sm:p-5 border-2 border-slate-200 dark:border-white/20 mx-auto max-w-full">
+              {/* Clinician Card - larger, with proper text wrapping */}
+              <div className="mt-4 sm:mt-6 bg-white dark:bg-white/10 backdrop-blur-sm dark:backdrop-blur-xl shadow-xl rounded-2xl p-4 sm:p-5 border-2 border-slate-200 dark:border-white/20 mx-auto w-full max-w-[90%]">
                 <div className="flex items-center gap-3 sm:gap-4">
                   <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 dark:from-nhs-blue dark:to-nhs-dark-blue flex items-center justify-center flex-shrink-0">
                     <span className="text-white font-bold text-base sm:text-lg">EW</span>
                   </div>
-                  <div className="text-left min-w-0 flex-1">
-                    <div className="font-bold text-base sm:text-lg text-slate-900 dark:text-white truncate">Dr. Emma Wilson</div>
-                    <div className="text-sm sm:text-base font-semibold text-slate-500 dark:text-white/70 truncate">Psychiatry</div>
+                  <div className="text-left flex-1 overflow-hidden">
+                    <div className="font-bold text-base sm:text-lg text-slate-900 dark:text-white break-words">Dr. Emma Wilson</div>
+                    <div className="text-sm sm:text-base font-semibold text-slate-500 dark:text-white/70 break-words">Psychiatry</div>
                   </div>
                 </div>
               </div>
