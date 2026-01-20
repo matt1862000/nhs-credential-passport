@@ -52,6 +52,9 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var cachedReturnDirections: [WalkingDirection] = []
     @Published var isUsingReturnDirections: Bool = false
     
+    // v1.9.83: Store arrival instruction to show when close to destination
+    private var arrivalInstruction: WalkingDirection? = nil
+    
     // v1.9.16: Cached return route for offline fallback
     @Published var cachedReturnRoutePolyline: [CLLocationCoordinate2D] = []
     @Published var hasCachedReturnRoute: Bool = false
@@ -676,22 +679,29 @@ class WaitingRoomViewModel: ObservableObject {
         
         // Start direction monitoring for turn-by-turn notifications (non-indoor routes only)
         if !route.isIndoor && !route.walkingDirections.isEmpty {
-            // v1.9.82: Filter out ALL arrival instructions (not just the last one)
+            // v1.9.83: Filter out ALL arrival instructions, but store the first one to show when close
             // This prevents showing "The destination is on your right" during navigation
             // Arrival instructions can appear in the middle of the list (end of outbound route)
             let originalCount = route.walkingDirections.count
+            arrivalInstruction = nil  // Reset for new walk
+            
             let filteredDirections = route.walkingDirections.compactMap { direction -> WalkingDirection? in
                 let lowercased = direction.instruction.lowercased()
                 
-                // Filter out any instruction that contains arrival keywords
-                // These are not navigation steps - they're arrival notifications
-                if lowercased.contains("the destination is on your right") ||
+                // Check if this is an arrival instruction
+                let isArrivalInstruction = lowercased.contains("the destination is on your right") ||
                    lowercased.contains("the destination is on your left") ||
                    lowercased.contains("destination is on your right") ||
                    lowercased.contains("destination is on your left") ||
                    (lowercased.contains("destination") && (lowercased.contains("on your right") || lowercased.contains("on your left"))) ||
-                   (lowercased.contains("arrive") && lowercased.contains("destination")) {
-                    // Skip this arrival instruction
+                   (lowercased.contains("arrive") && lowercased.contains("destination"))
+                
+                if isArrivalInstruction {
+                    // Store the first arrival instruction to show when close to destination
+                    if arrivalInstruction == nil {
+                        arrivalInstruction = direction
+                        DebugLogger.shared.log("💾 Stored arrival instruction for later: '\(direction.instruction)'", category: "DIRECTION_FILTER")
+                    }
                     DebugLogger.shared.log("🚫 Filtered out arrival instruction: '\(direction.instruction)'", category: "DIRECTION_FILTER")
                     return nil
                 }
@@ -1034,6 +1044,35 @@ class WaitingRoomViewModel: ObservableObject {
         
         // Get route path for dynamic radius calculation
         let routePath = route.routePath
+        
+        // v1.9.83: Check if approaching final destination (last marker) to show arrival instruction
+        if let lastMarker = route.qrMarkers.last,
+           !visitedMarkerIds.contains(lastMarker.id),
+           let arrivalInst = arrivalInstruction {
+            let markerLocation = CLLocation(latitude: lastMarker.coordinate.latitude, longitude: lastMarker.coordinate.longitude)
+            let distanceToLastMarker = userLocation.distance(from: markerLocation)
+            
+            // Show arrival instruction when within 30m of final destination
+            if distanceToLastMarker < 30 {
+                // Temporarily add arrival instruction to cached directions so banner can show it
+                if !cachedOriginalDirections.contains(where: { $0.id == arrivalInst.id }) {
+                    cachedOriginalDirections.append(arrivalInst)
+                    // Set direction index to show the arrival instruction
+                    let arrivalIndex = cachedOriginalDirections.count - 1
+                    locationService.currentDirectionIndex = arrivalIndex
+                    DebugLogger.shared.log("📍 Showing arrival instruction - within \(Int(distanceToLastMarker))m of final destination (index: \(arrivalIndex))", category: "ARRIVAL")
+                }
+            } else {
+                // Remove arrival instruction if we're further away
+                if let arrivalIndex = cachedOriginalDirections.firstIndex(where: { $0.id == arrivalInst.id }) {
+                    cachedOriginalDirections.remove(at: arrivalIndex)
+                    // Reset direction index if it was pointing to the arrival instruction
+                    if locationService.currentDirectionIndex >= cachedOriginalDirections.count {
+                        locationService.currentDirectionIndex = max(0, cachedOriginalDirections.count - 1)
+                    }
+                }
+            }
+        }
         
         // Check each marker on the route
         for marker in route.qrMarkers {
