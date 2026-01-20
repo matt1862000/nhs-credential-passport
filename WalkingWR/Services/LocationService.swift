@@ -9,6 +9,7 @@ import Foundation
 import CoreLocation
 import Combine
 import UIKit
+import Network
 
 class LocationService: NSObject, ObservableObject {
     private let locationManager = CLLocationManager()
@@ -26,6 +27,12 @@ class LocationService: NSObject, ObservableObject {
     @Published var locationRetryCount: Int = 0
     @Published var isRetrying: Bool = false
     private var locationRequestStartTime: Date?
+    
+    // v1.9.74: Network monitoring for WiFi/cellular transitions
+    private let networkMonitor = NWPathMonitor()
+    private let networkQueue = DispatchQueue(label: "NetworkMonitor")
+    private var currentNetworkType: String = "Unknown"
+    private var lastNetworkChangeTime: Date?
     
     // Direction monitoring
     @Published var currentDirectionIndex: Int = 0
@@ -142,6 +149,9 @@ class LocationService: NSObject, ObservableObject {
         locationManager.distanceFilter = 10 // Update every 10 meters
         authorizationStatus = locationManager.authorizationStatus
         
+        // v1.9.74: Start network monitoring
+        startNetworkMonitoring()
+        
         // Listen for app returning to foreground to re-check permissions
         NotificationCenter.default.addObserver(
             self,
@@ -149,6 +159,76 @@ class LocationService: NSObject, ObservableObject {
             name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
+        
+        // Listen for app going to background
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+    }
+    
+    // v1.9.74: Network monitoring for debugging WiFi/cellular transitions
+    private func startNetworkMonitoring() {
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            guard let self = self else { return }
+            
+            let timestamp = Date()
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss.SSS"
+            let timeString = formatter.string(from: timestamp)
+            
+            var networkType = "Unknown"
+            if path.usesInterfaceType(.wifi) {
+                networkType = "WiFi"
+            } else if path.usesInterfaceType(.cellular) {
+                networkType = "Cellular"
+            } else if path.usesInterfaceType(.wiredEthernet) {
+                networkType = "Ethernet"
+            } else if path.usesInterfaceType(.loopback) {
+                networkType = "Loopback"
+            }
+            
+            let isExpensive = path.isExpensive
+            let isConstrained = path.isConstrained
+            let status = path.status
+            
+            let previousType = self.currentNetworkType
+            self.currentNetworkType = networkType
+            self.lastNetworkChangeTime = timestamp
+            
+            print("🌐 [NETWORK] [\(timeString)] Network changed: \(previousType) → \(networkType)")
+            print("🌐 [NETWORK] [\(timeString)]   Status: \(status == .satisfied ? "Connected" : status == .requiresConnection ? "Requires Connection" : "Unsatisfied")")
+            print("🌐 [NETWORK] [\(timeString)]   Expensive: \(isExpensive), Constrained: \(isConstrained)")
+            print("🌐 [NETWORK] [\(timeString)]   Location tracking: \(self.isTracking), Monitoring directions: \(self.isMonitoringDirections)")
+            print("🌐 [NETWORK] [\(timeString)]   Current location: \(self.currentLocation != nil ? "Yes" : "No"), Accuracy: \(self.currentLocation?.horizontalAccuracy ?? -1)m")
+            
+            // Log if transitioning during active walk
+            if self.isTracking {
+                print("🌐 [NETWORK] [\(timeString)] ⚠️ Network transition during active walk!")
+            }
+        }
+        networkMonitor.start(queue: networkQueue)
+        
+        // Log initial network state
+        let initialPath = networkMonitor.currentPath
+        if initialPath.usesInterfaceType(.wifi) {
+            currentNetworkType = "WiFi"
+        } else if initialPath.usesInterfaceType(.cellular) {
+            currentNetworkType = "Cellular"
+        }
+        print("🌐 [NETWORK] Initial network type: \(currentNetworkType)")
+    }
+    
+    @objc private func appDidEnterBackground() {
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+        print("📱 [APP STATE] [\(timeString)] App entered background")
+        print("📱 [APP STATE] [\(timeString)]   Tracking: \(isTracking), Monitoring: \(isMonitoringDirections)")
+        print("📱 [APP STATE] [\(timeString)]   Network: \(currentNetworkType)")
     }
     
     deinit {
@@ -359,17 +439,30 @@ class LocationService: NSObject, ObservableObject {
     /// Check if user is approaching any direction waypoint and send notification
     /// v1.9.71: Adds GPS accuracy filtering and movement confirmation to prevent jitter from advancing waypoints
     private func checkDirectionWaypoints(currentLocation: CLLocation) {
-        guard isMonitoringDirections, !directionWaypoints.isEmpty, !cachedRoutePath.isEmpty else { return }
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+        
+        guard isMonitoringDirections, !directionWaypoints.isEmpty, !cachedRoutePath.isEmpty else {
+            print("📍 [WAYPOINT CHECK] [\(timeString)] Skipping - Monitoring: \(isMonitoringDirections), Waypoints: \(directionWaypoints.count), Route: \(cachedRoutePath.count)")
+            return
+        }
         
         // v1.9.71: Filter out poor GPS readings
         // Reject readings with accuracy worse than maxGPSAccuracy (default 20m)
         if currentLocation.horizontalAccuracy > maxGPSAccuracy || currentLocation.horizontalAccuracy < 0 {
-            print("📍 [GPS Filter] Rejecting location: accuracy=\(String(format: "%.1f", currentLocation.horizontalAccuracy))m (max: \(maxGPSAccuracy)m)")
+            print("📍 [GPS Filter] [\(timeString)] Rejecting location: accuracy=\(String(format: "%.1f", currentLocation.horizontalAccuracy))m (max: \(maxGPSAccuracy)m)")
+            print("📍 [GPS Filter] [\(timeString)]   Network: \(currentNetworkType)")
             return
         }
         
+        print("📍 [WAYPOINT CHECK] [\(timeString)] Checking waypoints (current index: \(currentDirectionIndex)/\(directionWaypoints.count))")
+        print("📍 [WAYPOINT CHECK] [\(timeString)]   Network: \(currentNetworkType), Accuracy: \(String(format: "%.1f", currentLocation.horizontalAccuracy))m")
+        
         // Project user's current position onto the polyline
         guard let userProjection = projectOntoPolyline(coordinate: currentLocation.coordinate, polyline: cachedRoutePath) else {
+            print("📍 [WAYPOINT CHECK] [\(timeString)] ⚠️ Failed to project location onto polyline")
             return
         }
         
@@ -766,6 +859,31 @@ extension LocationService: CLLocationManagerDelegate {
             return
         }
         
+        // v1.9.74: Enhanced logging for network transitions
+        let accuracy = newLocation.horizontalAccuracy
+        let speed = newLocation.speed
+        let course = newLocation.course
+        let altitude = newLocation.altitude
+        let timeSinceLastUpdate: TimeInterval
+        if let lastLocation = currentLocation {
+            timeSinceLastUpdate = newLocation.timestamp.timeIntervalSince(lastLocation.timestamp)
+        } else {
+            timeSinceLastUpdate = 0
+        }
+        
+        print("📍 [LOCATION UPDATE] [\(timeString)] New location received")
+        print("📍 [LOCATION UPDATE] [\(timeString)]   Coordinates: (\(String(format: "%.6f", newLocation.coordinate.latitude)), \(String(format: "%.6f", newLocation.coordinate.longitude)))")
+        print("📍 [LOCATION UPDATE] [\(timeString)]   Accuracy: \(String(format: "%.1f", accuracy))m (max: \(maxGPSAccuracy)m)")
+        print("📍 [LOCATION UPDATE] [\(timeString)]   Speed: \(String(format: "%.2f", speed))m/s, Course: \(String(format: "%.1f", course))°, Altitude: \(String(format: "%.1f", altitude))m")
+        print("📍 [LOCATION UPDATE] [\(timeString)]   Time since last: \(String(format: "%.2f", timeSinceLastUpdate))s")
+        print("📍 [LOCATION UPDATE] [\(timeString)]   Network: \(currentNetworkType)")
+        print("📍 [LOCATION UPDATE] [\(timeString)]   Tracking: \(isTracking), Monitoring: \(isMonitoringDirections)")
+        
+        // Log if accuracy is poor (might indicate network transition issue)
+        if accuracy > maxGPSAccuracy {
+            print("📍 [LOCATION UPDATE] [\(timeString)] ⚠️ POOR ACCURACY - Rejecting location (accuracy: \(String(format: "%.1f", accuracy))m > max: \(maxGPSAccuracy)m)")
+        }
+        
         let isFirstLocation = currentLocation == nil
         
         print("⏱️ [LOCATION] [\(timeString)] 📍 didUpdateLocations: lat=\(String(format: "%.5f", newLocation.coordinate.latitude)), lon=\(String(format: "%.5f", newLocation.coordinate.longitude)), accuracy=\(String(format: "%.1f", newLocation.horizontalAccuracy))m\(isFirstLocation ? " (FIRST LOCATION)" : "")")
@@ -806,6 +924,46 @@ extension LocationService: CLLocationManagerDelegate {
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: timestamp)
+        
+        print("❌ [LOCATION ERROR] [\(timeString)] Location manager failed with error")
+        print("❌ [LOCATION ERROR] [\(timeString)]   Error: \(error.localizedDescription)")
+        print("❌ [LOCATION ERROR] [\(timeString)]   Network: \(currentNetworkType)")
+        print("❌ [LOCATION ERROR] [\(timeString)]   Tracking: \(isTracking), Monitoring: \(isMonitoringDirections)")
+        print("❌ [LOCATION ERROR] [\(timeString)]   Current location: \(currentLocation != nil ? "Yes" : "No")")
+        
+        if let clError = error as? CLError {
+            print("❌ [LOCATION ERROR] [\(timeString)]   CLError code: \(clError.code.rawValue)")
+            switch clError.code {
+            case .locationUnknown:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: locationUnknown - Location could not be determined")
+            case .denied:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: denied - Location services denied")
+            case .network:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: network - Network unavailable or bad")
+            case .headingFailure:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: headingFailure - Heading could not be determined")
+            case .regionMonitoringDenied:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: regionMonitoringDenied")
+            case .regionMonitoringFailure:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: regionMonitoringFailure")
+            case .regionMonitoringSetupDelayed:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: regionMonitoringSetupDelayed")
+            case .regionMonitoringResponseDelayed:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: regionMonitoringResponseDelayed")
+            case .geocodeFoundNoResult:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: geocodeFoundNoResult")
+            case .geocodeFoundPartialResult:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: geocodeFoundPartialResult")
+            case .geocodeCanceled:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: geocodeCanceled")
+            default:
+                print("❌ [LOCATION ERROR] [\(timeString)]   Code: unknown")
+            }
+        }
         print("Location error: \(error.localizedDescription)")
         DispatchQueue.main.async {
             // On error, trigger immediate retry if we haven't exceeded max
