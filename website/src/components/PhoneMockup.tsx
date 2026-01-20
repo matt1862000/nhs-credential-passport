@@ -313,7 +313,7 @@ export default function PhoneMockup() {
                   </div>
                   <div className="text-left flex-1 overflow-hidden">
                     <div className="font-bold text-base sm:text-lg text-slate-900 dark:text-white break-words">Dr. Emma Wilson</div>
-                    <div className="text-sm sm:text-base font-semibold text-slate-500 dark:text-white/70 break-words">Psychiatry</div>
+                    <div className="text-xs sm:text-sm font-semibold text-slate-500 dark:text-white/70 break-words">Psychiatry</div>
                   </div>
                 </div>
               </div>
