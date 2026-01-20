@@ -130,7 +130,7 @@ export default function Navbar() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsMobileMenuOpen(false)}
-              className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden"
+              className="fixed inset-0 bg-black/70 backdrop-blur-md z-40 md:hidden"
             />
             
             {/* Menu Panel */}
@@ -139,7 +139,7 @@ export default function Navbar() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
               transition={{ duration: 0.2 }}
-              className="fixed top-0 left-0 right-0 glass-dark z-50 md:hidden shadow-2xl"
+              className="fixed top-0 left-0 right-0 bg-midnight/95 dark:bg-midnight/95 bg-white/95 backdrop-blur-xl z-50 md:hidden shadow-2xl border-b border-white/10 dark:border-white/10 border-slate-200"
             >
               <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
                 {/* Header with close button */}
@@ -152,13 +152,13 @@ export default function Navbar() {
                         className="w-full h-full object-contain"
                       />
                     </div>
-                    <span className="text-lg font-bold dark:text-white text-slate-800">
+                    <span className="text-lg font-bold text-white dark:text-white text-slate-900">
                       Wait<span className="text-teal-accent dark:text-teal-accent text-teal-600">Well</span>
                     </span>
                   </Link>
                   <button
                     onClick={() => setIsMobileMenuOpen(false)}
-                    className="p-2 dark:text-white text-slate-700"
+                    className="p-2 text-white dark:text-white text-slate-900 hover:bg-white/10 dark:hover:bg-white/10 hover:bg-slate-100 rounded-lg transition-colors"
                     aria-label="Close menu"
                   >
                     <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -174,7 +174,7 @@ export default function Navbar() {
                       key={link.href}
                       href={link.href}
                       onClick={() => setIsMobileMenuOpen(false)}
-                      className="text-white/90 dark:text-white/90 text-slate-800 hover:text-white dark:hover:text-white hover:text-slate-900 transition-colors py-3 px-4 rounded-lg hover:bg-white/10 dark:hover:bg-white/10 hover:bg-slate-100 text-base font-medium"
+                      className="text-white dark:text-white text-slate-900 hover:text-teal-accent dark:hover:text-teal-accent hover:text-teal-700 transition-colors py-3 px-4 rounded-lg hover:bg-white/10 dark:hover:bg-white/10 hover:bg-slate-100 text-base font-semibold"
                     >
                       {link.label}
                     </Link>
@@ -182,13 +182,13 @@ export default function Navbar() {
                 </div>
 
                 {/* Actions */}
-                <div className="pt-4 border-t border-white/10 dark:border-white/10 border-slate-200 space-y-3">
+                <div className="pt-4 border-t border-white/20 dark:border-white/20 border-slate-300 space-y-3">
                   <button
                     onClick={() => {
                       toggleTheme()
                       setIsMobileMenuOpen(false)
                     }}
-                    className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-full glass dark:text-white text-slate-700 font-semibold hover:bg-white/10 dark:hover:bg-white/10 hover:bg-slate-100 transition-colors"
+                    className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-white/10 dark:bg-white/10 bg-slate-100 text-white dark:text-white text-slate-900 font-semibold hover:bg-white/20 dark:hover:bg-white/20 hover:bg-slate-200 transition-colors"
                     aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
                   >
                     {theme === 'dark' ? (
@@ -210,7 +210,7 @@ export default function Navbar() {
                   <Link
                     href="#download"
                     onClick={() => setIsMobileMenuOpen(false)}
-                    className="block w-full text-center px-6 py-3 rounded-full bg-gradient-to-r from-teal-accent to-teal-accent/80 text-midnight font-semibold hover:shadow-lg hover:shadow-teal-accent/30 transition-all"
+                    className="block w-full text-center px-6 py-3 rounded-full bg-gradient-to-r from-teal-accent to-teal-accent/80 text-white dark:text-midnight font-semibold hover:shadow-lg hover:shadow-teal-accent/30 transition-all"
                   >
                     Download App
                   </Link>
