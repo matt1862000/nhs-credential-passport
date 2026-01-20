@@ -39,9 +39,11 @@ class LocationService: NSObject, ObservableObject {
     
     // v1.9.71: GPS stability tracking to prevent jitter from advancing waypoints
     private var recentProjectedPositions: [(segmentIndex: Int, t: Double, timestamp: Date)] = []
-    private let maxGPSAccuracy: Double = 20.0 // Reject GPS readings with accuracy worse than 20m
-    private let minMovementAlongRoute: Double = 15.0 // Require 15m of actual movement along route before advancing
-    private let positionHistoryWindow: TimeInterval = 10.0 // Keep last 10 seconds of positions
+    private let maxGPSAccuracy: Double = 15.0 // Reject GPS readings with accuracy worse than 15m (stricter)
+    private let minMovementAlongRoute: Double = 20.0 // Require 20m of actual movement along route before advancing (stricter)
+    private let positionHistoryWindow: TimeInterval = 30.0 // Keep last 30 seconds of positions (3x longer)
+    private let minConsistentReadings: Int = 3 // Require at least 3 consistent readings
+    private let consistencyThreshold: Double = 0.6 // 60% of readings must show forward progress
     
     // MARK: - Polyline Projection Helpers (v1.9.70)
     
@@ -400,24 +402,33 @@ class LocationService: NSObject, ObservableObject {
             
             // Check if user has reached/passed this waypoint using polyline position
             // User is at/past waypoint if:
-            // 1. Within 30m straight-line distance, AND
-            // 2. User's polyline position is at or past the waypoint's position
+            // 1. Within 20m straight-line distance, AND
+            // 2. User's polyline position is past the waypoint's position (stricter: > instead of >=)
             let userIsAtOrPastOnPolyline = isAhead(
                 segmentIndex1: userProjection.segmentIndex,
                 t1: userProjection.t,
                 segmentIndex2: waypointSegment,
-                t2: 0.3  // User should be at least 30% into the waypoint's segment
-            ) || userProjection.segmentIndex >= waypoint.polylineIndex
+                t2: 0.6  // User should be at least 60% into the waypoint's segment (stricter)
+            ) || userProjection.segmentIndex > waypoint.polylineIndex  // Stricter: > instead of >=
             
             // v1.9.71: Require actual movement along route before advancing (prevents GPS jitter)
-            // Exception: if very close (<15m), always trigger (user is definitely there)
-            let hasMovedEnough = distanceMovedAlongRoute >= minMovementAlongRoute || distance <= 15
+            let hasMovedEnough = distanceMovedAlongRoute >= minMovementAlongRoute
             
-            // Trigger notification if:
-            // - Within 30m distance AND past on polyline AND has moved enough, OR
-            // - Within 15m distance (very close, definitely there regardless of movement)
-            let shouldTrigger = (distance <= directionNotificationRadius && userIsAtOrPastOnPolyline && hasMovedEnough) ||
-                                (distance <= 15)  // Failsafe: if very close, always trigger
+            // v1.9.72: Check for consistent forward movement
+            let hasConsistentMovement = hasConsistentForwardMovement(recentPositions: recentProjectedPositions)
+            
+            // v1.9.72: Check GPS accuracy for this reading
+            let hasGoodAccuracy = currentLocation.horizontalAccuracy > 0 && currentLocation.horizontalAccuracy <= maxGPSAccuracy
+            
+            // Trigger notification if ALL conditions are met (stricter AND logic):
+            // - Within 20m distance (stricter radius)
+            // - Past on polyline
+            // - Has moved enough along route
+            // - Has consistent forward movement
+            // - Has good GPS accuracy
+            // OR failsafe: if very close (<8m), always trigger (stricter failsafe)
+            let shouldTrigger = (distance <= 20 && userIsAtOrPastOnPolyline && hasMovedEnough && hasConsistentMovement && hasGoodAccuracy) ||
+                                (distance <= 8)  // Failsafe: if very close, always trigger (stricter)
             
             if shouldTrigger {
                 NotificationService.shared.sendDirectionNotification(
@@ -506,6 +517,38 @@ class LocationService: NSObject, ObservableObject {
         }
         
         return totalDistance
+    }
+    
+    /// v1.9.72: Check if recent positions show consistent forward movement along route
+    /// Returns true if at least 60% of readings show forward progress
+    private func hasConsistentForwardMovement(recentPositions: [(segmentIndex: Int, t: Double, timestamp: Date)]) -> Bool {
+        guard recentPositions.count >= minConsistentReadings else {
+            return false  // Need at least minConsistentReadings to check consistency
+        }
+        
+        // Sort by timestamp (oldest first)
+        let sorted = recentPositions.sorted { $0.timestamp < $1.timestamp }
+        
+        // Count how many positions show forward progress compared to the previous one
+        var forwardCount = 0
+        for i in 1..<sorted.count {
+            let prev = sorted[i - 1]
+            let curr = sorted[i]
+            
+            // Check if current position is ahead of previous
+            if isAhead(
+                segmentIndex1: curr.segmentIndex,
+                t1: curr.t,
+                segmentIndex2: prev.segmentIndex,
+                t2: prev.t
+            ) {
+                forwardCount += 1
+            }
+        }
+        
+        // Require at least consistencyThreshold percentage of readings to show forward progress
+        let forwardPercentage = Double(forwardCount) / Double(sorted.count - 1)
+        return forwardPercentage >= consistencyThreshold
     }
     
     // v1.9.0: Get next turn coordinate for map annotation
