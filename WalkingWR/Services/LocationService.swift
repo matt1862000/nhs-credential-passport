@@ -601,8 +601,13 @@ class LocationService: NSObject, ObservableObject {
                     debugLogger.log("Direction index updated: \(oldIndex) → \(newIndex)", category: "DIRECTION_ADVANCE")
                 }
                 
-                // Clear position history after advancing (fresh start for next waypoint)
-                recentProjectedPositions.removeAll()
+                // v1.9.76: Keep position history for next waypoint (don't clear)
+                // This allows movement tracking to continue across waypoint advances
+                // Old positions will naturally expire via the time window filter
+                // Only keep recent positions (last 10 seconds) to prevent stale data from affecting next waypoint
+                let cutoffTime = now.addingTimeInterval(-10.0) // Keep last 10 seconds of positions
+                recentProjectedPositions = recentProjectedPositions.filter { $0.timestamp >= cutoffTime }
+                debugLogger.log("Kept \(recentProjectedPositions.count) recent positions for next waypoint tracking", category: "DIRECTION_ADVANCE")
                 
                 print("📍 Direction: step \(index + 1)/\(directionWaypoints.count) - \(waypoint.instruction) (segment \(userProjection.segmentIndex), dist \(Int(distance))m, moved \(String(format: "%.1f", distanceMovedAlongRoute))m)")
                 break // Only send one notification at a time
