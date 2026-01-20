@@ -1,18 +1,15 @@
-import { Metadata } from 'next'
+'use client'
+
 import Link from 'next/link'
 import Navbar from '@/components/Navbar'
 import Footer from '@/components/Footer'
 
-export const metadata: Metadata = {
-  title: 'Terms of Service | WaitWell',
-  description: 'WaitWell Terms of Service - Terms and conditions for using the WaitWell application.',
-}
-
 export default function TermsOfService() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 dark:from-deep-navy dark:to-midnight">
+    <>
       <Navbar />
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12 sm:py-16">
+      <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 dark:from-deep-navy dark:to-midnight">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12 sm:py-16">
         <Link href="/" className="inline-flex items-center gap-2 text-teal-600 dark:text-teal-accent hover:text-teal-700 dark:hover:text-teal-400 mb-8">
           ← Back to Home
         </Link>
@@ -145,6 +142,6 @@ export default function TermsOfService() {
         </div>
       </div>
       <Footer />
-    </div>
+    </>
   )
 }

@@ -1,18 +1,15 @@
-import { Metadata } from 'next'
+'use client'
+
 import Link from 'next/link'
 import Navbar from '@/components/Navbar'
 import Footer from '@/components/Footer'
 
-export const metadata: Metadata = {
-  title: 'Accessibility Statement | WaitWell',
-  description: 'WaitWell Accessibility Statement - Our commitment to making the app accessible to all users.',
-}
-
 export default function Accessibility() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 dark:from-deep-navy dark:to-midnight">
+    <>
       <Navbar />
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12 sm:py-16">
+      <div className="min-h-screen bg-gradient-to-b from-blue-50 via-white to-slate-50 dark:from-deep-navy dark:to-midnight">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-12 sm:py-16">
         <Link href="/" className="inline-flex items-center gap-2 text-teal-600 dark:text-teal-accent hover:text-teal-700 dark:hover:text-teal-400 mb-8">
           ← Back to Home
         </Link>
@@ -131,6 +128,6 @@ export default function Accessibility() {
         </div>
       </div>
       <Footer />
-    </div>
+    </>
   )
 }
