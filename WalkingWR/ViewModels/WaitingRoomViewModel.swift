@@ -676,24 +676,24 @@ class WaitingRoomViewModel: ObservableObject {
         
         // Start direction monitoring for turn-by-turn notifications (non-indoor routes only)
         if !route.isIndoor && !route.walkingDirections.isEmpty {
-            // v1.9.81: Filter out final arrival instructions before monitoring
-            // This prevents showing "The destination is on your right" at the start of the walk
+            // v1.9.82: Filter out ALL arrival instructions (not just the last one)
+            // This prevents showing "The destination is on your right" during navigation
+            // Arrival instructions can appear in the middle of the list (end of outbound route)
             let originalCount = route.walkingDirections.count
-            let filteredDirections = route.walkingDirections.enumerated().compactMap { (index, direction) -> WalkingDirection? in
+            let filteredDirections = route.walkingDirections.compactMap { direction -> WalkingDirection? in
                 let lowercased = direction.instruction.lowercased()
-                let isLast = index == route.walkingDirections.count - 1
                 
-                // Only filter the last direction if it contains arrival keywords
-                if isLast {
-                    if lowercased.contains("arrive") || 
-                       lowercased.contains("destination") || 
-                       lowercased.contains("your destination") ||
-                       lowercased.contains("on your right") ||
-                       lowercased.contains("on your left") {
-                        // Skip this final arrival instruction
-                        DebugLogger.shared.log("🚫 Filtered out final arrival instruction: '\(direction.instruction)'", category: "DIRECTION_FILTER")
-                        return nil
-                    }
+                // Filter out any instruction that contains arrival keywords
+                // These are not navigation steps - they're arrival notifications
+                if lowercased.contains("the destination is on your right") ||
+                   lowercased.contains("the destination is on your left") ||
+                   lowercased.contains("destination is on your right") ||
+                   lowercased.contains("destination is on your left") ||
+                   (lowercased.contains("destination") && (lowercased.contains("on your right") || lowercased.contains("on your left"))) ||
+                   (lowercased.contains("arrive") && lowercased.contains("destination")) {
+                    // Skip this arrival instruction
+                    DebugLogger.shared.log("🚫 Filtered out arrival instruction: '\(direction.instruction)'", category: "DIRECTION_FILTER")
+                    return nil
                 }
                 return direction
             }
