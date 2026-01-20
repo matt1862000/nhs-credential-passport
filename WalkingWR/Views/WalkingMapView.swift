@@ -2191,15 +2191,28 @@ struct EmbeddedWalkMapView: View {
     }
     
     /// v1.9.15: Extract walking directions from MKRoute steps
+    /// v1.9.77: Exclude final arrival instruction from navigation directions to prevent showing destination too early
     private func extractDirectionsFromMKRoute(_ route: MKRoute) -> [WalkingDirection] {
         var directions: [WalkingDirection] = []
         
-        // Find the last step with instructions (to mark it as "arrive")
+        // Find the last step with instructions (to identify arrival step)
         let lastStepWithInstructions = route.steps.lastIndex(where: { !$0.instructions.isEmpty })
         
         for (index, step) in route.steps.enumerated() {
             // Skip steps with no instructions (usually the first "depart" step)
             guard !step.instructions.isEmpty else { continue }
+            
+            // v1.9.77: Skip the final arrival instruction - it will be shown when user is close to destination
+            // This prevents showing "The destination is on your right" when starting the walk
+            let isLastStep = index == lastStepWithInstructions
+            if isLastStep {
+                // Check if this is an arrival instruction (contains "destination", "arrive", etc.)
+                let lowercased = step.instructions.lowercased()
+                if lowercased.contains("arrive") || lowercased.contains("destination") || lowercased.contains("your destination") {
+                    // Skip this final arrival instruction - it's not a navigation step
+                    continue
+                }
+            }
             
             let stepDistance = Int(step.distance)
             // Estimate duration based on walking speed (~80m/min)
@@ -2217,16 +2230,12 @@ struct EmbeddedWalkMapView: View {
             // Extract maneuver type from instructions
             let maneuver = extractManeuverType(from: step.instructions)
             
-            // Keep all actual directions - don't replace with "Return to starting point"
-            // The last step will naturally be an "arrive" instruction from MapKit
-            let isLastStep = index == lastStepWithInstructions
-            
             let direction = WalkingDirection(
-                instruction: step.instructions,  // Keep the actual instruction
+                instruction: step.instructions,
                 distance: distanceText,
                 distanceMeters: stepDistance,
                 duration: durationText,
-                maneuver: isLastStep ? "arrive" : maneuver
+                maneuver: maneuver
             )
             directions.append(direction)
         }

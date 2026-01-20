@@ -806,12 +806,25 @@ class WaitingRoomViewModel: ObservableObject {
     }
     
     // v1.9.16: Extract walking directions from MKRoute steps (helper for pre-calculation)
+    // v1.9.77: Exclude final arrival instruction from navigation directions to prevent showing destination too early
     private func extractDirectionsFromMKRoute(_ route: MKRoute) -> [WalkingDirection] {
         var directions: [WalkingDirection] = []
         let lastStepWithInstructions = route.steps.lastIndex(where: { !$0.instructions.isEmpty })
         
         for (index, step) in route.steps.enumerated() {
             guard !step.instructions.isEmpty else { continue }
+            
+            // v1.9.77: Skip the final arrival instruction - it will be shown when user is close to destination
+            // This prevents showing "The destination is on your right" when starting the walk
+            let isLastStep = index == lastStepWithInstructions
+            if isLastStep {
+                // Check if this is an arrival instruction (contains "destination", "arrive", etc.)
+                let lowercased = step.instructions.lowercased()
+                if lowercased.contains("arrive") || lowercased.contains("destination") || lowercased.contains("your destination") {
+                    // Skip this final arrival instruction - it's not a navigation step
+                    continue
+                }
+            }
             
             let stepDistance = Int(step.distance)
             let stepDurationSeconds = max(60, stepDistance / 80 * 60)
@@ -825,14 +838,13 @@ class WaitingRoomViewModel: ObservableObject {
             }
             
             let maneuver = self.extractManeuverType(from: step.instructions)
-            let isLastStep = index == lastStepWithInstructions
             
             let direction = WalkingDirection(
                 instruction: step.instructions,
                 distance: distanceText,
                 distanceMeters: stepDistance,
                 duration: durationText,
-                maneuver: isLastStep ? "arrive" : maneuver
+                maneuver: maneuver
             )
             directions.append(direction)
         }
