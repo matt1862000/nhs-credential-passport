@@ -12,7 +12,7 @@ const footerLinks = {
   ],
   support: [
     { label: 'Help Centre', href: '/help' },
-    { label: 'Contact Us', href: '/contact' },
+    { label: 'Contact Us', href: 'mailto:raihan.talukdar@nhs.net', external: true },
     { label: 'FAQs', href: '/faqs' },
     { label: 'Feedback', href: 'https://www.careopinion.org.uk/opinions?nacs=TAH', external: true },
   ],
