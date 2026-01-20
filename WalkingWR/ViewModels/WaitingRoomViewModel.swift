@@ -1045,9 +1045,11 @@ class WaitingRoomViewModel: ObservableObject {
         // Get route path for dynamic radius calculation
         let routePath = route.routePath
         
-        // v1.9.83: Check if approaching final destination (last marker) to show arrival instruction
+        // v1.9.84: Check if approaching final destination (last marker) to show arrival instruction
+        // Only check if we haven't visited the last marker yet (still on outbound leg)
         if let lastMarker = route.qrMarkers.last,
            !visitedMarkerIds.contains(lastMarker.id),
+           !isUsingReturnDirections,  // v1.9.84: Don't show arrival instruction during return leg
            let arrivalInst = arrivalInstruction {
             let markerLocation = CLLocation(latitude: lastMarker.coordinate.latitude, longitude: lastMarker.coordinate.longitude)
             let distanceToLastMarker = userLocation.distance(from: markerLocation)
@@ -1070,6 +1072,15 @@ class WaitingRoomViewModel: ObservableObject {
                     if locationService.currentDirectionIndex >= cachedOriginalDirections.count {
                         locationService.currentDirectionIndex = max(0, cachedOriginalDirections.count - 1)
                     }
+                }
+            }
+        } else if isUsingReturnDirections || (route.qrMarkers.last.map { visitedMarkerIds.contains($0.id) } ?? false) {
+            // v1.9.84: Clear arrival instruction if we're on return leg or have visited last marker
+            if let arrivalInst = arrivalInstruction,
+               let arrivalIndex = cachedOriginalDirections.firstIndex(where: { $0.id == arrivalInst.id }) {
+                cachedOriginalDirections.remove(at: arrivalIndex)
+                if locationService.currentDirectionIndex >= cachedOriginalDirections.count {
+                    locationService.currentDirectionIndex = max(0, cachedOriginalDirections.count - 1)
                 }
             }
         }
@@ -1098,6 +1109,17 @@ class WaitingRoomViewModel: ObservableObject {
                 userProgress.qrScansCompleted += 1
                 userProgress.todayQRScansCompleted += 1
                 userProgress.addPoints(marker.pointsValue)
+                
+                // v1.9.84: If this is the last marker, clear arrival instruction for return leg
+                if marker == route.qrMarkers.last, let arrivalInst = arrivalInstruction {
+                    // Remove arrival instruction from cached directions
+                    if let arrivalIndex = cachedOriginalDirections.firstIndex(where: { $0.id == arrivalInst.id }) {
+                        cachedOriginalDirections.remove(at: arrivalIndex)
+                        DebugLogger.shared.log("🧹 Cleared arrival instruction - reached final destination, preparing for return leg", category: "ARRIVAL")
+                    }
+                    // Clear the stored arrival instruction so it doesn't interfere with return directions
+                    arrivalInstruction = nil
+                }
                 
                 // Show the photo prompt
                 showMarkerArrivalPrompt = true
