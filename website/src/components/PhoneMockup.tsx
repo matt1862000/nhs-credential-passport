@@ -318,8 +318,8 @@ export default function PhoneMockup() {
                 </div>
               </div>
               
-              {/* Route suggestion - larger */}
-              <div className="mt-4 p-4 rounded-2xl bg-teal-50 dark:bg-teal-accent/10 border-2 border-teal-300 dark:border-teal-accent/20">
+              {/* Route suggestion - positioned in middle between clinician card and bottom */}
+              <div className="mt-auto mb-8 p-4 rounded-2xl bg-teal-50 dark:bg-teal-accent/10 border-2 border-teal-300 dark:border-teal-accent/20">
                 <div className="text-base text-teal-700 dark:text-teal-accent font-bold">Perfect time for a 10-min walk! 🚶</div>
               </div>
             </div>
