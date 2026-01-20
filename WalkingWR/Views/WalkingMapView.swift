@@ -847,40 +847,8 @@ struct EmbeddedWalkMapViewSwiftUI: View {
             }
             
             // v1.6.31: Compact status ring in top-left corner (saves vertical space)
-            // ROLLBACK: Comment out this VStack and uncomment the one below to restore banner
-            VStack {
-                HStack(alignment: .top) {
-                    // Compact activity ring showing delay/steps (top-left)
-                    CompactStatusRing(
-                        walkDurationMinutes: viewModel.walkSession.currentRoute?.durationMinutes ?? 15,
-                        walkStartTime: viewModel.walkSession.startTime,
-                        healthKitService: viewModel.healthKitService,
-                        isStepTrackingEnabled: $isStepTrackingEnabled,
-                        showMotionExplainer: $showMotionExplainer,
-                        hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable  // v1.6.45
-                    )
-                    
-                    Spacer()
-                    
-                    // Location button (top-right)
-                    // v1.9.10: Shows full route overview first, then returns to following
-                    Button(action: {
-                        showFullRouteThenFollow()
-                    }) {
-                        Image(systemName: "location.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.tealAccent)
-                            .frame(width: 44, height: 44)
-                            .background(Color.darkCardBackground)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                
-                Spacer()
-            }
+            // Status ring and location button - shown as overlay to be above intro overlay
+            // (Original VStack removed - now in overlay to ensure visibility)
             
             /* ROLLBACK: Uncomment this to restore the banner layout
             // v1.6.30: Combined status banner (delay + steps) to save vertical space
@@ -1072,6 +1040,41 @@ struct EmbeddedWalkMapViewSwiftUI: View {
         .overlay(
             showingIntroOverlay ? IntroOverlayView(introPhase: introPhase).opacity(1).allowsHitTesting(false) : nil
         )
+        // Status ring overlay - must be after intro overlay to appear on top
+        .overlay(alignment: .topLeading) {
+            VStack {
+                HStack(alignment: .top) {
+                    // Compact activity ring showing delay/steps (top-left)
+                    CompactStatusRing(
+                        walkDurationMinutes: viewModel.walkSession.currentRoute?.durationMinutes ?? 15,
+                        walkStartTime: viewModel.walkSession.startTime,
+                        healthKitService: viewModel.healthKitService,
+                        isStepTrackingEnabled: $isStepTrackingEnabled,
+                        showMotionExplainer: $showMotionExplainer,
+                        hasClinicianSelected: viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable
+                    )
+                    
+                    Spacer()
+                    
+                    // Location button (top-right)
+                    Button(action: {
+                        showFullRouteThenFollow()
+                    }) {
+                        Image(systemName: "location.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.tealAccent)
+                            .frame(width: 44, height: 44)
+                            .background(Color.darkCardBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                
+                Spacer()
+            }
+        }
         .onAppear {
             if !hasPlayedIntro {
                 playIntroAnimation()
