@@ -14,7 +14,7 @@ const footerLinks = {
     { label: 'Help Centre', href: '/help' },
     { label: 'Contact Us', href: '/contact' },
     { label: 'FAQs', href: '/faqs' },
-    { label: 'Feedback', href: '/feedback' },
+    { label: 'Feedback', href: 'https://www.careopinion.org.uk/opinions?nacs=TAH', external: true },
   ],
   legal: [
     { label: 'Privacy Policy', href: '/privacy' },
@@ -68,9 +68,15 @@ export default function Footer() {
             <ul className="space-y-3">
               {footerLinks.support.map((link) => (
                 <li key={link.label}>
-                  <Link href={link.href} className="dark:text-white/50 text-slate-800 hover:text-teal-accent dark:hover:text-teal-accent hover:text-teal-700 transition-colors">
-                    {link.label}
-                  </Link>
+                  {link.external ? (
+                    <a href={link.href} target="_blank" rel="noopener noreferrer" className="dark:text-white/50 text-slate-800 hover:text-teal-accent dark:hover:text-teal-accent hover:text-teal-700 transition-colors">
+                      {link.label}
+                    </a>
+                  ) : (
+                    <Link href={link.href} className="dark:text-white/50 text-slate-800 hover:text-teal-accent dark:hover:text-teal-accent hover:text-teal-700 transition-colors">
+                      {link.label}
+                    </Link>
+                  )}
                 </li>
               ))}
             </ul>
