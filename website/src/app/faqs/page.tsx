@@ -65,19 +65,6 @@ export default function FAQs() {
               
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">How do I get started?</h3>
-                  <p>
-                    After downloading WaitWell from the App Store, you'll need to:
-                  </p>
-                  <ul className="list-disc pl-6 space-y-2 mt-2">
-                    <li>Grant location permissions so the app can provide navigation</li>
-                    <li>Allow HealthKit access if you want to track your steps and activity</li>
-                    <li>Scan the QR code at your clinic or manually enter your appointment details</li>
-                    <li>View your wait time and suggested walking routes</li>
-                  </ul>
-                </div>
-
-                <div>
                   <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">How accurate are the wait times?</h3>
                   <p>
                     Wait times are provided by participating clinics and updated in real-time. However, wait times can change, so we recommend checking the app periodically and allowing extra time to return to the clinic.
@@ -97,21 +84,75 @@ export default function FAQs() {
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What if I get lost or need to return early?</h3>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What are the breathing exercises?</h3>
                   <p>
-                    WaitWell provides turn-by-turn navigation to help you stay on track. If you need to return to the clinic early, you can:
+                    WaitWell includes breathing exercises (such as the 4-7-8 pattern) to help you relax and manage stress while waiting. These are optional wellness features designed to support your mental wellbeing during your appointment wait.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">How do route suggestions work?</h3>
+                  <p>
+                    WaitWell automatically calculates which routes fit within your available wait time. Routes are filtered to be shorter than your wait time, and each shows estimated duration, distance, and step count. Routes include a return journey back to the clinic, and the app accounts for walking speed (average 1.4 m/s) and adds a safety buffer. If your wait time changes, route suggestions update automatically.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What are Points of Interest (POIs)?</h3>
+                  <p>
+                    POIs are highlighted locations along your route, such as pharmacies (useful for picking up prescriptions), cafes and shops, and parks and green spaces. POIs are automatically included in route suggestions and are marked with colored circles on the map. You can see POI details by tapping on them in the route preview.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">How do return alerts work?</h3>
+                  <p>
+                    WaitWell sends smart notifications to ensure you return on time:
                   </p>
                   <ul className="list-disc pl-6 space-y-2 mt-2">
-                    <li>Use the "Return to Clinic" feature to get directions back</li>
-                    <li>Follow the return route that's automatically calculated</li>
-                    <li>The app will alert you when it's time to head back based on your wait time</li>
+                    <li><strong>Halfway Alert:</strong> When you've completed 50% of your route - suggests starting to head back</li>
+                    <li><strong>Return Now Alert:</strong> When you've used 80% of your wait time - time to return immediately</li>
+                    <li><strong>Clinician Ready:</strong> Immediate notification if your clinician becomes available early</li>
+                    <li><strong>Wait Time Increased:</strong> Notification if your wait time extends, giving you more time</li>
+                  </ul>
+                  <p className="mt-4">
+                    All alerts include a return route to guide you back to the clinic.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What is the progress and gamification system?</h3>
+                  <p>
+                    WaitWell tracks your activity and rewards your wellness:
+                  </p>
+                  <ul className="list-disc pl-6 space-y-2 mt-2">
+                    <li><strong>Points:</strong> Earned for completing routes and scanning QR markers</li>
+                    <li><strong>Steps:</strong> Tracked via HealthKit integration (optional)</li>
+                    <li><strong>Badges:</strong> Unlocked for achievements like "First Steps", "Explorer", "Step Champion"</li>
+                    <li><strong>Levels:</strong> Progress through levels as you accumulate points</li>
+                    <li><strong>Digital Literacy:</strong> Track your progress with NHS App features and QR scanning</li>
                   </ul>
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What are the breathing exercises?</h3>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What do the waypoint markers mean?</h3>
                   <p>
-                    WaitWell includes breathing exercises (such as the 4-7-8 pattern) to help you relax and manage stress while waiting. These are optional wellness features designed to support your mental wellbeing during your appointment wait.
+                    Waypoint markers on the map show key points along your route:
+                  </p>
+                  <ul className="list-disc pl-6 space-y-2 mt-2">
+                    <li><strong>Teal circle:</strong> Start/End point (your clinic location)</li>
+                    <li><strong>Red/Brown circle:</strong> Pharmacy or other POI</li>
+                    <li><strong>Gold/Brown circle:</strong> Dentist or destination (furthest point on route)</li>
+                  </ul>
+                  <p className="mt-4">
+                    Labels (Start, Pharmacy, Dentist, End) appear next to markers as you progress.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What does the navigation banner show?</h3>
+                  <p>
+                    The top navigation banner displays your next turn instruction (e.g., "Turn right onto Park Lane"), distance to the turn, total distance walked, time remaining until you should return, and distance remaining on your route.
                   </p>
                 </div>
               </div>
@@ -181,42 +222,64 @@ export default function FAQs() {
             </section>
 
             <section>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Understanding the Interface</h2>
+              
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What do the icons mean?</h3>
+                  <ul className="list-disc pl-6 space-y-2">
+                    <li><strong>⏰ Clock:</strong> Wait time / Time remaining</li>
+                    <li><strong>🚶 Walking Figure:</strong> Walking routes / Steps</li>
+                    <li><strong>❤️ Heart:</strong> Wellbeing features</li>
+                    <li><strong>🏆 Trophy:</strong> Progress and achievements</li>
+                    <li><strong>📍 Pin:</strong> Location / Waypoint</li>
+                    <li><strong>📷 Camera:</strong> QR scanner</li>
+                    <li><strong>✏️ Pencil:</strong> Edit appointment details</li>
+                    <li><strong>↩️ Arrow:</strong> Return to clinic</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What do the colors on the map mean?</h3>
+                  <ul className="list-disc pl-6 space-y-2">
+                    <li><strong>Teal/Green:</strong> Active routes, start/end points, positive indicators</li>
+                    <li><strong>Red/Brown:</strong> Pharmacies and POIs</li>
+                    <li><strong>Gold/Brown:</strong> Destination waypoints</li>
+                    <li><strong>Blue:</strong> Return routes, your location</li>
+                    <li><strong>Pulsing Circle:</strong> Your current GPS location</li>
+                    <li><strong>Solid Circle:</strong> Waypoint markers</li>
+                  </ul>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What types of notifications will I receive?</h3>
+                  <ul className="list-disc pl-6 space-y-2">
+                    <li><strong>Halfway Alert:</strong> "Start heading back" - you've completed 50% of your route</li>
+                    <li><strong>Return Now:</strong> "Time to return" - you've used 80% of your wait time</li>
+                    <li><strong>Clinician Ready:</strong> "Your clinician is ready" - return immediately</li>
+                    <li><strong>Wait Time Increased:</strong> Your wait time has extended - you have more time</li>
+                    <li><strong>Wait Time Decreased:</strong> Your wait time has shortened - return sooner</li>
+                    <li><strong>QR Marker Nearby:</strong> A QR marker is close - scan it for bonus content</li>
+                  </ul>
+                </div>
+              </div>
+            </section>
+
+            <section>
               <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Technical Support</h2>
               
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">The app isn't working correctly. What should I do?</h3>
-                  <p>
-                    Try these troubleshooting steps:
-                  </p>
-                  <ul className="list-disc pl-6 space-y-2 mt-2">
-                    <li>Ensure you have granted location permissions</li>
-                    <li>Check that you have an internet connection (for initial route loading)</li>
-                    <li>Restart the app</li>
-                    <li>Update to the latest version from the App Store</li>
-                    <li>If issues persist, contact us at <a href="mailto:raihan.talukdar@nhs.net" className="text-teal-600 dark:text-teal-accent hover:underline">raihan.talukdar@nhs.net</a></li>
-                  </ul>
-                </div>
-
-                <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">Why aren't directions advancing correctly?</h3>
-                  <p>
-                    WaitWell uses GPS to track your progress along routes. If directions seem to be advancing too quickly or incorrectly, this may be due to:
-                  </p>
-                  <ul className="list-disc pl-6 space-y-2 mt-2">
-                    <li>GPS accuracy issues (the app filters poor GPS readings)</li>
-                    <li>Using a cached route from a different starting location</li>
-                    <li>Standing still near a waypoint</li>
-                  </ul>
-                  <p className="mt-4">
-                    The app requires consistent forward movement to advance waypoints, which helps prevent GPS jitter from causing incorrect direction updates.
-                  </p>
-                </div>
-
-                <div>
                   <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">My clinic isn't listed. Can I still use WaitWell?</h3>
                   <p>
                     Yes! You can manually enter your clinic location and appointment details. However, real-time wait times are only available for participating clinics. You can still use WaitWell to find walking routes near any clinic location.
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">I'm having technical issues. Where can I get help?</h3>
+                  <p>
+                    For detailed troubleshooting guides, please visit our <Link href="/help" className="text-teal-600 dark:text-teal-accent hover:underline">Help Centre</Link>. For specific issues, you can also contact us at <a href="mailto:raihan.talukdar@nhs.net" className="text-teal-600 dark:text-teal-accent hover:underline">raihan.talukdar@nhs.net</a>.
                   </p>
                 </div>
               </div>

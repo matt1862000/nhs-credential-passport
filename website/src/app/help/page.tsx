@@ -23,6 +23,18 @@ export default function HelpCentre() {
               
               <div className="space-y-6">
                 <div>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">First Time Setup</h3>
+                  <p>After downloading WaitWell from the App Store:</p>
+                  <ol className="list-decimal pl-6 space-y-2 mt-2">
+                    <li>Open the app and grant location permissions when prompted</li>
+                    <li>Allow HealthKit access if you want to track your steps and activity (optional)</li>
+                    <li>Grant camera permissions if you want to scan QR codes</li>
+                    <li>Complete the onboarding tutorial (first time only)</li>
+                    <li>You're ready to use WaitWell at your next clinic appointment!</li>
+                  </ol>
+                </div>
+
+                <div>
                   <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">How to Scan the Clinic QR Code</h3>
                   <ol className="list-decimal pl-6 space-y-2">
                     <li>Open WaitWell when you arrive at your clinic</li>
@@ -106,74 +118,76 @@ export default function HelpCentre() {
             </section>
 
             <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Understanding Features</h2>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">How Route Generation Works</h2>
               
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">Understanding the Wait Time Display</h3>
-                  <p>The wait time screen shows:</p>
-                  <ul className="list-disc pl-6 space-y-2 mt-2">
-                    <li><strong>Current Wait Time:</strong> Large number showing minutes until your appointment</li>
-                    <li><strong>Clinician Card:</strong> Shows your clinician's name and specialty</li>
-                    <li><strong>Route Suggestion:</strong> Suggests a walking route that fits your wait time</li>
-                    <li><strong>Last Updated:</strong> Timestamp showing when wait time was last refreshed</li>
-                  </ul>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">AI-Powered Route Naming</h3>
+                  <p>
+                    WaitWell uses Google's Gemini AI to generate creative, personalized names and descriptions for each route:
+                  </p>
+                  <ol className="list-decimal pl-6 space-y-2 mt-2">
+                    <li><strong>Route Analysis:</strong> The AI analyzes all points of interest (POIs) along your route, including their types (cafes, parks, churches, shops, etc.) and locations</li>
+                    <li><strong>Creative Naming:</strong> Based on the specific POIs, route duration, and distance, the AI generates a fun, memorable route name (e.g., "Pub & Spire Stroll", "Bakery Loop", "Garden Gateway")</li>
+                    <li><strong>Detailed Descriptions:</strong> The AI creates warm, specific descriptions mentioning actual places you'll pass, what you might see or experience, and concrete details about each location</li>
+                    <li><strong>Template Fallback:</strong> If AI generation isn't available, the app uses intelligent templates based on the route's key features</li>
+                  </ol>
+                  <p className="mt-4">
+                    <strong>Why AI?</strong> This ensures every route feels unique and personalized, making your walk more engaging and helping you remember the route by its distinctive name and description.
+                  </p>
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">How Route Suggestions Work</h3>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">How POI Arrival Detection Works</h3>
                   <p>
-                    WaitWell automatically calculates which routes fit within your available wait time:
+                    When you approach a point of interest (POI) along your route, WaitWell automatically detects your arrival:
                   </p>
-                  <ul className="list-disc pl-6 space-y-2 mt-2">
-                    <li>Routes are filtered to be shorter than your wait time</li>
-                    <li>Each route shows estimated duration, distance, and step count</li>
-                    <li>Routes include a return journey back to the clinic</li>
-                    <li>The app accounts for walking speed (average 1.4 m/s) and adds a safety buffer</li>
-                    <li>If your wait time changes, route suggestions update automatically</li>
-                  </ul>
+                  <ol className="list-decimal pl-6 space-y-2 mt-2">
+                    <li><strong>GPS Tracking:</strong> The app continuously monitors your location using GPS as you walk</li>
+                    <li><strong>Dynamic Activation Radius:</strong> Each POI has a "detection zone" that adapts based on how far the POI is from the walking route:
+                      <ul className="list-disc pl-6 mt-2 space-y-1">
+                        <li>POIs right on the route (cafes, bus stops): ~25 meter detection radius</li>
+                        <li>POIs set back from the route (schools, parks): up to 75 meter detection radius</li>
+                      </ul>
+                    </li>
+                    <li><strong>Proximity Check:</strong> When you enter a POI's detection zone, the app calculates your distance to the POI</li>
+                    <li><strong>Arrival Confirmation:</strong> Once you're within the activation radius, the app:
+                      <ul className="list-disc pl-6 mt-2 space-y-1">
+                        <li>Records that you've visited the POI</li>
+                        <li>Sends you a notification about the arrival</li>
+                        <li>Offers to take a photo at the location (for QR markers)</li>
+                        <li>Awards points for visiting the POI</li>
+                        <li>Tracks the visit in your progress</li>
+                      </ul>
+                    </li>
+                    <li><strong>Smart Filtering:</strong> The app filters out GPS inaccuracies and only records arrivals when you're genuinely close to the POI, preventing false detections</li>
+                  </ol>
+                  <p className="mt-4">
+                    <strong>Note:</strong> POI detection works best when you're actively walking and have good GPS signal. If you're indoors or in an area with poor GPS, detection may be delayed until you're closer to the POI.
+                  </p>
                 </div>
+              </div>
+            </section>
 
+            <section>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">Navigation & Routes</h2>
+              
+              <div className="space-y-6">
                 <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">Understanding Points of Interest (POIs)</h3>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What if I Get Lost or Need to Return Early?</h3>
                   <p>
-                    POIs are highlighted locations along your route:
+                    If you need to return to the clinic early or get lost:
                   </p>
-                  <ul className="list-disc pl-6 space-y-2 mt-2">
-                    <li><strong>Pharmacies:</strong> Marked with a red/brown circle - useful for picking up prescriptions</li>
-                    <li><strong>Cafes & Shops:</strong> Places to grab a drink or snack</li>
-                    <li><strong>Parks & Green Spaces:</strong> Areas for relaxation and nature connection</li>
-                    <li>POIs are automatically included in route suggestions</li>
-                    <li>You can see POI details by tapping on them in the route preview</li>
-                  </ul>
-                </div>
-
-                <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">How Return Alerts Work</h3>
-                  <p>
-                    WaitWell sends smart notifications to ensure you return on time:
+                  <ol className="list-decimal pl-6 space-y-2 mt-2">
+                    <li>Look for the "Return to Clinic" button or option in the app</li>
+                    <li>The app will calculate a direct route back to your clinic</li>
+                    <li>Follow the return route directions shown on the map</li>
+                    <li>The app will guide you back with turn-by-turn navigation</li>
+                    <li>If you're truly lost, you can also use your phone's standard Maps app with the clinic address</li>
+                  </ol>
+                  <p className="mt-4">
+                    <strong>Tip:</strong> The app automatically alerts you when it's time to head back based on your wait time, so you shouldn't need to manually return unless there's an emergency.
                   </p>
-                  <ul className="list-disc pl-6 space-y-2 mt-2">
-                    <li><strong>Halfway Alert:</strong> When you've completed 50% of your route - suggests starting to head back</li>
-                    <li><strong>Return Now Alert:</strong> When you've used 80% of your wait time - time to return immediately</li>
-                    <li><strong>Clinician Ready:</strong> Immediate notification if your clinician becomes available early</li>
-                    <li><strong>Wait Time Increased:</strong> Notification if your wait time extends, giving you more time</li>
-                    <li>All alerts include a return route to guide you back to the clinic</li>
-                  </ul>
-                </div>
-
-                <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">Understanding Progress & Gamification</h3>
-                  <p>
-                    WaitWell tracks your activity and rewards your wellness:
-                  </p>
-                  <ul className="list-disc pl-6 space-y-2 mt-2">
-                    <li><strong>Points:</strong> Earned for completing routes and scanning QR markers</li>
-                    <li><strong>Steps:</strong> Tracked via HealthKit integration (optional)</li>
-                    <li><strong>Badges:</strong> Unlocked for achievements like "First Steps", "Explorer", "Step Champion"</li>
-                    <li><strong>Levels:</strong> Progress through levels as you accumulate points</li>
-                    <li><strong>Digital Literacy:</strong> Track your progress with NHS App features and QR scanning</li>
-                  </ul>
                 </div>
 
                 <div>
@@ -181,14 +195,15 @@ export default function HelpCentre() {
                   <p>
                     Some routes include QR markers for additional content:
                   </p>
-                  <ul className="list-disc pl-6 space-y-2 mt-2">
+                  <ol className="list-decimal pl-6 space-y-2 mt-2">
                     <li>QR markers appear as special waypoints along certain routes</li>
                     <li>When you approach a marker, you'll receive a notification</li>
                     <li>Tap the notification to open the QR scanner</li>
+                    <li>Point your camera at the QR marker</li>
                     <li>Scan the marker to unlock wellbeing content, nature facts, or digital skills tips</li>
                     <li>Earn bonus points for scanning markers</li>
                     <li>Markers you've visited are tracked in your progress</li>
-                  </ul>
+                  </ol>
                 </div>
               </div>
             </section>
@@ -225,17 +240,6 @@ export default function HelpCentre() {
                     <li><strong>Distance Walked:</strong> Total distance covered so far</li>
                     <li><strong>Time Remaining:</strong> Minutes left until you should return</li>
                     <li><strong>Distance Remaining:</strong> Kilometers left on your route</li>
-                  </ul>
-                </div>
-
-                <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">Understanding Waypoint Markers</h3>
-                  <ul className="list-disc pl-6 space-y-2">
-                    <li><strong>Start/End:</strong> Teal circle - your clinic location</li>
-                    <li><strong>Pharmacy:</strong> Red/brown circle - points of interest along the route</li>
-                    <li><strong>Dentist/Destination:</strong> Gold/brown circle - the furthest point on your route</li>
-                    <li>Labels appear next to markers as you progress</li>
-                    <li>Markers are sized larger for Start/End points</li>
                   </ul>
                 </div>
 
