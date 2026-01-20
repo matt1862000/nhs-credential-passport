@@ -37,11 +37,13 @@ class LocationService: NSObject, ObservableObject {
     private let directionNotificationRadius: Double = 30 // meters - notify when within 30m of turn
     private let deviationThreshold: Double = 50.0  // v1.9.15: Consider off-route if >50m from route
     
-    // v1.9.72: GPS stability tracking to prevent jitter from advancing waypoints
+    // v1.9.24: GPS consistency tracking - require consistent forward movement over time
     private var recentProjectedPositions: [(segmentIndex: Int, t: Double, timestamp: Date)] = []
-    private let maxGPSAccuracy: Double = 15.0 // Reject GPS readings with accuracy worse than 15m (was 20m)
-    private let minMovementAlongRoute: Double = 20.0 // Require 20m of actual movement along route before advancing (was 15m)
-    private let positionHistoryWindow: TimeInterval = 15.0 // Keep last 15 seconds of positions (was 10s)
+    private let maxGPSAccuracy: Double = 15.0 // Reject GPS readings with accuracy worse than 15m
+    private let minMovementAlongRoute: Double = 20.0 // Require 20m of actual movement along route before advancing
+    private let positionHistoryWindow: TimeInterval = 10.0 // Keep last 10 seconds of positions
+    private let minConsistentReadings: Int = 5 // Need at least 5 consistent readings
+    private let consistencyThreshold: Double = 0.7 // 70% of readings must show forward progress
     
     // MARK: - Polyline Projection Helpers (v1.9.70)
     
@@ -418,30 +420,47 @@ class LocationService: NSObject, ObservableObject {
             let waypointLocation = CLLocation(latitude: waypoint.coordinate.latitude, longitude: waypoint.coordinate.longitude)
             let distance = currentLocation.distance(from: waypointLocation)
             
-            // v1.9.72: Stricter waypoint advancement logic
+            // v1.9.24: Consistency-based waypoint advancement
             let waypointSegment = max(0, waypoint.polylineIndex - 1)
+            let waypointT: Double = 0.5 // Consider waypoint at midpoint of its segment
             
             // Check if user has reached/passed this waypoint using polyline position
-            // v1.9.72: Require being at least 50% through the waypoint's segment (was 30%)
             let userIsAtOrPastOnPolyline = isAhead(
                 segmentIndex1: userProjection.segmentIndex,
                 t1: userProjection.t,
                 segmentIndex2: waypointSegment,
-                t2: 0.5  // User should be at least 50% into the waypoint's segment
+                t2: waypointT
             ) || userProjection.segmentIndex >= waypoint.polylineIndex
             
-            // v1.9.72: Require actual movement along route before advancing (prevents GPS jitter)
-            // Raised threshold: need 20m movement OR be within 10m of waypoint (was 15m)
-            let hasMovedEnough = distanceMovedAlongRoute >= minMovementAlongRoute || distance <= 10
+            // v1.9.24: NEW - Check for CONSISTENT forward movement over time
+            // This is the key improvement - GPS must show consistent forward progress
+            let hasConsistentMovement = hasConsistentForwardMovement(
+                towardWaypoint: waypointSegment,
+                recentPositions: recentProjectedPositions
+            )
             
-            // v1.9.72: Also check GPS accuracy for this specific reading
-            let hasGoodAccuracy = currentLocation.horizontalAccuracy <= maxGPSAccuracy && currentLocation.horizontalAccuracy >= 0
+            // v1.9.24: Check if user has transitioned from before to after the waypoint
+            let hasTransitionedPast = hasPassedWaypointConsistently(
+                waypointSegment: waypointSegment,
+                waypointT: waypointT,
+                recentPositions: recentProjectedPositions,
+                currentProjection: userProjection
+            )
+            
+            // v1.9.24: Require movement along route
+            let hasMovedEnough = distanceMovedAlongRoute >= minMovementAlongRoute
             
             // Trigger notification if:
-            // - Within 25m distance (was 30m) AND past on polyline AND has moved enough AND good GPS, OR
-            // - Within 10m distance (very close, definitely there regardless of movement)
-            let shouldTrigger = (distance <= 25 && userIsAtOrPastOnPolyline && hasMovedEnough && hasGoodAccuracy) ||
-                                (distance <= 10)  // Failsafe: if very close, always trigger
+            // 1. CONSISTENT approach: Within 25m AND consistent forward movement AND transitioned past waypoint AND moved enough
+            // 2. FAILSAFE: Within 8m (very close, definitely there)
+            let consistentApproach = distance <= 25 && hasConsistentMovement && (hasTransitionedPast || userIsAtOrPastOnPolyline) && hasMovedEnough
+            let veryClose = distance <= 8  // Reduced from 10m - must be VERY close
+            
+            let shouldTrigger = consistentApproach || veryClose
+            
+            if shouldTrigger {
+                print("📍 [Trigger] Waypoint \(index): dist=\(Int(distance))m, consistent=\(hasConsistentMovement), transitioned=\(hasTransitionedPast), moved=\(String(format: "%.1f", distanceMovedAlongRoute))m")
+            }
             
             if shouldTrigger {
                 NotificationService.shared.sendDirectionNotification(
@@ -530,6 +549,91 @@ class LocationService: NSObject, ObservableObject {
         }
         
         return totalDistance
+    }
+    
+    /// v1.9.24: Check if GPS has been consistently showing forward movement toward/past a waypoint
+    /// Returns true only if the majority of recent readings show consistent forward progress
+    private func hasConsistentForwardMovement(
+        towardWaypoint waypointSegment: Int,
+        recentPositions: [(segmentIndex: Int, t: Double, timestamp: Date)]
+    ) -> Bool {
+        // Need minimum number of readings to assess consistency
+        guard recentPositions.count >= minConsistentReadings else {
+            print("📍 [Consistency] Not enough readings: \(recentPositions.count)/\(minConsistentReadings)")
+            return false
+        }
+        
+        // Check how many consecutive readings show forward movement
+        var forwardCount = 0
+        var backwardCount = 0
+        
+        for i in 1..<recentPositions.count {
+            let prev = recentPositions[i - 1]
+            let curr = recentPositions[i]
+            
+            // Check if current reading is ahead of previous
+            let movedForward = isAhead(
+                segmentIndex1: curr.segmentIndex,
+                t1: curr.t,
+                segmentIndex2: prev.segmentIndex,
+                t2: prev.t
+            )
+            
+            // Also check if staying in same position (not moving backward)
+            let samePosition = curr.segmentIndex == prev.segmentIndex && abs(curr.t - prev.t) < 0.05
+            
+            if movedForward || samePosition {
+                forwardCount += 1
+            } else {
+                backwardCount += 1
+            }
+        }
+        
+        // Calculate consistency ratio
+        let totalMovements = forwardCount + backwardCount
+        guard totalMovements > 0 else { return false }
+        
+        let consistencyRatio = Double(forwardCount) / Double(totalMovements)
+        let isConsistent = consistencyRatio >= consistencyThreshold
+        
+        print("📍 [Consistency] Forward: \(forwardCount), Backward: \(backwardCount), Ratio: \(String(format: "%.1f", consistencyRatio * 100))% - \(isConsistent ? "CONSISTENT" : "INCONSISTENT")")
+        
+        return isConsistent
+    }
+    
+    /// v1.9.24: Check if the position history shows the user has passed a waypoint
+    /// Requires: oldest reading BEFORE waypoint, newest reading AFTER waypoint
+    private func hasPassedWaypointConsistently(
+        waypointSegment: Int,
+        waypointT: Double,
+        recentPositions: [(segmentIndex: Int, t: Double, timestamp: Date)],
+        currentProjection: (segmentIndex: Int, t: Double, distanceToPolyline: Double)
+    ) -> Bool {
+        guard let oldestPosition = recentPositions.first else { return false }
+        
+        // Check if oldest position was BEFORE the waypoint
+        let wasBeforeWaypoint = !isAhead(
+            segmentIndex1: oldestPosition.segmentIndex,
+            t1: oldestPosition.t,
+            segmentIndex2: waypointSegment,
+            t2: waypointT
+        )
+        
+        // Check if current position is AFTER the waypoint
+        let isNowPastWaypoint = isAhead(
+            segmentIndex1: currentProjection.segmentIndex,
+            t1: currentProjection.t,
+            segmentIndex2: waypointSegment,
+            t2: waypointT
+        )
+        
+        let hasPassed = wasBeforeWaypoint && isNowPastWaypoint
+        
+        if hasPassed {
+            print("📍 [Waypoint] Transitioned from before to after waypoint over \(recentPositions.count) readings")
+        }
+        
+        return hasPassed
     }
     
     // v1.9.0: Get next turn coordinate for map annotation
