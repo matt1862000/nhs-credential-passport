@@ -659,6 +659,10 @@ class WaitingRoomViewModel: ObservableObject {
         }
         // Otherwise, step tracking will start when user taps the Steps card
         
+        // v1.9.79: Log walk start
+        DebugLogger.shared.log("🚶🚶🚶 WALK STARTED 🚶🚶🚶", category: "WALK_LIFECYCLE")
+        DebugLogger.shared.log("Route: \(route.name), Duration: \(route.durationMinutes) min, Waypoints: \(route.qrMarkers.count)", category: "WALK_LIFECYCLE")
+        
         // Start location tracking (requests permission if needed)
         locationService.startTracking()
         
@@ -692,6 +696,11 @@ class WaitingRoomViewModel: ObservableObject {
     }
     
     func endWalk(completed: Bool) {
+        // v1.9.79: Log walk end
+        DebugLogger.shared.log("🏁🏁🏁 WALK ENDED 🏁🏁🏁 - Completed: \(completed)", category: "WALK_LIFECYCLE")
+        if let route = walkSession.currentRoute {
+            DebugLogger.shared.log("Final stats - Distance: \(Int(locationService.distanceWalked))m, Duration: \(walkSession.elapsedTime) seconds", category: "WALK_LIFECYCLE")
+        }
         let timestamp = Date()
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
