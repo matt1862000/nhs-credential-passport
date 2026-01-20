@@ -107,7 +107,7 @@ export default function Navbar() {
         {/* Mobile Menu Button */}
         <button
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          className="md:hidden p-2 dark:text-white text-slate-700"
+          className="md:hidden p-2 text-slate-900 dark:text-white"
           aria-label="Toggle menu"
         >
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -152,13 +152,13 @@ export default function Navbar() {
                         className="w-full h-full object-contain"
                       />
                     </div>
-                    <span className="text-lg font-bold text-white dark:text-white text-slate-900">
-                      Wait<span className="text-teal-accent dark:text-teal-accent text-teal-600">Well</span>
+                    <span className="text-lg font-bold text-slate-900 dark:text-white">
+                      Wait<span className="text-teal-600 dark:text-teal-accent">Well</span>
                     </span>
                   </Link>
                   <button
                     onClick={() => setIsMobileMenuOpen(false)}
-                    className="p-2 text-white dark:text-white text-slate-900 hover:bg-white/10 dark:hover:bg-white/10 hover:bg-slate-100 rounded-lg transition-colors"
+                    className="p-2 text-slate-900 dark:text-white hover:bg-slate-100 dark:hover:bg-white/10 rounded-lg transition-colors"
                     aria-label="Close menu"
                   >
                     <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -174,7 +174,7 @@ export default function Navbar() {
                       key={link.href}
                       href={link.href}
                       onClick={() => setIsMobileMenuOpen(false)}
-                      className="text-white dark:text-white text-slate-900 hover:text-teal-accent dark:hover:text-teal-accent hover:text-teal-700 transition-colors py-3 px-4 rounded-lg hover:bg-white/10 dark:hover:bg-white/10 hover:bg-slate-100 text-base font-semibold"
+                      className="text-slate-900 dark:text-white hover:text-teal-700 dark:hover:text-teal-accent transition-colors py-3 px-4 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 text-base font-semibold"
                     >
                       {link.label}
                     </Link>
@@ -188,7 +188,7 @@ export default function Navbar() {
                       toggleTheme()
                       setIsMobileMenuOpen(false)
                     }}
-                    className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-white/10 dark:bg-white/10 bg-slate-100 text-white dark:text-white text-slate-900 font-semibold hover:bg-white/20 dark:hover:bg-white/20 hover:bg-slate-200 transition-colors"
+                    className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white font-semibold hover:bg-slate-200 dark:hover:bg-white/20 transition-colors"
                     aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
                   >
                     {theme === 'dark' ? (
@@ -210,7 +210,7 @@ export default function Navbar() {
                   <Link
                     href="#download"
                     onClick={() => setIsMobileMenuOpen(false)}
-                    className="block w-full text-center px-6 py-3 rounded-full bg-gradient-to-r from-teal-accent to-teal-accent/80 text-white dark:text-midnight font-semibold hover:shadow-lg hover:shadow-teal-accent/30 transition-all"
+                    className="block w-full text-center px-6 py-3 rounded-full bg-gradient-to-r from-teal-accent to-teal-accent/80 text-white dark:text-white dark:text-midnight font-semibold hover:shadow-lg hover:shadow-teal-accent/30 transition-all"
                   >
                     Download App
                   </Link>
