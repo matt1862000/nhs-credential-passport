@@ -12,15 +12,6 @@ import CoreLocation
 import UIKit
 #endif
 
-// MARK: - Notification Names for Batch Testing
-extension Notification.Name {
-    static let runBatchTest = Notification.Name("runBatchTest")
-    static let runSingleLocationTest = Notification.Name("runSingleLocationTest")
-    // v1.6.45: Internal notifications (after sheet is opened)
-    static let runBatchTestInternal = Notification.Name("runBatchTestInternal")
-    static let runSingleLocationTestInternal = Notification.Name("runSingleLocationTestInternal")
-}
-
 struct ProfileView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @ObservedObject var healthKitService: HealthKitService
@@ -1795,7 +1786,8 @@ struct SettingsView: View {
     @State private var showHealthKitUnavailable = false
     @State private var showMotionUnavailable = false
     @State private var showHealthKitManageAlert = false
-    @ObservedObject private var diagnosticState = DiagnosticViewState.shared  // v1.6.47: For sheet binding
+    @State private var showTestResultsAlert = false
+    @State private var googleQuota: (today: Int, cap: Int) = (0, 10)  // v1.9.50: Track Google quota
     
     // Only show permissions that have been interacted with (not .notDetermined)
     var shouldShowNotifications: Bool {
@@ -1822,6 +1814,225 @@ struct SettingsView: View {
         AppTheme(rawValue: appTheme) ?? .system
     }
     
+    // MARK: - Debug Test Actions
+    #if DEBUG
+    private func runDeduplicationTests() {
+        print("🔵 [DEBUG] Test button tapped!")
+        print("🔵 [DEBUG] Calling runAllTests()...")
+        DeduplicationTestRunner.shared.runAllTests()
+        print("🔵 [DEBUG] runAllTests() completed, showing alert")
+        showTestResultsAlert = true
+    }
+    #endif
+    
+    // MARK: - List Sections (extracted to reduce compiler complexity)
+    
+    private var aboutSection: some View {
+        Section("About") {
+            HStack {
+                Text("Version")
+                Spacer()
+                Text(appVersion)
+                    .foregroundColor(.primary)
+            }
+            
+            Link(destination: URL(string: "https://www.sheffieldpartnership.nhs.uk")!) {
+                HStack {
+                    Text("Sheffield Health Partnership NHS Foundation Trust")
+                        .font(.subheadline)
+                    Spacer()
+                    Image(systemName: "arrow.up.right.square")
+                }
+            }
+        }
+    }
+    
+    #if DEBUG
+    @State private var isGeneratingDatabase = false
+    @State private var databaseGenerationStatus = ""
+    @State private var showDatabaseSuccessAlert = false
+    @State private var showDatabaseProgress = false
+    @StateObject private var databaseGenerator = PrePopulatedPOIGenerator()
+    
+    private func generatePOIDatabase() {
+        isGeneratingDatabase = true
+        showDatabaseProgress = true
+        databaseGenerationStatus = "Starting generation..."
+        
+        Task {
+            do {
+                // Check if database already exists with POIs
+                if let existingDB = PrePopulatedPOIService.shared.loadBundledDatabase(),
+                   !existingDB.postcodeAreas.isEmpty,
+                   existingDB.postcodeAreas.first?.pois.isEmpty == false {
+                    // Database exists with POIs - only generate routes
+                    print("📦 Existing database found with POIs - generating routes only...")
+                    databaseGenerationStatus = "Found existing POIs. Generating routes with MapKit..."
+                    
+                    let fileURL = try await databaseGenerator.addRoutesToExistingDatabase()
+                    
+                    await MainActor.run {
+                        isGeneratingDatabase = false
+                        showDatabaseProgress = false
+                        databaseGenerationStatus = "✅ Routes added to database!\n\(fileURL.path)\n\nCopy this file to your project root and commit to GitHub."
+                        showDatabaseSuccessAlert = true
+                        
+                        // Also copy to Desktop for easy access
+                        if let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first {
+                            let desktopFile = desktopURL.appendingPathComponent("prepopulated_pois.json")
+                            try? FileManager.default.copyItem(at: fileURL, to: desktopFile)
+                            print("📦 Also copied to Desktop: \(desktopFile.path)")
+                        }
+                    }
+                } else {
+                    // No existing database - generate everything
+                    print("📦 No existing database - generating POIs and routes...")
+                    databaseGenerationStatus = "Generating POIs and routes..."
+                    
+                    let fileURL = try await databaseGenerator.generateAndSaveDatabase()
+                    
+                    await MainActor.run {
+                        isGeneratingDatabase = false
+                        showDatabaseProgress = false
+                        databaseGenerationStatus = "✅ Database saved to:\n\(fileURL.path)\n\nCopy this file to your project root and commit to GitHub."
+                        showDatabaseSuccessAlert = true
+                        
+                        // Also copy to Desktop for easy access
+                        if let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first {
+                            let desktopFile = desktopURL.appendingPathComponent("prepopulated_pois.json")
+                            try? FileManager.default.copyItem(at: fileURL, to: desktopFile)
+                            print("📦 Also copied to Desktop: \(desktopFile.path)")
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isGeneratingDatabase = false
+                    showDatabaseProgress = false
+                    databaseGenerationStatus = "❌ Error: \(error.localizedDescription)"
+                    showDatabaseSuccessAlert = true
+                }
+            }
+        }
+    }
+    
+    private var databaseProgressView: some View {
+        VStack(spacing: 24) {
+            // Large progress indicator
+            ProgressView()
+                .scaleEffect(2.0)
+                .tint(.tealAccent)
+            
+            // Main status text
+            Text(databaseGenerator.currentStatus)
+                .font(.headline)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            
+            // Detailed progress info
+            if databaseGenerator.isGenerating {
+                VStack(spacing: 12) {
+                    // Progress bar for postcode areas
+                    if databaseGenerator.totalPostcodes > 0 {
+                        VStack(spacing: 4) {
+                            HStack {
+                                Text("Postcode Areas")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text("\(databaseGenerator.currentPostcodeIndex)/\(databaseGenerator.totalPostcodes)")
+                                    .font(.subheadline)
+                                    .foregroundColor(.tealAccent)
+                            }
+                            
+                            GeometryReader { geometry in
+                                ZStack(alignment: .leading) {
+                                    Rectangle()
+                                        .fill(Color.gray.opacity(0.2))
+                                        .frame(height: 8)
+                                        .cornerRadius(4)
+                                    
+                                    Rectangle()
+                                        .fill(Color.tealAccent)
+                                        .frame(
+                                            width: geometry.size.width * Double(databaseGenerator.currentPostcodeIndex) / Double(databaseGenerator.totalPostcodes),
+                                            height: 8
+                                        )
+                                        .cornerRadius(4)
+                                }
+                            }
+                            .frame(height: 8)
+                        }
+                    }
+                    
+                    // Current postcode
+                    if !databaseGenerator.currentPostcode.isEmpty {
+                        HStack {
+                            Image(systemName: "mappin.circle.fill")
+                                .foregroundColor(.tealAccent)
+                            Text(databaseGenerator.currentPostcode)
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
+                        }
+                    }
+                    
+                    // Current duration being generated
+                    if databaseGenerator.currentDuration > 0 {
+                        HStack {
+                            Image(systemName: "clock.fill")
+                                .foregroundColor(.orange)
+                            Text("Generating \(databaseGenerator.currentDuration)min route...")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    // Routes generated count
+                    if databaseGenerator.routesGenerated > 0 {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.mintGreen)
+                            Text("\(databaseGenerator.routesGenerated) routes generated")
+                                .font(.caption)
+                                .foregroundColor(.mintGreen)
+                        }
+                    }
+                }
+                .padding()
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(12)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: 400)
+    }
+    
+    private var debugTestsSection: some View {
+        Section("Debug Tests") {
+            Button(action: runDeduplicationTests) {
+                HStack {
+                    Label("Run Deduplication Tests", systemImage: "checkmark.seal")
+                    Spacer()
+                }
+                .foregroundColor(.blue)
+            }
+            
+            Button(action: generatePOIDatabase) {
+                HStack {
+                    Label("Generate Routes (or Full DB)", systemImage: "square.and.arrow.down")
+                    Spacer()
+                    if isGeneratingDatabase {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    }
+                }
+                .foregroundColor(.blue)
+            }
+            .disabled(isGeneratingDatabase)
+        }
+    }
+    #endif
+    
     // Get app version from bundle (e.g., "1.0.1 (2)")
     var appVersion: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
@@ -1847,11 +2058,10 @@ struct SettingsView: View {
         }
     }
     
-    var body: some View {
-        NavigationStack {
-            List {
-                // Only show Permissions section if user has interacted with any permission
-                if hasAnyPermissions {
+    @ViewBuilder
+    private var listContent: some View {
+        // Only show Permissions section if user has interacted with any permission
+        if hasAnyPermissions {
                     Section {
                         if shouldShowNotifications {
                             Button(action: {
@@ -1983,23 +2193,15 @@ struct SettingsView: View {
                     }
                 }
                 
-                Section("About") {
-                    HStack {
-                        Text("Version")
-                        Spacer()
-                        Text(appVersion)
-                            .foregroundColor(.primary)
-                    }
-                    
-                    Link(destination: URL(string: "https://www.sheffieldpartnership.nhs.uk")!) {
-                        HStack {
-                            Text("Sheffield Health Partnership NHS Foundation Trust")
-                                .font(.subheadline)
-                            Spacer()
-                            Image(systemName: "arrow.up.right.square")
-                        }
-                    }
-                }
+                aboutSection
+                
+                // Debug: Deduplication Tests (only in debug builds)
+                #if DEBUG
+                debugTestsSection
+                #endif
+                
+                // v1.9.50: Cache Management for Testing
+                CacheManagementSection(googleQuota: $googleQuota, onClear: clearAllCaches)
                 
                 // Cached Locations Section
                 CachedLocationsSection()
@@ -2091,15 +2293,12 @@ struct SettingsView: View {
                             .foregroundColor(.mintGreen)
                     }
                 }
-                
-                // DEBUG: Batch Testing Tools - HIDDEN FOR RELEASE/TESTFLIGHT
-                // Set showDebugTools = true only for local development
-                let showDebugTools = false  // v1.9.0: Hidden for TestFlight
-                if showDebugTools {
-                    #if DEBUG
-                SavedBatchTestsSection(locationService: locationService)
-                    #endif
-                }
+    }
+    
+    var body: some View {
+        NavigationStack {
+            List {
+                listContent
             }
             .navigationTitle("Settings")
             #if os(iOS)
@@ -2149,6 +2348,38 @@ struct SettingsView: View {
             } message: {
                 Text("Motion & Fitness tracking is not available on the iOS Simulator.\n\nPlease test on a real device to enable step counting during walks.")
             }
+            .alert("Tests Executed", isPresented: $showTestResultsAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("Deduplication tests have been executed.\n\nCheck the Xcode console (Cmd+Shift+Y) to see detailed test results with ✅/❌ indicators.")
+            }
+            .sheet(isPresented: $showDatabaseProgress) {
+                NavigationStack {
+                    VStack(spacing: 30) {
+                        Spacer()
+                        
+                        databaseProgressView
+                        
+                        Spacer()
+                        
+                        Button("Cancel") {
+                            isGeneratingDatabase = false
+                            showDatabaseProgress = false
+                        }
+                        .foregroundColor(.red)
+                        .padding()
+                    }
+                    .padding()
+                    .navigationTitle("Generating Database")
+                    .navigationBarTitleDisplayMode(.inline)
+                }
+                .presentationDetents([.medium])
+            }
+            .alert("Database Generation", isPresented: $showDatabaseSuccessAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(databaseGenerationStatus)
+            }
             .alert("Manage HealthKit Access", isPresented: $showHealthKitManageAlert) {
                 Button("Open Health App") {
                     openHealthApp()
@@ -2157,17 +2388,11 @@ struct SettingsView: View {
             } message: {
                 Text("To manage HealthKit access:\n\n1. Tap 'Open Health App' below\n2. Tap your profile icon (top right)\n3. Look for Apps or Apps & Services\n4. Find WaitWell\n5. Toggle Steps on or off")
             }
-            // v1.6.47: Diagnostic sheet moved here from SavedBatchTestsSection to prevent multiple presentation attempts
-            .sheet(item: $diagnosticState.selectedTest, onDismiss: {
-                print("🔬 Sheet: onDismiss callback fired")
-                diagnosticState.refresh()
-            }) { test in
-                DiagnosticTestDetailSheet(test: test)
-            }
             .preferredColorScheme(effectiveColorScheme)
             .id(appTheme) // Force view refresh when theme changes
             .onAppear {
                 refreshPermissionStatuses()
+                updateGoogleQuota()  // v1.9.50: Update quota on appear
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 if newPhase == .active {
@@ -2176,6 +2401,11 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+    
+    // v1.9.50: Update Google quota
+    private func updateGoogleQuota() {
+        googleQuota = GoogleMapsService.shared.getGooglePlacesCallCount()
     }
     
     private func refreshPermissionStatuses() {
@@ -2188,6 +2418,34 @@ struct SettingsView: View {
         }
         // HealthKit and Location are already reactive via their services
         healthKitService.checkAuthorization()
+    }
+    
+    // v1.9.50: Clear all caches for testing
+    private func clearAllCaches() {
+        // Get stats before clearing
+        let poiStats = POICacheService.shared.getCacheStats()
+        let routeStats = RouteCacheService.shared.getCacheStats()
+        let quota = GoogleMapsService.shared.getGooglePlacesCallCount()
+        
+        // Clear both caches
+        POICacheService.shared.clearCache()
+        RouteCacheService.shared.clearCache()
+        
+        // Update quota display
+        updateGoogleQuota()
+        
+        print("═══════════════════════════════════════════════════════════")
+        print("🧹 CACHE CLEARED FOR TESTING")
+        print("═══════════════════════════════════════════════════════════")
+        print("📦 POI Cache: Removed \(poiStats.locations) locations, \(poiStats.totalPOIs) POIs")
+        print("📦 Route Cache: Removed \(routeStats.routeSets) route sets, \(routeStats.totalRoutes) routes")
+        print("🌐 Google Quota: \(quota.today)/\(quota.cap) calls remaining")
+        print("═══════════════════════════════════════════════════════════")
+        print("✅ Ready to test free-sources-first strategy!")
+        print("   Next route generation will:")
+        print("   1. Try free sources first (Apple/OSM/Geograph)")
+        print("   2. Fallback to Google if <15 POIs found (optimal threshold)")
+        print("═══════════════════════════════════════════════════════════")
     }
     
     private func requestNotificationPermission() {
@@ -2775,6 +3033,40 @@ struct CachedLocationsSection: View {
     }
 }
 
+// MARK: - Cache Management Section (v1.9.50)
+struct CacheManagementSection: View {
+    @Binding var googleQuota: (today: Int, cap: Int)
+    let onClear: () -> Void
+    
+    var body: some View {
+        Group {
+            Section {
+                // Google Quota Status
+                HStack {
+                    Label("Google Places Quota", systemImage: "chart.bar.fill")
+                    Spacer()
+                    Text("\(googleQuota.today)/\(googleQuota.cap)")
+                        .foregroundColor(googleQuota.today >= googleQuota.cap ? .red : .primary)
+                        .fontWeight(.semibold)
+                }
+                
+                // Clear All Caches Button
+                Button(action: onClear) {
+                    HStack {
+                        Label("Clear All Caches", systemImage: "trash.fill")
+                        Spacer()
+                    }
+                    .foregroundColor(.coralPink)
+                }
+            } header: {
+                Text("Cache Management (Testing)")
+            } footer: {
+                Text("Clearing cache is safe and doesn't use API calls. Use this to test the free-sources-first strategy.")
+            }
+        }
+    }
+}
+
 // MARK: - Cached POIs Detail View
 struct CachedPOIsDetailView: View {
     let locationName: String
@@ -2847,7 +3139,7 @@ struct CachedPOIsDetailView: View {
                                 .frame(width: 30)
                             
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(poi.name)
+                                Text(poi.toPlaceResult().displayName)
                                     .font(.subheadline)
                                 
                                 if let vicinity = poi.vicinity {
@@ -2916,807 +3208,6 @@ struct CachedPOIsDetailView: View {
         if types.contains("church") { return "cross.fill" }
         
         return "mappin"
-    }
-}
-
-// MARK: - Saved Batch Tests Section (DEBUG - remove in final version)
-
-struct SavedBatchTest: Codable, Identifiable {
-    let id: UUID
-    let timestamp: Date
-    let results: String
-    let summary: String  // Short summary for list view
-    
-    init(results: String) {
-        self.id = UUID()
-        self.timestamp = Date()
-        self.results = results
-        
-        // Extract summary from results (first location's valid rate or overall)
-        if let overallMatch = results.range(of: "Valid rate: \\d+%", options: .regularExpression) {
-            self.summary = String(results[overallMatch])
-        } else {
-            self.summary = "Test completed"
-        }
-    }
-}
-
-class BatchTestStorage {
-    static let shared = BatchTestStorage()
-    private let storageKey = "savedBatchTests"
-    private let maxTests = 10  // Keep last 10 tests
-    
-    func saveTest(_ results: String) {
-        var tests = getAllTests()
-        let newTest = SavedBatchTest(results: results)
-        tests.insert(newTest, at: 0)  // Most recent first
-        
-        // Keep only the last N tests
-        if tests.count > maxTests {
-            tests = Array(tests.prefix(maxTests))
-        }
-        
-        if let encoded = try? JSONEncoder().encode(tests) {
-            UserDefaults.standard.set(encoded, forKey: storageKey)
-        }
-        print("💾 Saved batch test result (\(tests.count) total)")
-    }
-    
-    func getAllTests() -> [SavedBatchTest] {
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let tests = try? JSONDecoder().decode([SavedBatchTest].self, from: data) else {
-            return []
-        }
-        return tests
-    }
-    
-    func deleteTest(_ id: UUID) {
-        var tests = getAllTests()
-        tests.removeAll { $0.id == id }
-        if let encoded = try? JSONEncoder().encode(tests) {
-            UserDefaults.standard.set(encoded, forKey: storageKey)
-        }
-    }
-    
-    func clearAllTests() {
-        UserDefaults.standard.removeObject(forKey: storageKey)
-    }
-}
-
-// v1.6.46: SINGLETON state holder - survives view recreation
-class DiagnosticViewState: ObservableObject {
-    static let shared = DiagnosticViewState()
-    
-    @Published var selectedTest: SavedBatchTest? {
-        didSet {
-            if let test = selectedTest {
-                print("🔬 DiagnosticViewState: selectedTest SET to '\(test.summary)' (id: \(test.id))")
-            } else if oldValue != nil {
-                print("🔬 DiagnosticViewState: selectedTest SET to nil (was set)")
-                print("🔬 STACK TRACE:")
-                Thread.callStackSymbols.prefix(15).forEach { print("   \($0)") }
-            }
-        }
-    }
-    @Published var savedTests: [SavedBatchTest] = []
-    
-    private init() {
-        print("🔬 DiagnosticViewState: SINGLETON INIT")
-        refresh()
-    }
-    
-    func refresh() {
-        savedTests = BatchTestStorage.shared.getAllTests()
-        print("🔬 DiagnosticViewState: refreshed, \(savedTests.count) tests, selectedTest is \(selectedTest == nil ? "nil" : "set")")
-    }
-    
-    func selectTest(_ test: SavedBatchTest) {
-        print("🔬 DiagnosticViewState: selectTest() called for '\(test.summary)'")
-        selectedTest = test
-    }
-    
-    func dismissSheet() {
-        print("🔬 DiagnosticViewState: dismissSheet() called explicitly")
-        selectedTest = nil
-        refresh()
-    }
-}
-
-struct SavedBatchTestsSection: View {
-    let locationService: LocationService  // v1.6.45: Need location access (not observed to prevent sheet dismissal)
-    @ObservedObject private var viewState = DiagnosticViewState.shared  // v1.6.46: SINGLETON - survives view recreation
-    @State private var showClearConfirmation = false
-    @State private var didCopyAllHistory = false
-    @State private var isTestRunning = false
-    @Environment(\.dismiss) private var dismiss
-    
-    // POI Diagnostics - results saved to BatchTestStorage
-    @State private var isRunningAppleDiagnostic = false
-    @State private var isRunningOSMDiagnostic = false
-    @State private var isRunningGoogleDiagnostic = false
-    @State private var isRunningBatchDurationTest = false  // v1.8.11: Batch test all durations
-    @State private var isRunningMultiSiteTest = false  // v1.8.15: Multi-site batch test
-    
-    // Cache clearing
-    @State private var didClearRouteCache = false
-    @State private var showRouteCacheClearConfirmation = false
-    
-    var body: some View {
-        let _ = print("🔬 SavedBatchTestsSection: body computed, viewState.selectedTest is \(viewState.selectedTest == nil ? "nil" : "set")")
-        Section {
-            // Test OSM POIs button
-            Button {
-                runOSMPOIDiagnostic()
-            } label: {
-                HStack {
-                    Image(systemName: isRunningOSMDiagnostic ? "hourglass" : "map.fill")
-                            .foregroundColor(.green)
-                    Text(isRunningOSMDiagnostic ? "Running OSM Diagnostic..." : "Test OSM POIs")
-                        .foregroundColor(.primary)
-                    }
-                }
-            .disabled(isRunningOSMDiagnostic)
-            
-            // Test Google POIs button
-                    Button {
-                runGooglePOIDiagnostic()
-                    } label: {
-                        HStack {
-                    Image(systemName: isRunningGoogleDiagnostic ? "hourglass" : "g.circle.fill")
-                                    .foregroundColor(.blue)
-                    Text(isRunningGoogleDiagnostic ? "Running Google Diagnostic..." : "Test Google POIs")
-                                .foregroundColor(.primary)
-                        }
-                    }
-            .disabled(isRunningGoogleDiagnostic)
-                    
-            // Apple POI Diagnostic button
-                        Button {
-                runApplePOIDiagnostic()
-            } label: {
-                HStack {
-                    Image(systemName: isRunningAppleDiagnostic ? "hourglass" : "apple.logo")
-                        .foregroundColor(.pink)
-                    Text(isRunningAppleDiagnostic ? "Running Apple Diagnostic..." : "Test Apple Maps POIs")
-                        .foregroundColor(.primary)
-                }
-            }
-            .disabled(isRunningAppleDiagnostic)
-            
-            // Batch Test All Durations button
-            Button {
-                runBatchDurationTest()
-                        } label: {
-                            HStack {
-                    Image(systemName: isRunningBatchDurationTest ? "hourglass" : "clock.arrow.2.circlepath")
-                        .foregroundColor(.purple)
-                    Text(isRunningBatchDurationTest ? "Testing All Durations..." : "Batch Test All Durations")
-                                        .foregroundColor(.primary)
-                    Spacer()
-                    Text("10-60 min")
-                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-            .disabled(isRunningBatchDurationTest)
-            
-            // Multi-Site Batch Test button (v1.8.15)
-            Button {
-                runMultiSiteBatchTest()
-                } label: {
-                    HStack {
-                    Image(systemName: isRunningMultiSiteTest ? "hourglass" : "map.fill")
-                            .foregroundColor(.orange)
-                    Text(isRunningMultiSiteTest ? "Testing Multiple Sites..." : "Multi-Site Batch Test")
-                            .foregroundColor(.primary)
-                    Spacer()
-                    Text("3 locations")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    }
-                }
-            .disabled(isRunningMultiSiteTest)
-            
-            // Clear Route Cache button
-            Button {
-                showRouteCacheClearConfirmation = true
-            } label: {
-                HStack {
-                    Image(systemName: didClearRouteCache ? "checkmark.circle.fill" : "trash.fill")
-                        .foregroundColor(didClearRouteCache ? .green : .red)
-                    Text(didClearRouteCache ? "Route Cache Cleared!" : "Clear Route Cache")
-                        .foregroundColor(didClearRouteCache ? .green : .primary)
-                    Spacer()
-                    // Show cache stats
-                    let stats = RouteCacheService.shared.getCacheStats()
-                    Text("\(stats.totalRoutes) routes")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .disabled(didClearRouteCache)
-            .confirmationDialog("Clear Route Cache?", isPresented: $showRouteCacheClearConfirmation, titleVisibility: .visible) {
-                Button("Clear All Cached Routes", role: .destructive) {
-                    RouteCacheService.shared.clearCache()
-                    didClearRouteCache = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        didClearRouteCache = false
-                    }
-                }
-                Button("Cancel", role: .cancel) { }
-            } message: {
-                Text("This will remove all cached walking routes. New routes will be generated on next use.")
-            }
-            
-            // v1.6.48: View Route Cache details
-            DisclosureGroup("View Cached Routes") {
-                let cacheDetails = RouteCacheService.shared.getCacheDetails()
-                if cacheDetails.isEmpty {
-                    Text("No cached routes")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.vertical, 4)
-                } else {
-                    ForEach(cacheDetails, id: \.duration) { set in
-                        VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                                Text("\(set.duration) min")
-                                    .font(.headline)
-                                    .foregroundColor(.tealAccent)
-                                Spacer()
-                                Text("\(set.routes.count) routes")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            ForEach(Array(set.routes.enumerated()), id: \.offset) { index, route in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack {
-                                        Text("\(index + 1).")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                        Text(route.name ?? "Unnamed")
-                                            .font(.caption)
-                                            .fontWeight(.medium)
-                                        Spacer()
-                                        Text("\(route.actualDuration)min")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                        if route.skipCount > 0 {
-                                            Text("⏭️\(route.skipCount)")
-                                                .font(.caption2)
-                                                .foregroundColor(.orange)
-                                        }
-                                    }
-                                    Text(route.pois.joined(separator: " → "))
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-            }
-                                .padding(.leading, 8)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                        Divider()
-                    }
-                }
-            }
-            
-            // Copy All History button
-            if !viewState.savedTests.isEmpty {
-                Button {
-                    // Combine all test results into one string
-                    let allHistory = viewState.savedTests.map { test in
-                        "═══════════════════════════════════════════\n" +
-                        "📅 \(test.timestamp.formatted(date: .complete, time: .shortened))\n" +
-                        "═══════════════════════════════════════════\n" +
-                        test.results
-                    }.joined(separator: "\n\n")
-                    
-                    UIPasteboard.general.string = allHistory
-                    didCopyAllHistory = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        didCopyAllHistory = false
-                    }
-                } label: {
-                    HStack {
-                        Image(systemName: didCopyAllHistory ? "checkmark" : "doc.on.doc.fill")
-                            .foregroundColor(didCopyAllHistory ? .green : .blue)
-                        Text(didCopyAllHistory ? "Copied!" : "Copy All History (\(viewState.savedTests.count) tests)")
-                            .foregroundColor(didCopyAllHistory ? .green : .primary)
-                    }
-                }
-            }
-            
-            // Saved tests list
-            if viewState.savedTests.isEmpty {
-                Text("No saved batch tests")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(viewState.savedTests) { test in
-                    Button {
-                        viewState.selectTest(test)
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(test.timestamp, style: .date)
-                                    .font(.subheadline)
-                                    .foregroundColor(.primary)
-                                Text(test.timestamp, style: .time)
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            Text(test.summary)
-                                .font(.caption)
-                                .foregroundColor(.tealAccent)
-                        }
-                    }
-                }
-                .onDelete { indexSet in
-                    for index in indexSet {
-                        BatchTestStorage.shared.deleteTest(viewState.savedTests[index].id)
-                    }
-                    viewState.refresh()
-                }
-                
-                Button(role: .destructive) {
-                    showClearConfirmation = true
-                } label: {
-                    HStack {
-                        Image(systemName: "trash")
-                        Text("Clear All Tests")
-                    }
-                    .font(.caption)
-                }
-            }
-        } header: {
-            HStack {
-                Image(systemName: "flask.fill")
-                    .foregroundColor(.orange)
-                Text("Batch Tests (DEBUG)")
-                    .foregroundColor(.orange)
-            }
-        } footer: {
-            Text("Run tests from here. Results auto-save. Will be removed in final version.")
-        }
-        .onAppear {
-            viewState.refresh()
-        }
-        // v1.6.47: Sheet moved to SettingsView to prevent multiple presentation attempts
-        .confirmationDialog("Clear All Tests?", isPresented: $showClearConfirmation) {
-            Button("Clear All", role: .destructive) {
-                BatchTestStorage.shared.clearAllTests()
-                viewState.refresh()
-            }
-            Button("Cancel", role: .cancel) { }
-        }
-    }
-    
-    // Run OSM POI diagnostic test
-    private func runOSMPOIDiagnostic() {
-        guard let location = locationService.currentLocation?.coordinate else {
-            let errorMsg = "🗺️ OSM DIAGNOSTIC\n❌ No location available. Please enable location services."
-            BatchTestStorage.shared.saveTest(errorMsg)
-            viewState.refresh()
-            return
-        }
-        
-        isRunningOSMDiagnostic = true
-        
-        Task {
-            let results = await GoogleMapsService.shared.runOSMPOIDiagnostic(
-                location: location,
-                radiusMeters: 2000
-            )
-            
-            await MainActor.run {
-                // Save results to persistent storage
-                BatchTestStorage.shared.saveTest(results)
-                isRunningOSMDiagnostic = false
-                // Refresh and auto-show results
-                viewState.refresh()
-                // Auto-select the most recent test to show results
-                if let latestTest = viewState.savedTests.first {
-                    // Small delay to ensure UI has updated
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        DiagnosticViewState.shared.selectTest(latestTest)
-                    }
-                }
-            }
-        }
-    }
-    
-    // Run Google POI diagnostic test
-    private func runGooglePOIDiagnostic() {
-        guard let location = locationService.currentLocation?.coordinate else {
-            let errorMsg = "🔷 GOOGLE DIAGNOSTIC\n❌ No location available. Please enable location services."
-            BatchTestStorage.shared.saveTest(errorMsg)
-            viewState.refresh()
-            return
-        }
-        
-        isRunningGoogleDiagnostic = true
-        
-        Task {
-            let results = await GoogleMapsService.shared.runGooglePOIDiagnostic(
-                location: location,
-                radiusMeters: 2000
-            )
-            
-            await MainActor.run {
-                // Save results to persistent storage
-                BatchTestStorage.shared.saveTest(results)
-                isRunningGoogleDiagnostic = false
-                // Refresh and auto-show results
-                viewState.refresh()
-                // Auto-select the most recent test to show results
-                if let latestTest = viewState.savedTests.first {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        DiagnosticViewState.shared.selectTest(latestTest)
-                    }
-                }
-            }
-        }
-    }
-    
-    // Run Apple Maps POI diagnostic test
-    private func runApplePOIDiagnostic() {
-        guard let location = locationService.currentLocation?.coordinate else {
-            let errorMsg = "🍎 APPLE DIAGNOSTIC\n❌ No location available. Please enable location services."
-            BatchTestStorage.shared.saveTest(errorMsg)
-            viewState.refresh()
-            return
-        }
-        
-        isRunningAppleDiagnostic = true
-        
-        Task {
-            let results = await GoogleMapsService.shared.runApplePOIDiagnostic(
-                location: location,
-                radiusMeters: 2000
-            )
-            
-            await MainActor.run {
-                // Save results to persistent storage
-                BatchTestStorage.shared.saveTest(results)
-                isRunningAppleDiagnostic = false
-                // Refresh and auto-show results
-                viewState.refresh()
-                // Auto-select the most recent test to show results
-                if let latestTest = viewState.savedTests.first {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        DiagnosticViewState.shared.selectTest(latestTest)
-                    }
-                }
-            }
-        }
-    }
-    
-    // v1.8.11: Batch test all durations to verify multi-waypoint changes work across all times
-    private func runBatchDurationTest() {
-        guard let location = locationService.currentLocation?.coordinate else {
-            let errorMsg = "🧪 BATCH DURATION TEST\n❌ No location available. Please enable location services."
-            BatchTestStorage.shared.saveTest(errorMsg)
-            viewState.refresh()
-            return
-        }
-        
-        isRunningBatchDurationTest = true
-        
-        Task {
-            // v1.8.11: Pre-fetch POIs ONCE with all filters applied
-            // This ensures restricted POIs (CJ's Playcare, etc.) are excluded
-            print("🧪 Pre-fetching POIs with filters...")
-            let allPOIs = try? await GoogleMapsService.shared.findNearbyPlaces(
-                location: location,
-                radiusMeters: 3000  // Large radius for all durations
-            )
-            let poiCount = allPOIs?.count ?? 0
-            print("🧪 Found \(poiCount) filtered POIs for batch test")
-            
-            var results = """
-            ═══════════════════════════════════════════════════════════
-            🧪 BATCH DURATION TEST - All Timings
-            📍 Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))
-            📅 \(Date().formatted(date: .complete, time: .shortened))
-            📦 POIs available: \(poiCount) (filters applied)
-            ═══════════════════════════════════════════════════════════
-            
-            """
-            
-            let durations = [15, 30, 45, 60]  // v1.8.16: Focused on key durations
-            
-            for duration in durations {
-                print("🧪 Testing \(duration)min...")
-                results += "\n───────────────────────────────────────────────────────────\n"
-                results += "⏱️ TARGET: \(duration) MINUTES\n"
-                results += "───────────────────────────────────────────────────────────\n"
-                
-                do {
-                    // Generate route without multi-waypoint preference (Route 1 style)
-                    // Use prefetched POIs with filters already applied
-                    let route1 = try await GoogleMapsService.shared.generateLocalRoute(
-                        from: location,
-                        targetDurationMinutes: duration,
-                        difficulty: nil,
-                        excludePlaceIds: [],
-                        prefetchedPOIs: allPOIs,
-                        preferMultiWaypoint: false
-                    )
-                    
-                    let route1Mins = route1.durationSeconds / 60
-                    let route1Accuracy = Int(Double(route1Mins) / Double(duration) * 100)
-                    let route1POIs = route1.places.map { $0.name }.joined(separator: " → ")
-                    results += "Route 1 (fast): \(route1Mins)min (\(route1Accuracy)%) | \(route1.places.count) waypoints\n"
-                    results += "  POIs: \(route1POIs)\n"
-                    
-                    // Generate route WITH multi-waypoint preference (Route 2+ style)
-                    // v1.8.15: Only apply preferMultiWaypoint for 30+ min routes (where it helps)
-                    let useMultiWaypoint = duration >= 30
-                    let excludeIds = Set(route1.places.map { $0.placeId })
-                    let route2 = try await GoogleMapsService.shared.generateLocalRoute(
-                        from: location,
-                        targetDurationMinutes: duration,
-                        difficulty: nil,
-                        excludePlaceIds: excludeIds,
-                        prefetchedPOIs: allPOIs,
-                        preferMultiWaypoint: useMultiWaypoint
-                    )
-                    
-                    let route2Mins = route2.durationSeconds / 60
-                    let route2Accuracy = Int(Double(route2Mins) / Double(duration) * 100)
-                    let route2POIs = route2.places.map { $0.name }.joined(separator: " → ")
-                    results += "Route 2 (multi): \(route2Mins)min (\(route2Accuracy)%) | \(route2.places.count) waypoints\n"
-                    results += "  POIs: \(route2POIs)\n"
-                    
-                    // Summary
-                    let route1IsMulti = route1.places.count >= 2
-                    let route2IsMulti = route2.places.count >= 2
-                    if route2IsMulti && !route1IsMulti {
-                        results += "  ✅ Multi-waypoint preference worked!\n"
-                    } else if route2IsMulti && route1IsMulti {
-                        results += "  ✅ Both routes are multi-waypoint\n"
-                    } else if !route2IsMulti {
-                        results += "  ⚠️ Route 2 is still single-waypoint\n"
-                    }
-                    
-                } catch {
-                    results += "❌ Error: \(error.localizedDescription)\n"
-                }
-                
-                // Small delay between tests to avoid rate limiting
-                try? await Task.sleep(nanoseconds: 500_000_000)
-            }
-            
-            results += "\n═══════════════════════════════════════════════════════════\n"
-            results += "🏁 BATCH TEST COMPLETE\n"
-            results += "═══════════════════════════════════════════════════════════\n"
-            
-            // Copy to clipboard automatically for easy sharing
-            await MainActor.run {
-                UIPasteboard.general.string = results
-            }
-            
-            print(results)
-            
-            await MainActor.run {
-                // Save results to persistent storage
-                BatchTestStorage.shared.saveTest(results)
-                isRunningBatchDurationTest = false
-                // Refresh and auto-show results
-                viewState.refresh()
-                // Auto-select the most recent test to show results
-                if let latestTest = viewState.savedTests.first {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        DiagnosticViewState.shared.selectTest(latestTest)
-                    }
-                }
-            }
-        }
-    }
-    
-    // MARK: - Multi-Site Batch Test (v1.8.15)
-    // Tests route generation across multiple locations: Current, S5 7AU, S11 9BF
-    private func runMultiSiteBatchTest() {
-        isRunningMultiSiteTest = true
-        
-        Task {
-            var results = """
-            ═══════════════════════════════════════════════════════════
-            🌍 MULTI-SITE BATCH TEST
-            📅 \(Date().formatted(date: .complete, time: .shortened))
-            ═══════════════════════════════════════════════════════════
-            
-            Testing locations:
-            • Current Location (Kirkhamgate)
-            • S5 7AU (Sheffield - Shiregreen)
-            • S11 9BF (Sheffield - Ecclesall)
-            
-            """
-            
-            // Define test locations
-            struct TestLocation {
-                let name: String
-                let postcode: String?
-                let coordinate: CLLocationCoordinate2D?
-            }
-            
-            var testLocations: [TestLocation] = []
-            
-            // 1. Current location
-            if let currentLoc = locationService.currentLocation?.coordinate {
-                testLocations.append(TestLocation(name: "Current Location", postcode: nil, coordinate: currentLoc))
-            }
-            
-            // 2. Geocode S5 7AU
-            let geocoder = CLGeocoder()
-            do {
-                let placemarks = try await geocoder.geocodeAddressString("S5 7AU, UK")
-                if let location = placemarks.first?.location?.coordinate {
-                    testLocations.append(TestLocation(name: "S5 7AU (Shiregreen)", postcode: "S5 7AU", coordinate: location))
-                }
-            } catch {
-                results += "⚠️ Could not geocode S5 7AU: \(error.localizedDescription)\n"
-            }
-            
-            // Small delay between geocoding requests
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            
-            // 3. Geocode S11 9BF
-            do {
-                let placemarks = try await geocoder.geocodeAddressString("S11 9BF, UK")
-                if let location = placemarks.first?.location?.coordinate {
-                    testLocations.append(TestLocation(name: "S11 9BF (Ecclesall)", postcode: "S11 9BF", coordinate: location))
-                }
-            } catch {
-                results += "⚠️ Could not geocode S11 9BF: \(error.localizedDescription)\n"
-            }
-            
-            results += "\n📍 Testing \(testLocations.count) locations\n"
-            
-            // Test durations - v1.8.16: Updated to match single-site test
-            let durations = [15, 30, 45, 60]
-            
-            // Test each location
-            for testLoc in testLocations {
-                guard let coordinate = testLoc.coordinate else { continue }
-                
-                results += "\n\n"
-                results += "╔══════════════════════════════════════════════════════════╗\n"
-                results += "║ 📍 \(testLoc.name)\n"
-                results += "║ 📌 (\(String(format: "%.5f", coordinate.latitude)), \(String(format: "%.5f", coordinate.longitude)))\n"
-                results += "╚══════════════════════════════════════════════════════════╝\n"
-                
-                // Fetch POIs for this location
-                print("🌍 Fetching POIs for \(testLoc.name)...")
-                let allPOIs = try? await GoogleMapsService.shared.findNearbyPlaces(
-                    location: coordinate,
-                    radiusMeters: 3000
-                )
-                let poiCount = allPOIs?.count ?? 0
-                results += "📦 POIs available: \(poiCount)\n"
-                
-                // Sample some POI names
-                if let pois = allPOIs, !pois.isEmpty {
-                    let samplePOIs = pois.prefix(5).map { $0.name }.joined(separator: ", ")
-                    results += "📋 Sample POIs: \(samplePOIs)\n"
-                }
-                
-                // Test each duration
-                for duration in durations {
-                    results += "\n───────────────────────────────────────────────────────────\n"
-                    results += "⏱️ TARGET: \(duration) MINUTES\n"
-                    results += "───────────────────────────────────────────────────────────\n"
-                    
-                    do {
-                        // Route 1 (fast)
-                        let route1 = try await GoogleMapsService.shared.generateLocalRoute(
-                            from: coordinate,
-                            targetDurationMinutes: duration,
-                            difficulty: nil,
-                            excludePlaceIds: [],
-                            prefetchedPOIs: allPOIs,
-                            preferMultiWaypoint: false
-                        )
-                        
-                        let route1Mins = route1.durationSeconds / 60
-                        let route1Accuracy = Int(Double(route1Mins) / Double(duration) * 100)
-                        let route1POIs = route1.places.map { $0.name }.joined(separator: " → ")
-                        results += "Route 1 (fast): \(route1Mins)min (\(route1Accuracy)%) | \(route1.places.count) WP\n"
-                        results += "  → \(route1POIs)\n"
-                        
-                        // Route 2 (multi-waypoint for 30+ min only)
-                        let useMultiWaypoint = duration >= 30
-                        let excludeIds = Set(route1.places.map { $0.placeId })
-                        let route2 = try await GoogleMapsService.shared.generateLocalRoute(
-                            from: coordinate,
-                            targetDurationMinutes: duration,
-                            difficulty: nil,
-                            excludePlaceIds: excludeIds,
-                            prefetchedPOIs: allPOIs,
-                            preferMultiWaypoint: useMultiWaypoint
-                        )
-                        
-                        let route2Mins = route2.durationSeconds / 60
-                        let route2Accuracy = Int(Double(route2Mins) / Double(duration) * 100)
-                        let route2POIs = route2.places.map { $0.name }.joined(separator: " → ")
-                        results += "Route 2 (multi): \(route2Mins)min (\(route2Accuracy)%) | \(route2.places.count) WP\n"
-                        results += "  → \(route2POIs)\n"
-                        
-                        // Quick summary
-                        if route1.places.count >= 2 && route2.places.count >= 2 {
-                            results += "  ✅ Both multi-waypoint\n"
-                        } else if route2.places.count < 2 {
-                            results += "  ⚠️ Route 2 single-waypoint\n"
-                        }
-                        
-                    } catch {
-                        results += "❌ Error: \(error.localizedDescription)\n"
-                    }
-                    
-                    // Small delay between tests
-                    try? await Task.sleep(nanoseconds: 300_000_000)
-                }
-            }
-            
-            results += "\n\n═══════════════════════════════════════════════════════════\n"
-            results += "🏁 MULTI-SITE BATCH TEST COMPLETE\n"
-            results += "═══════════════════════════════════════════════════════════\n"
-            
-            // Copy to clipboard
-            await MainActor.run {
-                UIPasteboard.general.string = results
-            }
-            
-            print(results)
-            
-            await MainActor.run {
-                BatchTestStorage.shared.saveTest(results)
-                isRunningMultiSiteTest = false
-                viewState.refresh()
-                if let latestTest = viewState.savedTests.first {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        DiagnosticViewState.shared.selectTest(latestTest)
-                    }
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Diagnostic Test Detail Sheet
-// v1.6.47: Extracted from SavedBatchTestsSection to prevent complex expression error
-struct DiagnosticTestDetailSheet: View {
-    let test: SavedBatchTest
-    
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                Text(test.results)
-                    .font(.system(.caption2, design: .monospaced))
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .navigationTitle("Test: \(test.timestamp.formatted(date: .abbreviated, time: .shortened))")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        print("🔬 Sheet: Done button tapped")
-                        DiagnosticViewState.shared.dismissSheet()
-                    }
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button {
-                        UIPasteboard.general.string = test.results
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                    }
-                }
-            }
-        }
     }
 }
 
