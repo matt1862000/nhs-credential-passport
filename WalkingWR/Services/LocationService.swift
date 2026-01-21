@@ -74,6 +74,7 @@ class LocationService: NSObject, ObservableObject {
     
     // v1.9.90: Track last marker to prevent advancing to return journey before destination is reached
     private var lastMarkerPolylineIndex: Int? = nil
+    private var returnJourneyStartIndex: Int? = nil  // v1.9.93: Direction index where return journey starts
     private var isLastMarkerVisited: (() -> Bool)? = nil
     
     // MARK: - Polyline Projection Helpers (v1.9.70)
@@ -370,12 +371,14 @@ class LocationService: NSObject, ObservableObject {
     ///   - skipPassedWaypoints: If true, check current location and skip already-passed waypoints.
     ///                          Use false for fresh walk start (index 0), true for mid-walk direction changes.
     ///   - lastMarkerPolylineIndex: Optional polyline index of the last marker (destination). If provided, prevents advancing to return journey until marker is visited.
+    ///   - returnJourneyStartIndex: Optional direction index where return journey starts (after arrival instruction is filtered). More reliable than polyline index alone.
     ///   - isLastMarkerVisited: Optional closure that returns true if the last marker has been visited. Required if lastMarkerPolylineIndex is provided.
     func startDirectionMonitoring(
         directions: [WalkingDirection],
         routePath: [CLLocationCoordinate2D],
         skipPassedWaypoints: Bool = false,
         lastMarkerPolylineIndex: Int? = nil,
+        returnJourneyStartIndex: Int? = nil,
         isLastMarkerVisited: (() -> Bool)? = nil
     ) {
         // Build waypoints from directions
@@ -388,6 +391,7 @@ class LocationService: NSObject, ObservableObject {
         
         // v1.9.90: Store last marker info to prevent advancing to return journey before destination is reached
         self.lastMarkerPolylineIndex = lastMarkerPolylineIndex
+        self.returnJourneyStartIndex = returnJourneyStartIndex  // v1.9.93: Store return journey start index
         self.isLastMarkerVisited = isLastMarkerVisited
         
         // Calculate cumulative distance for each step to find approximate positions
@@ -495,6 +499,7 @@ class LocationService: NSObject, ObservableObject {
         currentDirectionIndex = 0
         recentProjectedPositions = []  // v1.9.71: Clear position history
         lastMarkerPolylineIndex = nil  // v1.9.90: Clear last marker tracking
+        returnJourneyStartIndex = nil  // v1.9.93: Clear return journey start index
         isLastMarkerVisited = nil
         NotificationService.shared.cancelDirectionNotifications()
     }
@@ -612,23 +617,31 @@ class LocationService: NSObject, ObservableObject {
             // v1.9.72: Check GPS accuracy for this reading
             let hasGoodAccuracy = currentLocation.horizontalAccuracy > 0 && currentLocation.horizontalAccuracy <= maxGPSAccuracy
             
-            // v1.9.90: Check if we're trying to advance to a return journey waypoint
-            // If the waypoint is after the last marker's position, require that the last marker has been visited
-            let isPastLastMarker: Bool
-            if let lastMarkerIndex = lastMarkerPolylineIndex {
-                // Check if this waypoint is after the last marker on the polyline
-                isPastLastMarker = waypoint.polylineIndex > lastMarkerIndex
+            // v1.9.93: Check if we're trying to advance to a return journey waypoint
+            // Use direction index (more reliable) OR polyline index as fallback
+            let isReturnJourneyWaypoint: Bool
+            if let returnStartIndex = returnJourneyStartIndex {
+                // Use direction index - most reliable method
+                isReturnJourneyWaypoint = index >= returnStartIndex
+            } else if let lastMarkerIndex = lastMarkerPolylineIndex {
+                // Fallback to polyline index check (use >= to catch waypoints at same index)
+                isReturnJourneyWaypoint = waypoint.polylineIndex >= lastMarkerIndex
             } else {
-                isPastLastMarker = false
+                isReturnJourneyWaypoint = false
             }
             
             let canAdvanceToReturnJourney: Bool
-            if isPastLastMarker {
+            if isReturnJourneyWaypoint {
                 // This is a return journey waypoint - check if last marker has been visited
                 if let checkVisited = isLastMarkerVisited {
                     canAdvanceToReturnJourney = checkVisited()
                     if !canAdvanceToReturnJourney {
-                        let blockLog = "🚫 BLOCKED: Trying to advance to return journey waypoint \(index + 1) ('\(waypoint.instruction)') but last marker not yet visited (waypoint polylineIndex: \(waypoint.polylineIndex) > last marker: \(lastMarkerPolylineIndex ?? -1))"
+                        let blockLog: String
+                        if let returnStartIndex = returnJourneyStartIndex {
+                            blockLog = "🚫 BLOCKED: Trying to advance to return journey waypoint \(index + 1) ('\(waypoint.instruction)') but last marker not yet visited (waypoint index: \(index) >= return journey start: \(returnStartIndex))"
+                        } else {
+                            blockLog = "🚫 BLOCKED: Trying to advance to return journey waypoint \(index + 1) ('\(waypoint.instruction)') but last marker not yet visited (waypoint polylineIndex: \(waypoint.polylineIndex) >= last marker: \(lastMarkerPolylineIndex ?? -1))"
+                        }
                         print("📍 [WAYPOINT CHECK] [\(timeString)] \(blockLog)")
                         debugLogger.log(blockLog, category: "DIRECTION_ADVANCE")
                     }

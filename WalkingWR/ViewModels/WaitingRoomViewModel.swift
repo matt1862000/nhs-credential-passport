@@ -732,10 +732,36 @@ class WaitingRoomViewModel: ObservableObject {
                 DebugLogger.shared.log("📍 Last marker polyline index: \(closestIndex) (distance: \(String(format: "%.1f", closestDistance))m from marker)", category: "DIRECTION_MONITORING")
             }
             
+            // v1.9.93: Find the return journey start index in filtered directions
+            // The return journey starts at the direction that comes after the arrival instruction
+            var returnJourneyStartIndex: Int? = nil
+            if let arrivalInst = arrivalInstruction,
+               let arrivalIndexInOriginal = route.walkingDirections.firstIndex(where: { $0.id == arrivalInst.id }) {
+                // Count how many directions before the arrival instruction were filtered out
+                var filteredBeforeArrival = 0
+                for i in 0..<arrivalIndexInOriginal {
+                    let direction = route.walkingDirections[i]
+                    let lowercased = direction.instruction.lowercased()
+                    let isArrival = lowercased.contains("the destination is on your right") ||
+                                   lowercased.contains("the destination is on your left") ||
+                                   lowercased.contains("destination is on your right") ||
+                                   lowercased.contains("destination is on your left") ||
+                                   (lowercased.contains("destination") && (lowercased.contains("on your right") || lowercased.contains("on your left"))) ||
+                                   (lowercased.contains("arrive") && lowercased.contains("destination"))
+                    if isArrival {
+                        filteredBeforeArrival += 1
+                    }
+                }
+                // The return journey starts at (arrivalIndexInOriginal - filteredBeforeArrival) in the filtered list
+                returnJourneyStartIndex = arrivalIndexInOriginal - filteredBeforeArrival
+                DebugLogger.shared.log("📍 Return journey starts at filtered direction index: \(returnJourneyStartIndex!) (original arrival index: \(arrivalIndexInOriginal))", category: "DIRECTION_MONITORING")
+            }
+            
             locationService.startDirectionMonitoring(
                 directions: filteredDirections,
                 routePath: route.routePath,
                 lastMarkerPolylineIndex: lastMarkerPolylineIndex,
+                returnJourneyStartIndex: returnJourneyStartIndex,
                 isLastMarkerVisited: { [weak self] in
                     guard let self = self,
                           let lastMarker = route.qrMarkers.last else { return false }
