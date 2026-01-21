@@ -72,6 +72,10 @@ class LocationService: NSObject, ObservableObject {
     private let minConsistentReadings: Int = 3 // Require at least 3 consistent readings
     private let consistencyThreshold: Double = 0.6 // 60% of readings must show forward progress
     
+    // v1.9.90: Track last marker to prevent advancing to return journey before destination is reached
+    private var lastMarkerPolylineIndex: Int? = nil
+    private var isLastMarkerVisited: (() -> Bool)? = nil
+    
     // MARK: - Polyline Projection Helpers (v1.9.70)
     
     /// Project a point onto a polyline segment and return the closest point
@@ -365,7 +369,15 @@ class LocationService: NSObject, ObservableObject {
     ///   - routePath: Full route polyline
     ///   - skipPassedWaypoints: If true, check current location and skip already-passed waypoints.
     ///                          Use false for fresh walk start (index 0), true for mid-walk direction changes.
-    func startDirectionMonitoring(directions: [WalkingDirection], routePath: [CLLocationCoordinate2D], skipPassedWaypoints: Bool = false) {
+    ///   - lastMarkerPolylineIndex: Optional polyline index of the last marker (destination). If provided, prevents advancing to return journey until marker is visited.
+    ///   - isLastMarkerVisited: Optional closure that returns true if the last marker has been visited. Required if lastMarkerPolylineIndex is provided.
+    func startDirectionMonitoring(
+        directions: [WalkingDirection],
+        routePath: [CLLocationCoordinate2D],
+        skipPassedWaypoints: Bool = false,
+        lastMarkerPolylineIndex: Int? = nil,
+        isLastMarkerVisited: (() -> Bool)? = nil
+    ) {
         // Build waypoints from directions
         // Each direction corresponds to a step - we'll use approximate positions along the route
         directionWaypoints = []
@@ -373,6 +385,10 @@ class LocationService: NSObject, ObservableObject {
         currentDirectionIndex = 0
         cachedRoutePath = routePath  // v1.9.15: Cache route path for deviation detection
         isSignificantlyOffRoute = false  // Reset deviation flag
+        
+        // v1.9.90: Store last marker info to prevent advancing to return journey before destination is reached
+        self.lastMarkerPolylineIndex = lastMarkerPolylineIndex
+        self.isLastMarkerVisited = isLastMarkerVisited
         
         // Calculate cumulative distance for each step to find approximate positions
         var cumulativeDistance: Double = 0
@@ -478,6 +494,8 @@ class LocationService: NSObject, ObservableObject {
         notifiedDirectionIndices = []
         currentDirectionIndex = 0
         recentProjectedPositions = []  // v1.9.71: Clear position history
+        lastMarkerPolylineIndex = nil  // v1.9.90: Clear last marker tracking
+        isLastMarkerVisited = nil
         NotificationService.shared.cancelDirectionNotifications()
     }
     
@@ -594,15 +612,45 @@ class LocationService: NSObject, ObservableObject {
             // v1.9.72: Check GPS accuracy for this reading
             let hasGoodAccuracy = currentLocation.horizontalAccuracy > 0 && currentLocation.horizontalAccuracy <= maxGPSAccuracy
             
+            // v1.9.90: Check if we're trying to advance to a return journey waypoint
+            // If the waypoint is after the last marker's position, require that the last marker has been visited
+            let isPastLastMarker: Bool
+            if let lastMarkerIndex = lastMarkerPolylineIndex {
+                // Check if this waypoint is after the last marker on the polyline
+                isPastLastMarker = waypoint.polylineIndex > lastMarkerIndex
+            } else {
+                isPastLastMarker = false
+            }
+            
+            let canAdvanceToReturnJourney: Bool
+            if isPastLastMarker {
+                // This is a return journey waypoint - check if last marker has been visited
+                if let checkVisited = isLastMarkerVisited {
+                    canAdvanceToReturnJourney = checkVisited()
+                    if !canAdvanceToReturnJourney {
+                        let blockLog = "🚫 BLOCKED: Trying to advance to return journey waypoint \(index + 1) ('\(waypoint.instruction)') but last marker not yet visited (waypoint polylineIndex: \(waypoint.polylineIndex) > last marker: \(lastMarkerPolylineIndex ?? -1))"
+                        print("📍 [WAYPOINT CHECK] [\(timeString)] \(blockLog)")
+                        debugLogger.log(blockLog, category: "DIRECTION_ADVANCE")
+                    }
+                } else {
+                    // No check function provided - allow advancement (backward compatibility)
+                    canAdvanceToReturnJourney = true
+                }
+            } else {
+                // Not a return journey waypoint - allow advancement
+                canAdvanceToReturnJourney = true
+            }
+            
             // Trigger notification if ALL conditions are met (stricter AND logic):
             // - Within 20m distance (stricter radius)
             // - Past on polyline
             // - Has moved enough along route
             // - Has consistent forward movement
             // - Has good GPS accuracy
+            // - Can advance to return journey (if applicable)
             // OR failsafe: if very close (<8m), always trigger (stricter failsafe)
-            let shouldTrigger = (distance <= 20 && userIsAtOrPastOnPolyline && hasMovedEnough && hasConsistentMovement && hasGoodAccuracy) ||
-                                (distance <= 8)  // Failsafe: if very close, always trigger (stricter)
+            let shouldTrigger = (distance <= 20 && userIsAtOrPastOnPolyline && hasMovedEnough && hasConsistentMovement && hasGoodAccuracy && canAdvanceToReturnJourney) ||
+                                (distance <= 8 && canAdvanceToReturnJourney)  // Failsafe: if very close, always trigger (stricter failsafe)
             
             // v1.9.74: Comprehensive logging for direction advancement debugging
             let waypointLog = """
@@ -653,11 +701,16 @@ class LocationService: NSObject, ObservableObject {
                 notifiedDirectionIndices.insert(index)
                 
                 // Update current direction index
-                if index >= currentDirectionIndex {
+                // v1.9.90: Don't advance if current index is beyond directionWaypoints (e.g., showing arrival instruction)
+                // The arrival instruction is added to cachedOriginalDirections but not to directionWaypoints
+                if index >= currentDirectionIndex && currentDirectionIndex < directionWaypoints.count {
                     let newIndex = min(index + 1, directionWaypoints.count - 1)
                     let oldIndex = currentDirectionIndex
                     currentDirectionIndex = newIndex
                     debugLogger.log("Direction index updated: \(oldIndex) → \(newIndex)", category: "DIRECTION_ADVANCE")
+                } else if currentDirectionIndex >= directionWaypoints.count {
+                    // v1.9.90: Currently showing arrival instruction (index beyond directionWaypoints) - don't override
+                    debugLogger.log("⚠️ Waypoint advancement blocked - currently showing arrival instruction (index \(currentDirectionIndex) >= \(directionWaypoints.count))", category: "DIRECTION_ADVANCE")
                 }
                 
                 // v1.9.76: Keep position history for next waypoint (don't clear)

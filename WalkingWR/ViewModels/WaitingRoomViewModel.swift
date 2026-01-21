@@ -712,9 +712,35 @@ class WaitingRoomViewModel: ObservableObject {
                 DebugLogger.shared.log("✅ Filtered \(originalCount - filteredDirections.count) arrival instruction(s). Passing \(filteredDirections.count) directions to monitoring", category: "DIRECTION_FILTER")
             }
             
+            // v1.9.90: Find polyline index of last marker to prevent advancing to return journey before destination is reached
+            var lastMarkerPolylineIndex: Int? = nil
+            if let lastMarker = route.qrMarkers.last {
+                // Find the closest point on the route polyline to the last marker
+                var closestIndex = 0
+                var closestDistance = Double.greatestFiniteMagnitude
+                let markerLocation = CLLocation(latitude: lastMarker.coordinate.latitude, longitude: lastMarker.coordinate.longitude)
+                
+                for (index, routePoint) in route.routePath.enumerated() {
+                    let routeLocation = CLLocation(latitude: routePoint.latitude, longitude: routePoint.longitude)
+                    let distance = markerLocation.distance(from: routeLocation)
+                    if distance < closestDistance {
+                        closestDistance = distance
+                        closestIndex = index
+                    }
+                }
+                lastMarkerPolylineIndex = closestIndex
+                DebugLogger.shared.log("📍 Last marker polyline index: \(closestIndex) (distance: \(String(format: "%.1f", closestDistance))m from marker)", category: "DIRECTION_MONITORING")
+            }
+            
             locationService.startDirectionMonitoring(
                 directions: filteredDirections,
-                routePath: route.routePath
+                routePath: route.routePath,
+                lastMarkerPolylineIndex: lastMarkerPolylineIndex,
+                isLastMarkerVisited: { [weak self] in
+                    guard let self = self,
+                          let lastMarker = route.qrMarkers.last else { return false }
+                    return self.visitedMarkerIds.contains(lastMarker.id)
+                }
             )
         }
         
