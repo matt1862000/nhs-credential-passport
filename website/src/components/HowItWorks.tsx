@@ -41,40 +41,40 @@ const steps = [
     title: 'Walk & Relax',
     description: 'Follow turn-by-turn directions. Discover points of interest and try breathing exercises.',
     icon: (
-      <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24">
         {/* Stars in upper left */}
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 3l0.5 0.5M2.5 3.5l0.5-0.5M3.5 2.5l-0.5 0.5" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4.5 2l0.5 0.5M4 2.5l0.5-0.5M5 1.5l-0.5 0.5" />
+        <path d="M3 3l0.8 0.8M2.2 3.8l0.8-0.8M3.8 2.2l-0.8 0.8" strokeWidth={1.2} strokeLinecap="round" />
+        <path d="M5 2l0.8 0.8M4.2 2.8l0.8-0.8M5.8 1.2l-0.8 0.8" strokeWidth={1.2} strokeLinecap="round" />
         
         {/* Sun in upper right */}
-        <circle cx="20" cy="4" r="1.5" fill="currentColor" />
-        <path strokeLinecap="round" strokeWidth={1.5} d="M20 2v0.5M20 5.5v0.5M22 4h0.5M18.5 4h-0.5M21.5 2.5l0.3 0.3M18.5 5.5l0.3 0.3M21.5 5.5l0.3-0.3M18.5 2.5l0.3-0.3" />
+        <circle cx="20" cy="4" r="2" fill="currentColor" />
+        <path d="M20 1.5v1M20 6.5v1M23 4h1M18 4h-1M22.2 2.2l0.7 0.7M17.8 5.8l0.7 0.7M22.2 5.8l0.7-0.7M17.8 2.2l0.7-0.7" strokeWidth={1.2} strokeLinecap="round" />
         
         {/* Left tree */}
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 17v-3" />
-        <circle cx="4" cy="12" r="1.8" fill="currentColor" />
+        <path d="M4 17v-4" strokeWidth={1.5} strokeLinecap="round" />
+        <circle cx="4" cy="11" r="2.5" fill="currentColor" />
         
         {/* Walking person with backpack and leaf */}
-        <circle cx="12" cy="10" r="1.2" fill="currentColor" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 11.2v2.5" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11.2 13.7h1.6" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.5 16.2l-0.8 2M13.5 16.2l0.8 2" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.5 12.5l-0.8-1M13.5 12.5l0.8-1" />
+        <circle cx="12" cy="9.5" r="1.8" fill="currentColor" />
+        <path d="M12 11.3v3" strokeWidth={1.5} strokeLinecap="round" />
+        <path d="M10.8 14.3h2.4" strokeWidth={1.5} strokeLinecap="round" />
+        <path d="M10 17.3l-1 2.5M14 17.3l1 2.5" strokeWidth={1.5} strokeLinecap="round" />
+        <path d="M10 12.5l-1-1.2M14 12.5l1-1.2" strokeWidth={1.5} strokeLinecap="round" />
         {/* Backpack */}
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.8 11.5v2h1.4v-2" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.8 12.5h1.4" />
+        <rect x="10.5" y="11" width="3" height="3" rx="0.5" fill="currentColor" />
+        <path d="M10.5 12.5h3" strokeWidth={0.8} />
         {/* Leaf in hand */}
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.5 12.5l1.2-0.8" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.2 11.5c0.2-0.3 0.5-0.4 0.7-0.2 0.2 0.2 0.2 0.5 0 0.7-0.2 0.2-0.5 0.4-0.7 0.2-0.2-0.2-0.2-0.5 0-0.7" />
+        <path d="M14 12.5l1.5-1" strokeWidth={1.5} strokeLinecap="round" />
+        <path d="M15.2 11.2c0.3-0.4 0.7-0.5 1-0.3 0.3 0.2 0.3 0.7 0 1-0.3 0.3-0.7 0.5-1 0.3-0.3-0.2-0.3-0.7 0-1" fill="currentColor" />
         
         {/* Right trees */}
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16v-3" />
-        <circle cx="17" cy="11" r="2.2" fill="currentColor" />
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 15v-2" />
-        <circle cx="19" cy="11" r="1.8" fill="currentColor" />
+        <path d="M17 16.5v-4" strokeWidth={1.5} strokeLinecap="round" />
+        <circle cx="17" cy="10.5" r="3" fill="currentColor" />
+        <path d="M19 15.5v-3" strokeWidth={1.5} strokeLinecap="round" />
+        <circle cx="19" cy="10.5" r="2.5" fill="currentColor" />
         
         {/* Dashed path */}
-        <path strokeLinecap="round" strokeWidth={1.5} strokeDasharray="1.5 1.5" d="M2 19h20" />
+        <path d="M2 19.5h20" strokeWidth={1.5} strokeDasharray="2 2" strokeLinecap="round" />
       </svg>
     ),
   },
