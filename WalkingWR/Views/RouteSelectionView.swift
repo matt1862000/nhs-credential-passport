@@ -6240,15 +6240,6 @@ struct ActiveWalkView: View {
                         get: { 
                             let idx = locationService.currentDirectionIndex
                             let clamped = min(max(0, idx), directionsToShow.count - 1)
-                            
-                            // v1.9.78: Log when banner reads the direction index
-                            if clamped < directionsToShow.count {
-                                let direction = directionsToShow[clamped]
-                                let bannerLog = "🎨 Banner reading direction: Index \(clamped)/\(directionsToShow.count) - '\(direction.instruction)'"
-                                print("📍 [BANNER] \(bannerLog)")
-                                DebugLogger.shared.log(bannerLog, category: "BANNER")
-                            }
-                            
                             return clamped
                         },
                         set: { newValue in
@@ -6432,13 +6423,6 @@ struct WalkingDirectionsBanner: View {
         if currentIndex < directions.count {
             let direction = directions[currentIndex]
             let instructionParts = splitInstruction(direction.instruction) // v1.9.15: Compute outside view builder
-            
-            // v1.9.78: Log when banner renders a direction
-            let _ = {
-                let renderLog = "🎨 Banner RENDERING: Index \(currentIndex)/\(directions.count) - '\(direction.instruction)' (distance: \(direction.distance))"
-                print("📍 [BANNER RENDER] \(renderLog)")
-                DebugLogger.shared.log(renderLog, category: "BANNER_RENDER")
-            }()
             
             Button(action: { 
                 withAnimation(.easeInOut(duration: 0.2)) {
