@@ -134,7 +134,7 @@ export default function Navbar() {
             />
             
             {/* Menu Panel */}
-            <motion.div
+          <motion.div
               initial={{ opacity: 0, y: -20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
@@ -169,54 +169,54 @@ export default function Navbar() {
 
                 {/* Navigation Links */}
                 <div className="flex flex-col gap-1 mb-6">
-                  {navLinks.map((link) => (
-                    <Link
-                      key={link.href}
-                      href={link.href}
-                      onClick={() => setIsMobileMenuOpen(false)}
+              {navLinks.map((link) => (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setIsMobileMenuOpen(false)}
                       className="text-slate-900 dark:text-white hover:text-teal-700 dark:hover:text-teal-accent transition-colors py-3 px-4 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 text-base font-semibold"
-                    >
-                      {link.label}
-                    </Link>
-                  ))}
+                >
+                  {link.label}
+                </Link>
+              ))}
                 </div>
 
                 {/* Actions */}
                 <div className="pt-4 border-t border-white/20 dark:border-white/20 border-slate-300 space-y-3">
-                  <button
+                <button
                     onClick={() => {
                       toggleTheme()
                       setIsMobileMenuOpen(false)
                     }}
                     className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-full bg-slate-100 dark:bg-white/10 text-slate-900 dark:text-white font-semibold hover:bg-slate-200 dark:hover:bg-white/20 transition-colors"
-                    aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-                  >
-                    {theme === 'dark' ? (
-                      <>
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-                        </svg>
-                        Light Mode
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                        </svg>
-                        Dark Mode
-                      </>
-                    )}
-                  </button>
-                  <Link
+                  aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+                >
+                  {theme === 'dark' ? (
+                    <>
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                      </svg>
+                      Light Mode
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                      </svg>
+                      Dark Mode
+                    </>
+                  )}
+                </button>
+                <Link
                     href="/#download"
                     onClick={() => setIsMobileMenuOpen(false)}
                     className="block w-full text-center px-6 py-3 rounded-full bg-gradient-to-r from-teal-accent to-teal-accent/80 text-white dark:text-white dark:text-midnight font-semibold hover:shadow-lg hover:shadow-teal-accent/30 transition-all"
-                  >
-                    Download App
-                  </Link>
-                </div>
+                >
+                  Download App
+                </Link>
               </div>
-            </motion.div>
+            </div>
+          </motion.div>
           </>
         )}
       </AnimatePresence>

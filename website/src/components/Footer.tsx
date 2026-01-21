@@ -73,9 +73,9 @@ export default function Footer() {
                       {link.label}
                     </a>
                   ) : (
-                    <Link href={link.href} className="dark:text-white/50 text-slate-800 hover:text-teal-accent dark:hover:text-teal-accent hover:text-teal-700 transition-colors">
-                      {link.label}
-                    </Link>
+                  <Link href={link.href} className="dark:text-white/50 text-slate-800 hover:text-teal-accent dark:hover:text-teal-accent hover:text-teal-700 transition-colors">
+                    {link.label}
+                  </Link>
                   )}
                 </li>
               ))}
