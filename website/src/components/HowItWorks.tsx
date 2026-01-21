@@ -42,12 +42,12 @@ const steps = [
     description: 'Follow turn-by-turn directions. Discover points of interest and try breathing exercises.',
     icon: (
       <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-        <circle cx="4" cy="6" r="1.5" fill="currentColor" />
-        <circle cx="5" cy="8" r="1.5" fill="currentColor" />
-        <circle cx="6" cy="6" r="1.5" fill="currentColor" />
-        <circle cx="7" cy="8" r="1.5" fill="currentColor" />
-        <circle cx="8" cy="6" r="1.5" fill="currentColor" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 16l-5.447-2.724A1 1 0 013 12.382V1.618a1 1 0 011.447-.894L9 3m0 13l6-3m-6 3V3m6 10l4.553 2.276A1 1 0 0021 14.382V3.618a1 1 0 00-.553-.894L15 0m0 13V0m0 0L9 3" />
+        <circle cx="5" cy="19" r="1" fill="currentColor" />
+        <circle cx="7.5" cy="21" r="1" fill="currentColor" />
+        <circle cx="10" cy="19" r="1" fill="currentColor" />
+        <circle cx="12.5" cy="21" r="1" fill="currentColor" />
+        <circle cx="15" cy="19" r="1" fill="currentColor" />
       </svg>
     ),
   },
