@@ -11,7 +11,7 @@ const benefits = [
   },
   {
     title: 'Simple Setup',
-    description: 'Delays are automatically easily updated using a simple Google Sheet (direct EPR integration coming in the future).',
+    description: 'Delays are easily updated using a simple Google Sheet (direct EPR integration coming in the future).',
   },
   {
     title: 'Real-Time Updates',
