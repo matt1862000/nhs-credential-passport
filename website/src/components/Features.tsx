@@ -115,7 +115,7 @@ export default function Features() {
               initial={{ opacity: 0, y: 30 }}
               animate={isInView ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: 0.6, delay: feature.delay }}
-              className="feature-card glass rounded-2xl p-6 sm:p-8 group cursor-pointer"
+              className="feature-card glass rounded-2xl p-6 sm:p-8 group"
             >
               {/* Icon */}
               <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-gradient-to-br ${feature.color} p-3 text-white dark:text-white mb-4 sm:mb-6 group-hover:scale-110 transition-transform`}>
@@ -129,14 +129,6 @@ export default function Features() {
               <p className="dark:text-white/50 text-slate-800 text-sm sm:text-base leading-relaxed">
                 {feature.description}
               </p>
-
-              {/* Hover indicator */}
-              <div className="mt-6 flex items-center gap-2 dark:text-white/30 text-slate-700 group-hover:text-teal-accent dark:group-hover:text-teal-accent group-hover:text-teal-700 transition-colors">
-                <span className="text-sm">Learn more</span>
-                <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </div>
             </motion.div>
           ))}
         </div>
