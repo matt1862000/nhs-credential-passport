@@ -42,12 +42,39 @@ const steps = [
     description: 'Follow turn-by-turn directions. Discover points of interest and try breathing exercises.',
     icon: (
       <svg className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 16l-5.447-2.724A1 1 0 013 12.382V1.618a1 1 0 011.447-.894L9 3m0 13l6-3m-6 3V3m6 10l4.553 2.276A1 1 0 0021 14.382V3.618a1 1 0 00-.553-.894L15 0m0 13V0m0 0L9 3" />
-        <circle cx="5" cy="19" r="1" fill="currentColor" />
-        <circle cx="7.5" cy="21" r="1" fill="currentColor" />
-        <circle cx="10" cy="19" r="1" fill="currentColor" />
-        <circle cx="12.5" cy="21" r="1" fill="currentColor" />
-        <circle cx="15" cy="19" r="1" fill="currentColor" />
+        {/* Stars in upper left */}
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 3l0.5 0.5M2.5 3.5l0.5-0.5M3.5 2.5l-0.5 0.5" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4.5 2l0.5 0.5M4 2.5l0.5-0.5M5 1.5l-0.5 0.5" />
+        
+        {/* Sun in upper right */}
+        <circle cx="20" cy="4" r="1.5" fill="currentColor" />
+        <path strokeLinecap="round" strokeWidth={1.5} d="M20 2v0.5M20 5.5v0.5M22 4h0.5M18.5 4h-0.5M21.5 2.5l0.3 0.3M18.5 5.5l0.3 0.3M21.5 5.5l0.3-0.3M18.5 2.5l0.3-0.3" />
+        
+        {/* Left tree */}
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 17v-3" />
+        <circle cx="4" cy="12" r="1.8" fill="currentColor" />
+        
+        {/* Walking person with backpack and leaf */}
+        <circle cx="12" cy="10" r="1.2" fill="currentColor" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 11.2v2.5" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11.2 13.7h1.6" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.5 16.2l-0.8 2M13.5 16.2l0.8 2" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.5 12.5l-0.8-1M13.5 12.5l0.8-1" />
+        {/* Backpack */}
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.8 11.5v2h1.4v-2" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.8 12.5h1.4" />
+        {/* Leaf in hand */}
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13.5 12.5l1.2-0.8" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14.2 11.5c0.2-0.3 0.5-0.4 0.7-0.2 0.2 0.2 0.2 0.5 0 0.7-0.2 0.2-0.5 0.4-0.7 0.2-0.2-0.2-0.2-0.5 0-0.7" />
+        
+        {/* Right trees */}
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16v-3" />
+        <circle cx="17" cy="11" r="2.2" fill="currentColor" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 15v-2" />
+        <circle cx="19" cy="11" r="1.8" fill="currentColor" />
+        
+        {/* Dashed path */}
+        <path strokeLinecap="round" strokeWidth={1.5} strokeDasharray="1.5 1.5" d="M2 19h20" />
       </svg>
     ),
   },
