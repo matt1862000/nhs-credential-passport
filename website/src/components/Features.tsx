@@ -45,7 +45,7 @@ const features = [
       </svg>
     ),
     title: 'Step Tracking',
-    description: 'Track your progress with HealthKit integration. See your steps, distance, and calories.',
+    description: 'Track your progress with HealthKit integration. See your steps and distance.',
     color: 'from-mint-green to-green-400',
     delay: 0.3,
   },
