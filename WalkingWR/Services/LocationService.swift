@@ -66,8 +66,8 @@ class LocationService: NSObject, ObservableObject {
     
     // v1.9.71: GPS stability tracking to prevent jitter from advancing waypoints
     private var recentProjectedPositions: [(segmentIndex: Int, t: Double, timestamp: Date)] = []
-    private let maxGPSAccuracy: Double = 15.0 // Reject GPS readings with accuracy worse than 15m (stricter)
-    private let minMovementAlongRoute: Double = 20.0 // Require 20m of actual movement along route before advancing (stricter)
+    private let maxGPSAccuracy: Double = 40.0 // Reject GPS readings with accuracy worse than 40m (balanced: allows 35m readings while still filtering poor GPS)
+    private let minMovementAlongRoute: Double = 15.0 // Require 15m of actual movement along route before advancing (balanced: prevents jitter but allows progression)
     private let positionHistoryWindow: TimeInterval = 30.0 // Keep last 30 seconds of positions (3x longer)
     private let minConsistentReadings: Int = 3 // Require at least 3 consistent readings
     private let consistencyThreshold: Double = 0.6 // 60% of readings must show forward progress
