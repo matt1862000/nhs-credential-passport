@@ -42,39 +42,44 @@ const steps = [
     description: 'Follow turn-by-turn directions. Discover points of interest and try breathing exercises.',
     icon: (
       <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24">
-        {/* Stars in upper left */}
-        <path d="M3 3l0.8 0.8M2.2 3.8l0.8-0.8M3.8 2.2l-0.8 0.8" strokeWidth={1.2} strokeLinecap="round" />
-        <path d="M5 2l0.8 0.8M4.2 2.8l0.8-0.8M5.8 1.2l-0.8 0.8" strokeWidth={1.2} strokeLinecap="round" />
+        {/* Stars in upper left - four-pointed */}
+        <path d="M3.5 3.5l0.3 0l0.15 0.15l0.15-0.15l0-0.3l-0.15-0.15l-0.15 0.15l-0.3 0z" />
+        <path d="M5.5 2.5l0.3 0l0.15 0.15l0.15-0.15l0-0.3l-0.15-0.15l-0.15 0.15l-0.3 0z" />
         
-        {/* Sun in upper right */}
-        <circle cx="20" cy="4" r="2" fill="currentColor" />
-        <path d="M20 1.5v1M20 6.5v1M23 4h1M18 4h-1M22.2 2.2l0.7 0.7M17.8 5.8l0.7 0.7M22.2 5.8l0.7-0.7M17.8 2.2l0.7-0.7" strokeWidth={1.2} strokeLinecap="round" />
+        {/* Sun in upper right with rays */}
+        <circle cx="19.5" cy="4.5" r="1.8" fill="currentColor" />
+        <path d="M19.5 2v0.8M19.5 7v0.8M22 4.5h0.8M17.2 4.5h-0.8M21.2 2.8l0.6 0.6M17.8 6.2l0.6 0.6M21.2 6.2l0.6-0.6M17.8 2.8l0.6-0.6" strokeWidth={1} strokeLinecap="round" />
         
-        {/* Left tree */}
-        <path d="M4 17v-4" strokeWidth={1.5} strokeLinecap="round" />
-        <circle cx="4" cy="11" r="2.5" fill="currentColor" />
+        {/* Left tree - small */}
+        <path d="M4.5 17.5v-3.5" strokeWidth={1.2} strokeLinecap="round" />
+        <circle cx="4.5" cy="12" r="2" fill="currentColor" />
         
-        {/* Walking person with backpack and leaf */}
-        <circle cx="12" cy="9.5" r="1.8" fill="currentColor" />
-        <path d="M12 11.3v3" strokeWidth={1.5} strokeLinecap="round" />
-        <path d="M10.8 14.3h2.4" strokeWidth={1.5} strokeLinecap="round" />
-        <path d="M10 17.3l-1 2.5M14 17.3l1 2.5" strokeWidth={1.5} strokeLinecap="round" />
-        <path d="M10 12.5l-1-1.2M14 12.5l1-1.2" strokeWidth={1.5} strokeLinecap="round" />
+        {/* Walking person with backpack and leaf - facing right */}
+        {/* Head */}
+        <circle cx="12" cy="9" r="1.5" fill="currentColor" />
+        {/* Body */}
+        <path d="M12 10.5v3.5" strokeWidth={1.3} strokeLinecap="round" />
+        {/* Torso */}
+        <path d="M11.2 10.5h1.6" strokeWidth={1.3} strokeLinecap="round" />
+        {/* Legs - walking stride */}
+        <path d="M11 14l-0.8 2.5M13 14l0.8 2.5" strokeWidth={1.3} strokeLinecap="round" />
+        {/* Arms */}
+        <path d="M10.5 11.5l-0.8-1M13.5 11.5l0.8-1" strokeWidth={1.3} strokeLinecap="round" />
         {/* Backpack */}
-        <rect x="10.5" y="11" width="3" height="3" rx="0.5" fill="currentColor" />
-        <path d="M10.5 12.5h3" strokeWidth={0.8} />
-        {/* Leaf in hand */}
-        <path d="M14 12.5l1.5-1" strokeWidth={1.5} strokeLinecap="round" />
-        <path d="M15.2 11.2c0.3-0.4 0.7-0.5 1-0.3 0.3 0.2 0.3 0.7 0 1-0.3 0.3-0.7 0.5-1 0.3-0.3-0.2-0.3-0.7 0-1" fill="currentColor" />
+        <rect x="10.8" y="10.5" width="2.4" height="2.8" rx="0.3" fill="currentColor" />
+        <path d="M10.8 12h2.4" strokeWidth={0.6} />
+        {/* Leaf in right hand */}
+        <path d="M13.5 11.5l1.2-0.6" strokeWidth={1.2} strokeLinecap="round" />
+        <path d="M14.3 10.6c0.2-0.3 0.5-0.4 0.8-0.2 0.3 0.2 0.3 0.6 0.1 0.9-0.2 0.3-0.5 0.4-0.8 0.2-0.3-0.2-0.3-0.6-0.1-0.9" fill="currentColor" />
         
-        {/* Right trees */}
-        <path d="M17 16.5v-4" strokeWidth={1.5} strokeLinecap="round" />
-        <circle cx="17" cy="10.5" r="3" fill="currentColor" />
-        <path d="M19 15.5v-3" strokeWidth={1.5} strokeLinecap="round" />
-        <circle cx="19" cy="10.5" r="2.5" fill="currentColor" />
+        {/* Right trees - two trees, larger */}
+        <path d="M16.5 17v-3.5" strokeWidth={1.2} strokeLinecap="round" />
+        <circle cx="16.5" cy="11.5" r="2.5" fill="currentColor" />
+        <path d="M18.5 16.5v-3" strokeWidth={1.2} strokeLinecap="round" />
+        <circle cx="18.5" cy="11.5" r="2.2" fill="currentColor" />
         
-        {/* Dashed path */}
-        <path d="M2 19.5h20" strokeWidth={1.5} strokeDasharray="2 2" strokeLinecap="round" />
+        {/* Dashed path/ground line */}
+        <path d="M2 19.5h20" strokeWidth={1.5} strokeDasharray="2 1.5" strokeLinecap="round" />
       </svg>
     ),
   },
