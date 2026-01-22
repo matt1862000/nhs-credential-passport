@@ -1311,14 +1311,52 @@ class GoogleMapsService: ObservableObject {
         if let prePopulatedPOIs = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: location, radiusMeters: Double(radiusMeters)) {
             print("📦 PRE-POPULATED DB HIT! Found \(prePopulatedPOIs.count) POIs from pre-populated database")
             print("📦 Using ONLY database POIs - skipping all external API calls (OSM, Geograph, Apple, Google)")
-            allResults = prePopulatedPOIs
             
-            // Cache the results for future use
+            // v1.9.60: Apply ALL the same filters as live POIs to database POIs
+            // This ensures database POIs go through the same safety net as API-fetched POIs
+            var dbResults = prePopulatedPOIs
+            
+            // 1. Filter restricted POIs (playcare, nursery, playground, etc.)
+            let beforeRestricted = dbResults.count
+            dbResults = dbResults.filter { !isRestrictedPOI($0) }
+            let restrictedCount = beforeRestricted - dbResults.count
+            if restrictedCount > 0 {
+                print("📦 🏫 Filtered \(restrictedCount) restricted POIs from database (playcare/nursery/playground)")
+            }
+            
+            // 2. Canonical POI deduplication - clusters similar POIs
+            let beforeCanonical = dbResults.count
+            dbResults = canonicalizePOIs(dbResults, origin: location)
+            let canonicalRemoved = beforeCanonical - dbResults.count
+            if canonicalRemoved > 0 {
+                print("📦 🎯 Canonical dedup removed \(canonicalRemoved) duplicate POIs from database")
+            }
+            
+            // 3. Filter POIs inside restricted areas (school grounds, military, etc.)
+            let beforeAreaFilter = dbResults.count
+            dbResults = await filterPOIsInRestrictedAreas(pois: dbResults, location: location, radiusMeters: radiusMeters)
+            let areaFiltered = beforeAreaFilter - dbResults.count
+            if areaFiltered > 0 {
+                print("📦 🏫 Restricted area filter removed \(areaFiltered) inaccessible POIs from database")
+            }
+            
+            // 4. Coordinate validation - removes POIs with incorrect coordinates
+            let beforeCoordValidation = dbResults.count
+            dbResults = validatePOICoordinates(dbResults)
+            let coordFiltered = beforeCoordValidation - dbResults.count
+            if coordFiltered > 0 {
+                print("📦 📍 Coordinate validation removed \(coordFiltered) POIs with incorrect coordinates from database")
+            }
+            
+            allResults = dbResults
+            
+            // Cache the filtered results for future use
             POICacheService.shared.cachePOIs(allResults, for: location)
             
             let endTime = Date()
             let totalTime = endTime.timeIntervalSince(startTime)
             let endTimeString = formatter.string(from: endTime)
+            print("📦 ✅ Database POIs after all filters: \(allResults.count) (was \(prePopulatedPOIs.count))")
             print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalTime))s (pre-populated DB only)")
             
             return allResults
@@ -1512,10 +1550,17 @@ class GoogleMapsService: ObservableObject {
                     
                     // v1.9.50: Filter by distance immediately as POIs arrive (Optimization 5)
                     // Filter out obviously too-far POIs before deduplication and expensive checks
+                    // v1.9.60: Also filter restricted POIs (playcare/nursery/playground) at source
+                    var restrictedFilteredCount = 0
                     let filteredPOIs = result.pois.filter { poi in
                         let distance = distanceBetween(location, poi.coordinate)
                         if distance > maxRealisticDistance {
                             return false  // Filter out unrealistic distances
+                        }
+                        // v1.9.60: Filter restricted POIs immediately at source
+                        if isRestrictedPOI(poi) {
+                            restrictedFilteredCount += 1
+                            return false
                         }
                         return true
                     }
@@ -1539,9 +1584,12 @@ class GoogleMapsService: ObservableObject {
                     let added = collected.count - beforeCount
                     
                     // Track filtered count for logging
-                    let filteredCount = result.pois.count - filteredPOIs.count
-                    if filteredCount > 0 {
-                        print("   🚫 Filtered \(filteredCount) distant POIs from \(result.source.rawValue) (>\(Int(maxRealisticDistance))m)")
+                    let distanceFilteredCount = result.pois.count - filteredPOIs.count - restrictedFilteredCount
+                    if distanceFilteredCount > 0 {
+                        print("   🚫 Filtered \(distanceFilteredCount) distant POIs from \(result.source.rawValue) (>\(Int(maxRealisticDistance))m)")
+                    }
+                    if restrictedFilteredCount > 0 {
+                        print("   🏫 Filtered \(restrictedFilteredCount) restricted POIs from \(result.source.rawValue) (playcare/nursery/playground)")
                     }
                     
                     // Track source contribution (use filtered count)
@@ -1619,7 +1667,8 @@ class GoogleMapsService: ObservableObject {
             print("🎯 [CANONICAL] No duplicates found (all \(allResults.count) POIs are unique)")
         }
         
-        // v1.6.47: Filter POIs inside restricted areas (schools, hospitals, etc.) without road access
+        // v1.6.47: Filter POIs inside restricted areas (schools, military, etc.) without road access
+        // Note: Hospitals are NOT filtered - many valid POIs are on hospital grounds
         let beforeRestrictedFilter = allResults.count
         allResults = await filterPOIsInRestrictedAreas(pois: allResults, location: location, radiusMeters: radiusMeters)
         let restrictedFiltered = beforeRestrictedFilter - allResults.count
@@ -3471,15 +3520,16 @@ class GoogleMapsService: ObservableObject {
     
     /// Structure to hold a restricted area polygon
     private struct RestrictedPolygon {
-        let type: String  // school, hospital, etc.
+        let type: String  // school, university, military, prison, golf_course
         let name: String
         let coordinates: [CLLocationCoordinate2D]
     }
     
     /// Filter POIs that are inside restricted areas without road access
-    /// 1. Query OSM for restricted area polygons (schools, hospitals, etc.)
+    /// 1. Query OSM for restricted area polygons (schools, military, prisons, etc.)
     /// 2. For each POI inside a restricted area, check if it has road access
-    /// 3. Keep POIs with road access (like hospital cafes), exclude others
+    /// 3. Keep POIs with road access, exclude others
+    /// Note: Hospitals are NOT filtered - many valid POIs are on hospital grounds
     private func filterPOIsInRestrictedAreas(
         pois: [PlaceResult],
         location: CLLocationCoordinate2D,
@@ -3542,12 +3592,12 @@ class GoogleMapsService: ObservableObject {
         radiusMeters: Int
     ) async -> [RestrictedPolygon] {
         // Query for restricted area polygons
+        // Note: Hospital is NOT included - many valid POIs are on hospital grounds
         let query = """
         [out:json][timeout:15];
         (
           way["amenity"="school"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           way["amenity"="university"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
-          way["amenity"="hospital"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           way["leisure"="golf_course"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           way["landuse"="military"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
           way["amenity"="kindergarten"](around:\(radiusMeters),\(location.latitude),\(location.longitude));
@@ -3594,11 +3644,10 @@ class GoogleMapsService: ObservableObject {
                     let tags = element["tags"] as? [String: String] ?? [:]
                     let name = tags["name"] ?? ""
                     
-                    // Determine type
+                    // Determine type (hospital is NOT included - valid POIs exist there)
                     var type = "unknown"
                     if tags["amenity"] == "school" || tags["amenity"] == "kindergarten" { type = "school" }
                     else if tags["amenity"] == "university" { type = "university" }
-                    else if tags["amenity"] == "hospital" { type = "hospital" }
                     else if tags["leisure"] == "golf_course" { type = "golf_course" }
                     else if tags["landuse"] == "military" { type = "military" }
                     else if tags["amenity"] == "prison" { type = "prison" }

@@ -1786,8 +1786,6 @@ struct SettingsView: View {
     @State private var showHealthKitUnavailable = false
     @State private var showMotionUnavailable = false
     @State private var showHealthKitManageAlert = false
-    @State private var showTestResultsAlert = false
-    @State private var googleQuota: (today: Int, cap: Int) = (0, 10)  // v1.9.50: Track Google quota
     
     // Only show permissions that have been interacted with (not .notDetermined)
     var shouldShowNotifications: Bool {
@@ -1814,16 +1812,6 @@ struct SettingsView: View {
         AppTheme(rawValue: appTheme) ?? .system
     }
     
-    // MARK: - Debug Test Actions
-    #if DEBUG
-    private func runDeduplicationTests() {
-        print("🔵 [DEBUG] Test button tapped!")
-        print("🔵 [DEBUG] Calling runAllTests()...")
-        DeduplicationTestRunner.shared.runAllTests()
-        print("🔵 [DEBUG] runAllTests() completed, showing alert")
-        showTestResultsAlert = true
-    }
-    #endif
     
     // MARK: - List Sections (extracted to reduce compiler complexity)
     
@@ -2016,45 +2004,6 @@ struct SettingsView: View {
         .frame(maxWidth: 400)
     }
     */
-    
-    private var debugTestsSection: some View {
-        Section("Debug Tests") {
-            Button(action: runDeduplicationTests) {
-                HStack {
-                    Label("Run Deduplication Tests", systemImage: "checkmark.seal")
-                    Spacer()
-                }
-                .foregroundColor(.blue)
-            }
-            
-            // Clear pre-populated database to test Firebase Storage download
-            Button(action: {
-                PrePopulatedPOIService.shared.clearDatabase()
-                print("📦 Pre-populated DB: Cleared - will download from Firebase Storage on next app start")
-            }) {
-                HStack {
-                    Label("Clear Pre-populated DB (Test Firebase)", systemImage: "arrow.down.circle")
-                    Spacer()
-                }
-                .foregroundColor(.orange)
-            }
-            
-            // Clear POI cache (may be showing old POI names)
-            Button(action: {
-                POICacheService.shared.clearCache()
-                print("📦 POI Cache: Cleared - will fetch fresh POIs on next search")
-            }) {
-                HStack {
-                    Label("Clear POI Cache", systemImage: "trash.circle")
-                    Spacer()
-                }
-                .foregroundColor(.red)
-            }
-            
-            // NOTE: Database generation is now done on computer using generate_database.py
-            // Removed debug button - database is generated on computer and bundled with app
-        }
-    }
     #endif
     
     // Get app version from bundle (e.g., "1.0.1 (2)")
@@ -2219,17 +2168,6 @@ struct SettingsView: View {
                 
                 aboutSection
                 
-                // Debug: Deduplication Tests (only in debug builds)
-                #if DEBUG
-                debugTestsSection
-                #endif
-                
-                // v1.9.50: Cache Management for Testing
-                CacheManagementSection(googleQuota: $googleQuota, onClear: clearAllCaches)
-                
-                // Cached Locations Section
-                CachedLocationsSection()
-                
                 // Privacy Section
                 Section {
                     NavigationLink {
@@ -2372,11 +2310,6 @@ struct SettingsView: View {
             } message: {
                 Text("Motion & Fitness tracking is not available on the iOS Simulator.\n\nPlease test on a real device to enable step counting during walks.")
             }
-            .alert("Tests Executed", isPresented: $showTestResultsAlert) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("Deduplication tests have been executed.\n\nCheck the Xcode console (Cmd+Shift+Y) to see detailed test results with ✅/❌ indicators.")
-            }
             // Removed database generation sheet and alert - no longer needed
             .alert("Manage HealthKit Access", isPresented: $showHealthKitManageAlert) {
                 Button("Open Health App") {
@@ -2390,7 +2323,6 @@ struct SettingsView: View {
             .id(appTheme) // Force view refresh when theme changes
             .onAppear {
                 refreshPermissionStatuses()
-                updateGoogleQuota()  // v1.9.50: Update quota on appear
             }
             .onChange(of: scenePhase) { oldPhase, newPhase in
                 if newPhase == .active {
@@ -2401,10 +2333,6 @@ struct SettingsView: View {
         }
     }
     
-    // v1.9.50: Update Google quota
-    private func updateGoogleQuota() {
-        googleQuota = GoogleMapsService.shared.getGooglePlacesCallCount()
-    }
     
     private func refreshPermissionStatuses() {
         // Check notification status
@@ -2418,33 +2346,6 @@ struct SettingsView: View {
         healthKitService.checkAuthorization()
     }
     
-    // v1.9.50: Clear all caches for testing
-    private func clearAllCaches() {
-        // Get stats before clearing
-        let poiStats = POICacheService.shared.getCacheStats()
-        let routeStats = RouteCacheService.shared.getCacheStats()
-        let quota = GoogleMapsService.shared.getGooglePlacesCallCount()
-        
-        // Clear both caches
-        POICacheService.shared.clearCache()
-        RouteCacheService.shared.clearCache()
-        
-        // Update quota display
-        updateGoogleQuota()
-        
-        print("═══════════════════════════════════════════════════════════")
-        print("🧹 CACHE CLEARED FOR TESTING")
-        print("═══════════════════════════════════════════════════════════")
-        print("📦 POI Cache: Removed \(poiStats.locations) locations, \(poiStats.totalPOIs) POIs")
-        print("📦 Route Cache: Removed \(routeStats.routeSets) route sets, \(routeStats.totalRoutes) routes")
-        print("🌐 Google Quota: \(quota.today)/\(quota.cap) calls remaining")
-        print("═══════════════════════════════════════════════════════════")
-        print("✅ Ready to test free-sources-first strategy!")
-        print("   Next route generation will:")
-        print("   1. Try free sources first (Apple/OSM/Geograph)")
-        print("   2. Fallback to Google if <15 POIs found (optimal threshold)")
-        print("═══════════════════════════════════════════════════════════")
-    }
     
     private func requestNotificationPermission() {
         if systemNotificationsEnabled {
@@ -2915,299 +2816,6 @@ struct ControlPoint: View {
     }
 }
 
-// MARK: - Cached Locations Section
-struct CachedLocationsSection: View {
-    @State private var cachedLocations: [POICacheService.CachedLocationInfo] = []
-    @State private var locationNames: [UUID: String] = [:] // Store resolved names by location ID
-    
-    var body: some View {
-        Section {
-            // Header with count
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Saved Locations")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    
-                    // v1.6.28: No limit - just show count
-                    Text("\(cachedLocations.count) location\(cachedLocations.count == 1 ? "" : "s") cached")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                // Count badge
-                Text("\(cachedLocations.count)")
-                    .font(.caption)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color.tealAccent)
-                    .clipShape(Capsule())
-            }
-            .padding(.vertical, 4)
-            
-            // List of cached locations
-            if cachedLocations.isEmpty {
-                HStack {
-                    Image(systemName: "mappin.slash")
-                        .foregroundColor(.secondary)
-                    Text("No locations saved yet")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.vertical, 8)
-            } else {
-                ForEach(Array(cachedLocations.enumerated()), id: \.element.id) { index, location in
-                    NavigationLink {
-                        CachedPOIsDetailView(
-                            locationName: locationNames[location.id] ?? "Cached Location",
-                            coordinate: location.coordinate,
-                            fetchedAt: location.fetchedAt
-                        )
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "mappin.circle.fill")
-                                .foregroundColor(.tealAccent)
-                                .font(.title3)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(locationNames[location.id] ?? "Loading...")
-                                    .font(.subheadline)
-                                    .foregroundColor(.primary)
-                                Text("\(location.poiCount) places • Saved \(location.fetchedAt, style: .relative) ago")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    .onAppear {
-                        // Reverse geocode this location if not already done
-                        if locationNames[location.id] == nil {
-                            POICacheService.shared.getLocationName(for: location.coordinate) { name in
-                                DispatchQueue.main.async {
-                                    locationNames[location.id] = name
-                                }
-                            }
-                        }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            // Delete this cached location
-                            POICacheService.shared.deleteLocation(at: index)
-                            refreshCachedLocations()
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
-                }
-            }
-        } header: {
-            HStack {
-                Image(systemName: "map.fill")
-                Text("Walking Routes Cache")
-            }
-        } footer: {
-            // v1.6.28: No limit on cached locations
-            Text("Routes are cached to speed up generation. Swipe to delete locations you no longer need.")
-        }
-        .onAppear {
-            refreshCachedLocations()
-        }
-    }
-    
-    private func refreshCachedLocations() {
-        cachedLocations = POICacheService.shared.getCachedLocationsInfo()
-        locationNames = [:] // Reset names to trigger re-geocoding
-    }
-}
-
-// MARK: - Cache Management Section (v1.9.50)
-struct CacheManagementSection: View {
-    @Binding var googleQuota: (today: Int, cap: Int)
-    let onClear: () -> Void
-    
-    var body: some View {
-        Group {
-            Section {
-                // Google Quota Status
-                HStack {
-                    Label("Google Places Quota", systemImage: "chart.bar.fill")
-                    Spacer()
-                    Text("\(googleQuota.today)/\(googleQuota.cap)")
-                        .foregroundColor(googleQuota.today >= googleQuota.cap ? .red : .primary)
-                        .fontWeight(.semibold)
-                }
-                
-                // Clear All Caches Button
-                Button(action: onClear) {
-                    HStack {
-                        Label("Clear All Caches", systemImage: "trash.fill")
-                        Spacer()
-                    }
-                    .foregroundColor(.coralPink)
-                }
-            } header: {
-                Text("Cache Management (Testing)")
-            } footer: {
-                Text("Clearing cache is safe and doesn't use API calls. Use this to test the free-sources-first strategy.")
-            }
-        }
-    }
-}
-
-// MARK: - Cached POIs Detail View
-struct CachedPOIsDetailView: View {
-    let locationName: String
-    let coordinate: CLLocationCoordinate2D
-    let fetchedAt: Date
-    
-    @State private var pois: [POICacheService.CachedPOI] = []
-    @State private var searchText: String = ""
-    
-    var filteredPOIs: [POICacheService.CachedPOI] {
-        if searchText.isEmpty {
-            return pois
-        }
-        return pois.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
-    }
-    
-    // Group POIs by category
-    var groupedPOIs: [(category: String, pois: [POICacheService.CachedPOI])] {
-        var groups: [String: [POICacheService.CachedPOI]] = [:]
-        
-        for poi in filteredPOIs {
-            let category = categorize(poi: poi)
-            groups[category, default: []].append(poi)
-        }
-        
-        // Sort categories and POIs
-        return groups.map { (category: $0.key, pois: $0.value.sorted { $0.name < $1.name }) }
-            .sorted { $0.category < $1.category }
-    }
-    
-    var body: some View {
-        List {
-            // Header info
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Image(systemName: "mappin.circle.fill")
-                            .font(.title)
-                            .foregroundColor(.tealAccent)
-                        
-                        VStack(alignment: .leading) {
-                            Text(locationName)
-                                .font(.headline)
-                            Text("\(pois.count) places discovered")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    
-                    HStack {
-                        Image(systemName: "clock")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("Saved \(fetchedAt, style: .relative) ago")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            
-            // POI List by category
-            ForEach(groupedPOIs, id: \.category) { group in
-                Section(header: Text(group.category)) {
-                    ForEach(group.pois, id: \.placeId) { poi in
-                        HStack(spacing: 12) {
-                            Image(systemName: iconFor(poi: poi))
-                                .font(.title3)
-                                .foregroundColor(.tealAccent)
-                                .frame(width: 30)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(poi.toPlaceResult().displayName)
-                                    .font(.subheadline)
-                                
-                                if let vicinity = poi.vicinity {
-                                    Text(vicinity)
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                }
-                            }
-                            
-                            Spacer()
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
-            }
-        }
-        .searchable(text: $searchText, prompt: "Search places")
-        .navigationTitle("Cached Places")
-        .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            pois = POICacheService.shared.getPOIsForLocation(at: coordinate)
-        }
-    }
-    
-    private func categorize(poi: POICacheService.CachedPOI) -> String {
-        let types = poi.types
-        
-        if types.contains("restaurant") || types.contains("food") || types.contains("cafe") || types.contains("bakery") {
-            return "🍽️ Food & Drink"
-        } else if types.contains("lodging") || types.contains("hotel") {
-            return "🏨 Hotels"
-        } else if types.contains("store") || types.contains("shopping_mall") || types.contains("clothing_store") {
-            return "🛍️ Shopping"
-        } else if types.contains("park") || types.contains("natural_feature") {
-            return "🌳 Parks & Nature"
-        } else if types.contains("museum") || types.contains("art_gallery") || types.contains("tourist_attraction") {
-            return "🎨 Arts & Culture"
-        } else if types.contains("health") || types.contains("hospital") || types.contains("pharmacy") {
-            return "🏥 Health"
-        } else if types.contains("gym") || types.contains("spa") {
-            return "💪 Fitness & Wellness"
-        } else if types.contains("bank") || types.contains("atm") {
-            return "🏦 Finance"
-        } else {
-            return "📍 Other Places"
-        }
-    }
-    
-    private func iconFor(poi: POICacheService.CachedPOI) -> String {
-        let types = poi.types
-        
-        if types.contains("restaurant") { return "fork.knife" }
-        if types.contains("cafe") { return "cup.and.saucer.fill" }
-        if types.contains("bar") { return "wineglass.fill" }
-        if types.contains("bakery") { return "birthday.cake.fill" }
-        if types.contains("hotel") || types.contains("lodging") { return "bed.double.fill" }
-        if types.contains("store") || types.contains("shopping") { return "bag.fill" }
-        if types.contains("park") { return "leaf.fill" }
-        if types.contains("museum") { return "building.columns.fill" }
-        if types.contains("pharmacy") { return "cross.case.fill" }
-        if types.contains("hospital") { return "cross.circle.fill" }
-        if types.contains("gym") { return "dumbbell.fill" }
-        if types.contains("spa") { return "sparkles" }
-        if types.contains("bank") { return "banknote.fill" }
-        if types.contains("church") { return "cross.fill" }
-        
-        return "mappin"
-    }
-}
 
 #Preview {
     let viewModel = WaitingRoomViewModel()

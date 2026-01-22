@@ -209,7 +209,33 @@ class RouteCacheService {
         // 🎯 PRIORITY 0: Check pre-populated database first
         if let prePopulatedRoutes = PrePopulatedPOIService.shared.getPrePopulatedRoutes(near: location, durationMinutes: durationMinutes) {
             print("📦 PRE-POPULATED ROUTES HIT! Found \(prePopulatedRoutes.count) routes from pre-populated database")
-            return prePopulatedRoutes
+            
+            // v1.9.60: Filter out routes containing restricted POIs (playcare, nursery, etc.)
+            // This catches routes in the database that include restricted POIs
+            let filteredRoutes = prePopulatedRoutes.filter { routeWithMeta in
+                let hasRestrictedPOI = routeWithMeta.route.places.contains { place in
+                    GoogleMapsService.shared.isRestrictedPOI(place)
+                }
+                if hasRestrictedPOI {
+                    let routeName = routeWithMeta.name ?? "Unnamed"
+                    let restrictedPOIs = routeWithMeta.route.places.filter { GoogleMapsService.shared.isRestrictedPOI($0) }
+                    let restrictedNames = restrictedPOIs.map { $0.name }.joined(separator: ", ")
+                    print("📦 🏫 Filtered pre-populated route '\(routeName)' - contains restricted POI(s): \(restrictedNames)")
+                }
+                return !hasRestrictedPOI
+            }
+            
+            let restrictedFilteredCount = prePopulatedRoutes.count - filteredRoutes.count
+            if restrictedFilteredCount > 0 {
+                print("📦 🏫 Filtered \(restrictedFilteredCount) pre-populated route(s) containing restricted POIs")
+            }
+            
+            // Only return if we still have valid routes after filtering
+            if !filteredRoutes.isEmpty {
+                return filteredRoutes
+            } else {
+                print("📦 ⚠️ All pre-populated routes contained restricted POIs - falling back to regular cache")
+            }
         }
         
         // 🎯 PRIORITY 1: Check regular cache
