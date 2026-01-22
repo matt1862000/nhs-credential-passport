@@ -8392,6 +8392,8 @@ class GoogleMapsService: ObservableObject {
             // Skip if already in route or excluded
             guard !existingPOIIds.contains(poi.placeId) else { continue }
             guard !excludePlaceIds.contains(poi.placeId) else { continue }
+            // Skip restricted POIs (playcare, nursery, playground, etc.)
+            guard !isRestrictedPOI(poi) else { continue }
             
             // Find minimum distance from this POI to any point on the route
             var minDist = Double.infinity
@@ -8845,7 +8847,8 @@ class GoogleMapsService: ObservableObject {
             print("🎯 🆘 FALLBACK: Including all non-excluded POIs")
             filtered = places.filter { place in
                 let types = Set(place.types ?? [])
-                return types.isDisjoint(with: excludedTypes)
+                // Still exclude restricted POIs (playcare, nursery, playground, etc.) even in fallback
+                return types.isDisjoint(with: excludedTypes) && !isRestrictedPOI(place)
             }
             print("🎯 ✓ \(filtered.count) candidates after fallback")
         }
