@@ -920,6 +920,27 @@ class GoogleMapsService: ObservableObject {
                 print("   🍽️ \(fp.name): ~\(est)min round-trip")
             }
             
+            // v2.0.1: FALLBACK when pre-filter is too aggressive for 5-min routes
+            let minimumCandidates = 10
+            if accepted.count < minimumCandidates && pois.count >= minimumCandidates {
+                print("🎯 ⚠️ 5-MIN FALLBACK: Only \(accepted.count) candidates (need \(minimumCandidates))")
+                
+                // Sort by estimated time (closest first)
+                let sortedByTime = pois.map { poi -> (poi: PlaceResult, estimated: Int) in
+                    (poi, estimateRoundTripMinutes(from: origin, to: poi))
+                }.sorted { $0.estimated < $1.estimated }
+                
+                // Take nearest POIs as fallback
+                let fallbackCount = min(minimumCandidates * 2, pois.count)
+                let fallbackPOIs = Array(sortedByTime.prefix(fallbackCount).map { $0.poi })
+                
+                let nearestEstimate = sortedByTime.first?.estimated ?? 0
+                let furthestEstimate = sortedByTime[min(fallbackCount - 1, sortedByTime.count - 1)].estimated
+                print("🎯 ✅ 5-MIN FALLBACK: Using \(fallbackPOIs.count) nearest POIs (est: \(nearestEstimate)-\(furthestEstimate)min)")
+                
+                return fallbackPOIs
+            }
+            
             return accepted
         }
         
@@ -992,6 +1013,30 @@ class GoogleMapsService: ObservableObject {
                     .map { "\($0.name) (~\($0.estimated)min)" }.joined(separator: ", ")
                 print("   ❌ Too long (>\(maxDuration)min): \(tooLong) POIs (e.g., \(examples))")
             }
+        }
+        
+        // v2.0.1: FALLBACK when pre-filter is too aggressive
+        // If we rejected all/most POIs, use the nearest ones anyway
+        // This prevents "POI desert" failures where all POIs are slightly too far
+        let minimumCandidates = 10
+        if accepted.count < minimumCandidates && pois.count >= minimumCandidates {
+            print("🎯 ⚠️ PRE-FILTER FALLBACK: Only \(accepted.count) candidates (need \(minimumCandidates))")
+            
+            // Sort all POIs by estimated round-trip time (closest first)
+            let sortedByTime = pois.map { poi -> (poi: PlaceResult, estimated: Int) in
+                (poi, estimateRoundTripMinutes(from: origin, to: poi))
+            }.sorted { $0.estimated < $1.estimated }
+            
+            // Take the nearest POIs as fallback candidates
+            let fallbackCount = min(minimumCandidates * 2, pois.count)  // Take up to 20 nearest
+            let fallbackPOIs = Array(sortedByTime.prefix(fallbackCount).map { $0.poi })
+            
+            // Show what we're using
+            let nearestEstimate = sortedByTime.first?.estimated ?? 0
+            let furthestEstimate = sortedByTime[min(fallbackCount - 1, sortedByTime.count - 1)].estimated
+            print("🎯 ✅ FALLBACK: Using \(fallbackPOIs.count) nearest POIs (est: \(nearestEstimate)-\(furthestEstimate)min)")
+            
+            return fallbackPOIs
         }
         
         return accepted
@@ -8101,14 +8146,15 @@ class GoogleMapsService: ObservableObject {
             return finalizeRouteDedup(selected)
         }
         
-        // Return BEST fallback route we found - but ONLY if within 130% cap
+        // Return BEST fallback route we found - but ONLY if within 150% cap
+        // v2.0.1: Relaxed from 130% to 150% for areas with indirect road networks
         if var best = bestFallbackRoute {
             let mins = best.durationSeconds / 60
-            let hardCap = Int(Double(targetDurationMinutes) * 1.30)  // 130% hard cap
+            let hardCap = Int(Double(targetDurationMinutes) * 1.50)  // 150% hard cap (relaxed from 130%)
             
-            // v1.6.36: NEVER return routes >130% - this was the bug causing 180-200% routes
+            // v2.0.1: Relaxed from 130% to 150% for areas with indirect road networks
             if mins > hardCap {
-                print("🗺️ ❌ Fallback route exceeds 130% cap: \(mins)min > \(hardCap)min - REJECTING")
+                print("🗺️ ❌ Fallback route exceeds 150% cap: \(mins)min > \(hardCap)min - REJECTING")
                 // Don't return this route, fall through to guaranteed fallback
             } else {
                 // Remove waypoints that are too close together (should be ~5 min / 300m+ apart)
@@ -8178,11 +8224,11 @@ class GoogleMapsService: ObservableObject {
             availablePOIs: places
         ) {
             let mins = guaranteedRoute.durationSeconds / 60
-            let hardCap = Int(Double(targetDurationMinutes) * 1.30)  // 130% hard cap
+            let hardCap = Int(Double(targetDurationMinutes) * 1.80)  // 180% hard cap (v2.0.1: relaxed for last resort)
             
-            // v1.6.36: NEVER return routes >130%
+            // v2.0.1: Relaxed from 130% to 180% for guaranteed fallback - better to return something than fail
             if mins > hardCap {
-                print("🗺️ 🆘 ❌ Guaranteed fallback exceeds 130%: \(mins)min > \(hardCap)min - REJECTING")
+                print("🗺️ 🆘 ❌ Guaranteed fallback exceeds 180%: \(mins)min > \(hardCap)min - REJECTING")
                 // Fall through to throw error
             } else {
                 print("🗺️ ✓ Guaranteed fallback created: \(mins)min (target: \(targetDurationMinutes)min)")
@@ -8307,9 +8353,9 @@ class GoogleMapsService: ObservableObject {
                 let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
                 let durationMinutes = totalDuration / 60
                 
-                // Accept if within 40-130% of target (v1.6.36: capped at 130%)
+                // Accept if within 40-150% of target (v2.0.1: relaxed from 130% for indirect road networks)
                 let minAccept = max(2, targetDurationMinutes * 4 / 10)  // 40%
-                let maxAccept = targetDurationMinutes * 13 / 10  // 130% - hard cap
+                let maxAccept = targetDurationMinutes * 15 / 10  // 150% - relaxed cap
                 
                 if durationMinutes >= minAccept && durationMinutes <= maxAccept {
                     print("🗺️ 🆘 ✓ Found viable out-and-back: \(durationMinutes)min")
@@ -8332,13 +8378,15 @@ class GoogleMapsService: ObservableObject {
             }
         }
         
-        // Last resort: return a reachable POI but cap at 130% of target
-        // Tightened from 150% to reduce outliers
-        let absoluteMaxDuration = targetDurationMinutes * 130 / 100  // 130% cap
+        // Last resort: return a reachable POI but cap at 180% of target
+        // v2.0.1: Increased from 130% to 180% for locations with indirect road networks
+        // (e.g., hospital grounds where actual walking distance is 2x+ straight-line)
+        // Better to return a longer-than-ideal route than fail completely
+        let absoluteMaxDuration = targetDurationMinutes * 180 / 100  // 180% cap
         var bestLastResort: GeneratedRoute? = nil
         var bestLastResortDiff = Int.max
         
-        for candidate in sorted.prefix(10) {
+        for candidate in sorted.prefix(5) {  // v2.0.1: Reduced from 10 to 5 for speed
             let poi = candidate.poi
             print("🗺️ 🆘 Last resort: trying \(poi.name)")
             
