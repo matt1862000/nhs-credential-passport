@@ -59,8 +59,17 @@ struct RouteSelectionView: View {
         viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable
     }
     
+    // v2.0.1: Check if delay is too short for a walk
+    // Need at least 15 minutes (10 min walk + 5 min buffer) to recommend a walk
+    private var isDelayTooShortForWalk: Bool {
+        guard hasActiveClinicDelay else { return false }
+        let availableTime = viewModel.waitTimeInfo.estimatedMinutes - 5
+        return availableTime < 10  // Minimum walk is 10 minutes
+    }
+    
     // Calculate recommended duration based on delay time (with 5 min buffer)
     // Defaults to 30 min if no clinic is active (free walk mode - best route reliability)
+    // v2.0.1: Minimum walk is 10 minutes, so need 15+ min delay
     private var recommendedDuration: Int {
         // If no active clinic, default to 30 min (most reliable routes)
         if !hasActiveClinicDelay {
@@ -68,13 +77,19 @@ struct RouteSelectionView: View {
         }
         
         let availableTime = viewModel.waitTimeInfo.estimatedMinutes - 5
+        
+        // v2.0.1: If delay is too short, still return 10 but UI will show warning
+        if availableTime < 10 {
+            return 10  // Will show warning that walk may not fit
+        }
+        
         let presetOptions = [10, 15, 20, 25, 30]
         
         // Find the best preset option that fits within available time
         if let bestOption = presetOptions.reversed().first(where: { $0 <= availableTime }) {
             return bestOption
         }
-        return 10 // Default to minimum preset if delay is very short
+        return 10 // Default to minimum preset
     }
     
     // Whether custom time should be auto-selected:
@@ -1130,6 +1145,26 @@ struct LocalRoutePickerSheet: View {
                                 }
                             }
                             .padding(.top, 8)
+                            
+                            // v2.0.1: Warning when delay is too short for a walk
+                            if isDelayTooShortForWalk {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundColor(.orange)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Wait time is short")
+                                            .font(.subheadline)
+                                            .fontWeight(.semibold)
+                                        Text("Your \(viewModel.waitTimeInfo.estimatedMinutes)-minute delay may not allow time for a walk. Consider staying near reception.")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.orange.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
                             
                             // Duration picker
                             VStack(alignment: .leading, spacing: 12) {

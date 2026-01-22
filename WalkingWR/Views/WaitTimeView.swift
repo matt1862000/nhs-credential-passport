@@ -586,6 +586,7 @@ struct WalkingSuggestionCard: View {
     // Suggested duration based on wait time (leave 5 min buffer)
     // Returns 30 as default if no clinic is active (free walk mode)
     // 30 min chosen because: most reliable routes (90%+) and WHO recommended daily activity
+    // v2.0.1: Minimum walk is 10 minutes, so need 15+ min delay to recommend a walk
     private var suggestedDuration: Int {
         if !hasActiveClinicDelay {
             return 30 // Default for free walk mode - best route reliability
@@ -593,10 +594,10 @@ struct WalkingSuggestionCard: View {
         let waitTime = viewModel.waitTimeInfo.estimatedMinutes
         // Dynamic calculation: delay minus 5-minute buffer to return
         let suggested = waitTime - 5
-        if suggested >= 5 {
+        if suggested >= 10 {  // Minimum walk duration is 10 minutes
             return suggested
         }
-        return 0 // Too short to walk (less than 5 min delay)
+        return 0 // Too short to walk (less than 15 min delay needed for 10 min walk + 5 min buffer)
     }
     
     // Estimated steps for the duration
