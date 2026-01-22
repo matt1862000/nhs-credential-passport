@@ -10,6 +10,7 @@
 		6C9677302EE9B7CE00DDB3B5 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 6C96772F2EE9B7CE00DDB3B5 /* FirebaseFirestore */; };
 		6C9677322EE9B7D700DDB3B5 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 6C9677312EE9B7D700DDB3B5 /* FirebaseCore */; };
 		6C96776D2EEA2F9900DDB3B5 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = 6C96776C2EEA2F9900DDB3B5 /* FirebaseMessaging */; };
+		6C96776E2EEA2F9900DDB3B5 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 6C96776F2EEA2F9900DDB3B5 /* FirebaseStorage */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +48,7 @@
 				6C96776D2EEA2F9900DDB3B5 /* FirebaseMessaging in Frameworks */,
 				6C9677322EE9B7D700DDB3B5 /* FirebaseCore in Frameworks */,
 				6C9677302EE9B7CE00DDB3B5 /* FirebaseFirestore in Frameworks */,
+				6C96776E2EEA2F9900DDB3B5 /* FirebaseStorage in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -101,6 +103,7 @@
 				6C96772F2EE9B7CE00DDB3B5 /* FirebaseFirestore */,
 				6C9677312EE9B7D700DDB3B5 /* FirebaseCore */,
 				6C96776C2EEA2F9900DDB3B5 /* FirebaseMessaging */,
+				6C96776F2EEA2F9900DDB3B5 /* FirebaseStorage */,
 			);
 			productName = WalkingWR;
 			productReference = 6CA4D88E2EE6145800FFA65F /* WalkingWR.app */;
@@ -292,7 +295,7 @@
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 276;
+				CURRENT_PROJECT_VERSION = 277;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -315,7 +318,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.93;
+				MARKETING_VERSION = 1.9.94;
 				PRODUCT_BUNDLE_IDENTIFIER = com.nhs.WalkingWR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -336,7 +339,7 @@
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 276;
+				CURRENT_PROJECT_VERSION = 277;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -359,7 +362,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.93;
+				MARKETING_VERSION = 1.9.94;
 				PRODUCT_BUNDLE_IDENTIFIER = com.nhs.WalkingWR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -422,6 +425,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 6C96772D2EE9B71D00DDB3B5 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseMessaging;
+		};
+		6C96776F2EEA2F9900DDB3B5 /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6C96772D2EE9B71D00DDB3B5 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

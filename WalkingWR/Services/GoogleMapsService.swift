@@ -555,7 +555,14 @@ class GoogleMapsService: ObservableObject {
     private func sourceQualityScore(for poi: PlaceResult, googlePOICount: Int, googlePOIs: [PlaceResult] = []) -> Double {
         // Only apply scoring if we have sufficient Google POIs (10+)
         // This ensures we still use OSM/Apple in sparse areas
-        guard googlePOICount >= 10 else { return 0.0 }
+        guard googlePOICount >= 10 else {
+            // No Google POIs available - use source-based scoring for pre-populated data
+            // Pre-populated OSM/Geograph POIs are pre-verified, so give them neutral/positive scores
+            if poi.source == .osm || poi.source == .geograph {
+                return 0.5  // Neutral bonus for pre-populated OSM/Geograph (they're pre-verified)
+            }
+            return 0.0  // Default for other sources when no Google POIs
+        }
         
         if isGooglePOI(poi) {
             return 3.0  // Strong preference for Google POIs
@@ -1299,57 +1306,20 @@ class GoogleMapsService: ObservableObject {
         var seenPlaceIds = Set<String>()
         
         // 🎯 PRIORITY 0: Check pre-populated database (fastest, no API calls)
+        // The pre-populated database already contains curated OSM + Geograph POIs
+        // When we have a DB hit, use ONLY those POIs - no external API calls needed
         if let prePopulatedPOIs = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: location, radiusMeters: Double(radiusMeters)) {
             print("📦 PRE-POPULATED DB HIT! Found \(prePopulatedPOIs.count) POIs from pre-populated database")
+            print("📦 Using ONLY database POIs - skipping all external API calls (OSM, Geograph, Apple, Google)")
             allResults = prePopulatedPOIs
-            for poi in allResults {
-                seenPlaceIds.insert(poi.placeId)
-            }
             
-            // Always fetch Geograph to supplement pre-populated data
-            if !geographApiKey.isEmpty {
-                let rawGeographPOIs = await searchGeographForPOIs(location: location, radiusMeters: radiusMeters)
-                
-                // Filter by distance
-                let maxRealisticDistance = Double(radiusMeters) * 2.0
-                let distanceFilteredGeograph = rawGeographPOIs.filter { poi in
-                    let distance = distanceBetween(location, poi.coordinate)
-                    return distance <= maxRealisticDistance
-                }
-                
-                // Pre-process Geograph POIs
-                let filteredGeograph = distanceFilteredGeograph.filter { !shouldExcludeGeographPOI($0, origin: location) }
-                let clusteredGeograph = clusterGeographPOIs(filteredGeograph, origin: location)
-                let scoredGeograph = clusteredGeograph.map { poi -> (poi: PlaceResult, score: Double) in
-                    let score = geographQualityScore(poi)
-                    return (poi, score)
-                }
-                let processedGeograph = scoredGeograph.filter { $0.score > 0.0 }.map { $0.poi }
-                
-                // Smart merge with pre-populated results
-                let beforeCount = allResults.count
-                allResults = smartMergeGeographPOIs(
-                    existing: allResults,
-                    newGeograph: processedGeograph,
-                    origin: location
-                )
-                let finalAdded = allResults.count - beforeCount
-                
-                let geographInFinal = allResults.filter { $0.source == .geograph }.count
-                print("📸 Geograph: Added \(finalAdded) new POIs to pre-populated database results")
-                print("📸 Final Geograph POIs in results: \(geographInFinal)")
-            }
-            
-            // Apply canonical deduplication to combined results
-            allResults = canonicalizePOIs(allResults, origin: location)
-            
-            // Cache the combined results for future use
+            // Cache the results for future use
             POICacheService.shared.cachePOIs(allResults, for: location)
             
             let endTime = Date()
             let totalTime = endTime.timeIntervalSince(startTime)
             let endTimeString = formatter.string(from: endTime)
-            print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalTime))s (pre-populated DB)")
+            print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalTime))s (pre-populated DB only)")
             
             return allResults
         }

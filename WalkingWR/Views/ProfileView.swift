@@ -1848,61 +1848,53 @@ struct SettingsView: View {
     }
     
     #if DEBUG
+    // NOTE: Database generation is now done on computer using generate_database.py
+    // Removed database generation UI - database is generated on computer and bundled with app
+    /*
     @State private var isGeneratingDatabase = false
     @State private var databaseGenerationStatus = ""
     @State private var showDatabaseSuccessAlert = false
     @State private var showDatabaseProgress = false
     @StateObject private var databaseGenerator = PrePopulatedPOIGenerator()
     
-    private func generatePOIDatabase() {
+    // Optional: Use this if you need to add routes from the app
+    private func addRoutesToDatabase() {
         isGeneratingDatabase = true
         showDatabaseProgress = true
-        databaseGenerationStatus = "Starting generation..."
+        databaseGenerationStatus = "Loading database and generating routes..."
         
         Task {
             do {
-                // Check if database already exists with POIs
-                if let existingDB = PrePopulatedPOIService.shared.loadBundledDatabase(),
-                   !existingDB.postcodeAreas.isEmpty,
-                   existingDB.postcodeAreas.first?.pois.isEmpty == false {
-                    // Database exists with POIs - only generate routes
-                    print("📦 Existing database found with POIs - generating routes only...")
-                    databaseGenerationStatus = "Found existing POIs. Generating routes with MapKit..."
-                    
-                    let fileURL = try await databaseGenerator.addRoutesToExistingDatabase()
-                    
+                // Check if database exists with POIs
+                guard let existingDB = PrePopulatedPOIService.shared.loadBundledDatabase(),
+                      !existingDB.postcodeAreas.isEmpty,
+                      existingDB.postcodeAreas.first?.pois.isEmpty == false else {
                     await MainActor.run {
                         isGeneratingDatabase = false
                         showDatabaseProgress = false
-                        databaseGenerationStatus = "✅ Routes added to database!\n\(fileURL.path)\n\nCopy this file to your project root and commit to GitHub."
+                        databaseGenerationStatus = "❌ No database found. Generate database using:\npython3 generate_database.py"
                         showDatabaseSuccessAlert = true
-                        
-                        // Also copy to Desktop for easy access
-                        if let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first {
-                            let desktopFile = desktopURL.appendingPathComponent("prepopulated_pois.json")
-                            try? FileManager.default.copyItem(at: fileURL, to: desktopFile)
-                            print("📦 Also copied to Desktop: \(desktopFile.path)")
-                        }
                     }
-                } else {
-                    // No existing database - generate everything
-                    print("📦 No existing database - generating POIs and routes...")
-                    databaseGenerationStatus = "Generating POIs and routes..."
+                    return
+                }
+                
+                // Database exists - add routes using OSRM
+                print("📦 Existing database found - adding routes with OSRM...")
+                databaseGenerationStatus = "Found existing POIs. Generating routes with OSRM..."
+                
+                let fileURL = try await databaseGenerator.addRoutesToExistingDatabase()
+                
+                await MainActor.run {
+                    isGeneratingDatabase = false
+                    showDatabaseProgress = false
+                    databaseGenerationStatus = "✅ Routes added!\n\(fileURL.path)\n\nReplace WalkingWR/prepopulated_pois.json with this file."
+                    showDatabaseSuccessAlert = true
                     
-                    let fileURL = try await databaseGenerator.generateAndSaveDatabase()
-                    
-                    await MainActor.run {
-                        isGeneratingDatabase = false
-                        showDatabaseProgress = false
-                        databaseGenerationStatus = "✅ Database saved to:\n\(fileURL.path)\n\nCopy this file to your project root and commit to GitHub."
-                        showDatabaseSuccessAlert = true
-                        
-                        // Also copy to Desktop for easy access
-                        if let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first {
-                            let desktopFile = desktopURL.appendingPathComponent("prepopulated_pois.json")
-                            try? FileManager.default.copyItem(at: fileURL, to: desktopFile)
-                            print("📦 Also copied to Desktop: \(desktopFile.path)")
-                        }
+                    // Also copy to Desktop for easy access
+                    if let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first {
+                        let desktopFile = desktopURL.appendingPathComponent("prepopulated_pois.json")
+                        try? FileManager.default.copyItem(at: fileURL, to: desktopFile)
+                        print("📦 Also copied to Desktop: \(desktopFile.path)")
                     }
                 }
             } catch {
@@ -1967,34 +1959,51 @@ struct SettingsView: View {
                     
                     // Current postcode
                     if !databaseGenerator.currentPostcode.isEmpty {
-                        HStack {
-                            Image(systemName: "mappin.circle.fill")
-                                .foregroundColor(.tealAccent)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Image(systemName: "mappin.circle.fill")
+                                    .foregroundColor(.tealAccent)
+                                Text("Current Area")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                             Text(databaseGenerator.currentPostcode)
                                 .font(.subheadline)
                                 .foregroundColor(.primary)
+                                .bold()
                         }
                     }
                     
                     // Current duration being generated
                     if databaseGenerator.currentDuration > 0 {
-                        HStack {
-                            Image(systemName: "clock.fill")
-                                .foregroundColor(.orange)
-                            Text("Generating \(databaseGenerator.currentDuration)min route...")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Image(systemName: "clock.fill")
+                                    .foregroundColor(.orange)
+                                Text("Current Route")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Text("\(databaseGenerator.currentDuration)min route")
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
                         }
                     }
                     
                     // Routes generated count
                     if databaseGenerator.routesGenerated > 0 {
-                        HStack {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.mintGreen)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.mintGreen)
+                                Text("Progress")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                             Text("\(databaseGenerator.routesGenerated) routes generated")
-                                .font(.caption)
+                                .font(.subheadline)
                                 .foregroundColor(.mintGreen)
+                                .bold()
                         }
                     }
                 }
@@ -2006,6 +2015,7 @@ struct SettingsView: View {
         .padding(24)
         .frame(maxWidth: 400)
     }
+    */
     
     private var debugTestsSection: some View {
         Section("Debug Tests") {
@@ -2017,18 +2027,32 @@ struct SettingsView: View {
                 .foregroundColor(.blue)
             }
             
-            Button(action: generatePOIDatabase) {
+            // Clear pre-populated database to test Firebase Storage download
+            Button(action: {
+                PrePopulatedPOIService.shared.clearDatabase()
+                print("📦 Pre-populated DB: Cleared - will download from Firebase Storage on next app start")
+            }) {
                 HStack {
-                    Label("Generate Routes (or Full DB)", systemImage: "square.and.arrow.down")
+                    Label("Clear Pre-populated DB (Test Firebase)", systemImage: "arrow.down.circle")
                     Spacer()
-                    if isGeneratingDatabase {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    }
                 }
-                .foregroundColor(.blue)
+                .foregroundColor(.orange)
             }
-            .disabled(isGeneratingDatabase)
+            
+            // Clear POI cache (may be showing old POI names)
+            Button(action: {
+                POICacheService.shared.clearCache()
+                print("📦 POI Cache: Cleared - will fetch fresh POIs on next search")
+            }) {
+                HStack {
+                    Label("Clear POI Cache", systemImage: "trash.circle")
+                    Spacer()
+                }
+                .foregroundColor(.red)
+            }
+            
+            // NOTE: Database generation is now done on computer using generate_database.py
+            // Removed debug button - database is generated on computer and bundled with app
         }
     }
     #endif
@@ -2353,33 +2377,7 @@ struct SettingsView: View {
             } message: {
                 Text("Deduplication tests have been executed.\n\nCheck the Xcode console (Cmd+Shift+Y) to see detailed test results with ✅/❌ indicators.")
             }
-            .sheet(isPresented: $showDatabaseProgress) {
-                NavigationStack {
-                    VStack(spacing: 30) {
-                        Spacer()
-                        
-                        databaseProgressView
-                        
-                        Spacer()
-                        
-                        Button("Cancel") {
-                            isGeneratingDatabase = false
-                            showDatabaseProgress = false
-                        }
-                        .foregroundColor(.red)
-                        .padding()
-                    }
-                    .padding()
-                    .navigationTitle("Generating Database")
-                    .navigationBarTitleDisplayMode(.inline)
-                }
-                .presentationDetents([.medium])
-            }
-            .alert("Database Generation", isPresented: $showDatabaseSuccessAlert) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text(databaseGenerationStatus)
-            }
+            // Removed database generation sheet and alert - no longer needed
             .alert("Manage HealthKit Access", isPresented: $showHealthKitManageAlert) {
                 Button("Open Health App") {
                     openHealthApp()
