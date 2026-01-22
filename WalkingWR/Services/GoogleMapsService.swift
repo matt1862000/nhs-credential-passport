@@ -5633,11 +5633,12 @@ class GoogleMapsService: ObservableObject {
             print("🔄 Stage 2 (systematic) failed, trying shorter durations...")
         }
         
-        // Stage 3: Try shorter durations (drop 5 min at a time, but not below 5 min)
+        // Stage 3: Try shorter durations (drop 5 min at a time, but not below 10 min)
+        // v2.0.1: Minimum route duration is 10 minutes
         print("\n📍 STAGE 3: Fallback to Shorter Durations")
         let stage3StartTime = Date()
         print("⏱️ [TIMING] Stage 3 STARTED")
-        for reducedDuration in stride(from: targetDurationMinutes - 5, through: 5, by: -5) {
+        for reducedDuration in stride(from: targetDurationMinutes - 5, through: 10, by: -5) {
             let currentDuration = reducedDuration  // Capture for concurrent access
             await MainActor.run { retryStatus = "Trying \(currentDuration) min route..." }
             do {
@@ -6964,27 +6965,28 @@ class GoogleMapsService: ObservableObject {
         }
         
         // ════════════════════════════════════════════════════════════════
-        // 🚦 v1.6.21: VIABILITY GATE FOR SHORT ROUTES
+        // 🚦 v2.0.1: VIABILITY GATE FOR SHORT ROUTES
         // Prevents forced bad routes in sparse areas
+        // Minimum route duration is now 10 minutes
         // ════════════════════════════════════════════════════════════════
         let nearestPOIDistance = places.map { distanceBetween(location, $0.coordinate) }.min() ?? 9999
         
-        // For 5-7 min routes: nearest POI must be within ~300m (3.75 min one-way @ 80m/min)
-        // If nearest is >300m, a 5-min round trip is physically impossible
-        if targetDurationMinutes <= 7 && nearestPOIDistance > 300 {
-            print("🚦 VIABILITY GATE: 5-7min route not possible")
-            print("   📏 Nearest POI: \(Int(nearestPOIDistance))m (need ≤300m for round-trip)")
-            print("   💡 Recommending 5-min minimum for this location")
+        // For 10 min routes: nearest POI should be within ~400m (5 min one-way @ 80m/min)
+        // If nearest is >500m, a good 10-min route may not be possible
+        if targetDurationMinutes <= 10 && nearestPOIDistance > 500 {
+            print("🚦 VIABILITY GATE: 10min route may be challenging")
+            print("   📏 Nearest POI: \(Int(nearestPOIDistance))m (ideal ≤400m for round-trip)")
+            print("   💡 Route may be longer than requested")
             
             // Set flag so UI can show appropriate message
             await MainActor.run {
                 shortRouteNotViable = true
-                minimumViableMinutes = 5
+                minimumViableMinutes = 10
             }
         } else {
             await MainActor.run {
                 shortRouteNotViable = false
-                minimumViableMinutes = 5
+                minimumViableMinutes = 10
             }
         }
         

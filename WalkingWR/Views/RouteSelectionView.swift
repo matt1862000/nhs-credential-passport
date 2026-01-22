@@ -74,24 +74,22 @@ struct RouteSelectionView: View {
         if let bestOption = presetOptions.reversed().first(where: { $0 <= availableTime }) {
             return bestOption
         }
-        return 10 // Default to minimum preset if delay is very short (5 min available via custom)
+        return 10 // Default to minimum preset if delay is very short
     }
     
     // Whether custom time should be auto-selected:
-    // 1. When delay > 35 min (i.e., 30 min walk + 5 min buffer)
-    // 2. When recommended walk is 5 min (not available as preset button)
+    // When delay > 35 min (i.e., 30 min walk + 5 min buffer)
     // Only applies when a clinic is active - free walk mode uses preset 30 min
     private var shouldUseCustom: Bool {
         guard hasActiveClinicDelay else { return false }
         let delayMinutes = viewModel.waitTimeInfo.estimatedMinutes
-        let recommendedWalk = max(5, delayMinutes - 5)
-        // Use custom if recommended is 5 min (not in presets) or if delay > 35 min
-        return recommendedWalk == 5 || delayMinutes > 35
+        // Use custom only if delay > 35 min (allows 31-60 min walks via slider)
+        return delayMinutes > 35
     }
     
     // Custom duration value based on delay (with 6 min buffer)
     private var customDurationForDelay: Int {
-        max(5, viewModel.waitTimeInfo.estimatedMinutes - 6)
+        max(10, viewModel.waitTimeInfo.estimatedMinutes - 6)
     }
     
     var filteredRoutes: [WalkingRoute] {
@@ -458,7 +456,7 @@ struct LocalRouteCard: View {
                 HStack(spacing: 16) {
                     FeatureTag(icon: "building.2", text: "Real POIs")
                     FeatureTag(icon: "road.lanes", text: "Walking paths")
-                    FeatureTag(icon: "clock", text: "5-60 min")
+                    FeatureTag(icon: "clock", text: "10-60 min")
                 }
                 
                 // Status and action
@@ -1012,7 +1010,7 @@ struct LocalRoutePickerSheet: View {
     @State private var generatedRouteData: GeneratedRoute?
     @State private var showMapPreview = false
     @State private var errorMessage: String?
-    @State private var customTimeValue: Double = 5  // Minimum walk duration is 5 minutes
+    @State private var customTimeValue: Double = 10  // Minimum walk duration is 10 minutes
     
     
     // Store last valid route for recycling when shuffle exhausts options
@@ -1205,14 +1203,14 @@ struct LocalRoutePickerSheet: View {
                                                 .foregroundColor(.secondary)
                                         }
                                         
-                                        Slider(value: $customTimeValue, in: 5...60, step: 5)
+                                        Slider(value: $customTimeValue, in: 10...60, step: 5)
                                             .tint(sliderColor)
                                             .onChange(of: customTimeValue) { _, newValue in
                                                 selectedDuration = Int(newValue)
                                             }
                                         
                                         HStack {
-                                            Text("5 min")
+                                            Text("10 min")
                                                 .font(.caption2)
                                                 .foregroundColor(.secondary)
                                             Spacer()
