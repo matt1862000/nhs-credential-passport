@@ -6642,9 +6642,13 @@ class GoogleMapsService: ObservableObject {
             print("⏱️ [TIMING] Free sources fetch COMPLETED in \(String(format: "%.2f", freeSourcesElapsed))s")
             print("🗺️ Free sources: Found \(places.count) POIs (need \(desiredSpots) for route)")
             
-            // Fallback to Google if we have <15 POIs (sparse area - need Google for better route quality)
+            // Check if we used the pre-populated database (comprehensive, no need for Google fallback)
+            let usedDatabase = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: location, radiusMeters: Double(searchRadius)) != nil
+            
+            // Fallback to Google if we have <15 POIs AND we didn't use the database
+            // Database POIs are comprehensive and pre-curated, so no Google fallback needed
             // Optimal threshold: 15 POIs covers all standard routes (10-30 min) with buffer for filtering
-            if places.count < 15 {
+            if places.count < 15 && !usedDatabase {
                 let googleFallbackStartTime = Date()
                 print("🗺️ [FALLBACK] Only \(places.count) POIs from free sources (<15) - fetching Google POIs for better route quality...")
                 print("⏱️ [TIMING] Google fallback fetch STARTED")
@@ -6665,6 +6669,11 @@ class GoogleMapsService: ObservableObject {
                 print("⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", totalPOIFetchTime))s")
                 print("⏱️ [TIMING]   Free sources: \(String(format: "%.2f", freeSourcesElapsed))s")
                 print("⏱️ [TIMING]   Google fallback: \(String(format: "%.2f", googleFallbackElapsed))s")
+                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+            } else if usedDatabase {
+                print("🗺️ ✅ Using pre-populated database POIs (\(places.count) POIs) - skipping Google fallback (database is comprehensive)")
+                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", freeSourcesElapsed))s (database only)")
                 print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
             } else {
                 print("🗺️ ✅ Sufficient POIs from free sources (\(places.count) ≥15) - skipping Google (cost saved!)")
