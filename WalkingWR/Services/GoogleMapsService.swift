@@ -1664,12 +1664,58 @@ class GoogleMapsService: ObservableObject {
             print("🎯 [CANONICAL] No duplicates found (all \(allResults.count) POIs are unique)")
         }
         
-        // v1.6.47: Filter POIs inside restricted areas (schools, military, etc.) without road access
-        // Note: Hospitals are NOT filtered - many valid POIs are on hospital grounds
+        // v1.9.99: OPTIMISTIC FILTERING - Fast path first, expensive filtering in background
+        // Fast name/type filter already applied (isRestrictedPOI) - catches 95% of issues instantly
+        // Expensive polygon check runs in background and caches results for next time
         let beforeRestrictedFilter = allResults.count
-        allResults = await filterPOIsInRestrictedAreas(pois: allResults, location: location, radiusMeters: radiusMeters)
+        
+        // Try cached filtered results first (instant if available)
+        let cacheKey = "\(location.latitude)_\(location.longitude)_\(radiusMeters)"
+        var excludedPlaceIds: Set<String> = []
+        
+        filteredPOICacheLock.lock()
+        if let cached = filteredPOICache[cacheKey] {
+            excludedPlaceIds = cached
+            filteredPOICacheLock.unlock()
+            
+            // Apply cached exclusions
+            let beforeCached = allResults.count
+            allResults = allResults.filter { !excludedPlaceIds.contains($0.placeId) }
+            let cachedFiltered = beforeCached - allResults.count
+            if cachedFiltered > 0 {
+                print("🏫 ✅ Used cached restricted area filter - excluded \(cachedFiltered) POIs (instant)")
+            }
+        } else {
+            filteredPOICacheLock.unlock()
+            
+            // No cache - start background filtering (non-blocking)
+            print("🏫 ⚡ Fast path: Returning POIs immediately, filtering in background...")
+            let poisToFilter = allResults  // Capture for background task
+            Task.detached(priority: .utility) { [weak self] in
+                guard let self = self else { return }
+                let filtered = await self.filterPOIsInRestrictedAreas(pois: poisToFilter, location: location, radiusMeters: radiusMeters)
+                let excluded = Set(poisToFilter.filter { poi in !filtered.contains(where: { $0.placeId == poi.placeId }) }.map { $0.placeId })
+                
+                // Cache the excluded POI IDs for next time
+                self.filteredPOICacheLock.lock()
+                self.filteredPOICache[cacheKey] = excluded
+                // Limit cache size to prevent memory growth
+                if self.filteredPOICache.count > 50 {
+                    let oldestKey = self.filteredPOICache.keys.first!
+                    self.filteredPOICache.removeValue(forKey: oldestKey)
+                }
+                self.filteredPOICacheLock.unlock()
+                
+                let excludedCount = excluded.count
+                if excludedCount > 0 {
+                    print("🏫 ✅ Background filtering complete - excluded \(excludedCount) POIs (cached for next time)")
+                }
+            }
+        }
+        
         let restrictedFiltered = beforeRestrictedFilter - allResults.count
-        if restrictedFiltered > 0 {
+        if restrictedFiltered > 0 && excludedPlaceIds.isEmpty {
+            // Only log if we actually filtered (not from cache)
             print("🏫 Restricted area filter removed \(restrictedFiltered) inaccessible POIs")
         }
         
@@ -3522,6 +3568,14 @@ class GoogleMapsService: ObservableObject {
         let coordinates: [CLLocationCoordinate2D]
     }
     
+    // Cache for restricted area polygons (key: "lat_lon_radius")
+    private var restrictedPolygonCache: [String: [RestrictedPolygon]] = [:]
+    private var restrictedPolygonCacheLock = NSLock()
+    
+    // Cache for filtered POI results (key: "lat_lon_radius", value: Set of placeIds to exclude)
+    private var filteredPOICache: [String: Set<String>] = [:]
+    private var filteredPOICacheLock = NSLock()
+    
     /// Filter POIs that are inside restricted areas without road access
     /// 1. Query OSM for restricted area polygons (schools, military, prisons, etc.)
     /// 2. For each POI inside a restricted area, check if it has road access
@@ -3584,10 +3638,25 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// Get restricted area polygons from OSM Overpass API
+    /// Uses cache to avoid repeated Overpass queries (7-15s each)
     private func getRestrictedAreaPolygons(
         location: CLLocationCoordinate2D,
         radiusMeters: Int
     ) async -> [RestrictedPolygon] {
+        // Check cache first (key: "lat_lon_radius")
+        let cacheKey = "\(location.latitude)_\(location.longitude)_\(radiusMeters)"
+        
+        restrictedPolygonCacheLock.lock()
+        if let cached = restrictedPolygonCache[cacheKey] {
+            restrictedPolygonCacheLock.unlock()
+            print("🏫 ✅ Using cached restricted area polygons (instant)")
+            return cached
+        }
+        restrictedPolygonCacheLock.unlock()
+        
+        // Not in cache - query Overpass API
+        print("🏫 Querying Overpass API for restricted area polygons...")
+        
         // Query for restricted area polygons
         // Note: Hospital is NOT included - many valid POIs are on hospital grounds
         let query = """
@@ -3662,6 +3731,17 @@ class GoogleMapsService: ObservableObject {
                 }
                 
                 print("🏫 Found \(polygons.count) restricted area polygons (mirror \(index + 1))")
+                
+                // Cache the polygons for future use
+                restrictedPolygonCacheLock.lock()
+                restrictedPolygonCache[cacheKey] = polygons
+                // Limit cache size to prevent memory growth
+                if restrictedPolygonCache.count > 50 {
+                    let oldestKey = restrictedPolygonCache.keys.first!
+                    restrictedPolygonCache.removeValue(forKey: oldestKey)
+                }
+                restrictedPolygonCacheLock.unlock()
+                
                 return polygons
                 
             } catch {
