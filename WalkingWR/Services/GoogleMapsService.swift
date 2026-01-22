@@ -1324,26 +1324,19 @@ class GoogleMapsService: ObservableObject {
                 print("📦 🏫 Filtered \(restrictedCount) restricted POIs from database (playcare/nursery/playground)")
             }
             
-            // 2. Canonical POI deduplication - clusters similar POIs
-            let beforeCanonical = dbResults.count
-            dbResults = canonicalizePOIs(dbResults, origin: location)
-            let canonicalRemoved = beforeCanonical - dbResults.count
-            if canonicalRemoved > 0 {
-                print("📦 🎯 Canonical dedup removed \(canonicalRemoved) duplicate POIs from database")
-            }
+            // 2. Skip canonical deduplication for database POIs (they're pre-curated and deduplicated)
+            // Database POIs are already deduplicated during database generation
+            // Canonical deduplication is expensive (O(n²)) and takes 20+ seconds for 460 POIs
+            // Database is already curated, so we skip this expensive step
             
             // 3. Skip restricted area filtering for database POIs (they're pre-curated)
             // The restricted POI filter (playcare/nursery) already handles the main issues
             // Restricted area filtering queries Overpass API which is slow (7-15s per call)
             // Database POIs are already curated, so we skip this expensive check
             
-            // 4. Coordinate validation - removes POIs with incorrect coordinates
-            let beforeCoordValidation = dbResults.count
-            dbResults = validatePOICoordinates(dbResults)
-            let coordFiltered = beforeCoordValidation - dbResults.count
-            if coordFiltered > 0 {
-                print("📦 📍 Coordinate validation removed \(coordFiltered) POIs with incorrect coordinates from database")
-            }
+            // 4. Skip coordinate validation for database POIs (they're pre-curated)
+            // Database POIs are already validated during database generation
+            // Coordinate validation is expensive and database is already curated
             
             allResults = dbResults
             
