@@ -1069,6 +1069,15 @@ struct LocalRoutePickerSheet: View {
     let durationOptions = [10, 15, 20, 25, 30]
     let maxRoutesToGenerate = 10  // Back to 10 - directions now use free Apple MapKit!
     
+    // v2.0.1: Check if delay is too short for a walk
+    // Need at least 15 minutes (10 min walk + 5 min buffer) to recommend a walk
+    private var isDelayTooShortForWalk: Bool {
+        // Only applies when a clinic is active
+        guard viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable else { return false }
+        let availableTime = viewModel.waitTimeInfo.estimatedMinutes - 5
+        return availableTime < 10  // Minimum walk is 10 minutes
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
