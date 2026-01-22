@@ -31,6 +31,45 @@ class RouteCacheService {
         return ((duration + 2) / 5) * 5  // +2 ensures proper rounding (not just floor)
     }
     
+    // MARK: - Primary POI Detection (v1.9.52)
+    
+    /// Generic POI keywords that shouldn't be treated as primary attractions
+    private static let genericPOIKeywords = [
+        "footpath", "path", "road", "street", "lane", "avenue", "close", "drive",
+        "bench", "bin", "post box", "telephone", "bollard", "sign", "lamp",
+        "looking", "towards", "junction", "crossing", "corner"
+    ]
+    
+    /// Extract the primary POI from a list of cached places
+    /// The primary POI is the first meaningful (non-generic) location
+    static func extractPrimaryPOI(from places: [CachedPlace]) -> String? {
+        for place in places {
+            let cleanedName = GoogleMapsService.cleanPOIDisplayName(place.name).lowercased()
+            
+            // Skip if too short (likely just a grid reference)
+            guard cleanedName.count >= 3 else { continue }
+            
+            // Skip generic POIs
+            let isGeneric = genericPOIKeywords.contains { cleanedName.contains($0) }
+            if isGeneric { continue }
+            
+            // Found a meaningful POI - this is our primary
+            return cleanedName
+        }
+        
+        // Fallback: use first POI if no meaningful one found
+        return places.first.map { GoogleMapsService.cleanPOIDisplayName($0.name).lowercased() }
+    }
+    
+    /// Check if two routes share the same primary POI
+    static func hasSamePrimaryPOI(_ route1: [CachedPlace], _ route2: [CachedPlace]) -> Bool {
+        guard let primary1 = extractPrimaryPOI(from: route1),
+              let primary2 = extractPrimaryPOI(from: route2) else {
+            return false
+        }
+        return primary1 == primary2
+    }
+    
     // MARK: - Cache Entry Structure
     
     struct CachedRouteSet: Codable {
@@ -165,7 +204,15 @@ class RouteCacheService {
     /// Returns cached routes WITH their Gemini names/descriptions if within 10m and same duration (rounded to 5min), nil otherwise
     /// Also validates that cached routes are within tolerance (80-120%, or 75-125% for edge cases)
     /// NEW: If exact duration not found, checks adjacent slots (±5, ±10, ±15 min) for valid routes
+    /// PRIORITY 0: Checks pre-populated database first (fastest, no API calls)
     func getCachedRoutes(near location: CLLocationCoordinate2D, durationMinutes: Int) -> [CachedRouteWithMetadata]? {
+        // 🎯 PRIORITY 0: Check pre-populated database first
+        if let prePopulatedRoutes = PrePopulatedPOIService.shared.getPrePopulatedRoutes(near: location, durationMinutes: durationMinutes) {
+            print("📦 PRE-POPULATED ROUTES HIT! Found \(prePopulatedRoutes.count) routes from pre-populated database")
+            return prePopulatedRoutes
+        }
+        
+        // 🎯 PRIORITY 1: Check regular cache
         let cached = loadCache()
         
         // Round to nearest 5 minutes for consistent caching (e.g., 42min → 40min)
@@ -418,19 +465,51 @@ class RouteCacheService {
             let routeName = names.indices.contains(index) ? (names[index] ?? "Route \(index + 1)") : "Route \(index + 1)"
             let poiNames = route.places.map { $0.name }.joined(separator: " → ")
             
-            // Find existing route with highest overlap
+            // v1.9.52: Convert new route places to CachedPlace for primary POI extraction
+            let newCachedPlaces = route.places.map { place in
+                CachedPlace(
+                    placeId: place.placeId,
+                    name: place.name,
+                    latitude: place.coordinate.latitude,
+                    longitude: place.coordinate.longitude,
+                    types: place.types ?? [],
+                    vicinity: place.vicinity
+                )
+            }
+            let newPrimaryPOI = RouteCacheService.extractPrimaryPOI(from: newCachedPlaces)
+            
+            // Find existing route with highest overlap (considering both placeId AND primary POI)
             var highestOverlap = 0.0
             var highestOverlapIndex: Int? = nil
+            var hasSamePrimaryPOI = false  // v1.9.52: Track if overlap is due to primary POI match
             
             for (existingIdx, existing) in existingRoutes.enumerated() {
                 let existingPlaceIds = Set(existing.places.map { $0.placeId })
                 let overlap = newPlaceIds.intersection(existingPlaceIds).count
-                let overlapPercent = Double(overlap) / Double(max(1, newPlaceIds.count))
+                var overlapPercent = Double(overlap) / Double(max(1, newPlaceIds.count))
+                var thisPrimaryPOIMatch = false
+                
+                // v1.9.52: CRITICAL - If routes share the same primary POI, treat as high overlap!
+                // This prevents "Star Inn Saunter" and "Star Inn Peek" from both existing
+                let existingPrimaryPOI = RouteCacheService.extractPrimaryPOI(from: existing.places)
+                if let newPrimary = newPrimaryPOI, let existingPrimary = existingPrimaryPOI {
+                    if newPrimary == existingPrimary {
+                        // Same primary POI = treat as 75% overlap (guarantees replacement decision)
+                        overlapPercent = max(overlapPercent, 0.75)
+                        thisPrimaryPOIMatch = true
+                        print("📦   🎯 Same primary POI '\(newPrimary)' detected vs existing route - treating as 75%+ overlap")
+                    }
+                }
+                
                 if overlapPercent > highestOverlap {
                     highestOverlap = overlapPercent
                     highestOverlapIndex = existingIdx
+                    hasSamePrimaryPOI = thisPrimaryPOIMatch
                 }
             }
+            
+            // Log reason for overlap if due to primary POI
+            let overlapReason = hasSamePrimaryPOI ? "same primary POI" : "\(Int(highestOverlap * 100))% placeId"
             
             // Create cached route
             let routeDirections: [CachedDirection]? = directions.indices.contains(index) && !directions[index].isEmpty
@@ -468,10 +547,10 @@ class RouteCacheService {
                     let oldName = existingRoutes[replaceIdx].name ?? "Unnamed"
                     existingRoutes[replaceIdx] = newCachedRoute
                     replaced += 1
-                    print("📦   🔄 '\(routeName)' (\(poiNames)) REPLACED '\(oldName)' (quality \(Int(newQuality)) > \(Int(existingQuality)), \(Int(highestOverlap * 100))% overlap)")
+                    print("📦   🔄 '\(routeName)' REPLACED '\(oldName)' (quality \(Int(newQuality)) > \(Int(existingQuality)), \(overlapReason) overlap)")
                 } else {
                     skipped += 1
-                    print("📦   ⏭️ '\(routeName)' (\(poiNames)) SKIPPED - lower quality (\(Int(newQuality)) ≤ \(Int(existingQuality)))")
+                    print("📦   ⏭️ '\(routeName)' SKIPPED - lower quality (\(Int(newQuality)) ≤ \(Int(existingQuality))), \(overlapReason) overlap")
                 }
             } else {
                 // Unique route - add if under limit, or replace worst if better

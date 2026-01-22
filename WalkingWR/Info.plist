@@ -26,6 +26,8 @@
 	<string>AIzaSyB4ArGM5beRSeInpW-P3q1SFbS_lrQ0jx8</string>
 	<key>GEMINI_API_KEY</key>
 	<string>AIzaSyDxMzPL_-enELjtzPWBNGoWbPjTmPGeZ_c</string>
+	<key>GEOGRAPH_API_KEY</key>
+	<string>df200a5f61</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

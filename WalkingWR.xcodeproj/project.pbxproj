@@ -22,6 +22,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				Services/GoogleMapsServiceDeduplicationTests.swift,
 			);
 			target = 6CA4D88D2EE6145800FFA65F /* WalkingWR */;
 		};

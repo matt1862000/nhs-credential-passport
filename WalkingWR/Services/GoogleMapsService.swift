@@ -131,6 +131,7 @@ enum POISource: String, Codable {
     case google = "google"
     case apple = "apple"
     case osm = "osm"
+    case geograph = "geograph"
     case unknown = "unknown"
 }
 
@@ -149,6 +150,11 @@ class GoogleMapsService: ObservableObject {
     // For production, consider using a backend proxy to hide the key
     private var apiKey: String {
         return Bundle.main.object(forInfoDictionaryKey: "GOOGLE_MAPS_API_KEY") as? String ?? ""
+    }
+    
+    // Geograph API Key - optional, request from https://www.geograph.org.uk/help/api
+    private var geographApiKey: String {
+        return Bundle.main.object(forInfoDictionaryKey: "GEOGRAPH_API_KEY") as? String ?? ""
     }
     
     @Published var isLoading = false
@@ -260,11 +266,6 @@ class GoogleMapsService: ObservableObject {
         print("")
         
         // Don't clear results - keep them for later summary
-    }
-    
-    // Legacy function name for compatibility
-    func printAPITestSummary() {
-        printAPICallSummary()
     }
     
     // v1.8.2: Route exploration animation - publishes route attempts for UI
@@ -1273,10 +1274,14 @@ class GoogleMapsService: ObservableObject {
     /// 1. Google Places API (cached daily - one API call per 24 hours)
     /// 2. Apple Maps (FREE, always called to supplement)
     /// 3. OpenStreetMap (FREE, always called to supplement)
+    /// 4. Geograph (FREE, experimental - requires API key from https://www.geograph.org.uk/help/api)
+    /// 
+    /// - Parameter skipGoogle: If true, skips Google Places API call (cost optimization for first-run)
     func findNearbyPlaces(
         location: CLLocationCoordinate2D,
         radiusMeters: Int = 2500,  // Increased from 500m for better coverage
-        types: [String] = ["point_of_interest"]
+        types: [String] = ["point_of_interest"],
+        skipGoogle: Bool = false  // v1.9.50: Skip Google on first run to save costs
     ) async throws -> [PlaceResult] {
         let startTime = Date()
         let formatter = DateFormatter()
@@ -1287,10 +1292,67 @@ class GoogleMapsService: ObservableObject {
         print("═══════════════════════════════════════════════════════════")
         print("🔍 POI FETCH START - Location: (\(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude)))")
         print("🔍 Search radius: \(radiusMeters)m")
+        print("🔍 Skip Google: \(skipGoogle ? "YES (cost optimization)" : "NO (full fetch)")")
         print("═══════════════════════════════════════════════════════════")
         
         var allResults: [PlaceResult] = []
         var seenPlaceIds = Set<String>()
+        
+        // 🎯 PRIORITY 0: Check pre-populated database (fastest, no API calls)
+        if let prePopulatedPOIs = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: location, radiusMeters: Double(radiusMeters)) {
+            print("📦 PRE-POPULATED DB HIT! Found \(prePopulatedPOIs.count) POIs from pre-populated database")
+            allResults = prePopulatedPOIs
+            for poi in allResults {
+                seenPlaceIds.insert(poi.placeId)
+            }
+            
+            // Always fetch Geograph to supplement pre-populated data
+            if !geographApiKey.isEmpty {
+                let rawGeographPOIs = await searchGeographForPOIs(location: location, radiusMeters: radiusMeters)
+                
+                // Filter by distance
+                let maxRealisticDistance = Double(radiusMeters) * 2.0
+                let distanceFilteredGeograph = rawGeographPOIs.filter { poi in
+                    let distance = distanceBetween(location, poi.coordinate)
+                    return distance <= maxRealisticDistance
+                }
+                
+                // Pre-process Geograph POIs
+                let filteredGeograph = distanceFilteredGeograph.filter { !shouldExcludeGeographPOI($0, origin: location) }
+                let clusteredGeograph = clusterGeographPOIs(filteredGeograph, origin: location)
+                let scoredGeograph = clusteredGeograph.map { poi -> (poi: PlaceResult, score: Double) in
+                    let score = geographQualityScore(poi)
+                    return (poi, score)
+                }
+                let processedGeograph = scoredGeograph.filter { $0.score > 0.0 }.map { $0.poi }
+                
+                // Smart merge with pre-populated results
+                let beforeCount = allResults.count
+                allResults = smartMergeGeographPOIs(
+                    existing: allResults,
+                    newGeograph: processedGeograph,
+                    origin: location
+                )
+                let finalAdded = allResults.count - beforeCount
+                
+                let geographInFinal = allResults.filter { $0.source == .geograph }.count
+                print("📸 Geograph: Added \(finalAdded) new POIs to pre-populated database results")
+                print("📸 Final Geograph POIs in results: \(geographInFinal)")
+            }
+            
+            // Apply canonical deduplication to combined results
+            allResults = canonicalizePOIs(allResults, origin: location)
+            
+            // Cache the combined results for future use
+            POICacheService.shared.cachePOIs(allResults, for: location)
+            
+            let endTime = Date()
+            let totalTime = endTime.timeIntervalSince(startTime)
+            let endTimeString = formatter.string(from: endTime)
+            print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalTime))s (pre-populated DB)")
+            
+            return allResults
+        }
         
         // 🎯 PRIORITY 1: Check cached POI data
         if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: location) {
@@ -1324,25 +1386,74 @@ class GoogleMapsService: ObservableObject {
             for poi in allResults {
                 seenPlaceIds.insert(poi.placeId)
             }
+            
+            // Always fetch Geograph regardless of cache
+            if !geographApiKey.isEmpty {
+                let rawGeographPOIs = await searchGeographForPOIs(location: location, radiusMeters: radiusMeters)
+                
+                // Filter by distance (relative to current location)
+                let maxRealisticDistance = Double(radiusMeters) * 2.0
+                let distanceFilteredGeograph = rawGeographPOIs.filter { poi in
+                    let distance = distanceBetween(location, poi.coordinate)
+                    return distance <= maxRealisticDistance
+                }
+                
+                // PB-POIRS: Pre-process Geograph POIs (hard exclusion, cluster, score)
+                // A. Hard exclusion FIRST
+                let filteredGeograph = distanceFilteredGeograph.filter { !shouldExcludeGeographPOI($0, origin: location) }
+                // B. Cluster duplicates
+                let clusteredGeograph = clusterGeographPOIs(filteredGeograph, origin: location)
+                // C. Score remaining POIs
+                let scoredGeograph = clusteredGeograph.map { poi -> (poi: PlaceResult, score: Double) in
+                    let score = geographQualityScore(poi)
+                    return (poi, score)
+                }
+                // D. Filter out any zero-scored (safety net)
+                let processedGeograph = scoredGeograph.filter { $0.score > 0.0 }.map { $0.poi }
+                
+                print("📸 Geograph: Pre-processing complete")
+                print("   📥 Raw: \(rawGeographPOIs.count) → Distance filtered: \(distanceFilteredGeograph.count)")
+                print("   🔄 Clustered: \(clusteredGeograph.count) → Scored & filtered: \(processedGeograph.count)")
+                
+                // Smart merge with existing results
+                let beforeCount = allResults.count
+                allResults = smartMergeGeographPOIs(
+                    existing: allResults,
+                    newGeograph: processedGeograph,
+                    origin: location
+                )
+                let finalAdded = allResults.count - beforeCount
+                
+                // Count how many Geograph POIs are in final results
+                let geographInFinal = allResults.filter { $0.source == .geograph }.count
+                
+                print("📸 Geograph: Successfully integrated!")
+                print("   ✅ Processed Geograph POIs: \(processedGeograph.count)")
+                print("   📍 Final Geograph POIs in results: \(geographInFinal)")
+                print("   📈 Net added: \(finalAdded) total new POIs (including Geograph)")
+            }
         } else {
             print("📭 CACHE MISS - No cached POIs within 1km")
             
             // ═══════════════════════════════════════════════════════════════
             // 🚀 v1.9.48: SMART PARALLEL FETCH WITH EARLY EXIT
             // - Fetches from all sources simultaneously
-            // - Exits early when we have enough POIs (6+)
+            // - Exits early when we have enough POIs (15+)
             // - Hard timeout at 3 seconds - never waits for slow OSM
             // - Gracefully handles Google quota exhaustion
             // ═══════════════════════════════════════════════════════════════
             let timeoutSeconds: Double = 3.0
-            let minimumPOIsRequired = 6
+            let minimumPOIsRequired = 15  // Optimal threshold for route quality
             let startTime = Date()
             
             print("🚀 SMART PARALLEL FETCH - Up to \(timeoutSeconds)s timeout, need \(minimumPOIsRequired)+ POIs...")
             
             // Check if Google is available (API key, quota cooldown, and daily cap)
-            let googleEnabled = !apiKey.isEmpty && canMakeGooglePlacesCall
-            if !googleEnabled {
+            // v1.9.50: Skip Google on first run to save costs (free sources usually sufficient)
+            let googleEnabled = !skipGoogle && !apiKey.isEmpty && canMakeGooglePlacesCall
+            if skipGoogle {
+                print("🌐 [COST OPT] Skipping Google Places on first run - using free sources (Apple/OSM/Geograph)")
+            } else if !googleEnabled {
                 if isGooglePlacesDisabled {
                     print("🌐 [QUOTA] Google Places temporarily disabled - using Apple/OSM only")
                 } else if !canMakeGooglePlacesCall {
@@ -1354,6 +1465,7 @@ class GoogleMapsService: ObservableObject {
             var googleCount = 0
             var appleCount = 0
             var osmCount = 0
+            var geographCount = 0
             var timedOut = false
             
             // v1.9.50: Calculate maxRealisticDistance for early filtering (Optimization 5: Aggressive POI Pre-filtering)
@@ -1401,6 +1513,29 @@ class GoogleMapsService: ObservableObject {
                     }
                 }
                 
+                // 📸 Geograph (FREE, experimental - requires API key)
+                if !geographApiKey.isEmpty {
+                    group.addTask { [self] in
+                        let rawPOIs = await self.searchGeographForPOIs(location: location, radiusMeters: radiusMeters)
+                        
+                        // PB-POIRS: Pre-process Geograph POIs (hard exclusion, cluster, score)
+                        // A. Hard exclusion FIRST
+                        let filtered = rawPOIs.filter { !self.shouldExcludeGeographPOI($0, origin: location) }
+                        // B. Cluster duplicates
+                        let clustered = self.clusterGeographPOIs(filtered, origin: location)
+                        // C. Score remaining POIs
+                        let scored = clustered.map { poi -> (poi: PlaceResult, score: Double) in
+                            let score = self.geographQualityScore(poi)
+                            return (poi, score)
+                        }
+                        // D. Filter out any zero-scored (safety net)
+                        let processed = scored.filter { $0.score > 0.0 }.map { $0.poi }
+                        
+                        // Already tagged with source in searchGeographForPOIs
+                        return SourcedPOIs(source: .geograph, pois: processed)
+                    }
+                }
+                
                 // Collect results as they arrive - first to finish wins
                 while let result = await group.next() {
                     let elapsed = Date().timeIntervalSince(startTime)
@@ -1415,10 +1550,22 @@ class GoogleMapsService: ObservableObject {
                         return true
                     }
                     
-                    // Merge filtered POIs with deduplication
+                    // Merge filtered POIs with smart deduplication
                     let beforeCount = collected.count
-                    collected.append(contentsOf: filteredPOIs)
-                    collected = self.deduplicatePOIs(collected)
+                    
+                    // If this is Geograph, use smart merge (already pre-processed)
+                    if result.source == .geograph {
+                        collected = self.smartMergeGeographPOIs(
+                            existing: collected,
+                            newGeograph: filteredPOIs,
+                            origin: location
+                        )
+                    } else {
+                        // For other sources, use standard append + deduplication
+                        collected.append(contentsOf: filteredPOIs)
+                        collected = self.deduplicatePOIs(collected)
+                    }
+                    
                     let added = collected.count - beforeCount
                     
                     // Track filtered count for logging
@@ -1438,6 +1585,9 @@ class GoogleMapsService: ObservableObject {
                     case .osm:
                         osmCount = filteredPOIs.count
                         print("   🗺️ OSM: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                    case .geograph:
+                        geographCount = filteredPOIs.count
+                        print("   📸 Geograph: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
                     case .unknown:
                         print("   ❓ Unknown: \(filteredPOIs.count) POIs @ \(String(format: "%.2f", elapsed))s")
                     }
@@ -1462,10 +1612,14 @@ class GoogleMapsService: ObservableObject {
             }
             
             let totalTime = Date().timeIntervalSince(startTime)
+            let endTimeString = formatter.string(from: Date())
             print("═══════════════════════════════════════════════════════════════")
-            print("📊 SMART FETCH COMPLETE in \(String(format: "%.2f", totalTime))s\(timedOut ? " (timeout)" : "")")
-            print("📊 Sources: Google=\(googleCount), Apple=\(appleCount), OSM=\(osmCount)")
+            print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalTime))s\(timedOut ? " (timeout)" : "")")
+            print("📊 Sources: Google=\(googleCount), Apple=\(appleCount), OSM=\(osmCount), Geograph=\(geographCount)")
             print("📊 Total unique POIs: \(allResults.count)")
+            if skipGoogle {
+                print("💰 Cost saved: Google Places skipped (free sources only)")
+            }
             if allResults.count < minimumPOIsRequired {
                 print("⚠️ Low POI count (\(allResults.count) < \(minimumPOIsRequired)) - route options may be limited")
             }
@@ -1475,12 +1629,41 @@ class GoogleMapsService: ObservableObject {
         // v1.9.50: Distance filtering now happens during parallel fetch (Optimization 5)
         // No need to filter again here - already filtered as POIs arrived
         
+        // ═══════════════════════════════════════════════════════════════
+        // 🎯 CANONICAL POI DEDUPLICATION LAYER (v1.9.50)
+        // ═══════════════════════════════════════════════════════════════
+        // Clusters POIs spatially and by name similarity to create canonical
+        // representatives. Prevents duplicates like:
+        // - "The Star Inn" vs "SE2922: The Star Inn, Kirkhamgate"
+        // - "Lindale Methodist Church" vs "SE2922: Lindale Methodist Church"
+        // ═══════════════════════════════════════════════════════════════
+        let beforeCanonical = allResults.count
+        let canonicalStartTime = Date()
+        print("🎯 [CANONICAL] Starting canonical POI deduplication...")
+        allResults = canonicalizePOIs(allResults, origin: location)
+        let canonicalElapsed = Date().timeIntervalSince(canonicalStartTime)
+        let canonicalRemoved = beforeCanonical - allResults.count
+        if canonicalRemoved > 0 {
+            print("🎯 [CANONICAL] Removed \(canonicalRemoved) duplicates (had \(beforeCanonical), now \(allResults.count)) in \(String(format: "%.3f", canonicalElapsed))s")
+        } else {
+            print("🎯 [CANONICAL] No duplicates found (all \(allResults.count) POIs are unique)")
+        }
+        
         // v1.6.47: Filter POIs inside restricted areas (schools, hospitals, etc.) without road access
         let beforeRestrictedFilter = allResults.count
         allResults = await filterPOIsInRestrictedAreas(pois: allResults, location: location, radiusMeters: radiusMeters)
         let restrictedFiltered = beforeRestrictedFilter - allResults.count
         if restrictedFiltered > 0 {
             print("🏫 Restricted area filter removed \(restrictedFiltered) inaccessible POIs")
+        }
+        
+        // 🎯 COORDINATE ACCURACY VALIDATION: Detect and filter POIs with incorrect coordinates
+        // When multiple POIs have the same name but coordinates far apart (>200m), one likely has wrong coordinates
+        let beforeCoordValidation = allResults.count
+        allResults = validatePOICoordinates(allResults)
+        let coordFiltered = beforeCoordValidation - allResults.count
+        if coordFiltered > 0 {
+            print("📍 Coordinate validation removed \(coordFiltered) POI(s) with incorrect coordinates")
         }
         
         // 💾 Cache combined results for next time
@@ -1494,94 +1677,17 @@ class GoogleMapsService: ObservableObject {
         
         print("═══════════════════════════════════════════════════════════")
         print("📊 POI FETCH COMPLETE - Total: \(allResults.count) POIs")
-        print("   📍 Google: \(allResults.filter { !$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") }.count)")
-        print("   🍎 Apple:  \(allResults.filter { $0.placeId.hasPrefix("apple_") }.count)")
-        print("   🗺️ OSM:    \(allResults.filter { $0.placeId.hasPrefix("osm_") }.count)")
+        let googleCount = allResults.filter { $0.source == .google }.count
+        let appleCount = allResults.filter { $0.source == .apple }.count
+        let osmCount = allResults.filter { $0.source == .osm }.count
+        let geographCount = allResults.filter { $0.source == .geograph }.count
+        print("   📍 Google:   \(googleCount)")
+        print("   🍎 Apple:    \(appleCount)")
+        print("   🗺️ OSM:      \(osmCount)")
+        print("   📸 Geograph: \(geographCount)")
         print("═══════════════════════════════════════════════════════════")
         print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalElapsed))s")
         
-        return allResults
-    }
-    
-    /// Same as findNearbyPlaces but does NOT cache results - used for testing to bypass location limits
-    func findNearbyPlacesWithoutCaching(
-        location: CLLocationCoordinate2D,
-        radiusMeters: Int = 2500
-    ) async throws -> [PlaceResult] {
-        var allResults: [PlaceResult] = []
-        var seenPlaceIds = Set<String>()
-        
-        print("🧪 [TEST MODE] Fetching POIs WITHOUT caching (bypass limit)")
-        
-        // 1. Check if we already have cached data for this area
-        if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: location), !cachedPOIs.isEmpty {
-            print("🧪 Found \(cachedPOIs.count) cached POIs - using those")
-            return cachedPOIs
-        }
-        
-        // 2. Google Places API (will fail if quota exceeded, but makes it a TRUE test)
-        if !apiKey.isEmpty {
-            print("🌐 GOOGLE (test mode) - Calling API...")
-            let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
-            for poi in googlePOIs {
-                if !seenPlaceIds.contains(poi.placeId) {
-                    seenPlaceIds.insert(poi.placeId)
-                    allResults.append(poi)
-                }
-            }
-            print("🌐 Got \(googlePOIs.count) from Google")
-        } else {
-            print("⚠️ GOOGLE SKIPPED - No API key")
-        }
-        
-        // 3. Fetch from Apple Maps (FREE, no limits)
-        print("🍎 APPLE MAPS (test mode)...")
-        let applePOIs = await searchAppleMapsForPOIs(location: location, radiusMeters: radiusMeters)
-        for poi in applePOIs {
-            let isDuplicate = allResults.contains { existing in
-                existing.name.lowercased() == poi.name.lowercased() ||
-                distanceBetween(existing.coordinate, poi.coordinate) < 50
-            }
-            if !isDuplicate {
-                allResults.append(poi)
-            }
-        }
-        print("🍎 Got \(applePOIs.count) from Apple")
-        
-        // 4. Fetch from OpenStreetMap (FREE, no limits)
-        print("🗺️ OSM (test mode)...")
-        let osmPOIs = await searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
-        for poi in osmPOIs {
-            let isDuplicate = allResults.contains { existing in
-                existing.name.lowercased() == poi.name.lowercased() ||
-                distanceBetween(existing.coordinate, poi.coordinate) < 50
-            }
-            if !isDuplicate {
-                allResults.append(poi)
-            }
-        }
-        print("🗺️ Got \(osmPOIs.count) from OSM")
-        
-        // 🚫 FILTER: Remove POIs that are unrealistically far away (same as main function)
-        let maxRealisticDistance = Double(radiusMeters) * 2.0
-        let beforeFilterCount = allResults.count
-        
-        allResults = allResults.filter { poi in
-            let distance = distanceBetween(location, poi.coordinate)
-            if distance > maxRealisticDistance {
-                print("🚫 FILTERED: '\(poi.name)' at \(Int(distance))m (max: \(Int(maxRealisticDistance))m)")
-                return false
-            }
-            return true
-        }
-        
-        let filteredCount = beforeFilterCount - allResults.count
-        if filteredCount > 0 {
-            print("🚫 Distance filter removed \(filteredCount) unrealistic POIs (>\(Int(maxRealisticDistance))m)")
-        }
-        
-        // NOTE: We do NOT cache results to avoid exceeding the free tier limit
-        print("🧪 [TEST MODE] Total POIs: \(allResults.count) (not cached)")
         return allResults
     }
     
@@ -2235,212 +2341,6 @@ class GoogleMapsService: ObservableObject {
         return await searchAppleMapsForPOIsFast(location: location, radiusMeters: radiusMeters)
     }
     
-    // MARK: - Apple Maps POI Diagnostic Test
-    /// Comprehensive Apple Maps search to diagnose what POIs are available
-    /// Logs every single result found for debugging purposes
-    func runApplePOIDiagnostic(location: CLLocationCoordinate2D, radiusMeters: Int = 2000) async -> String {
-        var results = "🍎 APPLE MAPS POI DIAGNOSTIC\n"
-        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        results += "📍 Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))\n"
-        results += "📏 Radius: \(radiusMeters)m\n"
-        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
-        // Key search terms for rural UK areas
-        let diagnosticQueries = [
-            "school", "academy", "primary", "secondary",
-            "church", "chapel", "pub", "inn", "hotel",
-            "shop", "store", "post office", "village hall",
-            "farm", "playground", "park", "memorial",
-            "cafe", "restaurant", "takeaway", "fish",
-            "garage", "nursery", "surgery", "doctor"
-        ]
-        
-        var allPOIs: [String: (name: String, distance: Double, query: String)] = [:]
-        var queryResults: [(query: String, count: Int)] = []
-        
-        print("🍎 📊 DIAGNOSTIC: Testing \(diagnosticQueries.count) search queries...")
-        
-        for query in diagnosticQueries {
-            let request = MKLocalSearch.Request()
-            request.naturalLanguageQuery = query
-            request.region = MKCoordinateRegion(
-                center: location,
-                latitudinalMeters: Double(radiusMeters * 2),
-                longitudinalMeters: Double(radiusMeters * 2)
-            )
-            
-            let search = MKLocalSearch(request: request)
-            var foundCount = 0
-            
-            do {
-                let response = try await search.start()
-                
-                for item in response.mapItems {
-                    guard let name = item.name else { continue }
-                    
-                    let itemCoord = item.placemark.coordinate
-                    let distance = distanceBetween(location, itemCoord)
-                    
-                    // Only include POIs within radius
-                    guard distance <= Double(radiusMeters) else { continue }
-                    
-                    foundCount += 1
-                    
-                    // Deduplicate by name
-                    if allPOIs[name] == nil {
-                        allPOIs[name] = (name: name, distance: distance, query: query)
-                    }
-                }
-            } catch {
-                // Silently skip failed queries
-            }
-            
-            queryResults.append((query: query, count: foundCount))
-            
-            // Small delay to avoid rate limiting
-            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-        }
-        
-        // Sort POIs by distance
-        let sortedPOIs = allPOIs.values.sorted { $0.distance < $1.distance }
-        
-        results += "📊 QUERY RESULTS\n"
-        results += "───────────────────────────────────────\n"
-        for qr in queryResults.sorted(by: { $0.count > $1.count }) {
-            let emoji = qr.count > 0 ? "✅" : "❌"
-            results += "\(emoji) \"\(qr.query)\": \(qr.count) POIs\n"
-        }
-        
-        results += "\n📍 ALL UNIQUE POIs FOUND (\(sortedPOIs.count))\n"
-        results += "───────────────────────────────────────\n"
-        
-        for (index, poi) in sortedPOIs.enumerated() {
-            let distanceStr = poi.distance < 1000 
-                ? "\(Int(poi.distance))m" 
-                : String(format: "%.1fkm", poi.distance / 1000)
-            results += "\(index + 1). \(poi.name) - \(distanceStr) [via \"\(poi.query)\"]\n"
-        }
-        
-        results += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        results += "📊 SUMMARY: \(sortedPOIs.count) unique POIs from Apple Maps\n"
-        
-        print("🍎 📊 DIAGNOSTIC COMPLETE: \(sortedPOIs.count) unique POIs")
-        print(results)
-        
-        return results
-    }
-    
-    // MARK: - OSM POI Diagnostic
-    /// Runs a diagnostic test to fetch all available POIs from OpenStreetMap
-    func runOSMPOIDiagnostic(location: CLLocationCoordinate2D, radiusMeters: Int = 2000) async -> String {
-        var results = "🗺️ OPENSTREETMAP POI DIAGNOSTIC\n"
-        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        results += "📍 Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))\n"
-        results += "📏 Radius: \(radiusMeters)m\n"
-        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
-        print("🗺️ 📊 DIAGNOSTIC: Fetching OSM POIs...")
-        
-        let osmPOIs = await searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
-        
-        // Group by category
-        var categoryCount: [String: Int] = [:]
-        for poi in osmPOIs {
-            let category = poi.types?.first ?? "unknown"
-            categoryCount[category, default: 0] += 1
-        }
-        
-        results += "📊 POI CATEGORIES\n"
-        results += "───────────────────────────────────────\n"
-        for (category, count) in categoryCount.sorted(by: { $0.value > $1.value }) {
-            results += "• \(category): \(count)\n"
-        }
-        
-        // Sort POIs by distance
-        let sortedPOIs = osmPOIs.sorted { 
-            distanceBetween(location, $0.coordinate) < distanceBetween(location, $1.coordinate)
-        }
-        
-        results += "\n📍 ALL POIs FOUND (\(sortedPOIs.count))\n"
-        results += "───────────────────────────────────────\n"
-        
-        for (index, poi) in sortedPOIs.enumerated() {
-            let distance = distanceBetween(location, poi.coordinate)
-            let distanceStr = distance < 1000 
-                ? "\(Int(distance))m" 
-                : String(format: "%.1fkm", distance / 1000)
-            let category = poi.types?.first ?? "?"
-            results += "\(index + 1). \(poi.name) - \(distanceStr) [\(category)]\n"
-        }
-        
-        results += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        if sortedPOIs.isEmpty {
-            results += "⚠️ NO POIs FOUND!\n"
-            results += "This could mean:\n"
-            results += "• Network connectivity issue\n"
-            results += "• All Overpass API mirrors are down\n"
-            results += "• No POIs exist in this area on OSM\n"
-            results += "\nTry again or check your internet connection.\n"
-        } else {
-            results += "📊 SUMMARY: \(sortedPOIs.count) POIs from OpenStreetMap\n"
-        }
-        
-        print("🗺️ 📊 DIAGNOSTIC COMPLETE: \(sortedPOIs.count) POIs from OSM")
-        
-        return results
-    }
-    
-    // MARK: - Google POI Diagnostic
-    /// Runs a diagnostic test to fetch all available POIs from Google Places API
-    func runGooglePOIDiagnostic(location: CLLocationCoordinate2D, radiusMeters: Int = 2000) async -> String {
-        var results = "🔷 GOOGLE PLACES POI DIAGNOSTIC\n"
-        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        results += "📍 Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))\n"
-        results += "📏 Radius: \(radiusMeters)m\n"
-        results += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        
-        print("🔷 📊 DIAGNOSTIC: Fetching Google POIs...")
-        
-        let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
-        
-        // Group by category
-        var categoryCount: [String: Int] = [:]
-        for poi in googlePOIs {
-            let category = poi.types?.first ?? "unknown"
-            categoryCount[category, default: 0] += 1
-        }
-        
-        results += "📊 POI CATEGORIES\n"
-        results += "───────────────────────────────────────\n"
-        for (category, count) in categoryCount.sorted(by: { $0.value > $1.value }) {
-            results += "• \(category): \(count)\n"
-        }
-        
-        // Sort POIs by distance
-        let sortedPOIs = googlePOIs.sorted { 
-            distanceBetween(location, $0.coordinate) < distanceBetween(location, $1.coordinate)
-        }
-        
-        results += "\n📍 ALL POIs FOUND (\(sortedPOIs.count))\n"
-        results += "───────────────────────────────────────\n"
-        
-        for (index, poi) in sortedPOIs.enumerated() {
-            let distance = distanceBetween(location, poi.coordinate)
-            let distanceStr = distance < 1000 
-                ? "\(Int(distance))m" 
-                : String(format: "%.1fkm", distance / 1000)
-            let category = poi.types?.first ?? "?"
-            results += "\(index + 1). \(poi.name) - \(distanceStr) [\(category)]\n"
-        }
-        
-        results += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        results += "📊 SUMMARY: \(sortedPOIs.count) POIs from Google Places\n"
-        
-        print("🔷 📊 DIAGNOSTIC COMPLETE: \(sortedPOIs.count) POIs from Google")
-        
-        return results
-    }
-    
     // MARK: - Search OpenStreetMap for POIs (Overpass API - FREE!)
     /// Searches OpenStreetMap using the Overpass API for POIs near a location
     /// This is completely FREE with no API key required!
@@ -2649,6 +2549,952 @@ class GoogleMapsService: ObservableObject {
         // All mirrors failed
         print("🗺️ ⚠️ All OSM mirrors failed")
         return allResults
+    }
+    
+    // MARK: - Geograph POI Search (Experimental)
+    
+    /// Searches Geograph.org.uk for geotagged photos that can serve as POIs
+    /// Uses the Syndicator API: https://www.geograph.org.uk/help/api
+    /// Returns photos with location data that can be used as landmarks/POIs
+    /// 
+    /// LICENSE: Geograph photos are licensed under CC BY-SA 2.0
+    /// Attribution: When displaying Geograph data, credit the photographer and Geograph.org.uk
+    /// Note: Requires API key from Geograph (request at https://www.geograph.org.uk/help/api)
+    private func searchGeographForPOIs(location: CLLocationCoordinate2D, radiusMeters: Int) async -> [PlaceResult] {
+        // Check if API key is available
+        guard !geographApiKey.isEmpty else {
+            print("📸 Geograph: No API key configured - skipping")
+            return []
+        }
+        
+        // Convert radius from meters to kilometers (Geograph API uses km)
+        let radiusKm = Double(radiusMeters) / 1000.0
+        
+        // Build API URL with location and distance parameters
+        // Format: lat,lon (e.g., "53.3811,-1.4701")
+        let locationString = "\(location.latitude),\(location.longitude)"
+        
+        // Geograph Syndicator API endpoint
+        // Parameters:
+        // - key: API key
+        // - location: lat,lon or grid reference
+        // - distance: radius in km
+        // - perpage: max results (up to 1000)
+        // - format: JSON
+        // - ll: include lat/lon in response
+        // - thumb: include thumbnail URL
+        // - desc: include description
+        let baseUrl = "https://api.geograph.org.uk/syndicator.php"
+        var components = URLComponents(string: baseUrl)
+        components?.queryItems = [
+            URLQueryItem(name: "key", value: geographApiKey),
+            URLQueryItem(name: "location", value: locationString),
+            URLQueryItem(name: "distance", value: "\(Int(radiusKm))"),
+            URLQueryItem(name: "perpage", value: "100"),
+            URLQueryItem(name: "format", value: "JSON"),
+            URLQueryItem(name: "ll", value: "1"),
+            URLQueryItem(name: "thumb", value: "1"),
+            URLQueryItem(name: "desc", value: "1")
+        ]
+        
+        guard let url = components?.url else {
+            print("📸 Geograph: Failed to build URL")
+            return []
+        }
+        
+        print("📸 Geograph: Requesting URL: \(url.absoluteString.replacingOccurrences(of: geographApiKey, with: "[API_KEY]"))")
+        
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10  // 10 second timeout
+        request.setValue("WalkingWR/1.0", forHTTPHeaderField: "User-Agent")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("📸 Geograph: Invalid response")
+                return []
+            }
+            
+            // Log response for debugging
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("📸 Geograph: Response preview (first 500 chars): \(String(responseString.prefix(500)))")
+            }
+            
+            guard httpResponse.statusCode == 200 else {
+                print("📸 Geograph: HTTP error \(httpResponse.statusCode)")
+                if let errorString = String(data: data, encoding: .utf8) {
+                    print("📸 Geograph: Error response: \(errorString)")
+                }
+                return []
+            }
+            
+            // Parse JSON response
+            // Geograph API returns different formats depending on format parameter
+            // For JSON format, it typically returns an array or object with items
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                // Try parsing as array
+                if let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                    print("📸 Geograph: Parsed as array with \(jsonArray.count) items")
+                    return parseGeographResults(jsonArray: jsonArray, location: location, radiusMeters: radiusMeters, sourceLabel: "")
+                }
+                print("📸 Geograph: Invalid JSON format - could not parse as object or array")
+                print("📸 Geograph: Data size: \(data.count) bytes")
+                return []
+            }
+            
+            print("📸 Geograph: Parsed as object with keys: \(json.keys.joined(separator: ", "))")
+            
+            // Handle object format - look for items, entries, or similar keys
+            if let items = json["items"] as? [[String: Any]] {
+                print("📸 Geograph: Found 'items' array with \(items.count) items")
+                return parseGeographResults(jsonArray: items, location: location, radiusMeters: radiusMeters, sourceLabel: "")
+            } else if let entries = json["entries"] as? [[String: Any]] {
+                print("📸 Geograph: Found 'entries' array with \(entries.count) entries")
+                return parseGeographResults(jsonArray: entries, location: location, radiusMeters: radiusMeters, sourceLabel: "")
+            } else if let jsonArray = json.values.first as? [[String: Any]] {
+                print("📸 Geograph: Found array in first value with \(jsonArray.count) items")
+                return parseGeographResults(jsonArray: jsonArray, location: location, radiusMeters: radiusMeters, sourceLabel: "")
+            }
+            
+            // Try to find any array in the JSON
+            for (key, value) in json {
+                if let array = value as? [[String: Any]] {
+                    print("📸 Geograph: Found array in key '\(key)' with \(array.count) items")
+                    return parseGeographResults(jsonArray: array, location: location, radiusMeters: radiusMeters, sourceLabel: "")
+                }
+            }
+            
+            print("📸 Geograph: Unexpected JSON structure - no arrays found")
+            print("📸 Geograph: JSON keys: \(json.keys.joined(separator: ", "))")
+            return []
+            
+        } catch {
+            print("📸 Geograph: Network error - \(error.localizedDescription)")
+            if let urlError = error as? URLError {
+                print("📸 Geograph: URL error code: \(urlError.code.rawValue), description: \(urlError.localizedDescription)")
+            }
+            return []
+        }
+    }
+    
+    /// Helper to parse Geograph API results into PlaceResult objects
+    private func parseGeographResults(jsonArray: [[String: Any]], location: CLLocationCoordinate2D, radiusMeters: Int, sourceLabel: String = "") -> [PlaceResult] {
+        var results: [PlaceResult] = []
+        let maxRealisticDistance = Double(radiusMeters) * 2.0
+        
+        let label = sourceLabel.isEmpty ? "Geograph" : "Geograph [\(sourceLabel)]"
+        print("📸 \(label): Parsing \(jsonArray.count) items...")
+        
+        // Log first item structure for debugging
+        if let firstItem = jsonArray.first {
+            print("📸 \(label): First item keys: \(firstItem.keys.joined(separator: ", "))")
+            if let firstItemJson = try? JSONSerialization.data(withJSONObject: firstItem, options: .prettyPrinted),
+               let firstItemString = String(data: firstItemJson, encoding: .utf8) {
+                print("📸 \(label): First item preview:\n\(String(firstItemString.prefix(1000)))")
+            }
+        }
+        
+        for (index, item) in jsonArray.enumerated() {
+            // Extract title/name - try multiple possible field names
+            var title: String?
+            if let t = item["title"] as? String { title = t }
+            else if let t = item["name"] as? String { title = t }
+            else if let t = item["caption"] as? String { title = t }
+            else if let t = item["subject"] as? String { title = t }
+            
+            guard let finalTitle = title, !finalTitle.isEmpty else {
+                if index < 3 { // Log first few failures
+                    print("📸 \(label): Item \(index) missing title/name - keys: \(item.keys.joined(separator: ", "))")
+                }
+                continue
+            }
+            
+            // Extract coordinates - try multiple possible field names
+            // Geograph API uses "lat" and "long" (not "lon") as strings
+            var lat: Double?
+            var lon: Double?
+            
+            // Try Geograph-specific format first: "lat" and "long" as strings
+            if let latStr = item["lat"] as? String, let longStr = item["long"] as? String {
+                lat = Double(latStr)
+                lon = Double(longStr)
+            }
+            // Try "lat" and "lon" as strings
+            else if let latStr = item["lat"] as? String, let lonStr = item["lon"] as? String {
+                lat = Double(latStr)
+                lon = Double(lonStr)
+            }
+            // Try "lat" and "lon" as numbers
+            else if let latNum = item["lat"] as? Double, let lonNum = item["lon"] as? Double {
+                lat = latNum
+                lon = lonNum
+            }
+            // Try standard "latitude" and "longitude" as numbers
+            else if let latitude = item["latitude"] as? Double, let longitude = item["longitude"] as? Double {
+                lat = latitude
+                lon = longitude
+            }
+            // Try standard "latitude" and "longitude" as strings
+            else if let latitude = item["latitude"] as? String, let longitude = item["longitude"] as? String {
+                lat = Double(latitude)
+                lon = Double(longitude)
+            }
+            // Try nested objects
+            else if let geo = item["geo"] as? [String: Any] {
+                lat = geo["latitude"] as? Double ?? (geo["lat"] as? String).flatMap(Double.init)
+                lon = geo["longitude"] as? Double ?? (geo["lon"] as? String ?? geo["long"] as? String).flatMap(Double.init)
+            } else if let point = item["point"] as? [String: Any] {
+                lat = point["latitude"] as? Double ?? (point["lat"] as? String).flatMap(Double.init)
+                lon = point["longitude"] as? Double ?? (point["lon"] as? String ?? point["long"] as? String).flatMap(Double.init)
+            } else if let locationObj = item["location"] as? [String: Any] {
+                lat = locationObj["latitude"] as? Double ?? (locationObj["lat"] as? String).flatMap(Double.init)
+                lon = locationObj["longitude"] as? Double ?? (locationObj["lon"] as? String ?? locationObj["long"] as? String).flatMap(Double.init)
+            }
+            
+            guard let finalLat = lat, let finalLon = lon else {
+                // Log ALL failures for postcode searches (not just first 3)
+                let titleForLog = title ?? "unknown"
+                let shouldLogAll = !sourceLabel.isEmpty  // Log all for postcode searches
+                if shouldLogAll || index < 3 {
+                    print("📸 \(label): Item \(index) '\(titleForLog)' missing coordinates")
+                    print("📸 \(label):   Available keys: \(item.keys.joined(separator: ", "))")
+                    // Try to show what coordinate fields exist
+                    if let latVal = item["lat"], let lonVal = item["long"] {
+                        print("📸 \(label):   Found lat=\(latVal), long=\(lonVal) (types: \(type(of: latVal)), \(type(of: lonVal)))")
+                        // Try to parse them manually to see why it's failing
+                        if let latStr = latVal as? String, let lonStr = lonVal as? String {
+                            if let latParsed = Double(latStr), let lonParsed = Double(lonStr) {
+                                print("📸 \(label):   ✅ Manual parse successful: lat=\(latParsed), lon=\(lonParsed)")
+                            } else {
+                                print("📸 \(label):   ❌ Manual parse failed: latStr='\(latStr)', lonStr='\(lonStr)'")
+                            }
+                        }
+                    } else if let latVal = item["lat"] {
+                        print("📸 \(label):   Found lat=\(latVal) but missing long")
+                    } else if let lonVal = item["long"] {
+                        print("📸 \(label):   Found long=\(lonVal) but missing lat")
+                    } else {
+                        print("📸 \(label):   No lat/long fields found")
+                    }
+                }
+                continue
+            }
+            
+            // Filter by distance (same as other sources)
+            // 🧪 TEST: Skip distance filter if location is (0,0) - means it's from postcode search
+            let coordinate = CLLocationCoordinate2D(latitude: finalLat, longitude: finalLon)
+            let shouldFilterByDistance = !(location.latitude == 0 && location.longitude == 0)
+            if shouldFilterByDistance {
+                let distance = distanceBetween(location, coordinate)
+                if distance > maxRealisticDistance {
+                    continue
+                }
+            }
+            
+            // Extract description/vicinity if available
+            var description = item["description"] as? String ?? item["desc"] as? String ?? ""
+            // Clean HTML tags
+            description = description.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            // Remove "Dist:Xkm" prefix if present (common in Geograph API responses)
+            if let distRange = description.range(of: "^Dist:\\d+\\.?\\d*km", options: .regularExpression) {
+                description = String(description[distRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let vicinity = description.isEmpty ? nil : description
+            
+            // Extract image ID for placeId
+            let imageId = item["id"] as? Int ?? item["image_id"] as? Int ?? finalTitle.hashValue
+            
+            // Extract photographer/submitter info if available (for attribution)
+            // Note: We store this in vicinity if not already set, or could be added to a future attribution field
+            let submitter = item["submitter"] as? String ?? item["user"] as? String
+            var finalVicinity = vicinity
+            if let submitter = submitter, finalVicinity == nil {
+                // Add photographer credit to vicinity if available
+                finalVicinity = "Photo by \(submitter) / Geograph.org.uk"
+            } else if let submitter = submitter, let existingVicinity = finalVicinity {
+                // Append photographer credit if vicinity already exists
+                finalVicinity = "\(existingVicinity) (Photo by \(submitter))"
+            }
+            
+            // Create PlaceResult
+            // Note: Geograph photos are CC BY-SA 2.0 - attribution should be shown when displaying
+            let placeResult = PlaceResult(
+                placeId: "geograph_\(imageId)",
+                name: finalTitle,
+                vicinity: finalVicinity,
+                geometry: PlaceGeometry(
+                    location: PlaceLocation(lat: finalLat, lng: finalLon)
+                ),
+                types: ["geograph_photo", "landmark"],  // Tag as Geograph photo/landmark
+                source: .geograph
+            )
+            
+            results.append(placeResult)
+        }
+        
+        print("📸 \(label): Found \(results.count) POIs (from \(jsonArray.count) items)")
+        return results
+    }
+    
+    // MARK: - Geograph Quality Scoring & Testing (PB-POIRS Algorithm)
+    
+    /// Universal POI filtering - location-agnostic rules that apply anywhere in the UK
+    /// No location-specific whitelists or special cases
+    
+    /// Hard exclusion check: Returns true if POI should be completely excluded (never output)
+    /// This runs BEFORE scoring - excluded items are never processed further
+    /// NOTE: Whitelist check happens FIRST - if whitelisted, never exclude
+    private func shouldExcludeGeographPOI(_ poi: PlaceResult, origin: CLLocationCoordinate2D) -> Bool {
+        let title = poi.name.lowercased()
+        let description = poi.vicinity?.lowercased() ?? ""
+        
+        // Clean description - remove "Dist:Xkm" prefix if present
+        var cleanedDescription = description
+        if let distRange = cleanedDescription.range(of: "Dist:\\d+\\.?\\d*km", options: .regularExpression) {
+            cleanedDescription = String(cleanedDescription[distRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        // A. HARD EXCLUSION RULES (ALWAYS APPLY - NO WHITELIST OVERRIDE)
+        // These items are NEVER POIs, even if they mention whitelisted locations
+        
+        // 3) Low-value land features
+        // Drainage ditches, culverts, runoff channels
+        if title.contains("drainage") || title.contains("ditch") || title.contains("culvert") ||
+           title.contains("runoff channel") || title.contains("field boundary") || title.contains("hedgerow") {
+            return true
+        }
+        
+        // Random trees, hedgerows (unless memorial/monument)
+        if (title.contains("tree") || title.contains("trees") || title.contains("hedgerow")) &&
+           !title.contains("memorial") && !title.contains("monument") {
+            return true
+        }
+        
+        // Grazing fields, generic farmland
+        if title.contains("grazing") || title.contains("grazing land") ||
+           (title.contains("field") && !title.contains("playing") && !title.contains("football") &&
+            !title.contains("cricket") && !title.contains("sports") && !title.contains("memorial")) {
+            return true
+        }
+        
+        // 2) Footpaths / tracks / rights of way
+        if title.contains("footpath") || title.contains("fp") || title.contains("fp-") ||
+           title.contains("track") || title.contains("bridleway") || title.contains("walkway") ||
+           title.contains("walking route") || title.contains("right of way") ||
+           (title.contains("lane") && (cleanedDescription.contains("footpath") || 
+            cleanedDescription.contains("path") || cleanedDescription.contains("walking"))) {
+            return true
+        }
+        
+        // 1) Transport infrastructure - ALWAYS EXCLUDE
+        // Motorways, A-roads, B-roads, road segments
+        if title.contains("motorway") || title.contains("m1") || title.contains("m62") ||
+           title.contains("m6") || title.contains("a-road") || title.contains("b-road") ||
+           title.contains("motorway bridge") || title.contains("motorway verge") {
+            return true
+        }
+        
+        // Road views / approaches / crossings - ALWAYS EXCLUDE
+        // "view along road", "approaching bridge", "crossing road/lane"
+        if (title.contains("view along") || title.contains("approaching") || 
+            title.contains("crossing") || title.contains("descends")) &&
+           (title.contains("road") || title.contains("bridge") || title.contains("lane") ||
+            title.contains("street") || title.contains("way")) {
+            return true
+        }
+        
+        // Traffic events, snow disruption, roadworks
+        if title.contains("traffic") || title.contains("roadworks") || title.contains("snow disruption") {
+            return true
+        }
+        
+        // 4) Utility / non-places
+        // Car parks, laybys
+        if title.contains("car park") || title.contains("parking") || title.contains("parking area") ||
+           title.contains("layby") || title.contains("lay-by") {
+            return true
+        }
+        
+        // Electricity substations
+        if title.contains("electricity") || title.contains("sub station") || title.contains("substation") {
+            return true
+        }
+        
+        // ==========================================
+        // B. VALID POI TYPE CHECK (Universal Rules)
+        // ==========================================
+        // After hard exclusions, check if this is a valid POI type
+        // Only these general types are allowed
+        
+        let isValidPOIType = 
+            // 1) Built heritage
+            title.contains("church") || title.contains("chapel") || title.contains("temple") ||
+            title.contains("mosque") || title.contains("synagogue") || title.contains("methodist") ||
+            title.contains("anglican") || title.contains("religious") ||
+            title.contains("historic") || title.contains("hall") || title.contains("manor") ||
+            title.contains("listed") || title.contains("castle") || title.contains("tower") ||
+            title.contains("mill") || title.contains("civic") ||
+            // 2) Community / civic
+            title.contains("school") || title.contains("library") || title.contains("town hall") ||
+            title.contains("village hall") || title.contains("community") || title.contains("medical") ||
+            // 3) Cultural / social
+            title.contains("inn") || title.contains("pub") || title.contains("post office") ||
+            title.contains("shop") || title.contains("store") || title.contains("market") ||
+            // 4) Industrial heritage (HIGH PRIORITY - comprehensive detection)
+            title.contains("grinding wheel") || title.contains("millstone") ||
+            title.contains("rolling mill") || title.contains("roller") ||
+            title.contains("stamping hammer") || title.contains("chimney") ||
+            title.contains("kiln") || title.contains("engine house") ||
+            title.contains("turbine") || title.contains("boiler") ||
+            title.contains("forge") || title.contains("foundry") ||
+            title.contains("cutlery") || title.contains("steel works") ||
+            title.contains("steelworks") || title.contains("workshop") ||
+            title.contains("machinery") || title.contains("industrial") ||
+            title.contains("trumpets") || description.contains("steel") ||
+            description.contains("forge") || description.contains("mill") ||
+            description.contains("cutlery") || description.contains("rolling") ||
+            description.contains("works") || description.contains("machinery") ||
+            description.contains("turbine") || description.contains("heritage") ||
+            description.contains("engine house") ||
+            // 5) Natural landmarks (STRICT - only named, destination-worthy features)
+            // MUST NOT describe road/bridge crossings
+            // Example allowed: "River Aire", "Stanage Edge"
+            // Example excluded: "Beck crosses Lane", "View from bridge"
+            ((title.contains("river") || title.contains("stream") || title.contains("beck") ||
+              title.contains("waterfall") || title.contains("valley") || title.contains("hill") ||
+              title.contains("edge") || title.contains("peak") || title.contains("moor")) &&
+             !title.contains("crosses") && !title.contains("crossing") &&
+             !title.contains("view from") && !title.contains("view of") &&
+             !title.contains("bridge") && !title.contains("road") &&
+             (cleanedDescription.contains("named") || cleanedDescription.contains("destination") ||
+              cleanedDescription.contains("landmark") || title.count > 15)) ||
+            // 6) Notable housing
+            (title.contains("crescent") || title.contains("terrace") || title.contains("cottage")) &&
+            (cleanedDescription.contains("architectural") || cleanedDescription.contains("listed") ||
+             cleanedDescription.contains("historic") || cleanedDescription.contains("notable")) ||
+            // 7) Postboxes (handled separately below)
+            title.contains("postbox") || title.contains("post box") || title.contains("letter box")
+        
+        // If not a valid POI type, exclude it
+        if !isValidPOIType {
+            return true  // Not a valid POI type
+        }
+        
+        // ==========================================
+        // C. POSTBOX RULE (LIMITED)
+        // ==========================================
+        // Postboxes are LOW PRIORITY and only allowed with specific conditions
+        if title.contains("postbox") || title.contains("post box") || title.contains("letter box") {
+            var hasValidContext = false
+            
+            // Check: Has meaningful description (e.g., WF2 10, location context)
+            if cleanedDescription.count >= 10 && 
+               (cleanedDescription.contains("wf") || cleanedDescription.contains("historic") ||
+                cleanedDescription.contains("location") || cleanedDescription.contains("context") ||
+                cleanedDescription.contains("no.") || cleanedDescription.contains("number")) {
+                hasValidContext = true
+            }
+            
+            // Check: Acts as a local navigation point (village centre)
+            if title.contains("centre") || title.contains("center") || title.contains("village") {
+                hasValidContext = true
+            }
+            
+            // Check: Has historic value: VR, GR, ERVII, Penfold
+            if description.contains("vr") || description.contains("ervii") ||
+               description.contains("gr") || description.contains("penfold") ||
+               description.contains("victorian") || description.contains("edwardian") ||
+               description.contains("elizabeth") {
+                hasValidContext = true
+            }
+            
+            // Exclude if none of the conditions are met
+            if !hasValidContext {
+                return true
+            }
+        }
+        
+        // 5) Items with no meaningful description
+        // Description absent or < 10 characters AND not visually significant
+        if cleanedDescription.isEmpty || (cleanedDescription.count < 10 && 
+           !title.contains("memorial") && !title.contains("monument") &&
+           !title.contains("church") && !title.contains("tower") &&
+           !title.contains("castle") && !title.contains("listed")) {
+            return true
+        }
+        
+        return false
+    }
+    
+    /// PB-POIRS Algorithm: Calculate quality score for a Geograph POI (0.0 to 10.0)
+    /// Follows comprehensive rules for identifying, cleaning, clustering, and ranking POIs
+    /// NOTE: This should only be called on POIs that passed shouldExcludeGeographPOI()
+    private func geographQualityScore(_ poi: PlaceResult) -> Double {
+        let title = poi.name.lowercased()
+        let description = poi.vicinity?.lowercased() ?? ""
+        
+        // Clean description - remove "Dist:Xkm" prefix if present
+        var cleanedDescription = description
+        if let distRange = cleanedDescription.range(of: "Dist:\\d+\\.?\\d*km", options: .regularExpression) {
+            cleanedDescription = String(cleanedDescription[distRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        
+        // NOTE: Hard exclusions are handled by shouldExcludeGeographPOI() - this function
+        // only scores POIs that have already passed exclusion checks
+        
+        // ==========================================
+        // RULE 2: POSTBOXES (SPECIAL RULE)
+        // ==========================================
+        var isPostbox = false
+        var postboxScore: Double = 0.0
+        
+        if title.contains("postbox") || title.contains("post box") || title.contains("letter box") {
+            isPostbox = true
+            postboxScore = 2.0  // Base low score
+            
+            // Boost: Clear local navigation point
+            if title.contains("centre") || title.contains("center") || title.contains("village") {
+                postboxScore += 1.0
+            }
+            
+            // Boost: Description has context
+            if cleanedDescription.contains("wf") || cleanedDescription.contains("historic") || 
+               cleanedDescription.contains("early os") || cleanedDescription.contains("os maps") {
+                postboxScore += 1.0
+            }
+            
+            // Boost: Victorian/Edwardian/George V or Penfold
+            if cleanedDescription.contains("vr") || cleanedDescription.contains("ervii") || 
+               cleanedDescription.contains("gr") || cleanedDescription.contains("penfold") {
+                postboxScore += 2.0
+            }
+            
+            // Boost: Lone infrastructure in rural area
+            if cleanedDescription.contains("rural") || cleanedDescription.contains("isolated") {
+                postboxScore += 0.5
+            }
+        }
+        
+        // ==========================================
+        // RULE 4: VALID POI CATEGORIES (WEIGHTS)
+        // ==========================================
+        var categoryWeight: Double = 0.0
+        
+        // Historic buildings (+2.0)
+        if title.contains("historic") || title.contains("original") || 
+           title.contains("workhouse") || title.contains("victorian") ||
+           title.contains("georgian") || description.contains("historic") ||
+           description.contains("original") || description.contains("1881") ||
+           description.contains("1878") {
+            categoryWeight = 2.0
+        }
+        // Religious buildings (+1.5)
+        else if title.contains("church") || title.contains("chapel") || 
+                title.contains("methodist") || title.contains("anglican") {
+            categoryWeight = 1.5
+        }
+        // Community buildings (+1.5)
+        else if title.contains("village hall") || title.contains("school") || 
+                title.contains("library") || title.contains("community") {
+            categoryWeight = 1.5
+        }
+        // Significant medical buildings (+1.5)
+        else if title.contains("hospital") || title.contains("wing") || 
+                title.contains("unit") || title.contains("clinic") ||
+                title.contains("department") || title.contains("centre") ||
+                title.contains("institute") {
+            categoryWeight = 1.5
+        }
+        // Notable pubs, shops (+1.0)
+        else if title.contains("inn") || title.contains("pub") || 
+                title.contains("shop") || title.contains("store") {
+            categoryWeight = 1.0
+        }
+        // Industrial heritage (+1.0)
+        else if title.contains("grinding wheel") || title.contains("rolling mill") ||
+                title.contains("trumpets") || title.contains("roller") {
+            categoryWeight = 1.0
+        }
+        // Memorials and monuments (+1.5) - check BEFORE natural features
+        else if title.contains("memorial") || title.contains("monument") ||
+                title.contains("war memorial") {
+            categoryWeight = 1.5
+        }
+        // Natural landmarks (+0.5) - only valid named, destination-worthy features
+        // Already filtered to exclude road/bridge crossings in exclusion rules
+        else if (title.contains("river") || title.contains("stream") || title.contains("beck") ||
+                title.contains("waterfall") || title.contains("valley") || title.contains("hill") ||
+                title.contains("edge") || title.contains("peak") || title.contains("moor")) {
+            categoryWeight = 0.5
+        }
+        // Architecturally notable housing (+1.0)
+        else if (title.contains("crescent") || title.contains("estate") || title.contains("bungalow")) &&
+                (cleanedDescription.contains("architectural") || cleanedDescription.contains("notable") ||
+                 cleanedDescription.contains("council estate") || cleanedDescription.contains("designed")) {
+            categoryWeight = 1.0
+        }
+        // Towers and landmarks
+        else if title.contains("tower") || title.contains("clock tower") {
+            categoryWeight = 2.0
+        }
+        // Halls and significant buildings
+        else if title.contains("hall") && !title.contains("village hall") {
+            categoryWeight = 1.5
+        }
+        
+        // Postboxes get base 0.0 category weight (handled separately)
+        if isPostbox {
+            categoryWeight = 0.0
+        }
+        
+        // ==========================================
+        // RULE 5: DESCRIPTION QUALITY WEIGHTING
+        // ==========================================
+        var descriptionWeight: Double = 0.0
+        
+        // cleanedDescription already computed above
+        
+        if cleanedDescription.isEmpty {
+            descriptionWeight = -1.0  // No description (after cleaning) - should have been excluded
+        } else if cleanedDescription.count < 10 {
+            descriptionWeight = 0.0  // Very minimal description
+        } else if cleanedDescription.count < 30 {
+            descriptionWeight = 0.5  // Short but has content
+        } else if cleanedDescription.count >= 50 {
+            // Check for detailed history/context
+            if cleanedDescription.contains("historic") || cleanedDescription.contains("original") ||
+               cleanedDescription.contains("formerly") || cleanedDescription.contains("named after") ||
+               cleanedDescription.contains("built in") || cleanedDescription.contains("established") ||
+               cleanedDescription.contains("workhouse") || cleanedDescription.contains("victorian") ||
+               cleanedDescription.contains("foundation stone") || cleanedDescription.contains("died") ||
+               cleanedDescription.contains("first world war") || cleanedDescription.contains("world war") {
+                descriptionWeight = 2.0  // Detailed history/context
+            } else {
+                descriptionWeight = 1.0  // Clear and informative
+            }
+        } else {
+            // 30-49 characters - check if it has meaningful content
+            if cleanedDescription.contains("memorial") || cleanedDescription.contains("church") ||
+               cleanedDescription.contains("school") || cleanedDescription.contains("hall") ||
+               cleanedDescription.contains("inn") || cleanedDescription.contains("pub") ||
+               cleanedDescription.contains("died") || cleanedDescription.contains("war") {
+                descriptionWeight = 1.0  // Mentions POI type or historical context - informative
+            } else {
+                descriptionWeight = 0.5  // Some content but brief
+            }
+        }
+        
+        // ==========================================
+        // RULE 6: FINAL SCORING + INDUSTRIAL HERITAGE BOOSTS
+        // ==========================================
+        var finalScore: Double
+        
+        if isPostbox {
+            // Postboxes use their special scoring
+            finalScore = postboxScore + descriptionWeight
+        } else {
+            // Base score starts at category weight
+            finalScore = categoryWeight + descriptionWeight
+            
+            // INDUSTRIAL HERITAGE BOOSTS (PB-POIRS v5)
+            if categoryWeight == 3.0 {  // Industrial heritage category
+                var industrialBoost: Double = 0.0
+                
+                // Boost: Description contains industrial history keywords
+                let industrialKeywords = ["steel", "forge", "mill", "cutlery", "rolling", "works", 
+                                         "machinery", "turbine", "victorian", "heritage", "engine house"]
+                if industrialKeywords.contains(where: { cleanedDescription.contains($0) }) {
+                    industrialBoost += 0.5
+                }
+                
+                // Boost: Part of a cluster of industrial artefacts
+                // (This is handled during clustering - if multiple industrial items cluster together,
+                //  they get higher priority. For now, we'll add boost if title suggests multiple items)
+                if title.contains(" - ") || title.contains(" and ") || title.contains(" & ") {
+                    // Suggests multiple items or part of a series
+                    industrialBoost += 0.5
+                }
+                
+                finalScore += industrialBoost
+            }
+        }
+        
+        // Ensure bounds (0-10)
+        finalScore = max(0.0, min(10.0, finalScore))
+        
+        return finalScore
+    }
+    
+    /// Cluster duplicate POIs within 30m or same feature name
+    /// Returns deduplicated list with best representative from each cluster
+    /// Prefers POIs with better descriptions and higher scores
+    private func clusterGeographPOIs(_ pois: [PlaceResult], origin: CLLocationCoordinate2D) -> [PlaceResult] {
+        var clustered: [PlaceResult] = []
+        var processed = Set<String>()
+        
+        for poi in pois {
+            // Skip if already processed
+            if processed.contains(poi.placeId) {
+                continue
+            }
+            
+            // Find all POIs in this cluster (within 30m or same feature name)
+            var cluster: [PlaceResult] = [poi]
+            processed.insert(poi.placeId)
+            
+            // Extract base feature name (remove variations)
+            let baseName = extractBaseFeatureName(poi.name)
+            
+            for otherPOI in pois {
+                if processed.contains(otherPOI.placeId) {
+                    continue
+                }
+                
+                let distance = distanceBetween(poi.coordinate, otherPOI.coordinate)
+                let otherBaseName = extractBaseFeatureName(otherPOI.name)
+                
+                // Cluster if within 30m OR same base feature name
+                // Also check if names are similar (e.g., "Westfield Crescent" and "Old people's bungalows in Westfield Crescent")
+                let namesSimilar = baseName.contains(otherBaseName) || otherBaseName.contains(baseName) ||
+                                   (baseName.count > 5 && otherBaseName.count > 5 &&
+                                    calculateNameSimilarity(baseName, otherBaseName) > 0.7)
+                
+                if distance <= 30.0 || baseName == otherBaseName || namesSimilar {
+                    cluster.append(otherPOI)
+                    processed.insert(otherPOI.placeId)
+                }
+            }
+            
+            // Select best representative from cluster (most complete description, then highest score)
+            // D. CLUSTERING RULE: ALWAYS output ONE master POI per cluster
+            if cluster.count > 1 {
+                let scored = cluster.map { poi -> (poi: PlaceResult, score: Double, distance: Double, descLength: Int) in
+                    let score = geographQualityScore(poi)
+                    let dist = distanceBetween(origin, poi.coordinate)
+                    let descLength = poi.vicinity?.count ?? 0
+                    return (poi, score, dist, descLength)
+                }
+                
+                // Choose item with most complete description, then highest score, then closest
+                let best = scored.max { first, second in
+                    // Prefer longer descriptions (more complete)
+                    if abs(Double(first.descLength - second.descLength)) > 10 {
+                        return first.descLength < second.descLength
+                    }
+                    // Then by score
+                    if abs(first.score - second.score) > 0.1 {
+                        return first.score < second.score
+                    }
+                    // Then by distance
+                    return first.distance > second.distance
+                }
+                
+                if let bestPOI = best {
+                    clustered.append(bestPOI.poi)
+                }
+            } else {
+                clustered.append(poi)
+            }
+        }
+        
+        return clustered
+    }
+    
+    /// Extract base feature name for clustering (removes variations like "Main Entrance", "Side View", etc.)
+    private func extractBaseFeatureName(_ name: String) -> String {
+        var base = name.lowercased()
+        
+        // Remove Geograph grid reference prefix (e.g., "SE2922 : ")
+        base = base.replacingOccurrences(of: "^[a-z]{1,2}\\d{4}\\s*:\\s*", with: "", options: .regularExpression)
+        
+        // Remove common variations and quotes
+        let variations = [
+            "main entrance", "side entrance", "entrance", "original",
+            "side view", "view of", "from", "near", "at", "the",
+            "building", "wing", "unit", "centre", "center",
+            " - 1", " - 2", " - 3", " 1", " 2", " 3",
+            "old people's", "\"old people's bungalows\"", "in", "on", "approaching", "descends",
+            "\"", "'", "bungalows", "bungalow"
+        ]
+        
+        for variation in variations {
+            base = base.replacingOccurrences(of: variation, with: "", options: .caseInsensitive)
+        }
+        
+        // Clean up extra spaces and normalize
+        base = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        base = base.replacingOccurrences(of: "  ", with: " ")
+        base = base.replacingOccurrences(of: "  ", with: " ")  // Double pass for multiple spaces
+        
+        return base
+    }
+    
+    /// Determine POI category for output (matches universal ruleset)
+    private func determinePOICategory(_ poi: PlaceResult) -> String {
+        let title = poi.name.lowercased()
+        let description = poi.vicinity?.lowercased() ?? ""
+        
+        // 1) Built heritage
+        if title.contains("church") || title.contains("chapel") || title.contains("temple") ||
+           title.contains("mosque") || title.contains("synagogue") || title.contains("methodist") ||
+           title.contains("anglican") || title.contains("religious") || title.contains("abbey") {
+            return "Religious Building"
+        } else if title.contains("historic") || title.contains("listed") || title.contains("castle") ||
+                  title.contains("tower") || title.contains("mill") ||
+                  (title.contains("hall") && !title.contains("village hall")) {
+            return "Historic Building"
+        }
+        // Memorials
+        else if title.contains("memorial") || title.contains("monument") {
+            return "Memorial/Monument"
+        }
+        // 2) Community / civic
+        else if title.contains("school") || title.contains("library") || title.contains("town hall") ||
+                title.contains("village hall") || title.contains("community") {
+            return "Community Building"
+        }
+        // 3) Cultural / social
+        else if title.contains("inn") || title.contains("pub") {
+            return "Pub/Inn"
+        } else if title.contains("postbox") || title.contains("post box") || description.contains("postbox") || description.contains("post box") {
+            return "Postbox"
+        } else if title.contains("shop") || title.contains("store") || title.contains("post office") {
+            return "Store"
+        }
+        // 4) Industrial heritage (HIGH PRIORITY)
+        else if title.contains("grinding wheel") || title.contains("millstone") ||
+                title.contains("rolling mill") || title.contains("roller") ||
+                title.contains("stamping hammer") || title.contains("chimney") ||
+                title.contains("kiln") || title.contains("engine house") ||
+                title.contains("turbine") || title.contains("boiler") ||
+                title.contains("forge") || title.contains("foundry") ||
+                title.contains("cutlery") || title.contains("steel works") ||
+                title.contains("steelworks") || title.contains("workshop") ||
+                title.contains("machinery") || title.contains("industrial") ||
+                title.contains("trumpets") || description.contains("steel") ||
+                description.contains("forge") || description.contains("mill") ||
+                description.contains("cutlery") || description.contains("rolling") ||
+                description.contains("works") || description.contains("machinery") ||
+                description.contains("turbine") || description.contains("heritage") ||
+                description.contains("engine house") {
+            return "Industrial Heritage"
+        }
+        // 5) Natural landmarks (already filtered to exclude road/bridge crossings)
+        else if title.contains("river") || title.contains("stream") || title.contains("beck") ||
+                title.contains("waterfall") || title.contains("valley") || title.contains("hill") ||
+                title.contains("edge") || title.contains("peak") || title.contains("moor") {
+            return "Natural Feature"
+        }
+        // 7) Postboxes
+        else if title.contains("postbox") || title.contains("post box") || title.contains("letter box") {
+            return "Postbox"
+        }
+        // Default
+        else {
+            return "Landmark"
+        }
+    }
+    
+    /// Generate 1-2 sentence meaningful summary
+    private func generatePOISummary(_ poi: PlaceResult) -> String {
+        let title = poi.name
+        let description = poi.vicinity ?? ""
+        
+        // If we have a good description, use first sentence or first 100 chars
+        if !description.isEmpty && description.count > 20 {
+            // Try to extract first sentence
+            if let firstSentence = description.components(separatedBy: ".").first,
+               firstSentence.count > 30 && firstSentence.count < 150 {
+                return firstSentence.trimmingCharacters(in: .whitespaces) + "."
+            } else {
+                // Use first 100 chars
+                let preview = String(description.prefix(100))
+                return preview.trimmingCharacters(in: .whitespaces) + (description.count > 100 ? "..." : "")
+            }
+        }
+        
+        // Fallback: generate from title
+        if title.contains("Church") || title.contains("Chapel") {
+            return "A place of worship in the local community."
+        } else if title.contains("Memorial") {
+            return "A memorial commemorating local history or events."
+        } else if title.contains("Hall") {
+            return "A historic or community building."
+        } else if title.contains("Hospital") || title.contains("Wing") {
+            return "A medical facility or hospital building."
+        } else {
+            return "A local landmark or point of interest."
+        }
+    }
+    
+    /// Generate qualification reason (why it qualified as a POI)
+    private func generatePOIQualification(_ poi: PlaceResult, score: Double) -> String {
+        let title = poi.name.lowercased()
+        let description = poi.vicinity?.lowercased() ?? ""
+        
+        var reasons: [String] = []
+        
+        // Category-based reasons
+        if title.contains("historic") || description.contains("historic") ||
+           description.contains("original") || description.contains("workhouse") {
+            reasons.append("Historic significance")
+        }
+        
+        if title.contains("church") || title.contains("chapel") {
+            reasons.append("Religious landmark")
+        }
+        
+        if title.contains("memorial") || title.contains("monument") {
+            reasons.append("Commemorative landmark")
+        }
+        
+        if title.contains("hospital") || title.contains("wing") || title.contains("unit") {
+            reasons.append("Significant medical facility")
+        }
+        
+        if title.contains("village hall") || title.contains("school") {
+            reasons.append("Community facility")
+        }
+        
+        if title.contains("grinding wheel") || title.contains("rolling mill") {
+            reasons.append("Industrial heritage feature")
+        }
+        
+        if title.contains("tower") || title.contains("clock tower") {
+            reasons.append("Prominent landmark")
+        }
+        
+        // Description quality reasons
+        if description.count >= 50 {
+            reasons.append("Well-documented")
+        }
+        
+        if description.contains("named after") || description.contains("formerly") {
+            reasons.append("Named feature with context")
+        }
+        
+        // Score-based reasons
+        if score >= 8.0 {
+            reasons.append("High-quality POI")
+        } else if score >= 6.0 {
+            reasons.append("Good quality POI")
+        }
+        
+        // Postbox special case
+        if title.contains("postbox") || title.contains("post box") {
+            if score >= 5.0 {
+                reasons.append("Historic or significant postbox")
+            } else {
+                reasons.append("Local navigation point")
+            }
+        }
+        
+        if reasons.isEmpty {
+            return "Valid landmark or point of interest"
+        }
+        
+        return reasons.joined(separator: ", ")
     }
     
     // MARK: - Restricted Area Filter (v1.6.47)
@@ -4505,6 +5351,7 @@ class GoogleMapsService: ObservableObject {
         targetDurationMinutes: Int,
         difficulty: RouteDifficulty? = nil,
         excludePlaceIds: Set<String> = [],
+        excludePOIs: [PlaceResult] = [],  // v1.9.51: Actual POI objects to check for duplicates by name/coordinate
         prefetchedPOIs: [PlaceResult]? = nil
     ) async throws -> GeneratedRoute {
         let startTime = Date()
@@ -4525,12 +5372,14 @@ class GoogleMapsService: ObservableObject {
         // Stage 1: Random selection (current behavior)
         print("\n📍 STAGE 1: Random Selection")
         let stage1StartTime = Date()
+        print("⏱️ [TIMING] Stage 1 STARTED")
         do {
             let route = try await generateLocalRoute(
                 from: location,
                 targetDurationMinutes: targetDurationMinutes,
                 difficulty: difficulty,
                 excludePlaceIds: excludePlaceIds,
+                excludePOIs: excludePOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
                 prefetchedPOIs: prefetchedPOIs,
                 useSystematicSelection: false
             )
@@ -4541,7 +5390,11 @@ class GoogleMapsService: ObservableObject {
             
             await MainActor.run { retryStatus = nil }
             print("✅ STAGE 1 SUCCESS: \(route.durationSeconds / 60) min route with \(route.places.count) waypoints")
-            print("⏱️ [ROUTE RETRY] [\(endTimeString)] ✅ generateLocalRouteWithRetry() COMPLETED in \(String(format: "%.2f", totalElapsed))s (Stage 1 took \(String(format: "%.2f", stage1Elapsed))s)")
+            print("⏱️ [TIMING] Stage 1: \(String(format: "%.2f", stage1Elapsed))s")
+            print("⏱️ [ROUTE RETRY] [\(endTimeString)] ✅ generateLocalRouteWithRetry() COMPLETED in \(String(format: "%.2f", totalElapsed))s")
+            print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+            print("⏱️ [TIMING] TOTAL TIME: \(String(format: "%.2f", totalElapsed))s (Stage 1 only)")
+            print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
             return route
         } catch GoogleMapsError.rateLimited(let waitTime) {
             // Rate limited - wait and retry once
@@ -4549,25 +5402,93 @@ class GoogleMapsService: ObservableObject {
             await MainActor.run { retryStatus = "Waiting for rate limit reset..." }
             try? await Task.sleep(nanoseconds: UInt64(waitTime) * 1_000_000_000)
             // Don't retry all stages, just continue to stage 2
+        } catch GoogleMapsError.noRouteFound {
+            // v1.9.50: If route generation failed with free sources, try with Google
+            print("🔄 Stage 1 (random) failed with free sources - trying with Google fallback...")
+            // Will fall through to Stage 2 which will try with Google
         } catch {
             print("🔄 Stage 1 (random) failed, trying systematic...")
         }
         
         // Stage 2: Systematic selection with expanded search
+        // v1.9.50: If Stage 1 failed, this might be due to insufficient POIs from free sources
+        // Try with Google POIs included (if not already tried)
         print("\n📍 STAGE 2: Systematic Selection + Expanded Search")
+        let stage2StartTime = Date()
+        print("⏱️ [TIMING] Stage 2 STARTED")
         await MainActor.run { retryStatus = "Retrying with expanded search..." }
         do {
+            // Check if we need to fetch Google POIs (if prefetchedPOIs was from free sources only)
+            var poisToUse: [PlaceResult]? = nil
+            var searchRadiusForStage2: Int? = nil
+            var stage2POIFetchTime: TimeInterval = 0
+            
+            // Calculate expanded search radius (2x base radius)
+            let baseRadius = max(600, (targetDurationMinutes * 80 / 2) / 2)  // Approximate base
+            searchRadiusForStage2 = baseRadius * 2  // Expanded search
+            
+            // If we had prefetched POIs, check if they were from free sources only
+            if let prefetched = prefetchedPOIs {
+                let googlePOICount = prefetched.filter { $0.source == .google }.count
+                if googlePOICount == 0 && prefetched.count < 25 {
+                    // Had POIs from free sources only, and <25 - try with Google
+                    let googleFetchStart = Date()
+                    print("🔄 Stage 2: Re-fetching POIs with Google included (had \(prefetched.count) from free sources, 0 from Google)")
+                    print("⏱️ [TIMING] Stage 2 Google fetch STARTED")
+                    poisToUse = try await findNearbyPlaces(
+                        location: location,
+                        radiusMeters: searchRadiusForStage2!,
+                        skipGoogle: false  // Include Google
+                    )
+                    stage2POIFetchTime = Date().timeIntervalSince(googleFetchStart)
+                    print("⏱️ [TIMING] Stage 2 Google fetch: \(String(format: "%.2f", stage2POIFetchTime))s")
+                    print("🔄 Stage 2: Now have \(poisToUse?.count ?? 0) POIs with Google")
+                } else {
+                    // Already have Google POIs or enough POIs - use prefetched
+                    poisToUse = prefetched
+                    print("🔄 Stage 2: Using prefetched POIs (\(prefetched.count) total, \(googlePOICount) from Google)")
+                }
+            } else {
+                // No prefetched POIs - fetch fresh with Google included
+                let googleFetchStart = Date()
+                print("🔄 Stage 2: Fetching fresh POIs with Google included (expanded search)")
+                print("⏱️ [TIMING] Stage 2 Google fetch STARTED")
+                poisToUse = try await findNearbyPlaces(
+                    location: location,
+                    radiusMeters: searchRadiusForStage2!,
+                    skipGoogle: false  // Include Google
+                )
+                stage2POIFetchTime = Date().timeIntervalSince(googleFetchStart)
+                print("⏱️ [TIMING] Stage 2 Google fetch: \(String(format: "%.2f", stage2POIFetchTime))s")
+                print("🔄 Stage 2: Fetched \(poisToUse?.count ?? 0) POIs with Google")
+            }
+            
+            let routeGenStart = Date()
             let route = try await generateLocalRoute(
                 from: location,
                 targetDurationMinutes: targetDurationMinutes,
                 difficulty: difficulty,
                 excludePlaceIds: excludePlaceIds,
-                prefetchedPOIs: nil,  // Fresh POI fetch with larger radius
+                excludePOIs: excludePOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
+                prefetchedPOIs: poisToUse,  // Use Google-included POIs if fetched
                 useSystematicSelection: true,
-                expandedSearch: true
+                expandedSearch: true,
+                searchRadiusOverride: searchRadiusForStage2  // Use calculated radius
             )
+            let routeGenTime = Date().timeIntervalSince(routeGenStart)
+            let stage2Elapsed = Date().timeIntervalSince(stage2StartTime)
+            let totalElapsed = Date().timeIntervalSince(startTime)
+            
             await MainActor.run { retryStatus = nil }
             print("✅ STAGE 2 SUCCESS: \(route.durationSeconds / 60) min route with \(route.places.count) waypoints")
+            print("⏱️ [TIMING] Stage 2 POI fetch: \(String(format: "%.2f", stage2POIFetchTime))s")
+            print("⏱️ [TIMING] Stage 2 route generation: \(String(format: "%.2f", routeGenTime))s")
+            print("⏱️ [TIMING] Stage 2 total: \(String(format: "%.2f", stage2Elapsed))s")
+            print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+            print("⏱️ [TIMING] TOTAL TIME: \(String(format: "%.2f", totalElapsed))s")
+            print("⏱️ [TIMING]   Stage 1: failed")
+            print("⏱️ [TIMING]   Stage 2: \(String(format: "%.2f", stage2Elapsed))s")
+            print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
             return route
         } catch GoogleMapsError.rateLimited(let waitTime) {
             // Rate limited - wait and continue
@@ -4580,6 +5501,8 @@ class GoogleMapsService: ObservableObject {
         
         // Stage 3: Try shorter durations (drop 5 min at a time, but not below 5 min)
         print("\n📍 STAGE 3: Fallback to Shorter Durations")
+        let stage3StartTime = Date()
+        print("⏱️ [TIMING] Stage 3 STARTED")
         for reducedDuration in stride(from: targetDurationMinutes - 5, through: 5, by: -5) {
             let currentDuration = reducedDuration  // Capture for concurrent access
             await MainActor.run { retryStatus = "Trying \(currentDuration) min route..." }
@@ -4589,12 +5512,22 @@ class GoogleMapsService: ObservableObject {
                     targetDurationMinutes: currentDuration,
                     difficulty: difficulty,
                     excludePlaceIds: excludePlaceIds,
+                    excludePOIs: excludePOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
                     prefetchedPOIs: nil,
                     useSystematicSelection: true,
                     expandedSearch: true
                 )
+                let stage3Elapsed = Date().timeIntervalSince(stage3StartTime)
+                let totalElapsed = Date().timeIntervalSince(startTime)
                 await MainActor.run { retryStatus = nil }
                 print("🔄 Found route at \(currentDuration) min (originally requested \(targetDurationMinutes) min)")
+                print("⏱️ [TIMING] Stage 3: \(String(format: "%.2f", stage3Elapsed))s")
+                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("⏱️ [TIMING] TOTAL TIME: \(String(format: "%.2f", totalElapsed))s")
+                print("⏱️ [TIMING]   Stage 1: failed")
+                print("⏱️ [TIMING]   Stage 2: failed")
+                print("⏱️ [TIMING]   Stage 3: \(String(format: "%.2f", stage3Elapsed))s")
+                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
                 return route
             } catch GoogleMapsError.rateLimited(let waitTime) {
                 // Rate limited in stage 3 - wait and continue to next duration
@@ -4619,6 +5552,8 @@ class GoogleMapsService: ObservableObject {
         from location: CLLocationCoordinate2D,
         targetDurationMinutes: Int,
         difficulty: RouteDifficulty? = nil,
+        excludePlaceIds: Set<String> = [],
+        excludePOIs: [PlaceResult] = [],  // v1.9.51: Actual POI objects to check for duplicates by name/coordinate
         prefetchedPOIs: [PlaceResult]? = nil
     ) async throws -> GeneratedRoute {
         
@@ -4628,6 +5563,8 @@ class GoogleMapsService: ObservableObject {
             from: location,
             targetDurationMinutes: targetDurationMinutes,
             difficulty: difficulty,
+            excludePlaceIds: excludePlaceIds,
+            excludePOIs: excludePOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
             prefetchedPOIs: prefetchedPOIs,
             useEndpointFirst: true  // NEW: Use simpler endpoint approach for Route 1
         )
@@ -4650,10 +5587,16 @@ class GoogleMapsService: ObservableObject {
             // Use 0.7 factor - the 0.4 was too aggressive (gave 6-8min routes)
             let shorterIdealDistance = Double(shorterHalfDuration * adaptiveWalkingSpeed) * 0.7
             
-            // Exclude the POI already used
-            let usedPlaceIds = Set(mapKitRoute.places.map { $0.placeId })
+            // Exclude the POI already used (by placeId, name, or location)
             let shorterCandidates = pois
-                .filter { !usedPlaceIds.contains($0.placeId) }
+                .filter { poi in
+                    // Check if this POI is already in the route using unified comparator
+                    let isAlreadyUsed = mapKitRoute.places.contains { existing in
+                        isRouteDuplicate(poi, existing)
+                    }
+                    
+                    return !isAlreadyUsed
+                }
                 .map { poi -> (poi: PlaceResult, distance: Double, score: Double) in
                     let dist = distanceBetween(location, poi.coordinate)
                     let score = abs(dist - shorterIdealDistance)
@@ -4756,6 +5699,375 @@ class GoogleMapsService: ObservableObject {
         return mapKitRoute
     }
     
+    // MARK: - Unified Route Deduplication System
+    
+    /// UNIFIED DUPLICATE COMPARATOR - Use this everywhere instead of ad-hoc checks
+    /// Returns true if two POIs are considered duplicates
+    /// Note: Internal visibility allows unit tests to access this function
+    func isRouteDuplicate(_ a: PlaceResult, _ b: PlaceResult) -> Bool {
+        // 1. Exact placeId match
+        if !a.placeId.isEmpty && !b.placeId.isEmpty && a.placeId == b.placeId {
+            return true
+        }
+        
+        // 2. Same location (within 20m) - definitive same spot
+        let distance = distanceBetween(a.coordinate, b.coordinate)
+        if distance < 20.0 {
+            return true
+        }
+        
+        // 3. Same cleaned name and close (within 200m) - likely same place
+        // INCREASED from 150m to 200m to catch more duplicates like "The Star Inn" variants
+        let nameA = GoogleMapsService.cleanPOIDisplayName(a.name).lowercased()
+        let nameB = GoogleMapsService.cleanPOIDisplayName(b.name).lowercased()
+        // IMPORTANT: Both conditions must be true - same cleaned name AND within 200m
+        // This catches cases like "The Star Inn" vs "SE2922 : The Star Inn, Batley Road, Kirkhamgate"
+        if nameA == nameB && nameA.count > 0 && distance < 200.0 {
+            // Debug logging for duplicates that should be caught
+            if nameA.contains("star inn") || nameA.contains("war memorial") || nameA.contains("lindale methodist church") {
+                print("🔍 isRouteDuplicate MATCH: '\(a.name)' vs '\(b.name)' → cleaned: '\(nameA)' == '\(nameB)', distance: \(String(format: "%.1f", distance))m < 200m")
+            }
+            return true
+        }
+        
+        // Debug logging for near-misses
+        if nameA == nameB && nameA.count > 0 && distance >= 200.0 {
+            if nameA.contains("star inn") || nameA.contains("war memorial") || nameA.contains("lindale methodist church") {
+                print("⚠️ isRouteDuplicate NEAR-MISS: '\(a.name)' vs '\(b.name)' → cleaned: '\(nameA)' == '\(nameB)', but distance: \(String(format: "%.1f", distance))m >= 200m")
+            }
+        } else if nameA != nameB && (a.name.lowercased().contains("star inn") || b.name.lowercased().contains("star inn") || a.name.lowercased().contains("war memorial") || b.name.lowercased().contains("war memorial") || a.name.lowercased().contains("lindale methodist church") || b.name.lowercased().contains("lindale methodist church")) {
+            print("⚠️ isRouteDuplicate NAME MISMATCH: '\(a.name)' → '\(nameA)' vs '\(b.name)' → '\(nameB)', distance: \(String(format: "%.1f", distance))m")
+        }
+        
+        return false
+    }
+    
+    /// POI Fingerprint - Safety net to catch near-identical cases
+    /// Combines cleaned name, rounded coordinates (~150m bins), and category
+    private func poiFingerprint(_ poi: PlaceResult) -> String {
+        // Round coordinates to ~150m bins (0.0015 deg ≈ ~160m at mid-latitudes)
+        let roundedLat = (round(poi.coordinate.latitude / 0.0015) * 0.0015)
+        let roundedLon = (round(poi.coordinate.longitude / 0.0025) * 0.0025)
+        
+        let cleanedName = GoogleMapsService.cleanPOIDisplayName(poi.name).lowercased()
+        let category = poi.types?.first ?? "unknown"
+        
+        return "\(cleanedName)|\(String(format: "%.6f", roundedLat)),\(String(format: "%.6f", roundedLon))|\(category)"
+    }
+    
+    /// Fingerprint-based deduplication (safety net)
+    private func deduplicateByFingerprint(_ places: [PlaceResult]) -> [PlaceResult] {
+        var seen = Set<String>()
+        var deduplicated: [PlaceResult] = []
+        
+        for place in places {
+            let fp = poiFingerprint(place)
+            if !seen.contains(fp) {
+                seen.insert(fp)
+                deduplicated.append(place)
+            }
+        }
+        
+        return deduplicated
+    }
+    
+    /// UNIFIED ROUTE DEDUPLICATION - Final pass with stable order
+    /// Uses unified comparator + fingerprint safety net + aggressive name matching
+    private func deduplicateRoutePlaces(_ places: [PlaceResult]) -> [PlaceResult] {
+        guard places.count > 1 else { return places }
+        
+        print("🔍 DEDUPLICATION: Checking \(places.count) POIs for duplicates...")
+        print("🔍 POI list: \(places.enumerated().map { "\($0+1). \($1.name) [\($1.placeId)]" }.joined(separator: ", "))")
+        
+        // Step 1: Pairwise duplicate removal using unified comparator
+        var deduplicated: [PlaceResult] = []
+        for (index, place) in places.enumerated() {
+            // Check against all already-deduplicated POIs
+            var matchedExisting: PlaceResult? = nil
+            let isDuplicate = deduplicated.contains { existing in
+                let isDup = isRouteDuplicate(place, existing)
+                if isDup {
+                    matchedExisting = existing
+                }
+                return isDup
+            }
+            
+            if isDuplicate, let matched = matchedExisting {
+                let distance = distanceBetween(place.coordinate, matched.coordinate)
+                let nameA = GoogleMapsService.cleanPOIDisplayName(place.name).lowercased()
+                let nameB = GoogleMapsService.cleanPOIDisplayName(matched.name).lowercased()
+                let reason: String
+                if place.placeId == matched.placeId {
+                    reason = "same placeId: \(place.placeId)"
+                } else if distance < 20.0 {
+                    reason = "same location (\(String(format: "%.1f", distance))m)"
+                } else {
+                    reason = "same cleaned name '\(nameA)' (\(String(format: "%.1f", distance))m)"
+                }
+                print("🚫 Route dedup [\(index + 1)/\(places.count)]: Removed '\(place.name)' [\(place.placeId)] (\(reason)) - matched '\(matched.name)' [\(matched.placeId)]")
+            } else {
+                deduplicated.append(place)
+                // Log all POIs to see what's being kept (especially for debugging duplicates)
+                // Always log if it's a problematic POI or if route is small
+                let cleanedName = GoogleMapsService.cleanPOIDisplayName(place.name).lowercased()
+                let isProblematic = cleanedName.contains("star inn") || cleanedName.contains("war memorial") || cleanedName.contains("lindale methodist church")
+                if isProblematic || places.count <= 10 || index < 3 || index >= places.count - 2 {
+                    print("✅ Route dedup [\(index + 1)/\(places.count)]: Kept '\(place.name)' [\(place.placeId)] (cleaned: '\(cleanedName)')")
+                }
+            }
+        }
+        
+        // Step 2: Fingerprint safety net (catches near-identical leftovers)
+        let beforeFingerprint = deduplicated.count
+        deduplicated = deduplicateByFingerprint(deduplicated)
+        if deduplicated.count < beforeFingerprint {
+            let removed = beforeFingerprint - deduplicated.count
+            print("🔍 Fingerprint safety net: Removed \(removed) additional near-duplicate(s)")
+        }
+        
+        // Step 3: Aggressive name-based deduplication (catches same name within 200m)
+        let beforeNameDedup = deduplicated.count
+        deduplicated = debugNearbyNameDupes(deduplicated)
+        if deduplicated.count < beforeNameDedup {
+            let removed = beforeNameDedup - deduplicated.count
+            print("🔍 Name-based deduplication: Removed \(removed) additional duplicate(s) by name")
+        }
+        
+        // Step 4: FINAL AGGRESSIVE PASS - Check ALL pairs again with 250m threshold for same cleaned name
+        var finalDeduplicated: [PlaceResult] = []
+        for place in deduplicated {
+            let nameA = GoogleMapsService.cleanPOIDisplayName(place.name).lowercased()
+            var matchedExisting: PlaceResult? = nil
+            let isDuplicate = finalDeduplicated.contains { existing in
+                let nameB = GoogleMapsService.cleanPOIDisplayName(existing.name).lowercased()
+                let distance = distanceBetween(place.coordinate, existing.coordinate)
+                // VERY AGGRESSIVE: same cleaned name within 250m = duplicate (increased from 200m)
+                // This catches cases like "The Star Inn" vs "SE2922 : The Star Inn, Batley Road, Kirkhamgate"
+                if nameA == nameB && nameA.count > 0 && distance <= 250.0 {
+                    matchedExisting = existing
+                    return true
+                }
+                // Also check unified comparator
+                if isRouteDuplicate(place, existing) {
+                    matchedExisting = existing
+                    return true
+                }
+                return false
+            }
+            
+            if !isDuplicate {
+                finalDeduplicated.append(place)
+            } else if let matched = matchedExisting {
+                let distance = distanceBetween(place.coordinate, matched.coordinate)
+                let nameB = GoogleMapsService.cleanPOIDisplayName(matched.name).lowercased()
+                print("🚫 FINAL AGGRESSIVE: Removed '\(place.name)' [\(place.placeId)] - same cleaned name '\(nameA)' as '\(matched.name)' [\(matched.placeId)] @ \(String(format: "%.1f", distance))m")
+            }
+        }
+        
+        if finalDeduplicated.count < deduplicated.count {
+            let removed = deduplicated.count - finalDeduplicated.count
+            print("🔍 Final aggressive pass: Removed \(removed) additional duplicate(s)")
+            deduplicated = finalDeduplicated
+        }
+        
+        if deduplicated.count < places.count {
+            let removed = places.count - deduplicated.count
+            print("🚫 Route deduplication: Removed \(removed) duplicate POI(s) from route (kept \(deduplicated.count) of \(places.count))")
+            print("🔍 Final POI list: \(deduplicated.enumerated().map { "\($0+1). \($1.name) [\($1.placeId)]" }.joined(separator: ", "))")
+        } else {
+            print("✅ Route deduplication: No duplicates found (all \(places.count) POIs unique)")
+        }
+        
+        return deduplicated
+    }
+    
+    /// Diagnostic: Check for nearby name duplicates that might have been missed
+    /// Also ACTUALLY REMOVES them if they're within 200m (more aggressive)
+    private func debugNearbyNameDupes(_ places: [PlaceResult]) -> [PlaceResult] {
+        var result = places
+        var removedIndices = Set<Int>()
+        
+        for i in 0..<places.count {
+            if removedIndices.contains(i) { continue }
+            
+            for j in (i+1)..<places.count {
+                if removedIndices.contains(j) { continue }
+                
+                let a = places[i]
+                let b = places[j]
+                let distance = distanceBetween(a.coordinate, b.coordinate)
+                let nameA = GoogleMapsService.cleanPOIDisplayName(a.name).lowercased()
+                let nameB = GoogleMapsService.cleanPOIDisplayName(b.name).lowercased()
+                
+                // If same cleaned name and within 250m, remove the later one (increased from 200m)
+                // This catches cases like "The Star Inn" vs "SE2922 : The Star Inn, Batley Road, Kirkhamgate"
+                if nameA == nameB && nameA.count > 0 && distance <= 250.0 {
+                    print("⚠️ CRITICAL: Found duplicate by name: '\(a.name)' [\(a.placeId)] vs '\(b.name)' [\(b.placeId)] @ \(Int(distance))m - REMOVING (cleaned: '\(nameA)')")
+                    removedIndices.insert(j)
+                } else if nameA == nameB && nameA.count > 0 && distance <= 200.0 {
+                    print("⚠️ Near-dup by name: '\(a.name)' [\(a.placeId)] vs '\(b.name)' [\(b.placeId)] @ \(Int(distance))m (<=200m, cleaned: '\(nameA)')")
+                }
+                
+                // Extra logging for problematic POIs
+                if nameA.contains("lindale methodist church") || nameA.contains("star inn") || nameA.contains("war memorial") {
+                    if nameA == nameB && nameA.count > 0 {
+                        print("🔍 debugNearbyNameDupes: Checking '\(a.name)' vs '\(b.name)' → cleaned: '\(nameA)' == '\(nameB)', distance: \(String(format: "%.1f", distance))m")
+                    }
+                }
+            }
+        }
+        
+        // Remove duplicates (in reverse order to maintain indices)
+        for index in removedIndices.sorted(by: >) {
+            result.remove(at: index)
+        }
+        
+        return result
+    }
+    
+    /// FINAL SAFETY WRAPPER - Call this at EVERY return site
+    /// Ensures route places are deduplicated even if polyline building fails
+    /// Also exposed for RouteSelectionView to use
+    func finalizeRouteDedupForView(_ route: GeneratedRoute) -> GeneratedRoute {
+        print("🛡️ VIEW LAYER: Final deduplication check before storing route")
+        print("🛡️ VIEW LAYER: Input route has \(route.places.count) POIs: \(route.places.map { $0.name }.joined(separator: ", "))")
+        let deduplicatedPlaces = deduplicateRoutePlaces(route.places)
+        
+        guard deduplicatedPlaces.count < route.places.count else {
+            print("🛡️ VIEW LAYER: No duplicates found - all \(route.places.count) POIs are unique")
+            return route
+        }
+        
+        print("🛡️ VIEW LAYER: Removed \(route.places.count - deduplicatedPlaces.count) duplicate(s) before storing")
+        print("🛡️ VIEW LAYER: Final route has \(deduplicatedPlaces.count) POIs: \(deduplicatedPlaces.map { $0.name }.joined(separator: ", "))")
+        return GeneratedRoute(
+            places: deduplicatedPlaces,
+            polyline: route.polyline,
+            distanceMeters: route.distanceMeters,
+            durationSeconds: route.durationSeconds,
+            legs: route.legs
+        )
+    }
+    
+    /// FINAL SAFETY WRAPPER - Call this at EVERY return site
+    /// Ensures route places are deduplicated even if polyline building fails
+    private func finalizeRouteDedup(_ route: GeneratedRoute) -> GeneratedRoute {
+        print("🔒 FINAL SAFETY WRAPPER: Deduplicating route with \(route.places.count) places before return")
+        if route.places.count > 1 {
+            print("🔒 FINAL SAFETY: Input POIs: \(route.places.enumerated().map { "\($0+1). \($1.name) [\($1.placeId)]" }.joined(separator: ", "))")
+        }
+        let deduplicatedPlaces = deduplicateRoutePlaces(route.places)
+        
+        // If no duplicates found, return original route
+        guard deduplicatedPlaces.count < route.places.count else {
+            print("🔒 FINAL SAFETY: No duplicates found, returning original route with \(route.places.count) POIs")
+            return route
+        }
+        
+        print("🔒 FINAL SAFETY: Removed \(route.places.count - deduplicatedPlaces.count) duplicate(s), returning deduplicated route")
+        print("🔒 FINAL SAFETY: Final POIs: \(deduplicatedPlaces.enumerated().map { "\($0+1). \($1.name) [\($1.placeId)]" }.joined(separator: ", "))")
+        
+        // Return with deduplicated places (polyline will be regenerated by caller if needed)
+        return GeneratedRoute(
+            places: deduplicatedPlaces,
+            polyline: route.polyline,
+            distanceMeters: route.distanceMeters,
+            durationSeconds: route.durationSeconds,
+            legs: route.legs
+        )
+    }
+    
+    /// Async version for cases where polyline regeneration is needed
+    private func finalizeRouteDedupAsync(_ route: GeneratedRoute, buildPolyline: ((_ places: [PlaceResult]) async throws -> String)? = nil) async -> GeneratedRoute {
+        let deduplicatedPlaces = deduplicateRoutePlaces(route.places)
+        
+        // If no duplicates found, return original route
+        guard deduplicatedPlaces.count < route.places.count else {
+            return route
+        }
+        
+        // Regenerate polyline with deduplicated places if builder provided
+        if let buildPolyline = buildPolyline {
+            do {
+                let newPolyline = try await buildPolyline(deduplicatedPlaces)
+                return GeneratedRoute(
+                    places: deduplicatedPlaces,
+                    polyline: newPolyline,
+                    distanceMeters: route.distanceMeters,
+                    durationSeconds: route.durationSeconds,
+                    legs: route.legs
+                )
+            } catch {
+                print("⚠️ Polyline build failed after dedup; returning deduped places anyway")
+                // Fall through to return with deduplicated places but original polyline
+            }
+        }
+        
+        // Return with deduplicated places (even if polyline regeneration failed)
+        return GeneratedRoute(
+            places: deduplicatedPlaces,
+            polyline: route.polyline,
+            distanceMeters: route.distanceMeters,
+            durationSeconds: route.durationSeconds,
+            legs: route.legs
+        )
+    }
+    
+    /// Print comprehensive route summary for debugging
+    private func printRouteSummary(route: GeneratedRoute, targetDuration: Int) {
+        print("\n")
+        print("╔══════════════════════════════════════════════════════════════╗")
+        print("║              📋 ROUTE SUMMARY (COPY-PASTE READY)              ║")
+        print("╠══════════════════════════════════════════════════════════════╣")
+        print("║ Target: \(targetDuration)min | Actual: \(route.durationSeconds / 60)min | Distance: \(String(format: "%.1f", Double(route.distanceMeters) / 1000.0))km | Waypoints: \(route.places.count)")
+        print("╠══════════════════════════════════════════════════════════════╣")
+        
+        // CRITICAL: Final duplicate check - this should NEVER find duplicates if deduplication worked
+        let service = GoogleMapsService.shared
+        var duplicateWarnings: [String] = []
+        for i in 0..<route.places.count {
+            for j in (i+1)..<route.places.count {
+                if service.isRouteDuplicate(route.places[i], route.places[j]) {
+                    let distance = distanceBetween(route.places[i].coordinate, route.places[j].coordinate)
+                    let nameA = GoogleMapsService.cleanPOIDisplayName(route.places[i].name).lowercased()
+                    let nameB = GoogleMapsService.cleanPOIDisplayName(route.places[j].name).lowercased()
+                    duplicateWarnings.append("🚨 CRITICAL DUPLICATE: #\(i+1) '\(route.places[i].name)' and #\(j+1) '\(route.places[j].name)' - cleaned: '\(nameA)' == '\(nameB)', distance: \(String(format: "%.1f", distance))m")
+                }
+            }
+        }
+        
+        for (index, poi) in route.places.enumerated() {
+            let position = "\(index + 1) of \(route.places.count)"
+            let cleanedName = GoogleMapsService.cleanPOIDisplayName(poi.name).lowercased()
+            print("║ \(position): \(poi.name)")
+            print("║    └─ Cleaned: \"\(cleanedName)\"")
+            print("║    └─ PlaceId: \(poi.placeId)")
+            
+            // Check for duplicates with other POIs in route
+            for (otherIndex, otherPOI) in route.places.enumerated() where otherIndex != index {
+                let otherCleanedName = GoogleMapsService.cleanPOIDisplayName(otherPOI.name).lowercased()
+                let distance = distanceBetween(poi.coordinate, otherPOI.coordinate)
+                
+                if cleanedName == otherCleanedName && cleanedName.count > 0 {
+                    duplicateWarnings.append("⚠️ DUPLICATE: #\(index + 1) '\(poi.name)' and #\(otherIndex + 1) '\(otherPOI.name)' have same cleaned name '\(cleanedName)' (\(String(format: "%.1f", distance))m apart)")
+                } else if distance < 20.0 {
+                    duplicateWarnings.append("⚠️ VERY CLOSE: #\(index + 1) '\(poi.name)' and #\(otherIndex + 1) '\(otherPOI.name)' are \(String(format: "%.1f", distance))m apart")
+                }
+            }
+        }
+        
+        // Print duplicate warnings if any
+        if !duplicateWarnings.isEmpty {
+            print("╠══════════════════════════════════════════════════════════════╣")
+            for warning in duplicateWarnings {
+                print("║ \(warning)")
+            }
+        }
+        
+        print("╚══════════════════════════════════════════════════════════════╝")
+        print("\n")
+    }
+    
     // MARK: - Enhance Route with More Waypoints
     /// Takes an existing route (often with 1-2 waypoints) and adds more POIs along the path
     /// This creates a more interesting walk without significantly changing the route duration
@@ -4779,7 +6091,8 @@ class GoogleMapsService: ObservableObject {
         let timeBuffer = 2
         if currentDurationMins >= targetDurationMinutes - timeBuffer {
             print("🗺️ 📍 Route already at target time (\(currentDurationMins)min / \(targetDurationMinutes)min) - no enhancement needed")
-            return existingRoute
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            return finalizeRouteDedup(existingRoute)
         }
         
         print("🗺️ 📍 PROGRESSIVE ENHANCEMENT: \(currentDurationMins)min → target \(targetDurationMinutes)min, \(currentWaypoints) waypoints")
@@ -4790,17 +6103,22 @@ class GoogleMapsService: ObservableObject {
         guard routePoints.count >= 2 else {
             print("🗺️ 📍 Cannot enhance - not enough route points")
             await MainActor.run { enhancementStatus = nil }
-            return existingRoute
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            return finalizeRouteDedup(existingRoute)
         }
         
-        // Get existing waypoint IDs to exclude
-        let existingIds = Set(existingRoute.places.map { $0.placeId })
-        let availablePOIs = prefetchedPOIs.filter { !existingIds.contains($0.placeId) }
+        // Get existing waypoints to exclude using unified comparator
+        let availablePOIs = prefetchedPOIs.filter { poi in
+            !existingRoute.places.contains { existing in
+                isRouteDuplicate(poi, existing)
+            }
+        }
         
         guard !availablePOIs.isEmpty else {
             print("🗺️ 📍 No additional POIs available for enhancement")
             await MainActor.run { enhancementStatus = nil }
-            return existingRoute
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            return finalizeRouteDedup(existingRoute)
         }
         
         // Find POIs that are NEAR the route path (within 150m of route line)
@@ -4827,7 +6145,8 @@ class GoogleMapsService: ObservableObject {
         guard !poisNearRoute.isEmpty else {
             print("🗺️ 📍 No POIs found near route path (within 150m)")
             await MainActor.run { enhancementStatus = nil }
-            return existingRoute
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            return finalizeRouteDedup(existingRoute)
         }
         
         print("🗺️ 📍 Found \(poisNearRoute.count) POIs near route path")
@@ -4855,8 +6174,19 @@ class GoogleMapsService: ObservableObject {
             
             let candidate = candidateInfo.poi
             
-            // Skip if already in list
-            if currentWaypointsList.contains(where: { $0.placeId == candidate.placeId }) {
+            // Skip if already in list using unified comparator
+            let isDuplicate = currentWaypointsList.contains { existing in
+                isRouteDuplicate(candidate, existing)
+            }
+            
+            if isDuplicate {
+                if let matched = currentWaypointsList.first(where: { isRouteDuplicate(candidate, $0) }) {
+                    let distance = distanceBetween(candidate.coordinate, matched.coordinate)
+                    print("🗺️ 📍 Skipping \(candidate.name) - duplicate of '\(matched.name)' (\(String(format: "%.1f", distance))m apart)")
+                }
+            }
+            
+            if isDuplicate {
                 continue
             }
             
@@ -4950,6 +6280,61 @@ class GoogleMapsService: ObservableObject {
             }
         }
         
+        // FINAL DEDUPLICATION: Remove any duplicates that might have slipped through using unified comparator
+        var deduplicatedWaypoints: [PlaceResult] = []
+        for waypoint in currentWaypointsList {
+            let isDuplicate = deduplicatedWaypoints.contains { existing in
+                isRouteDuplicate(waypoint, existing)
+            }
+            
+            if isDuplicate {
+                if let matched = deduplicatedWaypoints.first(where: { isRouteDuplicate(waypoint, $0) }) {
+                    let distance = distanceBetween(waypoint.coordinate, matched.coordinate)
+                    print("🗺️ 📍 Removed duplicate waypoint: '\(waypoint.name)' (matches '\(matched.name)', \(String(format: "%.1f", distance))m apart)")
+                }
+            }
+            
+            if !isDuplicate {
+                deduplicatedWaypoints.append(waypoint)
+            }
+        }
+        
+        // If we removed duplicates, regenerate the route with deduplicated waypoints
+        if deduplicatedWaypoints.count < currentWaypointsList.count {
+            print("🗺️ 📍 ⚠️ Removed \(currentWaypointsList.count - deduplicatedWaypoints.count) duplicate waypoint(s) - regenerating route")
+            
+            // Regenerate route with deduplicated waypoints
+            do {
+                let sortedWaypoints = deduplicatedWaypoints.sorted { wp1, wp2 in
+                    let dist1 = distanceBetween(origin, wp1.coordinate)
+                    let dist2 = distanceBetween(origin, wp2.coordinate)
+                    return dist1 < dist2
+                }
+                
+                let directions = try await getWalkingDirections(
+                    origin: origin,
+                    destination: origin,
+                    waypoints: sortedWaypoints.map { $0.coordinate },
+                    preserveWaypointOrder: true
+                )
+                
+                let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                
+                currentRoute = GeneratedRoute(
+                    places: sortedWaypoints,
+                    polyline: directions.overviewPolyline.points,
+                    distanceMeters: distance,
+                    durationSeconds: duration,
+                    legs: directions.legs
+                )
+                currentWaypointsList = sortedWaypoints
+            } catch {
+                print("🗺️ 📍 ⚠️ Failed to regenerate route after deduplication: \(error.localizedDescription)")
+                // Use original route even with duplicates rather than failing
+            }
+        }
+        
         // Report results
         let originalMins = existingRoute.durationSeconds / 60
         let finalMins = currentRoute.durationSeconds / 60
@@ -4961,7 +6346,8 @@ class GoogleMapsService: ObservableObject {
         }
         
         await MainActor.run { enhancementStatus = nil }
-        return currentRoute
+        // FINAL SAFETY WRAPPER: Ensure deduplication on return
+        return finalizeRouteDedup(currentRoute)
     }
     
     // MARK: - Generate Local Walking Route
@@ -5015,12 +6401,14 @@ class GoogleMapsService: ObservableObject {
         targetDurationMinutes: Int,
         difficulty: RouteDifficulty? = nil,
         excludePlaceIds: Set<String> = [],
+        excludePOIs: [PlaceResult] = [],  // v1.9.51: Actual POI objects to check for duplicates by name/coordinate
         prefetchedPOIs: [PlaceResult]? = nil,
         useSystematicSelection: Bool = false,
         expandedSearch: Bool = false,
         preferredDirection: RouteDirection? = nil,  // Try to generate route in this direction
         useEndpointFirst: Bool = false,  // Use single endpoint approach (better for Route 1)
-        preferMultiWaypoint: Bool = false  // v1.6.49: Force 2+ waypoints for variety (routes 2-4)
+        preferMultiWaypoint: Bool = false,  // v1.6.49: Force 2+ waypoints for variety (routes 2-4)
+        searchRadiusOverride: Int? = nil  // v1.9.50: Allow override for Stage 2 fallback
     ) async throws -> GeneratedRoute {
         let startTime = Date()
         let formatter = DateFormatter()
@@ -5137,7 +6525,9 @@ class GoogleMapsService: ObservableObject {
         // Long routes need larger radius to find distant POIs
         let baseRadius = max(600, totalDistanceTarget / 2)
         let searchRadius: Int
-        if expandedSearch {
+        if let override = searchRadiusOverride {
+            searchRadius = override  // v1.9.50: Use override if provided (for Stage 2 fallback)
+        } else if expandedSearch {
             searchRadius = baseRadius * 2  // Double radius for retry
         } else if targetDurationMinutes >= 30 {
             searchRadius = max(1500, baseRadius * 2)  // 30+ min: largest radius
@@ -5219,12 +6609,53 @@ class GoogleMapsService: ObservableObject {
             places = filtered
             print("🗺️ ⚡ Using \(places.count) pre-fetched POIs (faster!)")
         } else {
-            // Fetch POIs now
+            // v1.9.50: SMART FIRST-RUN STRATEGY
+            // Try free sources first (Apple, OSM, Geograph) to save Google costs
+            // Fallback to Google if <15 POIs found (optimal threshold for route quality)
+            let freeSourcesStartTime = Date()
+            print("🗺️ [COST OPT] First-run: Trying free sources first (Apple/OSM/Geograph)...")
+            print("⏱️ [TIMING] Free sources fetch STARTED")
+            
             places = try await findNearbyPlaces(
                 location: location,
-                radiusMeters: searchRadius
+                radiusMeters: searchRadius,
+                skipGoogle: true  // Skip Google on first attempt
             )
-            print("🗺️ Found \(places.count) POIs (need \(desiredSpots) for route)")
+            
+            let freeSourcesElapsed = Date().timeIntervalSince(freeSourcesStartTime)
+            print("⏱️ [TIMING] Free sources fetch COMPLETED in \(String(format: "%.2f", freeSourcesElapsed))s")
+            print("🗺️ Free sources: Found \(places.count) POIs (need \(desiredSpots) for route)")
+            
+            // Fallback to Google if we have <15 POIs (sparse area - need Google for better route quality)
+            // Optimal threshold: 15 POIs covers all standard routes (10-30 min) with buffer for filtering
+            if places.count < 15 {
+                let googleFallbackStartTime = Date()
+                print("🗺️ [FALLBACK] Only \(places.count) POIs from free sources (<15) - fetching Google POIs for better route quality...")
+                print("⏱️ [TIMING] Google fallback fetch STARTED")
+                
+                let googlePOIs = try await findNearbyPlaces(
+                    location: location,
+                    radiusMeters: searchRadius,
+                    skipGoogle: false  // Include Google
+                )
+                
+                let googleFallbackElapsed = Date().timeIntervalSince(googleFallbackStartTime)
+                print("⏱️ [TIMING] Google fallback fetch COMPLETED in \(String(format: "%.2f", googleFallbackElapsed))s")
+                print("🗺️ With Google: Found \(googlePOIs.count) POIs")
+                places = googlePOIs
+                
+                let totalPOIFetchTime = Date().timeIntervalSince(freeSourcesStartTime)
+                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", totalPOIFetchTime))s")
+                print("⏱️ [TIMING]   Free sources: \(String(format: "%.2f", freeSourcesElapsed))s")
+                print("⏱️ [TIMING]   Google fallback: \(String(format: "%.2f", googleFallbackElapsed))s")
+                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+            } else {
+                print("🗺️ ✅ Sufficient POIs from free sources (\(places.count) ≥15) - skipping Google (cost saved!)")
+                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", freeSourcesElapsed))s (free sources only)")
+                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+            }
         }
         
         // ════════════════════════════════════════════════════════════════
@@ -5233,13 +6664,41 @@ class GoogleMapsService: ObservableObject {
         let fetchedPOICount = places.count
         
         // Filter out previously shown places to ensure variety
-        if !excludePlaceIds.isEmpty {
+        // v1.9.51: Enhanced exclusion - checks placeId AND name similarity/coordinate proximity
+        // This prevents duplicates like "The Star Inn" vs "SE2922: The Star Inn, Kirkhamgate" from appearing in different routes
+        if !excludePlaceIds.isEmpty || !excludePOIs.isEmpty {
             let beforeCount = places.count
-            let excludedPOIs = places.filter { excludePlaceIds.contains($0.placeId) }
-            places = places.filter { !excludePlaceIds.contains($0.placeId) }
-            print("🗺️ Excluded \(beforeCount - places.count) previously shown POIs, \(places.count) remaining")
-            if !excludedPOIs.isEmpty {
-                print("🚫 Excluded POIs: \(excludedPOIs.map { $0.name }.joined(separator: ", "))")
+            
+            // Combine excluded POIs from parameter and prefetched pool
+            var allExcludedPOIs = excludePOIs
+            if let prefetched = prefetchedPOIs {
+                let excludedFromPrefetched = prefetched.filter { excludePlaceIds.contains($0.placeId) }
+                allExcludedPOIs.append(contentsOf: excludedFromPrefetched)
+            }
+            
+            places = places.filter { poi in
+                // Direct placeId match
+                if excludePlaceIds.contains(poi.placeId) {
+                    return false
+                }
+                
+                // Check if this POI is a duplicate of any excluded POI using unified comparator
+                for excludedPOI in allExcludedPOIs {
+                    if isRouteDuplicate(poi, excludedPOI) {
+                        let distance = distanceBetween(poi.coordinate, excludedPOI.coordinate)
+                        print("🚫 Excluded duplicate POI: '\(poi.name)' (matches excluded '\(excludedPOI.name)') - \(String(format: "%.1f", distance))m apart")
+                        return false
+                    }
+                }
+                
+                return true
+            }
+            
+            let excludedCount = beforeCount - places.count
+            print("🗺️ Excluded \(excludedCount) previously shown POIs (by ID or similarity), \(places.count) remaining")
+            if excludedCount > 0 && !allExcludedPOIs.isEmpty {
+                let excludedNames = allExcludedPOIs.map { $0.name }.joined(separator: ", ")
+                print("🚫 Excluded POI set: \(excludedNames)")
             }
         }
         let afterExclusionCount = places.count
@@ -5479,7 +6938,41 @@ class GoogleMapsService: ObservableObject {
             // This penalizes POIs that would create overly long out-and-backs
             // v1.6.41: Add distance bonus to escape cluster trap for short walks
             var endpointCandidates = places
-                .filter { !excludePlaceIds.contains($0.placeId) }
+                .filter { poi in
+                    // Exclude by placeId
+                    if excludePlaceIds.contains(poi.placeId) {
+                        return false
+                    }
+                    
+                    // Exclude duplicates of excluded POIs (by name/location)
+                    for excludedPOI in excludePOIs {
+                        let distance = distanceBetween(poi.coordinate, excludedPOI.coordinate)
+                        let poiDisplayName = GoogleMapsService.cleanPOIDisplayName(poi.name)
+                        let excludedDisplayName = GoogleMapsService.cleanPOIDisplayName(excludedPOI.name)
+                        let poiCleaned = poiDisplayName.lowercased()
+                        let excludedCleaned = excludedDisplayName.lowercased()
+                        
+                        // Same display name (case-insensitive) and close (<150m) = duplicate
+                        // INCREASED from 100m to 150m to catch POIs from different sources with slightly different coordinates
+                        // Made case-insensitive to match within-route deduplication behavior
+                        if poiCleaned == excludedCleaned {
+                            if distance < 150.0 {
+                                print("🚫 Excluded endpoint candidate: '\(poi.name)' (matches excluded '\(excludedPOI.name)') - \(String(format: "%.1f", distance))m apart")
+                                return false
+                            } else {
+                                print("⚠️ Same cleaned name but >150m apart (endpoint): '\(poi.name)' vs '\(excludedPOI.name)' - \(String(format: "%.1f", distance))m (cleaned: '\(poiCleaned)')")
+                            }
+                        }
+                        
+                        // High name similarity (>0.9) and close (<30m) = likely duplicate
+                        let nameSimilarity = calculateNameSimilarity(poiDisplayName.lowercased(), excludedDisplayName.lowercased(), poi1: poi, poi2: excludedPOI)
+                        if nameSimilarity > 0.9 && distance < 30.0 {
+                            return false
+                        }
+                    }
+                    
+                    return true
+                }
                 .map { poi -> (poi: PlaceResult, distance: Double, score: Double) in
                     let dist = distanceBetween(location, poi.coordinate)
                     let distanceScore = abs(dist - idealEndpointDistance)
@@ -5619,7 +7112,9 @@ class GoogleMapsService: ObservableObject {
                         let routePoints = decodePolyline(route.polyline)
                         
                         let poisNearRoute = places.filter { poi in
-                            guard poi.placeId != result.poi.placeId else { return false }
+                            // Exclude the endpoint POI itself using unified comparator
+                            guard !isRouteDuplicate(poi, result.poi) else { return false }
+                            
                             return routePoints.contains { routePoint in
                                 distanceBetween(poi.coordinate, routePoint) < 150
                             }
@@ -5689,7 +7184,9 @@ class GoogleMapsService: ObservableObject {
                             let routePoints = decodePolyline(route.polyline)
                             
                             let poisNearRoute = places.filter { poi in
-                                guard poi.placeId != candidate.poi.placeId else { return false }
+                                // Exclude the endpoint POI itself using unified comparator
+                                guard !isRouteDuplicate(poi, candidate.poi) else { return false }
+                                
                                 return routePoints.contains { routePoint in
                                     distanceBetween(poi.coordinate, routePoint) < 150
                                 }
@@ -5818,7 +7315,43 @@ class GoogleMapsService: ObservableObject {
                 if !alternativeEndpointRoutes.isEmpty {
                     print("🎯 📦 Stored \(alternativeEndpointRoutes.count) alternative route(s) for pool")
                 }
-                return bestEnhanceable.route
+                // Final deduplication before returning
+                let deduplicatedPlaces = deduplicateRoutePlaces(bestEnhanceable.route.places)
+                var routeToReturn = bestEnhanceable.route
+                if deduplicatedPlaces.count < bestEnhanceable.route.places.count {
+                    // Regenerate route with deduplicated places
+                    do {
+                        let directions = try await getWalkingDirections(
+                            origin: location,
+                            destination: location,
+                            waypoints: deduplicatedPlaces.map { $0.coordinate },
+                            preserveWaypointOrder: true
+                        )
+                        let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                        let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                        routeToReturn = GeneratedRoute(
+                            places: deduplicatedPlaces,
+                            polyline: directions.overviewPolyline.points,
+                            distanceMeters: distance,
+                            durationSeconds: duration,
+                            legs: directions.legs
+                        )
+                    } catch {
+                        print("⚠️ Failed to regenerate route after deduplication, using deduplicated places without regeneration")
+                        // Even if regeneration fails, use deduplicated places to avoid returning duplicates
+                        routeToReturn = GeneratedRoute(
+                            places: deduplicatedPlaces,
+                            polyline: bestEnhanceable.route.polyline,
+                            distanceMeters: bestEnhanceable.route.distanceMeters,
+                            durationSeconds: bestEnhanceable.route.durationSeconds,
+                            legs: bestEnhanceable.route.legs
+                        )
+                    }
+                }
+                // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                routeToReturn = finalizeRouteDedup(routeToReturn)
+                printRouteSummary(route: routeToReturn, targetDuration: targetDurationMinutes)
+                return routeToReturn
             } else if let firstValid = validEndpointRoutes.first {
                 print("🎯 ⚠️ Only boring routes found")
                 
@@ -5832,7 +7365,43 @@ class GoogleMapsService: ObservableObject {
                 if !alternativeEndpointRoutes.isEmpty {
                     print("🎯 📦 Stored \(alternativeEndpointRoutes.count) alternative route(s) for pool")
                 }
-                return firstValid.route
+                // Final deduplication before returning
+                let deduplicatedPlaces = deduplicateRoutePlaces(firstValid.route.places)
+                var routeToReturn = firstValid.route
+                if deduplicatedPlaces.count < firstValid.route.places.count {
+                    // Regenerate route with deduplicated places
+                    do {
+                        let directions = try await getWalkingDirections(
+                            origin: location,
+                            destination: location,
+                            waypoints: deduplicatedPlaces.map { $0.coordinate },
+                            preserveWaypointOrder: true
+                        )
+                        let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                        let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                        routeToReturn = GeneratedRoute(
+                            places: deduplicatedPlaces,
+                            polyline: directions.overviewPolyline.points,
+                            distanceMeters: distance,
+                            durationSeconds: duration,
+                            legs: directions.legs
+                        )
+                    } catch {
+                        print("⚠️ Failed to regenerate route after deduplication, using deduplicated places without regeneration")
+                        // Even if regeneration fails, use deduplicated places to avoid returning duplicates
+                        routeToReturn = GeneratedRoute(
+                            places: deduplicatedPlaces,
+                            polyline: firstValid.route.polyline,
+                            distanceMeters: firstValid.route.distanceMeters,
+                            durationSeconds: firstValid.route.durationSeconds,
+                            legs: firstValid.route.legs
+                        )
+                    }
+                }
+                // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                routeToReturn = finalizeRouteDedup(routeToReturn)
+                printRouteSummary(route: routeToReturn, targetDuration: targetDurationMinutes)
+                return routeToReturn
             }
             
             // If no valid routes but we have a fallback, use it (better than nothing)
@@ -5840,7 +7409,44 @@ class GoogleMapsService: ObservableObject {
                 let fallbackMins = fallback.durationSeconds / 60
                 print("🎯 ⚠️ No routes in tolerance, using best fallback: \(fallbackMins)min (target: \(targetDurationMinutes)min)")
                 print("🎯 💡 Note: This area has high road overhead - closest route is \(fallbackMins)min")
-                return fallback
+                // Final deduplication before returning
+                let deduplicatedPlaces = deduplicateRoutePlaces(fallback.places)
+                if deduplicatedPlaces.count < fallback.places.count {
+                    // Regenerate route with deduplicated places
+                    do {
+                        let directions = try await getWalkingDirections(
+                            origin: location,
+                            destination: location,
+                            waypoints: deduplicatedPlaces.map { $0.coordinate },
+                            preserveWaypointOrder: true
+                        )
+                        let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                        let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                        let deduplicatedRoute = GeneratedRoute(
+                            places: deduplicatedPlaces,
+                            polyline: directions.overviewPolyline.points,
+                            distanceMeters: distance,
+                            durationSeconds: duration,
+                            legs: directions.legs
+                        )
+                        // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                        return finalizeRouteDedup(deduplicatedRoute)
+                    } catch {
+                        print("⚠️ Failed to regenerate route after deduplication, using deduplicated places without regeneration")
+                        // Even if regeneration fails, use deduplicated places to avoid returning duplicates
+                        let fallbackRoute = GeneratedRoute(
+                            places: deduplicatedPlaces,
+                            polyline: fallback.polyline,
+                            distanceMeters: fallback.distanceMeters,
+                            durationSeconds: fallback.durationSeconds,
+                            legs: fallback.legs
+                        )
+                        // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                        return finalizeRouteDedup(fallbackRoute)
+                    }
+                }
+                // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                return finalizeRouteDedup(fallback)
             }
             
             print("🎯 No valid endpoint routes found, falling back to loop approach...")
@@ -5968,9 +7574,16 @@ class GoogleMapsService: ObservableObject {
             // In quick mode, return immediately if we have a valid route that meets minimum threshold
             // If route is too short (< 75% of target), continue trying more waypoints
             if quickMode && !validRoutes.isEmpty {
-                let bestRouteMinutes = validRoutes.first!.durationSeconds / 60
+                let bestRoute = validRoutes.first!
+                let bestRouteMinutes = bestRoute.durationSeconds / 60
                 let minimumAcceptable = Int(Double(targetDurationMinutes) * 0.75)  // 75% minimum
                 let maximumAcceptable = Int(Double(targetDurationMinutes) * 1.20)  // 120% maximum for early return
+                
+                // Final deduplication check before returning
+                let deduplicatedPlaces = deduplicateRoutePlaces(bestRoute.places)
+                if deduplicatedPlaces.count < bestRoute.places.count {
+                    print("🗺️ ⚡ Quick mode: Found duplicates in route, will regenerate before returning")
+                }
                 
                 if bestRouteMinutes >= minimumAcceptable && bestRouteMinutes <= maximumAcceptable {
                     print("🗺️ ⚡ Quick mode: returning valid route (\(bestRouteMinutes)min within 75-120%)")
@@ -6112,6 +7725,33 @@ class GoogleMapsService: ObservableObject {
                 
                 guard selectedWaypoints.count == waypointCount else { continue }
                 
+                // FINAL SAFETY CHECK: Remove any duplicate POIs using unified comparator
+                var deduplicatedWaypoints: [PlaceResult] = []
+                for waypoint in selectedWaypoints {
+                    let isDuplicate = deduplicatedWaypoints.contains { existing in
+                        isRouteDuplicate(waypoint, existing)
+                    }
+                    
+                    if isDuplicate {
+                        if let matched = deduplicatedWaypoints.first(where: { isRouteDuplicate(waypoint, $0) }) {
+                            let distance = distanceBetween(waypoint.coordinate, matched.coordinate)
+                            print("🚫 Removed duplicate waypoint: '\(waypoint.name)' (matches '\(matched.name)', \(String(format: "%.1f", distance))m apart)")
+                        }
+                    }
+                    
+                    if !isDuplicate {
+                        deduplicatedWaypoints.append(waypoint)
+                    }
+                }
+                
+                // If deduplication removed waypoints, we need at least the minimum count
+                guard deduplicatedWaypoints.count >= max(1, waypointCount - 1) else {
+                    print("🚫 Too many duplicates removed, skipping this combination")
+                    continue
+                }
+                
+                selectedWaypoints = deduplicatedWaypoints
+                
                 // Skip if we've already tried this exact combination
                 let comboKey = selectedWaypoints.map { $0.placeId }.sorted().joined(separator: ",")
                 guard !triedCombinations.contains(comboKey) else { continue }
@@ -6158,7 +7798,8 @@ class GoogleMapsService: ObservableObject {
                     if !validRoutes.isEmpty {
                         let best = validRoutes.max(by: { $0.places.count < $1.places.count })!
                         print("🗺️ ⚠️ Returning best route found before rate limit: \(best.durationSeconds/60)min, \(best.places.count) POIs")
-                        return best
+                        // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                        return finalizeRouteDedup(best)
                     }
                     
                     // Return fallback if we have one
@@ -6222,6 +7863,47 @@ class GoogleMapsService: ObservableObject {
             let selectedScore = sorted.first!.backtrackScore
             print("🗺️ Route backtracking score: \(String(format: "%.0f", selectedScore * 100))% (lower = more loop-like)")
             
+            // FINAL DEDUPLICATION: Remove any duplicate POIs before processing
+            let deduplicatedPlaces = deduplicateRoutePlaces(selected.places)
+            if deduplicatedPlaces.count < selected.places.count {
+                // Regenerate route with deduplicated places
+                let sortedWaypoints = deduplicatedPlaces.sorted { wp1, wp2 in
+                    let dist1 = distanceBetween(location, wp1.coordinate)
+                    let dist2 = distanceBetween(location, wp2.coordinate)
+                    return dist1 < dist2
+                }
+                
+                do {
+                    let directions = try await getWalkingDirections(
+                        origin: location,
+                        destination: location,
+                        waypoints: sortedWaypoints.map { $0.coordinate },
+                        preserveWaypointOrder: true
+                    )
+                    
+                    let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                    let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                    
+                    selected = GeneratedRoute(
+                        places: sortedWaypoints,
+                        polyline: directions.overviewPolyline.points,
+                        distanceMeters: distance,
+                        durationSeconds: duration,
+                        legs: directions.legs
+                    )
+                } catch {
+                    print("⚠️ Failed to regenerate route after deduplication, using deduplicated places without regeneration")
+                    // Even if regeneration fails, use deduplicated places to avoid returning duplicates
+                    selected = GeneratedRoute(
+                        places: sortedWaypoints,
+                        polyline: selected.polyline,
+                        distanceMeters: selected.distanceMeters,
+                        durationSeconds: selected.durationSeconds,
+                        legs: selected.legs
+                    )
+                }
+            }
+            
             // Remove waypoints that are too close together (should be ~5 min / 300m+ apart)
             // v1.8.10: Now async - regenerates polyline when waypoints removed
             selected = await removeCloseWaypoints(from: selected, minDistance: 250, origin: location)
@@ -6244,13 +7926,62 @@ class GoogleMapsService: ObservableObject {
                     let newAccuracy = Double(extendedMins) / Double(targetDurationMinutes)
                     if newAccuracy >= 0.95 && newAccuracy <= 1.10 {
                         print("🔧 ✅ Extended route: \(finalMins)min → \(extendedMins)min (\(Int(newAccuracy * 100))%)")
-                        selected = extended
-                        finalMins = extendedMins
+                        // CRITICAL: Extended route is already deduplicated by tryExtendRoute's finalizeRouteDedup
+                        // But ensure it's still deduplicated in case of any edge cases
+                        selected = finalizeRouteDedup(extended)
+                        finalMins = selected.durationSeconds / 60
                     } else {
                         print("🔧 ⏭️ Extension would be \(extendedMins)min (\(Int(newAccuracy * 100))%) - keeping original")
                     }
                 }
             }
+            
+            // FINAL DEDUPLICATION CHECK: One last pass before returning
+            let finalDeduplicatedPlaces = deduplicateRoutePlaces(selected.places)
+            if finalDeduplicatedPlaces.count < selected.places.count {
+                // Regenerate with deduplicated places
+                let sortedWaypoints = finalDeduplicatedPlaces.sorted { wp1, wp2 in
+                    let dist1 = distanceBetween(location, wp1.coordinate)
+                    let dist2 = distanceBetween(location, wp2.coordinate)
+                    return dist1 < dist2
+                }
+                
+                do {
+                    let directions = try await getWalkingDirections(
+                        origin: location,
+                        destination: location,
+                        waypoints: sortedWaypoints.map { $0.coordinate },
+                        preserveWaypointOrder: true
+                    )
+                    
+                    let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                    let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                    
+                    selected = GeneratedRoute(
+                        places: sortedWaypoints,
+                        polyline: directions.overviewPolyline.points,
+                        distanceMeters: distance,
+                        durationSeconds: duration,
+                        legs: directions.legs
+                    )
+                    finalMins = duration / 60
+                } catch {
+                    print("⚠️ Failed to regenerate route after final deduplication, using deduplicated places without regeneration")
+                    // Even if regeneration fails, use deduplicated places to avoid returning duplicates
+                    selected = GeneratedRoute(
+                        places: sortedWaypoints,
+                        polyline: selected.polyline,
+                        distanceMeters: selected.distanceMeters,
+                        durationSeconds: selected.durationSeconds,
+                        legs: selected.legs
+                    )
+                    // Recalculate finalMins from deduplicated places (approximate)
+                    finalMins = selected.durationSeconds / 60
+                }
+            }
+            
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            selected = finalizeRouteDedup(selected)
             
             // v1.6.49: Clear summary logging for easy copy/paste
             let poiNames = selected.places.map { $0.name }.joined(separator: " → ")
@@ -6258,6 +7989,9 @@ class GoogleMapsService: ObservableObject {
             print("═══════════════════════════════════════════════════════════")
             print("📍 ROUTE GENERATED: \(finalMins)min | \(selected.places.count) waypoints | \(distanceKm)km")
             print("📍 POIs: \(poiNames)")
+            
+            // 📋 COMPREHENSIVE ROUTE SUMMARY FOR DEBUGGING
+            printRouteSummary(route: selected, targetDuration: targetDurationMinutes)
             print("═══════════════════════════════════════════════════════════")
             
             // Mark POIs as recently used for variety in future routes
@@ -6265,7 +7999,8 @@ class GoogleMapsService: ObservableObject {
                 markPOIAsUsed(place.placeId)
             }
             
-            return selected
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            return finalizeRouteDedup(selected)
         }
         
         // Return BEST fallback route we found - but ONLY if within 130% cap
@@ -6295,6 +8030,31 @@ class GoogleMapsService: ObservableObject {
                     print("🗺️ ⚠️ Returning longer route: \(mins)min (target: \(targetDurationMinutes)min)")
                 }
                 
+                // Final deduplication before returning fallback
+                let deduplicatedPlaces = deduplicateRoutePlaces(best.places)
+                if deduplicatedPlaces.count < best.places.count {
+                    // Regenerate route with deduplicated places
+                    do {
+                        let directions = try await getWalkingDirections(
+                            origin: location,
+                            destination: location,
+                            waypoints: deduplicatedPlaces.map { $0.coordinate },
+                            preserveWaypointOrder: true
+                        )
+                        let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                        let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                        best = GeneratedRoute(
+                            places: deduplicatedPlaces,
+                            polyline: directions.overviewPolyline.points,
+                            distanceMeters: distance,
+                            durationSeconds: duration,
+                            legs: directions.legs
+                        )
+                    } catch {
+                        print("⚠️ Failed to regenerate fallback route after deduplication, using original")
+                    }
+                }
+                
                 // Mark POIs as recently used for variety
                 for place in best.places {
                     markPOIAsUsed(place.placeId)
@@ -6302,7 +8062,8 @@ class GoogleMapsService: ObservableObject {
                 
                 // Note: Google fallback is handled separately in generateLocalRouteWithGoogleFallback
                 // This function just returns the best MapKit route
-                return best
+                // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                return finalizeRouteDedup(best)
             }
         }
         
@@ -6328,12 +8089,68 @@ class GoogleMapsService: ObservableObject {
             } else {
                 print("🗺️ ✓ Guaranteed fallback created: \(mins)min (target: \(targetDurationMinutes)min)")
                 
+                // Final deduplication before returning guaranteed fallback
+                let deduplicatedPlaces = deduplicateRoutePlaces(guaranteedRoute.places)
+                if deduplicatedPlaces.count < guaranteedRoute.places.count {
+                    // Regenerate route with deduplicated places
+                    do {
+                        let directions = try await getWalkingDirections(
+                            origin: location,
+                            destination: location,
+                            waypoints: deduplicatedPlaces.map { $0.coordinate },
+                            preserveWaypointOrder: true
+                        )
+                        let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                        let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                        let deduplicatedRoute = GeneratedRoute(
+                            places: deduplicatedPlaces,
+                            polyline: directions.overviewPolyline.points,
+                            distanceMeters: distance,
+                            durationSeconds: duration,
+                            legs: directions.legs
+                        )
+                        
+                        // Mark POIs as recently used for variety
+                        for place in deduplicatedRoute.places {
+                            markPOIAsUsed(place.placeId)
+                        }
+                        
+                        // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                        let finalized = finalizeRouteDedup(deduplicatedRoute)
+                        printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
+                        return finalized
+                    } catch {
+                        print("⚠️ Failed to regenerate guaranteed fallback route after deduplication, using deduplicated places without regeneration")
+                        // Even if regeneration fails, use deduplicated places to avoid returning duplicates
+                        let fallbackRoute = GeneratedRoute(
+                            places: deduplicatedPlaces,
+                            polyline: guaranteedRoute.polyline,
+                            distanceMeters: guaranteedRoute.distanceMeters,
+                            durationSeconds: guaranteedRoute.durationSeconds,
+                            legs: guaranteedRoute.legs
+                        )
+                        
+                        // Mark POIs as recently used for variety
+                        for place in fallbackRoute.places {
+                            markPOIAsUsed(place.placeId)
+                        }
+                        
+                        // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                        let finalized = finalizeRouteDedup(fallbackRoute)
+                        printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
+                        return finalized
+                    }
+                }
+                
                 // Mark POIs as recently used for variety
                 for place in guaranteedRoute.places {
                     markPOIAsUsed(place.placeId)
                 }
                 
-                return guaranteedRoute
+                // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                let finalized = finalizeRouteDedup(guaranteedRoute)
+                printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
+                return finalized
             }
         }
         
@@ -6399,13 +8216,15 @@ class GoogleMapsService: ObservableObject {
                 if durationMinutes >= minAccept && durationMinutes <= maxAccept {
                     print("🗺️ 🆘 ✓ Found viable out-and-back: \(durationMinutes)min")
                     
-                    return GeneratedRoute(
+                    let outAndBackRoute = GeneratedRoute(
                         places: [poi],
                         polyline: directions.overviewPolyline.points,
                         distanceMeters: totalDistance,
                         durationSeconds: totalDuration,
                         legs: directions.legs
                     )
+                    // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                    return finalizeRouteDedup(outAndBackRoute)
                 } else {
                     print("🗺️ 🆘 ✗ \(poi.name): \(durationMinutes)min not in \(minAccept)-\(maxAccept)min range")
                 }
@@ -6463,7 +8282,8 @@ class GoogleMapsService: ObservableObject {
         
         if let route = bestLastResort {
             print("🗺️ 🆘 ✓ Best last resort: \(route.durationSeconds/60)min")
-            return route
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            return finalizeRouteDedup(route)
         }
         
         return nil
@@ -6511,7 +8331,10 @@ class GoogleMapsService: ObservableObject {
     /// Remove waypoints that are too close together (keeps first one in each cluster)
     /// v1.8.10: Now async - regenerates polyline when waypoints are removed to fix Star Inn bug
     private func removeCloseWaypoints(from route: GeneratedRoute, minDistance: Double, origin: CLLocationCoordinate2D) async -> GeneratedRoute {
-        guard route.places.count > 1 else { return route }
+        guard route.places.count > 1 else {
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            return finalizeRouteDedup(route)
+        }
         
         var filteredPlaces: [PlaceResult] = []
         
@@ -6539,25 +8362,29 @@ class GoogleMapsService: ObservableObject {
                     preserveWaypointOrder: true
                 )
                 print("🗺️ ✅ Polyline regenerated after filtering")
-                return GeneratedRoute(
+                let filteredRoute = GeneratedRoute(
                     places: filteredPlaces,
                     polyline: newDirections.overviewPolyline.points,
                     distanceMeters: newDirections.legs.reduce(0) { $0 + $1.distance.value },
                     durationSeconds: newDirections.legs.reduce(0) { $0 + $1.duration.value },
                     legs: newDirections.legs
                 )
+                // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                return finalizeRouteDedup(filteredRoute)
             } catch {
                 print("🗺️ ⚠️ Polyline regeneration failed: \(error.localizedDescription)")
             }
         }
         
-        return GeneratedRoute(
+        let finalRoute = GeneratedRoute(
             places: filteredPlaces,
             polyline: route.polyline,
             distanceMeters: route.distanceMeters,
             durationSeconds: route.durationSeconds,
             legs: route.legs
         )
+        // FINAL SAFETY WRAPPER: Ensure deduplication on return
+        return finalizeRouteDedup(finalRoute)
     }
     
     // MARK: - Route Extension (v1.6.47)
@@ -6646,6 +8473,22 @@ class GoogleMapsService: ObservableObject {
         
         // Try adding the closest POI(s) - estimate ~2-3 min detour per nearby POI
         for candidate in onRoutePOIs.prefix(3) {
+            // CRITICAL: Check if this POI is already in the route using unified comparator
+            // This must check against ALL places in the route, not just the first match
+            let isDuplicate = route.places.contains { existing in
+                isRouteDuplicate(candidate.poi, existing)
+            }
+            
+            if isDuplicate {
+                if let matched = route.places.first(where: { isRouteDuplicate(candidate.poi, $0) }) {
+                    let distance = distanceBetween(candidate.poi.coordinate, matched.coordinate)
+                    let nameA = GoogleMapsService.cleanPOIDisplayName(candidate.poi.name).lowercased()
+                    let nameB = GoogleMapsService.cleanPOIDisplayName(matched.name).lowercased()
+                    print("🔧 Skipping '\(candidate.poi.name)' - duplicate of existing POI '\(matched.name)' in route (\(String(format: "%.1f", distance))m apart, cleaned: '\(nameA)' == '\(nameB)')")
+                }
+                continue  // Skip this POI - already in route
+            }
+            
             // Estimate detour time (distance to POI and back, at ~80m/min walking)
             let detourMeters = candidate.minDistance * 2  // There and back
             let estimatedDetourMins = Int(detourMeters / 80) + 1  // +1 for stopping time
@@ -6684,13 +8527,16 @@ class GoogleMapsService: ObservableObject {
                     let newDurationSeconds = newDirections.legs.reduce(0) { $0 + $1.duration.value }
                     let newDistanceMeters = newDirections.legs.reduce(0) { $0 + $1.distance.value }
                     
-                    return GeneratedRoute(
+                    let extendedRoute = GeneratedRoute(
                         places: newPlaces,
                         polyline: newDirections.overviewPolyline.points,
                         distanceMeters: newDistanceMeters,
                         durationSeconds: newDurationSeconds,
                         legs: newDirections.legs
                     )
+                    
+                    // CRITICAL: Deduplicate before returning - catches duplicates that might have been added
+                    return finalizeRouteDedup(extendedRoute)
                 } catch {
                     print("🔧 Failed to generate extended route: \(error.localizedDescription)")
                     continue
@@ -6856,7 +8702,8 @@ class GoogleMapsService: ObservableObject {
                                         legs: extendedDirections.legs
                                     )
                                     validRoutes.append(extendedRoute)
-                                    return extendedRoute
+                                    // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                                    return finalizeRouteDedup(extendedRoute)
                                 } else {
                                     print("🗺️ 🔍 ✗ Extended route outside tolerance: \(extendedMins)min")
                                     // Fall back to original valid route
@@ -6934,7 +8781,8 @@ class GoogleMapsService: ObservableObject {
                 print("🗺️ 📌 Best fallback so far: \(durationMin)min (diff: \(diff)min)")
             }
             
-            return route
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            return finalizeRouteDedup(route)
         } catch let error as GoogleMapsError {
             // Propagate rate limit errors so caller can handle them
             if case .rateLimited = error {
@@ -7150,6 +8998,15 @@ class GoogleMapsService: ObservableObject {
         var selectedAngles: [Double] = []
         
         for (place, angle) in placesWithAngles {
+            // Check if this POI is already selected using unified comparator
+            let isAlreadySelected = selected.contains { existing in
+                isRouteDuplicate(place, existing)
+            }
+            
+            if isAlreadySelected {
+                continue  // Skip this POI - already selected
+            }
+            
             // Check if this angle is far enough from already selected angles
             let isAngularlyDistinct = selectedAngles.allSatisfy { existingAngle in
                 let diff = abs(angle - existingAngle)
@@ -7169,11 +9026,17 @@ class GoogleMapsService: ObservableObject {
         
         // If we couldn't find enough angularly diverse POIs, fill with remaining
         if selected.count < count {
-            let selectedIds = Set(selected.map { $0.placeId })
-            for place in places where !selectedIds.contains(place.placeId) {
-                selected.append(place)
-                if selected.count >= count {
-                    break
+            for place in places {
+            // Check if this POI is already selected using unified comparator
+            let isAlreadySelected = selected.contains { existing in
+                isRouteDuplicate(place, existing)
+            }
+                
+                if !isAlreadySelected {
+                    selected.append(place)
+                    if selected.count >= count {
+                        break
+                    }
                 }
             }
         }
@@ -7195,12 +9058,18 @@ class GoogleMapsService: ObservableObject {
         origin: CLLocationCoordinate2D
     ) async -> GeneratedRoute {
         let routePath = decodePolyline(route.polyline)
-        guard routePath.count > 2 else { return route }
+        guard routePath.count > 2 else {
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            return finalizeRouteDedup(route)
+        }
         
         var existingPlaceIds = Set(route.places.map { $0.placeId })
         let spotsToAdd = desiredCount - route.places.count
         
-        guard spotsToAdd > 0 else { return route }
+        guard spotsToAdd > 0 else {
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            return finalizeRouteDedup(route)
+        }
         
         print("🗺️ Adding up to \(spotsToAdd) discovery spots along route (have \(allPlaces.count) POIs available)...")
         
@@ -7237,7 +9106,17 @@ class GoogleMapsService: ObservableObject {
             
             for maxDistanceFromRoute in [100.0, 200.0, 300.0, 500.0] {
                 let candidatePOIs = allPlaces.filter { place in
-                    guard !existingPlaceIds.contains(place.placeId) else { return false }
+                    // Check if already in route using unified comparator
+                    let isDuplicate = route.places.contains { existing in
+                        isRouteDuplicate(place, existing)
+                    }
+                    
+                    // Also check against already-added discovery spots using unified comparator
+                    let isInAdditionalSpots = additionalSpots.contains { existing in
+                        isRouteDuplicate(place, existing)
+                    }
+                    
+                    guard !isDuplicate && !isInAdditionalSpots else { return false }
                     guard distanceBetween(origin, place.coordinate) > 60 else { return false }
                     
                     // Check minimum spacing from existing waypoints (relaxed for later attempts)
@@ -7272,6 +9151,27 @@ class GoogleMapsService: ObservableObject {
         // Merge original waypoints with additional spots, sorted by position along route
         var allWaypoints = route.places + additionalSpots
         
+        // FINAL DEDUPLICATION: Remove any duplicates that might have slipped through using unified comparator
+        var deduplicatedWaypoints: [PlaceResult] = []
+        for waypoint in allWaypoints {
+            let isDuplicate = deduplicatedWaypoints.contains { existing in
+                isRouteDuplicate(waypoint, existing)
+            }
+            
+            if isDuplicate {
+                if let matched = deduplicatedWaypoints.first(where: { isRouteDuplicate(waypoint, $0) }) {
+                    let distance = distanceBetween(waypoint.coordinate, matched.coordinate)
+                    print("🗺️ Removed duplicate discovery spot: '\(waypoint.name)' (matches '\(matched.name)', \(String(format: "%.1f", distance))m apart)")
+                }
+            }
+            
+            if !isDuplicate {
+                deduplicatedWaypoints.append(waypoint)
+            }
+        }
+        
+        allWaypoints = deduplicatedWaypoints
+        
         // Sort by distance along route
         allWaypoints.sort { p1, p2 in
             let pos1 = findPositionAlongRoute(p1.coordinate, routePath: routePath)
@@ -7279,7 +9179,11 @@ class GoogleMapsService: ObservableObject {
             return pos1 < pos2
         }
         
-        print("🗺️ Route now has \(allWaypoints.count) discovery spots (added \(additionalSpots.count))")
+        let duplicatesRemoved = (route.places.count + additionalSpots.count) - allWaypoints.count
+        if duplicatesRemoved > 0 {
+            print("🗺️ Removed \(duplicatesRemoved) duplicate waypoint(s) during discovery spot merge")
+        }
+        print("🗺️ Route now has \(allWaypoints.count) discovery spots (added \(additionalSpots.count - duplicatesRemoved))")
         
         // v1.8.10: Regenerate polyline if waypoints changed to fix Star Inn bug
         if allWaypoints.count != route.places.count {
@@ -7292,26 +9196,30 @@ class GoogleMapsService: ObservableObject {
                     preserveWaypointOrder: true
                 )
                 print("🗺️ ✅ Polyline regenerated - \(newDirections.legs.count) legs")
-                return GeneratedRoute(
+                let newRoute = GeneratedRoute(
                     places: allWaypoints,
                     polyline: newDirections.overviewPolyline.points,
                     distanceMeters: newDirections.legs.reduce(0) { $0 + $1.distance.value },
                     durationSeconds: newDirections.legs.reduce(0) { $0 + $1.duration.value },
                     legs: newDirections.legs
                 )
+                // FINAL SAFETY WRAPPER: Ensure deduplication on return
+                return finalizeRouteDedup(newRoute)
             } catch {
                 print("🗺️ ⚠️ Polyline regeneration failed: \(error.localizedDescription)")
                 // Fall back to original polyline
             }
         }
         
-        return GeneratedRoute(
+        let finalRoute = GeneratedRoute(
             places: allWaypoints,
             polyline: route.polyline,
             distanceMeters: route.distanceMeters,
             durationSeconds: route.durationSeconds,
             legs: route.legs
         )
+        // FINAL SAFETY WRAPPER: Ensure deduplication on return
+        return finalizeRouteDedup(finalRoute)
     }
     
     /// Find approximate position (0.0 to 1.0) of a coordinate along the route
@@ -7391,20 +9299,1165 @@ class GoogleMapsService: ObservableObject {
     /// Deduplicates POIs by location proximity
     /// - Same name AND within 50m → dedupe (actual duplicate from different source)
     /// - Very close (<20m) regardless of name → dedupe (same physical location)
-    private func deduplicatePOIs(_ pois: [PlaceResult]) -> [PlaceResult] {
-        var result: [PlaceResult] = []
-        for poi in pois {
-            let isDuplicate = result.contains { existing in
-                let distance = distanceBetween(existing.coordinate, poi.coordinate)
-                let sameNameAndClose = existing.name.lowercased() == poi.name.lowercased() && distance < 50
-                let veryClose = distance < 20  // Same physical location regardless of name
-                return sameNameAndClose || veryClose
+    /// Smart merge Geograph POIs with existing POIs from other sources
+    /// Uses intelligent deduplication that considers source quality and POI quality scores
+    /// STRICT: Geograph is evidence only - never replaces actual business POIs
+    private func smartMergeGeographPOIs(
+        existing: [PlaceResult],
+        newGeograph: [PlaceResult],
+        origin: CLLocationCoordinate2D
+    ) -> [PlaceResult] {
+        var merged = existing
+        
+        for geographPOI in newGeograph {
+            // Skip non-POIs
+            if isNonPOI(geographPOI) {
+                continue
             }
-            if !isDuplicate {
-                result.append(poi)
+            
+            let geographScore = geographQualityScore(geographPOI)
+            
+            // Check for duplicates with existing POIs
+            if let duplicateIndex = merged.firstIndex(where: { existing in
+                // Skip non-POIs as merge targets
+                if isNonPOI(existing) {
+                    return false
+                }
+                return isDuplicateGeograph(geographPOI: geographPOI, existingPOI: existing)
+            }) {
+                // Duplicate found - choose best POI
+                let existingPOI = merged[duplicateIndex]
+                
+                // STRICT: Never let Geograph replace actual business POIs (Google/Apple/OSM)
+                // Geograph is evidence only - only replace if existing is also Geograph or Unknown
+                if existingPOI.source == .google || existingPOI.source == .apple || existingPOI.source == .osm {
+                    // Keep existing POI - Geograph is evidence only
+                    continue
+                }
+                
+                let best = chooseBestPOI(geographPOI: geographPOI, existingPOI: existingPOI)
+                
+                if best.placeId == geographPOI.placeId {
+                    // Replace with Geograph version (only if existing was Geograph/Unknown)
+                    merged[duplicateIndex] = geographPOI
+                    print("   🔄 Replaced \(existingPOI.source.rawValue) POI '\(existingPOI.name)' with Geograph '\(geographPOI.name)' (score: \(String(format: "%.1f", geographScore)))")
+                }
+                // Otherwise keep existing POI
+            } else {
+                // No duplicate - add Geograph POI (as evidence)
+                merged.append(geographPOI)
             }
         }
+        
+        return merged
+    }
+    
+    /// Check if Geograph POI is a duplicate of existing POI
+    /// STRICT: Requires type compatibility and high name similarity
+    private func isDuplicateGeograph(geographPOI: PlaceResult, existingPOI: PlaceResult) -> Bool {
+        // Never merge non-POIs
+        if isNonPOI(geographPOI) || isNonPOI(existingPOI) {
+            return false
+        }
+        
+        let distance = distanceBetween(geographPOI.coordinate, existingPOI.coordinate)
+        
+        // Extract base names (remove Geograph grid prefixes for better matching)
+        let geographBase = extractBaseFeatureName(geographPOI.name)
+        let existingBase = extractBaseFeatureName(existingPOI.name)
+        
+        // Check type compatibility first
+        let geographCategory = determinePOICategory(geographPOI)
+        let existingCategory = determinePOICategory(existingPOI)
+        let typesCompatible = arePOITypesCompatible(geographPOI, existingPOI, poiCategory: geographCategory, otherCategory: existingCategory)
+        
+        if !typesCompatible {
+            return false
+        }
+        
+        // Rule 1: Exact same location (< 10m) - definitely same place (if types compatible)
+        if distance < 10.0 {
+            return true
+        }
+        
+        // Rule 2: Same base name (after normalization) AND close (within 25m) AND type compatible
+        // TIGHTENED: distance ≤ 25m (was 30m)
+        if geographBase == existingBase && distance <= 25.0 && typesCompatible {
+            return true
+        }
+        
+        // Rule 3: High name similarity AND close (within 25m) AND type compatible
+        // TIGHTENED: similarity > 0.85 (was 0.8), distance ≤ 25m (was 30m)
+        let nameSimilarity = calculateNameSimilarity(geographBase, existingBase, poi1: geographPOI, poi2: existingPOI)
+        if nameSimilarity > 0.85 && distance <= 25.0 && typesCompatible {
+            return true
+        }
+        
+        // Rule 4: Very close (≤ 15m) AND same coarse group
+        // TIGHTENED: distance ≤ 15m (was 20m), use coarse group
+        let group1 = coarseGroup(geographPOI)
+        let group2 = coarseGroup(existingPOI)
+        let sameCoarseGroup = group1 != nil && group1 == group2 && group1 != "Unknown"
+        if distance <= 15.0 && sameCoarseGroup {
+            return true
+        }
+        
+        // Rule 5: Moderate name similarity AND close AND same coarse group
+        // TIGHTENED: similarity > 0.80 (was 0.7), distance ≤ 30m (was 40m)
+        if nameSimilarity > 0.80 && distance <= 30.0 && sameCoarseGroup {
+            return true
+        }
+        
+        return false
+    }
+    
+    /// Calculate name similarity (0.0 to 1.0)
+    /// More conservative: substring matches only return high score if types are compatible
+    private func calculateNameSimilarity(_ name1: String, _ name2: String, poi1: PlaceResult? = nil, poi2: PlaceResult? = nil) -> Double {
+        let lower1 = name1.lowercased()
+        let lower2 = name2.lowercased()
+        
+        // Exact match
+        if lower1 == lower2 {
+            return 1.0
+        }
+        
+        // One contains the other - only return 0.9 if coarse groups match (prevents unsafe merges)
+        if lower1.contains(lower2) || lower2.contains(lower1) {
+            // If we have POI context, check coarse groups match
+            if let p1 = poi1, let p2 = poi2 {
+                let group1 = coarseGroup(p1)
+                let group2 = coarseGroup(p2)
+                if let g1 = group1, let g2 = group2, g1 == g2 && g1 != "Unknown" {
+                    return 0.85  // Substring match with compatible groups
+                }
+                // If groups don't match, don't give high score for substring
+                // Fall through to word-based similarity
+            } else {
+                // No context - be conservative, return lower score
+                return 0.75
+            }
+        }
+        
+        // Word overlap with weighted scoring
+        var words1 = Set(lower1.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty })
+        var words2 = Set(lower2.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty })
+        
+        // Remove common location words that don't affect POI identity
+        let locationWords = Set(["on", "at", "near", "the", "a", "an", "road", "street", "lane", "way", "avenue", "close", "drive", "kirkhamgate", "batley", "brandy", "carr"])
+        words1 = words1.subtracting(locationWords)
+        words2 = words2.subtracting(locationWords)
+        
+        let intersection = words1.intersection(words2)
+        let union = words1.union(words2)
+        
+        if union.isEmpty {
+            return 0.0
+        }
+        
+        // Base Jaccard similarity
+        let jaccard = Double(intersection.count) / Double(union.count)
+        
+        // Boost similarity if core identifying words match (e.g., "star" + "inn" = high confidence)
+        // If intersection has 2+ words and represents >50% of the shorter name, boost
+        // BUT only if types are compatible (if we have POI context)
+        let minWords = min(words1.count, words2.count)
+        if minWords >= 2 && intersection.count >= 2 && Double(intersection.count) >= Double(minWords) * 0.5 {
+            // Only boost if types are compatible (if we have POI context)
+            var shouldBoost = true
+            if let p1 = poi1, let p2 = poi2 {
+                let group1 = coarseGroup(p1)
+                let group2 = coarseGroup(p2)
+                if let g1 = group1, let g2 = group2 {
+                    shouldBoost = (g1 == g2 && g1 != "Unknown")
+                }
+            }
+            if shouldBoost {
+                // Boost by up to 0.15 for strong core word matches
+                let boost = min(0.15, Double(intersection.count - 1) * 0.05)
+                return min(1.0, jaccard + boost)
+            }
+        }
+        
+        return jaccard
+    }
+    
+    /// Check if two POIs are in the same category
+    private func sameCategory(_ poi1: PlaceResult, _ poi2: PlaceResult) -> Bool {
+        let cat1 = determinePOICategory(poi1)
+        let cat2 = determinePOICategory(poi2)
+        return cat1 == cat2
+    }
+    
+    // MARK: - Non-POI Detection & Coarse Grouping
+    
+    /// Check if a POI is actually a non-POI (junction, road, locality, etc.)
+    /// These should never be merge targets or canonical representatives
+    private func isNonPOI(_ poi: PlaceResult) -> Bool {
+        let name = poi.name.lowercased()
+        let types = Set((poi.types ?? []).map { $0.lowercased() })
+        
+        // Check types array for non-POI indicators
+        let nonPOITypes = Set(["junction", "road", "locality", "neighbourhood", "sublocality", 
+                              "political", "administrative", "route", "street_address"])
+        if !types.isDisjoint(with: nonPOITypes) {
+            return true
+        }
+        
+        // Check name patterns for road junctions (e.g., "Batley Road Brandy Carr Road")
+        // Pattern: Two road names separated by space (common OSM junction naming)
+        let roadWords = ["road", "street", "lane", "way", "avenue", "close", "drive", "crescent", "grove", "place", "terrace"]
+        let words = name.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        var roadCount = 0
+        for word in words {
+            if roadWords.contains(word.lowercased()) {
+                roadCount += 1
+            }
+        }
+        // If name contains 2+ road words, likely a junction
+        if roadCount >= 2 {
+            return true
+        }
+        
+        // Check for explicit junction/road patterns
+        if name.contains("junction") || name.contains("intersection") || name.contains("crossroads") {
+            return true
+        }
+        
+        // Check for Geograph photo captions (not actual POIs)
+        if poi.source == .geograph {
+            // Geograph photos with generic descriptions are not POIs
+            let genericPatterns = ["looking", "view", "path", "field", "track", "footpath", "bridleway"]
+            if genericPatterns.contains(where: { name.contains($0) }) && !name.contains("memorial") && !name.contains("monument") {
+                // Check if it's just a photo caption, not a named feature
+                if name.count < 30 && !name.contains("church") && !name.contains("inn") && !name.contains("hall") {
+                    return true
+                }
+            }
+        }
+        
+        return false
+    }
+    
+    /// Coarse grouping for type compatibility
+    /// Groups POIs into broad categories for compatibility checking
+    private func coarseGroup(_ poi: PlaceResult) -> String? {
+        let category = determinePOICategory(poi)
+        let name = poi.name.lowercased()
+        let types = Set((poi.types ?? []).map { $0.lowercased() })
+        
+        // Food & Drink
+        if category == "Pub/Inn" || 
+           name.contains("restaurant") || name.contains("cafe") || name.contains("bar") ||
+           name.contains("takeaway") || name.contains("fish and chips") || name.contains("bistro") ||
+           types.contains("restaurant") || types.contains("cafe") || types.contains("bar") ||
+           types.contains("food") || types.contains("meal_takeaway") {
+            return "Food & Drink"
+        }
+        
+        // Retail & Services
+        if category == "Store" ||
+           name.contains("shop") || name.contains("store") || name.contains("supermarket") ||
+           name.contains("pharmacy") || name.contains("post office") ||
+           types.contains("store") || types.contains("shop") || types.contains("supermarket") ||
+           types.contains("pharmacy") || types.contains("post_office") {
+            return "Retail & Services"
+        }
+        
+        // Personal Care & Health
+        if name.contains("hairdresser") || name.contains("barber") || name.contains("salon") ||
+           name.contains("dentist") || name.contains("dental") || name.contains("physiotherapy") ||
+           name.contains("physio") || name.contains("clinic") || name.contains("surgery") ||
+           types.contains("hair_care") || types.contains("beauty_salon") || types.contains("dentist") ||
+           types.contains("physiotherapist") || types.contains("doctor") {
+            return "Personal Care & Health"
+        }
+        
+        // Childcare & Education
+        if name.contains("nursery") || name.contains("playcare") || name.contains("daycare") ||
+           name.contains("preschool") || name.contains("school") || name.contains("academy") ||
+           types.contains("school") || types.contains("nursery") || types.contains("kindergarten") ||
+           types.contains("childcare") {
+            return "Childcare & Education"
+        }
+        
+        // Religious & Community
+        if category == "Religious Building" || category == "Community Building" ||
+           name.contains("church") || name.contains("chapel") || name.contains("mosque") ||
+           name.contains("synagogue") || name.contains("temple") || name.contains("village hall") ||
+           name.contains("community") || name.contains("community centre") ||
+           types.contains("place_of_worship") || types.contains("church") || types.contains("community_centre") {
+            return "Religious & Community"
+        }
+        
+        // Heritage & Monuments
+        if category == "Historic Building" || category == "Memorial/Monument" ||
+           category == "Industrial Heritage" ||
+           name.contains("memorial") || name.contains("monument") || name.contains("heritage") ||
+           types.contains("memorial") || types.contains("monument") || types.contains("historic") {
+            return "Heritage & Monuments"
+        }
+        
+        // Postbox (special case - incompatible with most things)
+        if category == "Postbox" || name.contains("postbox") || name.contains("post box") {
+            return "Postbox"
+        }
+        
+        // Natural Features
+        if category == "Natural Feature" ||
+           types.contains("park") || types.contains("natural_feature") {
+            return "Natural Feature"
+        }
+        
+        // Unknown/Landmark (default catch-all)
+        if category == "Unknown" || category == "Landmark" {
+            return "Unknown"
+        }
+        
+        return category
+    }
+    
+    /// Choose best POI when duplicate found (considers source priority and quality)
+    private func chooseBestPOI(geographPOI: PlaceResult, existingPOI: PlaceResult) -> PlaceResult {
+        let geographScore = geographQualityScore(geographPOI)
+        
+        // Priority 1: Always prefer Google (most accurate/up-to-date)
+        if existingPOI.source == .google {
+            return existingPOI
+        }
+        
+        // Priority 2: Prefer high-quality Geograph over Apple/OSM
+        if geographScore >= 6.0 && (existingPOI.source == .apple || existingPOI.source == .osm) {
+            // Check if Geograph has better name/description
+            let geographHasBetterName = geographPOI.name.count > existingPOI.name.count
+            let geographHasBetterDesc = (geographPOI.vicinity?.count ?? 0) > (existingPOI.vicinity?.count ?? 0)
+            
+            if geographHasBetterName || geographHasBetterDesc {
+                return geographPOI  // Geograph has better metadata
+            }
+        }
+        
+        // Priority 3: Prefer Geograph over OSM if both are low quality
+        if geographScore >= 4.0 && existingPOI.source == .osm && geographScore > 4.0 {
+            return geographPOI
+        }
+        
+        // Default: keep existing (preserves priority order)
+        return existingPOI
+    }
+    
+    /// Check if a POI name matches a known chain (Tesco, Co-op, Costa, Greggs, Starbucks, etc.)
+    private func isChainPOI(_ poi: PlaceResult) -> Bool {
+        let name = normalizePOIName(poi.name).lowercased()
+        let chainNames = ["tesco", "co-op", "coop", "costa", "greggs", "starbucks", "sainsburys", "aldi", "lidl", "morrisons", "asda", "spar", "m&s", "marks and spencer", "boots", "superdrug"]
+        return chainNames.contains { name.contains($0) }
+    }
+    
+    /// Check if two POIs have matching address/vicinity (for chain validation)
+    private func hasMatchingAddress(_ a: PlaceResult, _ b: PlaceResult) -> Bool {
+        // Check if vicinity strings match (if available)
+        if let vicinityA = a.vicinity, let vicinityB = b.vicinity,
+           !vicinityA.isEmpty, !vicinityB.isEmpty,
+           vicinityA.lowercased() == vicinityB.lowercased() {
+            return true
+        }
+        return false
+    }
+    
+    private func deduplicatePOIs(_ pois: [PlaceResult]) -> [PlaceResult] {
+        var result: [PlaceResult] = []
+        
+        // Sort by source priority: Google > Geograph (high score) > Apple > OSM > Geograph (low score)
+        let sorted = pois.sorted { first, second in
+            let firstPriority = sourcePriority(first)
+            let secondPriority = sourcePriority(second)
+            if firstPriority != secondPriority {
+                return firstPriority < secondPriority
+            }
+            // If same priority, prefer higher quality Geograph
+            if first.source == .geograph && second.source == .geograph {
+                return geographQualityScore(first) > geographQualityScore(second)
+            }
+            return false
+        }
+        
+        for poi in sorted {
+            // Skip non-POIs - they cannot be merged or be merge targets
+            if isNonPOI(poi) {
+                continue
+            }
+            
+            let isDuplicate = result.contains { existing in
+                // Skip non-POIs as merge targets
+                if isNonPOI(existing) {
+                    return false
+                }
+                
+                let distance = distanceBetween(existing.coordinate, poi.coordinate)
+                
+                // Extract base names (remove Geograph grid prefixes, normalize)
+                let existingBase = extractBaseFeatureName(existing.name)
+                let poiBase = extractBaseFeatureName(poi.name)
+                
+                // SAFETY CHECK: Must be type compatible before any merge
+                let poiCategory = determinePOICategory(poi)
+                let existingCategory = determinePOICategory(existing)
+                let typesCompatible = arePOITypesCompatible(poi, existing, poiCategory: poiCategory, otherCategory: existingCategory)
+                
+                // If types are incompatible, never merge
+                if !typesCompatible {
+                    return false
+                }
+                
+                // CHAIN SAFEGUARD: For chain POIs, require ≤15m or address/plus-code match
+                let isChain = isChainPOI(poi) || isChainPOI(existing)
+                if isChain {
+                    let hasAddressMatch = hasMatchingAddress(poi, existing)
+                    if distance > 15.0 && !hasAddressMatch {
+                        // Chain POIs too far apart without address match - don't merge
+                        return false
+                    }
+                }
+                
+                // Calculate name similarity with POI context for better accuracy
+                let nameSimilarity = calculateNameSimilarity(existingBase, poiBase, poi1: existing, poi2: poi)
+                
+                // Rule 1: Exact name match (after normalization) AND close AND type compatible
+                let exactNameMatch = existingBase == poiBase && distance <= 25 && typesCompatible
+                
+                // Rule 2: Name similarity (handles "The Star Inn" vs "SE2922: The Star Inn, Kirkhamgate")
+                // TIGHTENED: similarity ≥ 0.85 AND distance ≤ 25m AND type compatible
+                let similarNameAndClose = nameSimilarity >= 0.85 && distance <= 25 && typesCompatible
+                
+                // Rule 3: Very close - requires compatible types (no similarity-only merge)
+                // TIGHTENED: distance ≤ 15m AND types compatible (removed similarity fallback)
+                let veryClose = distance <= 15 && typesCompatible
+                
+                // Rule 4: Same coarse group AND very close AND similar name
+                // TIGHTENED: same coarse group AND similarity ≥ 0.80 AND distance ≤ 20m
+                let group1 = coarseGroup(poi)
+                let group2 = coarseGroup(existing)
+                let sameCoarseGroup = group1 != nil && group1 == group2 && group1 != "Unknown"
+                let sameCatAndClose = sameCoarseGroup && distance <= 20 && nameSimilarity >= 0.80
+                
+                return exactNameMatch || similarNameAndClose || veryClose || sameCatAndClose
+            }
+            
+            if !isDuplicate {
+                result.append(poi)
+            } else {
+                // Log which duplicate was removed
+                if let existing = result.first(where: { existing in
+                    if isNonPOI(existing) {
+                        return false
+                    }
+                    let distance = distanceBetween(existing.coordinate, poi.coordinate)
+                    let existingBase = extractBaseFeatureName(existing.name)
+                    let poiBase = extractBaseFeatureName(poi.name)
+                    let poiCategory = determinePOICategory(poi)
+                    let existingCategory = determinePOICategory(existing)
+                    let typesCompatible = arePOITypesCompatible(poi, existing, poiCategory: poiCategory, otherCategory: existingCategory)
+                    if !typesCompatible {
+                        return false
+                    }
+                    let nameSimilarity = calculateNameSimilarity(existingBase, poiBase, poi1: existing, poi2: poi)
+                    let group1 = coarseGroup(poi)
+                    let group2 = coarseGroup(existing)
+                    let sameCoarseGroup = group1 != nil && group1 == group2 && group1 != "Unknown"
+                    return (existingBase == poiBase && distance <= 25 && typesCompatible) ||
+                           (nameSimilarity >= 0.85 && distance <= 25 && typesCompatible) ||
+                           (distance <= 15 && typesCompatible) ||
+                           (sameCoarseGroup && distance <= 20 && nameSimilarity >= 0.80)
+                }) {
+                    print("🔄 Dedup: Removed '\(poi.name)' (source: \(poi.source.rawValue)) - duplicate of '\(existing.name)' (source: \(existing.source.rawValue))")
+                }
+            }
+        }
+        
         return result
+    }
+    
+    /// Get source priority for deduplication (lower number = higher priority)
+    private func sourcePriority(_ poi: PlaceResult) -> Int {
+        switch poi.source {
+        case .google: return 1
+        case .geograph:
+            // High-quality Geograph gets priority 2, low-quality gets 4
+            return geographQualityScore(poi) >= 6.0 ? 2 : 4
+        case .apple: return 3
+        case .osm: return 5
+        case .unknown: return 6
+        }
+    }
+    
+    // MARK: - Canonical POI Deduplication (v1.9.50)
+    
+    /// Canonical POI deduplication layer
+    /// Clusters POIs spatially and by name similarity to create canonical representatives
+    /// Prevents duplicates like "The Star Inn" vs "SE2922: The Star Inn, Kirkhamgate"
+    /// 
+    /// Process:
+    /// 1. Spatial clustering (~50m) - treats each cluster as single real-world place
+    /// 2. Name normalization + similarity (≥0.85) - merges similar names
+    /// 3. Source priority - chooses best representative (Google > Apple > OSM > Geograph)
+    /// 4. Preserves provenance - logs all merged aliases
+    private func canonicalizePOIs(_ pois: [PlaceResult], origin: CLLocationCoordinate2D) -> [PlaceResult] {
+        guard !pois.isEmpty else { return pois }
+        
+        print("🎯 [CANONICAL] Processing \(pois.count) POIs with type-aware merge rules:")
+        print("   • Requires: (1) proximity ≤150m (or ≤400m with same grid ref/OSM ID), (2) compatible types, (3) name similarity ≥0.85 OR shared source signal")
+        print("   • Never merges incompatible types (e.g., pub vs postbox)")
+        
+        var canonical: [PlaceResult] = []
+        var processed = Set<String>()
+        var mergeLog: [(canonical: String, merged: [String])] = []
+        
+        // Sort by source priority (best sources first)
+        let sorted = pois.sorted { first, second in
+            let firstPriority = sourcePriority(first)
+            let secondPriority = sourcePriority(second)
+            if firstPriority != secondPriority {
+                return firstPriority < secondPriority
+            }
+            // If same priority, prefer Geograph with higher quality score
+            if first.source == .geograph && second.source == .geograph {
+                return geographQualityScore(first) > geographQualityScore(second)
+            }
+            return false
+        }
+        
+        for poi in sorted {
+            // Skip if already processed
+            if processed.contains(poi.placeId) {
+                continue
+            }
+            
+            // Skip non-POIs - they cannot be canonical representatives
+            if isNonPOI(poi) {
+                continue
+            }
+            
+            // Find all POIs in this canonical cluster
+            var cluster: [PlaceResult] = [poi]
+            processed.insert(poi.placeId)
+            
+            // Normalize this POI's name for comparison
+            let poiBaseName = normalizePOIName(poi.name)
+            let poiGridRef = extractGeographGridReference(poi.name)
+            let poiOSMId = extractOSMId(poi.placeId)
+            let poiCategory = determinePOICategory(poi)
+            
+            for otherPOI in sorted {
+                if processed.contains(otherPOI.placeId) {
+                    continue
+                }
+                
+                // Skip non-POIs - they cannot be merged
+                if isNonPOI(otherPOI) {
+                    continue
+                }
+                
+                let distance = distanceBetween(poi.coordinate, otherPOI.coordinate)
+                let otherBaseName = normalizePOIName(otherPOI.name)
+                let otherGridRef = extractGeographGridReference(otherPOI.name)
+                let otherOSMId = extractOSMId(otherPOI.placeId)
+                let otherCategory = determinePOICategory(otherPOI)
+                
+                // SAFETY CHECK: Must be type compatible before any merge
+                let typesCompatible = arePOITypesCompatible(poi, otherPOI, poiCategory: poiCategory, otherCategory: otherCategory)
+                if !typesCompatible {
+                    continue
+                }
+                
+                // Special handling for "Unknown" types - only merge if extremely similar and very close
+                if poiCategory == "Unknown" || otherCategory == "Unknown" {
+                    let nameSimilarity = calculateNameSimilarity(poiBaseName, otherBaseName, poi1: poi, poi2: otherPOI)
+                    // Only allow merge if extremely similar names AND extremely close
+                    if nameSimilarity >= 0.92 && distance <= 10.0 {
+                        cluster.append(otherPOI)
+                        processed.insert(otherPOI.placeId)
+                        print("   🔗 Unknown type merge: \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity))")
+                        continue
+                    } else {
+                        continue  // Don't merge Unknown types otherwise
+                    }
+                }
+                
+                // Shared source signals (check first - these override distance limits)
+                let hasSharedGridRef = poiGridRef != nil && poiGridRef == otherGridRef
+                let hasSharedOSMId = poiOSMId != nil && poiOSMId == otherOSMId
+                
+                // Name similarity with POI context
+                let nameSimilarity = calculateNameSimilarity(poiBaseName, otherBaseName, poi1: poi, poi2: otherPOI)
+                let hasNameSimilarity = nameSimilarity >= 0.90  // TIGHTENED from 0.85
+                let veryHighSimilarity = nameSimilarity > 0.95   // TIGHTENED from 0.9
+                
+                // Debug logging for potential duplicates
+                if distance <= 500.0 && nameSimilarity > 0.7 {
+                    let gridRefInfo: String
+                    if hasSharedGridRef {
+                        gridRefInfo = "shared: \(poiGridRef ?? "none")"
+                    } else if poiGridRef != nil && otherGridRef == nil {
+                        gridRefInfo = "one-sided: \(poiGridRef ?? "none")"
+                    } else if poiGridRef == nil && otherGridRef != nil {
+                        gridRefInfo = "one-sided: \(otherGridRef ?? "none")"
+                    } else {
+                        gridRefInfo = "none"
+                    }
+                    print("   🔍 Checking: '\(poi.name)' vs '\(otherPOI.name)' - \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity)), gridRef: \(gridRefInfo), types: \(poiCategory)/\(otherCategory)")
+                }
+                
+                // RULE 1: Hard spatial merge (≤20m) - requires compatible types, ignores names
+                // TIGHTENED: distance ≤ 20m (was 30m)
+                let hardSpatialMerge = distance <= 20.0
+                if hardSpatialMerge {
+                    // Types already checked above
+                    cluster.append(otherPOI)
+                    processed.insert(otherPOI.placeId)
+                    print("   🔗 Hard spatial merge: \(String(format: "%.1f", distance))m apart (ignoring name mismatch)")
+                    continue
+                }
+                
+                // RULE 2: Same Geograph grid reference - merge if very high name similarity
+                // STRICT: Grid ref alone not enough - requires name similarity ≥ 0.92
+                if hasSharedGridRef {
+                    let withinStandardRange = distance <= 200.0 && nameSimilarity >= 0.92
+                    let withinExtendedRange = distance <= 400.0 && nameSimilarity >= 0.92 && hasNameSimilarity
+                    
+                    if withinStandardRange || withinExtendedRange {
+                        // Types already checked above
+                        cluster.append(otherPOI)
+                        processed.insert(otherPOI.placeId)
+                        let rangeType = withinStandardRange ? "standard" : "extended (name similarity)"
+                        print("   🔗 Same grid ref: \(poiGridRef ?? "") - \(String(format: "%.1f", distance))m apart (\(rangeType) merge)")
+                        continue
+                    } else {
+                        print("   ⚠️ Same grid ref but insufficient name similarity: '\(poi.name)' vs '\(otherPOI.name)' - \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity)) (needs ≥0.92)")
+                        continue
+                    }
+                }
+                
+                // RULE 2b: One has grid ref, other doesn't - merge ONLY if very high name similarity (≥0.92)
+                // STRICT: Grid ref alone not enough - requires very high name similarity
+                let oneHasGridRef = (poiGridRef != nil && otherGridRef == nil) || (poiGridRef == nil && otherGridRef != nil)
+                if oneHasGridRef {
+                    // STRICT: Require name similarity ≥ 0.92 (was 0.85/0.9)
+                    let withinExtendedRange = distance <= 500.0 && nameSimilarity >= 0.92
+                    let withinStandardRange = distance <= 300.0 && nameSimilarity >= 0.92
+                    
+                    if withinStandardRange || withinExtendedRange {
+                        // Types already checked above
+                        cluster.append(otherPOI)
+                        processed.insert(otherPOI.placeId)
+                        let gridRefPOI = poiGridRef != nil ? poi.name : otherPOI.name
+                        let rangeType = withinStandardRange ? "standard" : "extended (very high similarity)"
+                        print("   🔗 Grid ref match (one-sided): '\(gridRefPOI)' - \(String(format: "%.1f", distance))m apart, similarity: \(String(format: "%.2f", nameSimilarity)) (\(rangeType))")
+                        continue
+                    } else if distance <= 500.0 {
+                        // Debug: why didn't it match?
+                        print("   ⚠️ Grid ref one-sided but no merge: '\(poi.name)' vs '\(otherPOI.name)' - \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity)) (needs ≥0.92)")
+                    }
+                }
+                
+                // RULE 3: Same OSM ID - merge immediately (within 200m, or up to 400m with name similarity)
+                if hasSharedOSMId {
+                    let withinStandardRange = distance <= 200.0
+                    let withinExtendedRange = distance <= 400.0 && hasNameSimilarity
+                    
+                    if withinStandardRange || withinExtendedRange {
+                        // REQUIREMENT: Compatible POI types
+                        let typesCompatible = arePOITypesCompatible(poi, otherPOI, poiCategory: poiCategory, otherCategory: otherCategory)
+                        if typesCompatible {
+                            cluster.append(otherPOI)
+                            processed.insert(otherPOI.placeId)
+                            let rangeType = withinStandardRange ? "standard" : "extended (name similarity)"
+                            print("   🔗 Same OSM ID: \(poiOSMId ?? "") - \(String(format: "%.1f", distance))m apart (\(rangeType) merge)")
+                            continue
+                        } else {
+                            print("   ❌ Type mismatch (same OSM ID): '\(poi.name)' (\(poiCategory)) vs '\(otherPOI.name)' (\(otherCategory)) - \(String(format: "%.1f", distance))m apart")
+                            continue
+                        }
+                    }
+                }
+                
+                // RULE 4: Medium merge (30-60m) with name similarity
+                // TIGHTENED: similarity ≥ 0.90 (was 0.85)
+                if distance > 30.0 && distance < 60.0 && nameSimilarity >= 0.90 {
+                    // Types already checked above
+                    cluster.append(otherPOI)
+                    processed.insert(otherPOI.placeId)
+                    print("   🔗 Medium name match: \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity))")
+                    continue
+                }
+                
+                // RULE 5: Wider merge (60-80m) with name similarity
+                // TIGHTENED: similarity ≥ 0.92 (was 0.85)
+                if distance >= 60.0 && distance <= 80.0 && nameSimilarity >= 0.92 {
+                    // Types already checked above
+                    cluster.append(otherPOI)
+                    processed.insert(otherPOI.placeId)
+                    print("   🔗 Wide name match: \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity))")
+                    continue
+                }
+                
+                // RULE 6: Very high name similarity (>0.95) at longer distances (80-200m)
+                // TIGHTENED: similarity > 0.95 (was 0.9)
+                if distance > 80.0 && distance <= 200.0 && nameSimilarity > 0.95 {
+                    // Types already checked above
+                    cluster.append(otherPOI)
+                    processed.insert(otherPOI.placeId)
+                    print("   🔗 Very high similarity: \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity))")
+                    continue
+                }
+            }
+            
+            // Choose best representative from cluster
+            if cluster.count == 1 {
+                // Single POI - no merging needed
+                canonical.append(poi)
+            } else {
+                // Multiple POIs in cluster - choose best representative
+                let best = chooseCanonicalRepresentative(from: cluster)
+                canonical.append(best.poi)
+                
+                // Log merged aliases
+                let mergedNames = cluster.filter { $0.placeId != best.poi.placeId }
+                    .map { $0.name }
+                if !mergedNames.isEmpty {
+                    mergeLog.append((canonical: best.poi.name, merged: mergedNames))
+                    print("🎯 [CANONICAL] Cluster: '\(best.poi.name)' (source: \(best.poi.source.rawValue))")
+                    print("   📋 Merged: \(mergedNames.joined(separator: ", "))")
+                }
+            }
+        }
+        
+        if !mergeLog.isEmpty {
+            print("🎯 [CANONICAL] Total clusters merged: \(mergeLog.count)")
+        }
+        
+        return canonical
+    }
+    
+    /// Extract Geograph grid reference from name (e.g., "SE2922" from "SE2922: The Star Inn")
+    private func extractGeographGridReference(_ name: String) -> String? {
+        let pattern = "^([A-Z]{1,2}\\d{4})"
+        if let regex = try? NSRegularExpression(pattern: pattern, options: []),
+           let match = regex.firstMatch(in: name, options: [], range: NSRange(name.startIndex..., in: name)),
+           let range = Range(match.range(at: 1), in: name) {
+            return String(name[range])
+        }
+        return nil
+    }
+    
+    /// Extract OSM ID from placeId (e.g., "123456" from "osm_123456")
+    private func extractOSMId(_ placeId: String) -> String? {
+        if placeId.hasPrefix("osm_") {
+            let osmId = String(placeId.dropFirst(4))
+            return osmId.isEmpty ? nil : osmId
+        }
+        return nil
+    }
+    
+    /// Check if two POI types are compatible for merging
+    /// STRICT: Defaults to FALSE - only merges when explicitly compatible
+    /// Never merge across incompatible types (e.g., pub vs postbox, restaurant vs church)
+    private func arePOITypesCompatible(_ poi1: PlaceResult, _ poi2: PlaceResult, poiCategory: String, otherCategory: String) -> Bool {
+        // 1. Reject all non-POIs
+        if isNonPOI(poi1) || isNonPOI(poi2) {
+            return false
+        }
+        
+        // 2. Check types arrays if available - if both have types but share none, incompatible
+        let types1 = poi1.types ?? []
+        let types2 = poi2.types ?? []
+        if !types1.isEmpty && !types2.isEmpty {
+            let set1 = Set(types1.map { $0.lowercased() })
+            let set2 = Set(types2.map { $0.lowercased() })
+            if !set1.isDisjoint(with: set2) {
+                return true  // Shared type = compatible
+            }
+            // If both have types but no overlap, incompatible
+            return false
+        }
+        
+        // 3. Use coarse grouping
+        let group1 = coarseGroup(poi1)
+        let group2 = coarseGroup(poi2)
+        if let g1 = group1, let g2 = group2, g1 == g2 && g1 != "Unknown" {
+            return true
+        }
+        
+        // 4. Explicit incompatible pairs (extended list)
+        let incompatiblePairs: [(String, String)] = [
+            // Postbox incompatible with most things
+            ("Pub/Inn", "Postbox"),
+            ("Pub/Inn", "Post Office"),
+            ("Store", "Postbox"),
+            ("Religious Building", "Postbox"),
+            ("Community Building", "Postbox"),
+            ("Historic Building", "Postbox"),
+            ("Memorial/Monument", "Postbox"),
+            ("Religious Building", "Restaurant"),
+            ("Religious Building", "Cafe"),
+            ("Religious Building", "Store"),
+            // Heritage incompatible with commercial
+            ("Pub/Inn", "Industrial Heritage"),
+            ("Store", "Industrial Heritage"),
+            ("Religious Building", "Industrial Heritage"),
+            // Different business verticals
+            ("Religious Building", "Childcare & Education"),
+            ("Community Building", "Food & Drink"),
+            ("Personal Care & Health", "Food & Drink"),
+            ("Personal Care & Health", "Retail & Services"),
+            ("Childcare & Education", "Personal Care & Health"),
+            ("Childcare & Education", "Food & Drink"),
+            ("Childcare & Education", "Retail & Services"),
+        ]
+        
+        // Check category-based incompatible pairs
+        for (type1, type2) in incompatiblePairs {
+            if (poiCategory == type1 && otherCategory == type2) ||
+               (poiCategory == type2 && otherCategory == type1) {
+                return false
+            }
+        }
+        
+        // Check coarse group incompatible pairs
+        if let g1 = group1, let g2 = group2 {
+            let groupIncompatiblePairs: [(String, String)] = [
+                ("Religious & Community", "Food & Drink"),
+                ("Religious & Community", "Retail & Services"),
+                ("Religious & Community", "Personal Care & Health"),
+                ("Childcare & Education", "Personal Care & Health"),
+                ("Childcare & Education", "Food & Drink"),
+                ("Childcare & Education", "Retail & Services"),
+                ("Personal Care & Health", "Food & Drink"),
+                ("Personal Care & Health", "Retail & Services"),
+                ("Postbox", "Food & Drink"),
+                ("Postbox", "Retail & Services"),
+                ("Postbox", "Religious & Community"),
+            ]
+            for (grp1, grp2) in groupIncompatiblePairs {
+                if (g1 == grp1 && g2 == grp2) || (g1 == grp2 && g2 == grp1) {
+                    return false
+                }
+            }
+        }
+        
+        // 5. If either is Unknown → incompatible unless names are nearly identical
+        if poiCategory == "Unknown" || otherCategory == "Unknown" {
+            return false  // Will be handled by name similarity check in rules
+        }
+        
+        // 6. Check for postbox in names/types (common incompatible type)
+        let name1 = poi1.name.lowercased()
+        let name2 = poi2.name.lowercased()
+        let hasPostbox1 = name1.contains("postbox") || name1.contains("post box") || types1.contains { $0.lowercased().contains("postbox") || $0.lowercased().contains("post_office") }
+        let hasPostbox2 = name2.contains("postbox") || name2.contains("post box") || types2.contains { $0.lowercased().contains("postbox") || $0.lowercased().contains("post_office") }
+        
+        // If one is a postbox and the other is clearly not, they're incompatible
+        if hasPostbox1 && !hasPostbox2 {
+            let incompatibleWithPostbox = ["pub", "inn", "church", "chapel", "shop", "store", "hall", "memorial", "monument", "restaurant", "cafe"]
+            if incompatibleWithPostbox.contains(where: { name2.contains($0) }) {
+                return false
+            }
+        }
+        if hasPostbox2 && !hasPostbox1 {
+            let incompatibleWithPostbox = ["pub", "inn", "church", "chapel", "shop", "store", "hall", "memorial", "monument", "restaurant", "cafe"]
+            if incompatibleWithPostbox.contains(where: { name1.contains($0) }) {
+                return false
+            }
+        }
+        
+        // 7. Default: INCOMPATIBLE (strict approach - only merge when explicitly compatible)
+        return false
+    }
+    
+    /// Clean POI name for display - removes grid references and location suffixes
+    /// Preserves capitalization and formatting
+    /// Example: "SE2922: Lindale Methodist Church, Kirkhamgate" -> "Lindale Methodist Church"
+    static func cleanPOIDisplayName(_ name: String) -> String {
+        var cleaned = name
+        
+        // Remove Geograph grid reference prefix (e.g., "SE2922 : " or "SE2922:")
+        cleaned = cleaned.replacingOccurrences(
+            of: "^[A-Z]{1,2}\\d{4}\\s*:\\s*",
+            with: "",
+            options: .regularExpression
+        )
+        
+        // Remove common location suffixes (case-insensitive, preserve original case)
+        // IMPORTANT: Order matters - remove longer suffixes first to avoid partial matches
+        let locationSuffixes = [
+            ", Batley Road, Kirkhamgate",  // Multi-part suffix first
+            ", Brandy Carr Road, Kirkhamgate",
+            ", Brandy Carr Lane, Kirkhamgate",
+            ", Kirkhamgate", ", Batley Road", ", Brandy Carr Road", ", Brandy Carr Lane",
+            ", Sheffield", ", Wakefield", ", UK", ", England",
+            " on Batley Road", " on Brandy Carr Road", " on Brandy Carr Lane",
+            "Batley Road", "Brandy Carr Road", "Brandy Carr Lane", "Kirkhamgate"
+        ]
+        
+        // Process multiple times to handle cases like "The Star Inn, Batley Road, Kirkhamgate"
+        var previousLength = cleaned.count
+        var iterations = 0
+        repeat {
+            previousLength = cleaned.count
+            iterations += 1
+            for suffix in locationSuffixes {
+                // Remove from end (case-insensitive)
+                if cleaned.range(of: suffix, options: [.caseInsensitive, .anchored, .backwards]) != nil {
+                    cleaned = String(cleaned.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    // Also remove trailing comma if present
+                    if cleaned.hasSuffix(",") {
+                        cleaned = String(cleaned.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+                // Remove with comma prefix (e.g., ", Kirkhamgate")
+                if let range = cleaned.range(of: ",\\s*" + suffix, options: [.regularExpression, .caseInsensitive, .anchored, .backwards]) {
+                    cleaned = String(cleaned[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            // Collapse whitespace after removals
+            cleaned = cleaned.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        } while cleaned.count < previousLength && iterations < 10  // Keep removing until no more changes (max 10 iterations)
+        
+        // Debug logging for problematic names
+        if name.lowercased().contains("star inn") || name.lowercased().contains("war memorial") || name.lowercased().contains("lindale methodist church") {
+            print("🧹 cleanPOIDisplayName: '\(name)' → '\(cleaned)' (after \(iterations) iterations)")
+        }
+        
+        return cleaned
+    }
+    
+    /// Normalize POI name for comparison
+    /// - Lowercase
+    /// - Remove Geograph grid prefixes (SE####:)
+    /// - Strip punctuation, road names, extra descriptors
+    /// - Collapse whitespace
+    private func normalizePOIName(_ name: String) -> String {
+        var normalized = name.lowercased()
+        
+        // Remove Geograph grid reference prefix (e.g., "SE2922 : " or "SE2922:")
+        normalized = normalized.replacingOccurrences(
+            of: "^[a-z]{1,2}\\d{4}\\s*:\\s*",
+            with: "",
+            options: .regularExpression
+        )
+        
+        // Remove common road/location suffixes that don't affect identity
+        // These are location descriptors, not part of the POI's core identity
+        // Process multiple times to handle cases like "The Star Inn, Batley Road, Kirkhamgate"
+        var previousLength = normalized.count
+        repeat {
+            previousLength = normalized.count
+            let locationSuffixes = [
+                ", kirkhamgate", ", batley road", ", brandy carr road", ", brandy carr lane",
+                ", sheffield", ", wakefield", ", uk", ", england",
+                "on batley road", "on brandy carr road", "on brandy carr lane",
+                "batley road", "brandy carr road", "brandy carr lane", "kirkhamgate"
+            ]
+            for suffix in locationSuffixes {
+                // Remove from end (with optional comma)
+                if normalized.hasSuffix(suffix) {
+                    normalized = String(normalized.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    // Also remove trailing comma if present
+                    if normalized.hasSuffix(",") {
+                        normalized = String(normalized.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+                // Remove with comma prefix (e.g., ", kirkhamgate")
+                normalized = normalized.replacingOccurrences(
+                    of: ",\\s*" + suffix.replacingOccurrences(of: " ", with: "\\s*"),
+                    with: "",
+                    options: [.regularExpression, .caseInsensitive]
+                )
+                // Remove standalone (e.g., "on batley road")
+                normalized = normalized.replacingOccurrences(
+                    of: "\\s+" + suffix.replacingOccurrences(of: " ", with: "\\s+"),
+                    with: " ",
+                    options: [.regularExpression, .caseInsensitive]
+                )
+            }
+            // Collapse whitespace after removals
+            normalized = normalized.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            normalized = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+        } while normalized.count < previousLength  // Keep removing until no more changes
+        
+        // Remove common prefixes that don't affect identity
+        let prefixesToRemove = ["the ", "a ", "an "]
+        for prefix in prefixesToRemove {
+            if normalized.hasPrefix(prefix) {
+                normalized = String(normalized.dropFirst(prefix.count))
+            }
+        }
+        
+        // Strip punctuation (keep spaces)
+        normalized = normalized.replacingOccurrences(
+            of: "[^a-z0-9\\s]",
+            with: " ",
+            options: .regularExpression
+        )
+        
+        // Collapse whitespace
+        normalized = normalized.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        normalized = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        return normalized
+    }
+    
+    // MARK: - Coordinate Accuracy Validation
+    
+    /// Validates POI coordinates to detect and filter incorrect coordinates
+    /// When multiple POIs have the same name but coordinates far apart (>200m), one likely has wrong coordinates
+    /// Prefers coordinates from more reliable sources (Google > Apple > OSM > Geograph)
+    private func validatePOICoordinates(_ pois: [PlaceResult]) -> [PlaceResult] {
+        var validated: [PlaceResult] = []
+        var filteredOut = Set<String>()
+        
+        // Group POIs by normalized name
+        var nameGroups: [String: [PlaceResult]] = [:]
+        for poi in pois {
+            let normalizedName = normalizePOIName(poi.name).lowercased()
+            if normalizedName.count >= 3 {  // Only check meaningful names (skip "A", "B", etc.)
+                nameGroups[normalizedName, default: []].append(poi)
+            }
+        }
+        
+        // Check each name group for coordinate discrepancies
+        for (normalizedName, group) in nameGroups where group.count > 1 {
+            // Calculate distances between all POIs in the group
+            var distances: [(poi1: PlaceResult, poi2: PlaceResult, distance: Double)] = []
+            for i in 0..<group.count {
+                for j in (i+1)..<group.count {
+                    let dist = distanceBetween(group[i].coordinate, group[j].coordinate)
+                    distances.append((group[i], group[j], dist))
+                }
+            }
+            
+            // Find the maximum distance in this group
+            let maxDistance = distances.map { $0.distance }.max() ?? 0
+            
+            // If all POIs are close together (<50m), they're fine - no coordinate issue
+            if maxDistance < 50.0 {
+                continue
+            }
+            
+            // If POIs are far apart (>200m), one likely has incorrect coordinates
+            if maxDistance > 200.0 {
+                print("📍 ⚠️ Coordinate discrepancy detected for '\(normalizedName)': \(group.count) POIs, max distance: \(String(format: "%.0f", maxDistance))m")
+                
+                // Find clusters of POIs that are close together
+                var clusters: [[PlaceResult]] = []
+                var unclustered = group
+                
+                while !unclustered.isEmpty {
+                    let seed = unclustered.removeFirst()
+                    var cluster = [seed]
+                    
+                    // Find all POIs within 50m of the seed
+                    unclustered.removeAll { poi in
+                        let dist = distanceBetween(seed.coordinate, poi.coordinate)
+                        if dist < 50.0 {
+                            cluster.append(poi)
+                            return true
+                        }
+                        return false
+                    }
+                    
+                    clusters.append(cluster)
+                }
+                
+                // If we have multiple clusters, keep the one from the most reliable source
+                if clusters.count > 1 {
+                    // Find the best cluster (highest priority source)
+                    // Compare by finding the best POI in each cluster
+                    let bestCluster = clusters.max { cluster1, cluster2 in
+                        let best1 = cluster1.min { sourcePriority($0) < sourcePriority($1) }!
+                        let best2 = cluster2.min { sourcePriority($0) < sourcePriority($1) }!
+                        return sourcePriority(best1) > sourcePriority(best2)
+                    }!
+                    
+                    // Get the best POI from the best cluster for logging
+                    let bestPOI = bestCluster.min { sourcePriority($0) < sourcePriority($1) }!
+                    
+                    // Get placeIds of the best cluster for comparison
+                    let bestClusterPlaceIds = Set(bestCluster.map { $0.placeId })
+                    
+                    // Filter out POIs from other clusters
+                    for cluster in clusters {
+                        // Check if this is the best cluster by comparing placeIds
+                        let clusterPlaceIds = Set(cluster.map { $0.placeId })
+                        if clusterPlaceIds == bestClusterPlaceIds {
+                            continue  // Keep this cluster
+                        }
+                        
+                        for poi in cluster {
+                            filteredOut.insert(poi.placeId)
+                            let dist = distanceBetween(poi.coordinate, bestPOI.coordinate)
+                            print("📍 ❌ Filtered '\(poi.name)' with incorrect coordinates - \(String(format: "%.0f", dist))m from reliable location (source: \(poi.source.rawValue) vs \(bestPOI.source.rawValue))")
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Return only POIs that weren't filtered out
+        return pois.filter { !filteredOut.contains($0.placeId) }
+    }
+    
+    /// Choose best canonical representative from a cluster
+    /// Priority: Google > Apple > OSM > Geograph (high quality) > Geograph (low quality)
+    private func chooseCanonicalRepresentative(from cluster: [PlaceResult]) -> (poi: PlaceResult, reason: String) {
+        // Filter out non-POIs - they cannot be canonical representatives
+        let validPOIs = cluster.filter { !isNonPOI($0) }
+        guard !validPOIs.isEmpty else {
+            // Fallback: if all are non-POIs, return first (shouldn't happen)
+            return (cluster.first!, "Fallback (all non-POIs)")
+        }
+        
+        // Sort by source priority: Google > Apple > OSM > Geograph (evidence only)
+        // Geograph is evidence only - never canonical
+        let sorted = validPOIs.sorted { first, second in
+            // Never prefer Geograph over actual POI sources
+            if first.source == .geograph && second.source != .geograph {
+                return false  // Prefer non-Geograph
+            }
+            if second.source == .geograph && first.source != .geograph {
+                return true  // Prefer non-Geograph
+            }
+            
+            let firstPriority = sourcePriority(first)
+            let secondPriority = sourcePriority(second)
+            if firstPriority != secondPriority {
+                return firstPriority < secondPriority
+            }
+            // If same priority, prefer better name (shorter, cleaner)
+            // Geograph names often have grid prefixes - prefer cleaner names
+            let firstNameClean = normalizePOIName(first.name)
+            let secondNameClean = normalizePOIName(second.name)
+            if firstNameClean.count != secondNameClean.count {
+                return firstNameClean.count < secondNameClean.count  // Prefer shorter (cleaner)
+            }
+            // If same length, prefer higher quality Geograph (only if both are Geograph)
+            if first.source == .geograph && second.source == .geograph {
+                return geographQualityScore(first) > geographQualityScore(second)
+            }
+            return false
+        }
+        
+        let best = sorted.first!
+        let reason: String
+        switch best.source {
+        case .google: reason = "Google (highest priority)"
+        case .apple: reason = "Apple Maps"
+        case .osm: reason = "OSM"
+        case .geograph: reason = "Geograph (evidence only, quality: \(String(format: "%.1f", geographQualityScore(best))))"
+        case .unknown: reason = "Unknown source"
+        }
+        
+        return (best, reason)
     }
     
     // MARK: - Local Waypoint Optimization (Nearest Neighbor)
@@ -7711,6 +10764,12 @@ struct PlaceResult: Codable, Identifiable {
             latitude: geometry.location.lat,
             longitude: geometry.location.lng
         )
+    }
+    
+    /// Cleaned display name - removes grid references and location suffixes for better readability
+    /// Example: "SE2922: Lindale Methodist Church, Kirkhamgate" -> "Lindale Methodist Church"
+    var displayName: String {
+        return GoogleMapsService.cleanPOIDisplayName(name)
     }
     
     enum CodingKeys: String, CodingKey {

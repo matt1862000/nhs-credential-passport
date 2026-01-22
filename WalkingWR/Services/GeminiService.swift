@@ -97,11 +97,6 @@ class GeminiService {
         // Don't clear results - keep them for later summary
     }
     
-    // Legacy function name for compatibility
-    func printAPITestSummary() {
-        printAPICallSummary()
-    }
-    
     /// Waypoint info for AI description generation
     struct WaypointInfo {
         let name: String

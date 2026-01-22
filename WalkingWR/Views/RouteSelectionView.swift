@@ -36,13 +36,6 @@ private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async
 import MapKit
 import CoreLocation
 
-// v1.6.45: Pending batch test type
-enum PendingBatchTest: Equatable {
-    case none
-    case allLocations
-    case singleLocation(name: String, lat: Double, lon: Double)
-}
-
 struct RouteSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var showLocalRoutePicker: Bool
@@ -55,7 +48,6 @@ struct RouteSelectionView: View {
     @State private var showHelpSheet = false
     @State private var localRouteDuration: Int = 10
     @State private var localRouteUseCustom = false
-    @State private var pendingBatchTest: PendingBatchTest = .none  // v1.6.45: Auto-run test when sheet opens
     
     init(viewModel: WaitingRoomViewModel, showLocalRoutePicker: Binding<Bool> = .constant(false)) {
         self.viewModel = viewModel
@@ -240,7 +232,6 @@ struct RouteSelectionView: View {
                 locationService: viewModel.locationService,
                 localRouteDuration: $localRouteDuration,
                 localRouteUseCustom: $localRouteUseCustom,
-                pendingBatchTest: $pendingBatchTest,
                 showActiveWalk: $showActiveWalk
             )
             .addAlerts(viewModel: viewModel)
@@ -325,22 +316,6 @@ struct RouteSelectionView: View {
                         localRouteUseCustom = false
                         localRouteDuration = recommendedDuration
                     }
-                }
-            }
-            // v1.6.45: Listen for INTERNAL batch test notifications (after MainTabView switches tabs)
-            .onReceive(NotificationCenter.default.publisher(for: .runBatchTestInternal)) { _ in
-                print("📬 RouteSelectionView received runBatchTestInternal - opening sheet")
-                pendingBatchTest = .allLocations
-                showLocalRoutePicker = true
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTestInternal)) { notification in
-                print("📬 RouteSelectionView received runSingleLocationTestInternal")
-                if let userInfo = notification.userInfo,
-                   let lat = userInfo["latitude"] as? Double,
-                   let lon = userInfo["longitude"] as? Double {
-                    let name = userInfo["locationName"] as? String ?? userInfo["name"] as? String ?? "Test Location"
-                    pendingBatchTest = .singleLocation(name: name, lat: lat, lon: lon)
-                    showLocalRoutePicker = true
                 }
             }
     }
@@ -1023,7 +998,6 @@ struct LocalRoutePickerSheet: View {
     @Binding var selectedDuration: Int
     @Binding var useCustomTime: Bool
     @Binding var isPresented: Bool
-    @Binding var pendingBatchTest: PendingBatchTest  // v1.6.45: Auto-run test when sheet opens
     @Binding var showActiveWalk: Bool  // v1.9.28: Show fullscreen ActiveWalkView
     // v1.9.36: pendingActiveWalk now in viewModel for iOS 17 compatibility
     @State private var isGenerating = false  // Button shows spinner
@@ -1064,6 +1038,7 @@ struct LocalRoutePickerSheet: View {
     
     // v1.6.25: Route deduplication - track unique route signatures
     @State private var routeSignatures: Set<String> = []  // Unique signatures: "sortedPOIIds|distanceBucket"
+    @State private var usedPrimaryPOIs: Set<String> = []  // v1.9.52: Track primary POI names to prevent semantic duplicates
     @State private var varietyExhausted = false  // True when no more unique routes possible
     
     // v1.8.8: Store rejected short routes - may add ONE at end if ≤2 acceptable routes
@@ -1086,12 +1061,8 @@ struct LocalRoutePickerSheet: View {
             ZStack {
                 AnimatedGradientBackground()
                 
-                // v1.6.47: Batch test live progress overlay
-                if testProgress.isActive {
-                    batchTestProgressOverlay()
-                }
                 // Show map preview with optional shuffle overlay
-                else if let route = generatedRoute, showMapPreview {
+                if let route = generatedRoute, showMapPreview {
                     mapPreviewSection(route: route)
                 } else if showLoadingScreen || (isShuffling && generatedRoute == nil) {
                     // v1.8.3: Show loading view only after button has shown spinner
@@ -1453,42 +1424,6 @@ struct LocalRoutePickerSheet: View {
                 // Pre-fetch POIs while user selects duration (speeds up Generate)
                 prefetchPOIsIfNeeded()
                 
-                // v1.6.45: Auto-run pending batch test after short delay
-                if pendingBatchTest != .none {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        switch pendingBatchTest {
-                        case .allLocations:
-                            print("🧪 Auto-starting batch test (all locations)")
-                            runAllLocationTests()
-                        case .singleLocation(let name, let lat, let lon):
-                            print("🧪 Auto-starting single location test: \(name)")
-                            let coordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-                            runSingleTest(at: coordinate, name: name)
-                        case .none:
-                            break
-                        }
-                        pendingBatchTest = .none
-                    }
-                }
-            }
-            // Remove old notification listeners - now using pendingBatchTest binding
-            .onReceive(NotificationCenter.default.publisher(for: .runBatchTestInternal)) { _ in
-                // Legacy - keeping for backwards compatibility but not used
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTestInternal)) { notification in
-                // Legacy - keeping for backwards compatibility
-                if let userInfo = notification.userInfo,
-                   let name = userInfo["locationName"] as? String ?? userInfo["name"] as? String,
-                   let lat = userInfo["latitude"] as? Double,
-                   let lon = userInfo["longitude"] as? Double {
-                    
-                    // If "Current Location", use actual location
-                    if name == "Current Location", let currentLoc = locationService.currentLocation {
-                        runRouteGenerationTest(at: currentLoc.coordinate)
-                    } else if lat != 0 && lon != 0 {
-                        runRouteGenerationTest(at: CLLocationCoordinate2D(latitude: lat, longitude: lon))
-                    }
-                }
             }
             .onChange(of: locationService.currentLocation) { _, newLocation in
                 // Re-fetch POIs if location significantly changed
@@ -1508,43 +1443,6 @@ struct LocalRoutePickerSheet: View {
             } message: {
                 let stats = POICacheService.shared.getCacheStats()
                 Text("You've saved routes in \(stats.locations) different locations. Upgrade to WaitWell+ for unlimited locations and more features!")
-            }
-            // Debug route test results sheet
-            .sheet(isPresented: $showRouteTestResults) {
-                NavigationStack {
-                    ScrollView {
-                        Text(routeTestResults)
-                            .font(.system(.caption, design: .monospaced))
-                            .padding()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .navigationTitle("Route Generation Test")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") {
-                                showRouteTestResults = false
-                            }
-                        }
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button {
-                                UIPasteboard.general.string = routeTestResults
-                                didCopyResults = true
-                                // Reset after 2 seconds
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                    didCopyResults = false
-                                }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: didCopyResults ? "checkmark" : "doc.on.doc")
-                                    Text(didCopyResults ? "Copied!" : "Copy All")
-                                        .font(.caption)
-                                }
-                                .foregroundColor(didCopyResults ? .green : .accentColor)
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -1595,15 +1493,84 @@ struct LocalRoutePickerSheet: View {
     }
     
     /// Register a route signature as "seen"
+    /// v1.9.52: Now also registers the primary POI to prevent semantic duplicates
     func registerRouteSignature(places: [PlaceResult], distanceMeters: Int) {
         let signature = generateRouteSignature(places: places, distanceMeters: distanceMeters)
         routeSignatures.insert(signature)
+        
+        // v1.9.52: Also register primary POI
+        registerPrimaryPOI(places: places)
     }
     
     /// Reset route signatures when starting fresh
     func resetRouteSignatures() {
         routeSignatures.removeAll()
+        usedPrimaryPOIs.removeAll()  // v1.9.52: Also reset primary POI tracking
         varietyExhausted = false
+    }
+    
+    // MARK: - Primary POI Tracking (v1.9.52)
+    // Prevents routes with same "primary POI" from appearing as different routes
+    // e.g., "Star Inn Saunter" and "Star Inn Peek" both feature The Star Inn
+    
+    /// Extract the primary POI from a route - this is the main featured location
+    /// The primary POI is typically:
+    /// 1. The first meaningful POI (not generic like "footpath" or "bench")
+    /// 2. The POI the route is likely named after
+    func extractPrimaryPOI(from places: [PlaceResult]) -> String? {
+        // Generic POI types that shouldn't be primary
+        let genericKeywords = [
+            "footpath", "path", "road", "street", "lane", "avenue", "close", "drive",
+            "bench", "bin", "post box", "telephone", "bollard", "sign", "lamp",
+            "looking", "towards", "junction", "crossing", "corner"
+        ]
+        
+        for place in places {
+            let cleanedName = GoogleMapsService.cleanPOIDisplayName(place.name).lowercased()
+            
+            // Skip if too short (likely just a grid reference)
+            guard cleanedName.count >= 3 else { continue }
+            
+            // Skip generic POIs
+            let isGeneric = genericKeywords.contains { cleanedName.contains($0) }
+            if isGeneric { continue }
+            
+            // Found a meaningful POI - this is our primary
+            return cleanedName
+        }
+        
+        // Fallback: use first POI if no meaningful one found
+        return places.first.map { GoogleMapsService.cleanPOIDisplayName($0.name).lowercased() }
+    }
+    
+    /// Check if a route's primary POI has already been used
+    func isPrimaryPOIUnique(places: [PlaceResult]) -> Bool {
+        guard let primaryPOI = extractPrimaryPOI(from: places) else { return true }
+        return !usedPrimaryPOIs.contains(primaryPOI)
+    }
+    
+    /// Register a route's primary POI as used
+    func registerPrimaryPOI(places: [PlaceResult]) {
+        if let primaryPOI = extractPrimaryPOI(from: places) {
+            usedPrimaryPOIs.insert(primaryPOI)
+            print("🎯 Registered primary POI: '\(primaryPOI)' (total: \(usedPrimaryPOIs.count) unique primaries)")
+        }
+    }
+    
+    /// Check if a route is truly unique - both signature AND primary POI must be unique
+    func isRouteTrulyUnique(places: [PlaceResult], distanceMeters: Int) -> Bool {
+        let signatureUnique = isRouteUnique(places: places, distanceMeters: distanceMeters)
+        let primaryUnique = isPrimaryPOIUnique(places: places)
+        
+        if !signatureUnique {
+            print("⚠️ Route rejected: duplicate signature")
+        } else if !primaryUnique {
+            if let primary = extractPrimaryPOI(from: places) {
+                print("⚠️ Route rejected: primary POI '\(primary)' already used in another route")
+            }
+        }
+        
+        return signatureUnique && primaryUnique
     }
     
     // MARK: - Waypoint Permutation (v1.6.26)
@@ -1841,9 +1808,22 @@ struct LocalRoutePickerSheet: View {
                 
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Checking route cache...")
                 
+                let cacheCheckStartTime = Date()
                 if shouldUseCache, let cachedRoutes = RouteCacheService.shared.getCachedRoutes(near: userLocation.coordinate, durationMinutes: selectedDuration), !cachedRoutes.isEmpty {
+                    let cacheCheckElapsed = Date().timeIntervalSince(cacheCheckStartTime)
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE HIT! Found \(cachedRoutes.count) cached routes")
+                    print("⏱️ [TIMING] Cache check: \(String(format: "%.3f", cacheCheckElapsed))s")
                     print("📦 Using \(cachedRoutes.count) cached routes for \(selectedDuration)min")
+                    
+                    // v1.9.50: If we have 10 cached routes, return immediately (no POI fetching needed)
+                    if cachedRoutes.count >= 10 {
+                        let totalTime = Date().timeIntervalSince(generateStartTime)
+                        print("⚡ FULL CACHE (10 routes) - returning immediately, skipping POI fetch")
+                        print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                        print("⏱️ [TIMING] TOTAL TIME: \(String(format: "%.2f", totalTime))s (cache only, no POI fetch)")
+                        print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                        // Continue with cached routes (existing logic below handles this)
+                    }
                     
                     // v1.6.46: Show loading screen IMMEDIATELY for cache hits
                     // This ensures the stage animation plays before showing map preview
@@ -1878,7 +1858,7 @@ struct LocalRoutePickerSheet: View {
                             let content = WellbeingContent.breathingExercises.randomElement() ?? WellbeingContent.breathingExercises[0]
                             return QRMarker(
                                 code: "POI\(index + 1)",
-                                name: place.name,
+                                name: place.displayName,  // Use cleaned display name
                                 location: place.vicinity ?? "Local POI",
                                 coordinate: place.coordinate,
                                 contentType: .breathingExercise,
@@ -2187,15 +2167,37 @@ struct LocalRoutePickerSheet: View {
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting route generation...")
                     let routeGenStartTime = Date()
                     
+                    // v1.9.51: Collect excluded POIs for duplicate detection (empty for first route)
+                    let excludedPlaceIds: Set<String> = []
+                    let excludedPOIs: [PlaceResult] = []
+                    
                     let result = try await mapsService.generateLocalRouteWithRetry(
                         from: userLocation.coordinate,
                         targetDurationMinutes: selectedDuration,
                         difficulty: nil,
+                        excludePlaceIds: excludedPlaceIds,
+                        excludePOIs: excludedPOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
                         prefetchedPOIs: poisToUse
                     )
                     
                     let routeGenTime = Date().timeIntervalSince(routeGenStartTime)
+                    let totalTime = Date().timeIntervalSince(generateStartTime)
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Route generated in \(String(format: "%.2f", routeGenTime))s")
+                    print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                    print("⏱️ [TIMING] ROUTE GENERATION SUMMARY")
+                    print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                    print("⏱️ [TIMING] Total time: \(String(format: "%.2f", totalTime))s")
+                    print("⏱️ [TIMING] Route generation: \(String(format: "%.2f", routeGenTime))s")
+                    if let prefetched = poisToUse {
+                        let googleCount = prefetched.filter { $0.source == .google }.count
+                        let freeCount = prefetched.count - googleCount
+                        print("⏱️ [TIMING] POI sources: \(freeCount) free (Apple/OSM/Geograph), \(googleCount) Google")
+                        if googleCount == 0 {
+                            print("⏱️ [TIMING] 💰 Cost saved: Google Places skipped")
+                        }
+                    }
+                    print("⏱️ [TIMING] Route: \(result.durationSeconds / 60)min, \(result.places.count) waypoints")
+                    print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
                     
                     // Validate result
                     guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
@@ -2291,26 +2293,43 @@ struct LocalRoutePickerSheet: View {
                         usedOSRMRouting: result.usedOSRM  // v1.7.1: Track OSRM usage for polyline refresh
                     )
                     
+                    // FINAL SAFETY CHECK: Deduplicate before storing
+                    print("🛡️ ROUTE SELECTION VIEW: Final deduplication check before storing route")
+                    let deduplicatedResult = await MainActor.run {
+                        // Access GoogleMapsService to deduplicate
+                        let service = GoogleMapsService.shared
+                        // Create a temporary route to use finalizeRouteDedup
+                        let tempRoute = GeneratedRoute(
+                            places: result.places,
+                            polyline: result.polyline,
+                            distanceMeters: result.distanceMeters,
+                            durationSeconds: result.durationSeconds,
+                            legs: result.legs
+                        )
+                        // This will call deduplicateRoutePlaces internally
+                        return service.finalizeRouteDedupForView(tempRoute)
+                    }
+                    
                     await MainActor.run {
                         isGenerating = false
                         routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
                         generatedRoute = localRoute
-                        generatedRouteData = result
+                        generatedRouteData = deduplicatedResult
                         // Save as last valid for recycling on shuffle
                         lastValidRoute = localRoute
-                        lastValidRouteData = result
+                        lastValidRouteData = deduplicatedResult
                         
                         // v1.8.8: Check if initial route is too short (< 50% of target)
                         let minAcceptablePercent = 0.50
                         let minAcceptableDuration = Int(Double(selectedDuration) * minAcceptablePercent)
-                        let isShortRoute = result.durationMinutes < minAcceptableDuration
+                        let isShortRoute = deduplicatedResult.durationMinutes < minAcceptableDuration
                         if isShortRoute {
-                            print("⚠️ Initial route is short fallback (\(result.durationMinutes)min < \(minAcceptableDuration)min target 50%)")
+                            print("⚠️ Initial route is short fallback (\(deduplicatedResult.durationMinutes)min < \(minAcceptableDuration)min target 50%)")
                         }
                         
                         // Initialize route array with first route
                         // v1.6.47: Include isDeadZoneFallback per-route
-                        allRoutes = [(route: localRoute, data: result, isDeadZoneFallback: isShortRoute)]
+                        allRoutes = [(route: localRoute, data: deduplicatedResult, isDeadZoneFallback: isShortRoute)]
                         currentRouteIndex = 0
                         preGenerationComplete = false
                         isRecycledRoute = false  // First route is never recycled
@@ -2332,6 +2351,11 @@ struct LocalRoutePickerSheet: View {
                         print("✅ ROUTE 1 READY - Total time: \(String(format: "%.2f", totalTime))s")
                         print("   📍 \(result.places.count) POIs, \(result.durationMinutes)min, \(result.distanceMeters)m")
                         print("═══════════════════════════════════════════════════════════")
+                        
+                        // Print simple route summary
+                        let poiNames = result.places.map { $0.name }.joined(separator: " → ")
+                        print("\n📋 ROUTES SUMMARY - \(selectedDuration)min")
+                        print("\(selectedDuration)min - route 1: \(poiNames)\n")
                         
                         // Print comprehensive API call summary
                         print("")
@@ -2388,114 +2412,6 @@ struct LocalRoutePickerSheet: View {
                 showMapPreview = true  // v1.8.13: Now show the preview after stages complete
             }
         )
-    }
-    
-    /// v1.6.47: Live batch test progress overlay - shows on device during testing
-    @ViewBuilder
-    private func batchTestProgressOverlay() -> some View {
-        VStack(spacing: 24) {
-            Spacer()
-            
-            // Header
-            VStack(spacing: 8) {
-                Image(systemName: "flask.fill")
-                    .font(.system(size: 50))
-                    .foregroundColor(.tealAccent)
-                    .symbolEffect(.pulse, options: .repeating)
-                
-                Text("Batch Test Running")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
-            }
-            
-            // Progress ring
-            ZStack {
-                Circle()
-                    .stroke(Color(.systemGray4), lineWidth: 10)
-                    .frame(width: 120, height: 120)
-                
-                Circle()
-                    .trim(from: 0, to: testProgress.overallProgress)
-                    .stroke(Color.tealAccent, style: StrokeStyle(lineWidth: 10, lineCap: .round))
-                    .frame(width: 120, height: 120)
-                    .rotationEffect(.degrees(-90))
-                    .animation(.easeInOut(duration: 0.3), value: testProgress.overallProgress)
-                
-                VStack(spacing: 2) {
-                    Text("\(Int(testProgress.overallProgress * 100))%")
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .foregroundColor(.primary)
-                    
-                    Text("\(testProgress.validCount)/\(testProgress.totalRoutes)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            
-            // Current status
-            VStack(spacing: 12) {
-                // Location progress
-                HStack {
-                    Image(systemName: "mappin.circle.fill")
-                        .foregroundColor(.coralPink)
-                    Text(testProgress.currentLocationName)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Spacer()
-                    Text("\(testProgress.currentLocationIndex + 1)/\(testProgress.totalLocations)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal)
-                
-                // Duration progress
-                if testProgress.currentDuration > 0 {
-                    HStack {
-                        Image(systemName: "clock.fill")
-                            .foregroundColor(.softAmber)
-                        Text("Testing \(testProgress.currentDuration) min routes")
-                            .font(.subheadline)
-                        Spacer()
-                        Text("\(testProgress.currentDurationIndex + 1)/\(testProgress.totalDurations)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.horizontal)
-                }
-                
-                // Current action
-                Text(testProgress.currentStatus)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(Color(.systemGray6))
-                    .clipShape(Capsule())
-            }
-            .padding()
-            .background(Color(.systemBackground).opacity(0.9))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .shadow(radius: 4)
-            .padding(.horizontal, 20)
-            
-            // Live valid rate
-            VStack(spacing: 4) {
-                Text("Current Valid Rate")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                Text(String(format: "%.0f%%", testProgress.validRate))
-                    .font(.title)
-                    .fontWeight(.bold)
-                    .foregroundColor(testProgress.validRate >= 75 ? .green : (testProgress.validRate >= 50 ? .orange : .red))
-            }
-            
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
     }
     
     @ViewBuilder
@@ -2923,16 +2839,26 @@ struct LocalRoutePickerSheet: View {
             Task {
                 do {
                     // Flatten all previously shown place IDs to exclude from new route
-                    let excludedPlaceIds = shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
+                    let excludedPlaceIds = await MainActor.run {
+                        shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
+                    }
+                    
+                    // v1.9.51: Also collect actual POI objects from previous routes for duplicate detection
+                    let excludedPOIs = await MainActor.run {
+                        allRoutes.flatMap { $0.data.places }
+                    }
                     
                     // Use pre-fetched POIs if available
-                    let poisToUse = prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
+                    let poisToUse = await MainActor.run {
+                        prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
+                    }
                     
                     let result = try await mapsService.generateLocalRoute(
                         from: userLocation.coordinate,
                         targetDurationMinutes: selectedDuration,
                         difficulty: nil,
                         excludePlaceIds: excludedPlaceIds,
+                        excludePOIs: excludedPOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
                         prefetchedPOIs: poisToUse
                     )
                     
@@ -3183,6 +3109,11 @@ struct LocalRoutePickerSheet: View {
                         shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
                     }
                     
+                    // v1.9.51: Also collect actual POI objects from previous routes for duplicate detection
+                    let excludedPOIs = await MainActor.run {
+                        allRoutes.flatMap { $0.data.places }
+                    }
+                    
                     // v1.8.15: Smart multi-waypoint - only for 30+ min routes where it helps
                     // For shorter routes (10-25min), multi-waypoint mode often produces WORSE results
                     // because the POI pool is smaller and falls back to suboptimal single-waypoint routes
@@ -3194,6 +3125,7 @@ struct LocalRoutePickerSheet: View {
                         targetDurationMinutes: selectedDuration,
                         difficulty: nil,
                         excludePlaceIds: excludedPlaceIds,
+                        excludePOIs: excludedPOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
                         prefetchedPOIs: poisToUse,
                         preferMultiWaypoint: preferMulti
                     )
@@ -3204,15 +3136,15 @@ struct LocalRoutePickerSheet: View {
                         continue
                     }
                     
-                    // v1.6.25: Use signature-based duplicate detection
-                    // This catches routes with same POIs even if place ID sets differ slightly
+                    // v1.9.52: Use enhanced duplicate detection - checks BOTH signature AND primary POI
+                    // This prevents routes like "Star Inn Saunter" and "Star Inn Peek" from both appearing
                     let isUnique = await MainActor.run {
-                        isRouteUnique(places: result.places, distanceMeters: result.distanceMeters)
+                        isRouteTrulyUnique(places: result.places, distanceMeters: result.distanceMeters)
                     }
                     
                     if !isUnique {
                         consecutiveDuplicates += 1
-                        print("⚠️ Duplicate route detected (signature match) - \(consecutiveDuplicates)/\(maxConsecutiveDuplicates)")
+                        print("⚠️ Duplicate route detected (signature or primary POI) - \(consecutiveDuplicates)/\(maxConsecutiveDuplicates)")
                         if consecutiveDuplicates >= maxConsecutiveDuplicates {
                             print("🛑 Variety exhausted - stopping early (found \(routesGenerated) unique routes)")
                             await MainActor.run { varietyExhausted = true }
@@ -3308,8 +3240,11 @@ struct LocalRoutePickerSheet: View {
                             return
                         }
                         
+                        // FINAL SAFETY CHECK: Deduplicate before storing
+                        let deduplicatedResult = mapsService.finalizeRouteDedupForView(result)
+                        
                         // v1.6.47: Freshly generated routes are not dead zone fallbacks
-                        allRoutes.append((route: route, data: result, isDeadZoneFallback: false))
+                        allRoutes.append((route: route, data: deduplicatedResult, isDeadZoneFallback: false))
                         
                         // v1.6.25: Register route signature for deduplication
                         registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
@@ -3405,11 +3340,17 @@ struct LocalRoutePickerSheet: View {
                                 shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
                             }
                             
+                            // v1.9.51: Also collect actual POI objects from previous routes for duplicate detection
+                            let excludedPOIs = await MainActor.run {
+                                allRoutes.flatMap { $0.data.places }
+                            }
+                            
                             let result = try await mapsService.generateLocalRoute(
                                 from: userLocation.coordinate,
                                 targetDurationMinutes: selectedDuration,
                                 difficulty: nil,
                                 excludePlaceIds: excludedPlaceIds,
+                                excludePOIs: excludedPOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
                                 prefetchedPOIs: combinedPOIs
                             )
                             
@@ -3503,8 +3444,11 @@ struct LocalRoutePickerSheet: View {
                                     return
                                 }
                                 
+                                // FINAL SAFETY CHECK: Deduplicate before storing
+                                let deduplicatedResult = mapsService.finalizeRouteDedupForView(result)
+                                
                                 // v1.6.47: Google fallback routes are not dead zone fallbacks
-                                allRoutes.append((route: route, data: result, isDeadZoneFallback: false))
+                                allRoutes.append((route: route, data: deduplicatedResult, isDeadZoneFallback: false))
                                 
                                 // v1.6.25: Register route signature for deduplication
                                 registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
@@ -3589,6 +3533,17 @@ struct LocalRoutePickerSheet: View {
                 } else {
                     print("🏁 Pre-generation complete for \(selectedDuration)min! \(allRoutes.count) routes generated")
                 }
+                
+                // Print simple route summary
+                print("\n═══════════════════════════════════════════════════════════")
+                print("📋 ROUTES SUMMARY - \(selectedDuration)min")
+                print("═══════════════════════════════════════════════════════════")
+                for (index, routeTuple) in allRoutes.enumerated() {
+                    let route = routeTuple.data
+                    let poiNames = route.places.map { $0.name }.joined(separator: " → ")
+                    print("\(selectedDuration)min - route \(index + 1): \(poiNames)")
+                }
+                print("═══════════════════════════════════════════════════════════\n")
             }
             
             // AFTER completing current duration, pre-generate for OTHER durations
@@ -3638,11 +3593,15 @@ struct LocalRoutePickerSheet: View {
             }
             
             do {
+                // v1.9.51: Collect excluded POIs for duplicate detection (empty for background cache generation)
+                let excludedPOIs: [PlaceResult] = []
+                
                 let result = try await mapsService.generateLocalRoute(
                     from: location,
                     targetDurationMinutes: duration,
                     difficulty: nil,
                     excludePlaceIds: [],
+                    excludePOIs: excludedPOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
                     prefetchedPOIs: pois
                 )
                 
@@ -3701,14 +3660,24 @@ struct LocalRoutePickerSheet: View {
                         break
                     }
                     
-                    let poisToUse = prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
-                    let excludedPlaceIds = shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
+                    let poisToUse = await MainActor.run {
+                        prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
+                    }
+                    let excludedPlaceIds = await MainActor.run {
+                        shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
+                    }
+                    
+                    // v1.9.51: Also collect actual POI objects from previous routes for duplicate detection
+                    let excludedPOIs = await MainActor.run {
+                        allRoutes.flatMap { $0.data.places }
+                    }
                     
                     let result = try await mapsService.generateLocalRoute(
                         from: coordinate,
                         targetDurationMinutes: duration,
                         difficulty: nil,
                         excludePlaceIds: excludedPlaceIds,
+                        excludePOIs: excludedPOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
                         prefetchedPOIs: poisToUse
                     )
                     
@@ -3864,813 +3833,6 @@ struct LocalRoutePickerSheet: View {
         return loc1.distance(from: loc2)
     }
     
-    // MARK: - Debug Route Generation Test
-    @State private var isRunningRouteTest = false
-    @State private var routeTestResults: String = ""
-    @State private var showRouteTestResults = false
-    @State private var didCopyResults = false  // For "Copied!" feedback
-    
-    // v1.6.47: Live progress tracking for on-device feedback
-    @State private var testProgress: BatchTestProgress = BatchTestProgress()
-    
-    struct BatchTestProgress {
-        var isActive: Bool = false
-        var currentLocationName: String = ""
-        var currentLocationIndex: Int = 0
-        var totalLocations: Int = 1
-        var currentDuration: Int = 0
-        var currentDurationIndex: Int = 0
-        var totalDurations: Int = 11  // 10, 15, 20... 60
-        var validCount: Int = 0
-        var totalRoutes: Int = 0
-        var currentStatus: String = "Starting..."
-        
-        var overallProgress: Double {
-            let locationProgress = Double(currentLocationIndex) / Double(max(1, totalLocations))
-            let durationProgress = Double(currentDurationIndex) / Double(max(1, totalDurations))
-            // Weight: 90% location progress, 10% within-location progress
-            return locationProgress + (durationProgress / Double(max(1, totalLocations)))
-        }
-        
-        var validRate: Double {
-            guard totalRoutes > 0 else { return 0 }
-            return Double(validCount) / Double(totalRoutes) * 100
-        }
-    }
-    
-    /// v1.6.47: Calculate unified Route Score out of 100
-    /// Components:
-    /// - Valid Rate (50 points): % of routes within 75-125% of target
-    /// - Accuracy (30 points): How close average is to 100% (penalty for deviation)
-    /// - Variety (15 points): % of unique routes vs duplicates
-    /// - Speed (5 points): Bonus for fast generation (<5s average)
-    static func calculateRouteScore(
-        validRate: Double,      // 0-100
-        avgAccuracy: Double,    // 0-200+ (100 = perfect)
-        varietyRate: Double,    // 0-100
-        avgSpeed: Double        // seconds per route
-    ) -> Int {
-        // Valid Rate: 50 points max
-        let validScore = (validRate / 100.0) * 50.0
-        
-        // Accuracy: 30 points max (perfect at 100%, loses points for deviation)
-        // ±10% from 100% = full 30 points, drops linearly to 0 at ±30%
-        let accuracyDeviation = abs(avgAccuracy - 100.0)
-        let accuracyScore = max(0, (1.0 - accuracyDeviation / 30.0)) * 30.0
-        
-        // Variety: 15 points max
-        let varietyScore = (varietyRate / 100.0) * 15.0
-        
-        // Speed: 5 points max (full points if <2s, drops to 0 at 10s)
-        let speedScore = max(0, min(5.0, (10.0 - avgSpeed) / 8.0 * 5.0))
-        
-        let totalScore = validScore + accuracyScore + varietyScore + speedScore
-        return min(100, max(0, Int(round(totalScore))))
-    }
-    
-    /// v1.6.45: Run test for a single location by coordinate
-    func runSingleTest(at coordinate: CLLocationCoordinate2D, name: String) {
-        // If lat/lon are 0, use current location (with polling retry)
-        if coordinate.latitude == 0 && coordinate.longitude == 0 {
-            waitForLocationAndRunTest()
-        } else {
-            runRouteGenerationTest(at: coordinate)
-        }
-    }
-    
-    /// Wait for location with polling, fallback to cached POI location
-    private func waitForLocationAndRunTest() {
-        // First check: Do we already have a location?
-        if let userLocation = locationService.currentLocation {
-            print("🧪 Using existing location: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
-            runRouteGenerationTest(at: userLocation.coordinate)
-            return
-        }
-        
-        // Second check: Can we use a cached POI location?
-        let cachedLocations = POICacheService.shared.getCachedLocationsInfo()
-        if let firstCached = cachedLocations.first {
-            print("🧪 Using cached POI location: \(firstCached.coordinate.latitude), \(firstCached.coordinate.longitude)")
-            print("   (This location has \(firstCached.poiCount) cached POIs)")
-            runRouteGenerationTest(at: firstCached.coordinate)
-            return
-        }
-        
-        // Last resort: Try to request and wait
-        print("⏳ No cached location - requesting fresh GPS...")
-        locationService.requestCurrentLocation()
-        
-        var attempts = 0
-        let maxAttempts = 6  // 3 seconds total
-        
-        func checkLocation() {
-            if let userLocation = locationService.currentLocation {
-                print("🧪 Got fresh location: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
-                runRouteGenerationTest(at: userLocation.coordinate)
-            } else if attempts < maxAttempts {
-                attempts += 1
-                print("⏳ Attempt \(attempts)/\(maxAttempts)...")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    checkLocation()
-                }
-            } else {
-                print("❌ Could not get location")
-                isRunningRouteTest = true
-                routeTestResults = "❌ ERROR: No location available.\n\nPlease:\n1. Generate a route first (this caches your location)\n2. Or ensure location permissions are granted"
-                showRouteTestResults = true
-            }
-        }
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            checkLocation()
-        }
-    }
-    
-    /// Run tests for ALL CACHED locations (dynamic, not hardcoded)
-    func runAllLocationTests() {
-        isRunningRouteTest = true
-        
-        // Build test locations list from CACHED locations
-        var allTestLocations: [(name: String, coordinate: CLLocationCoordinate2D)] = []
-        
-        // Add current location first if available
-        if let userLocation = locationService.currentLocation {
-            allTestLocations.append(("📍 Current Location", userLocation.coordinate))
-        }
-        
-        // Add all cached locations
-        let cachedLocations = POICacheService.shared.getCachedLocationsInfo()
-        for (index, cached) in cachedLocations.enumerated() {
-            // Skip if too close to current location (already added)
-            if let userLocation = locationService.currentLocation {
-                let distance = CLLocation(latitude: cached.coordinate.latitude, longitude: cached.coordinate.longitude)
-                    .distance(from: CLLocation(latitude: userLocation.coordinate.latitude, longitude: userLocation.coordinate.longitude))
-                if distance < 100 { continue }  // Skip duplicates within 100m
-            }
-            allTestLocations.append(("📦 Cached #\(index + 1) (\(cached.poiCount) POIs)", cached.coordinate))
-        }
-        
-        // v1.6.47: Initialize live progress
-        testProgress = BatchTestProgress()
-        testProgress.isActive = true
-        testProgress.totalLocations = allTestLocations.count
-        testProgress.currentStatus = "Initializing..."
-        
-        // Get app version for batch test header
-        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
-        
-        routeTestResults = "🧪🧪🧪 BATCH TEST - ALL LOCATIONS 🧪🧪🧪\n"
-        routeTestResults += "📱 Version: \(appVersion) (Build \(buildNumber))\n"
-        routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        routeTestResults += "Testing \(allTestLocations.count) locations...\n\n"
-        
-        Task {
-            // v1.6.41: Track total test duration
-            let batchStartTime = Date()
-            
-            var allLocationSummaries: [(name: String, avgAccuracy: Double, validRate: Double, avgSpeed: Double, poiCount: Int)] = []
-            
-            for (index, location) in allTestLocations.enumerated() {
-                await MainActor.run {
-                    // v1.6.47: Update live progress
-                    testProgress.currentLocationIndex = index
-                    testProgress.currentLocationName = location.name
-                    testProgress.currentDurationIndex = 0
-                    testProgress.currentDuration = 0
-                    testProgress.currentStatus = "Testing \(location.name)..."
-                    
-                    routeTestResults += "\n\n"
-                    routeTestResults += "╔══════════════════════════════════════════════════════════════╗\n"
-                    routeTestResults += "║ 📍 LOCATION \(index + 1)/\(allTestLocations.count): \(location.name)\n"
-                    routeTestResults += "╚══════════════════════════════════════════════════════════════╝\n"
-                }
-                
-                // Run test for this location and collect summary
-                let summary = await runSingleLocationTest(
-                    coordinate: location.coordinate,
-                    name: location.name
-                )
-                allLocationSummaries.append((
-                    name: location.name,
-                    avgAccuracy: summary.avgAccuracy,
-                    validRate: summary.validRate,
-                    avgSpeed: summary.avgSpeed,
-                    poiCount: summary.poiCount
-                ))
-                
-                // Small delay between locations to avoid rate limiting
-                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-            }
-            
-            // Final comparison summary
-            await MainActor.run {
-                routeTestResults += "\n\n"
-                routeTestResults += "╔══════════════════════════════════════════════════════════════╗\n"
-                routeTestResults += "║ 📊 FINAL COMPARISON - ALL LOCATIONS                          ║\n"
-                routeTestResults += "╚══════════════════════════════════════════════════════════════╝\n"
-                routeTestResults += "┌────────────────────────┬────────┬─────────┬────────┬──────┐\n"
-                routeTestResults += "│ Location               │ Avg Acc│ Valid % │ Speed  │ POIs │\n"
-                routeTestResults += "├────────────────────────┼────────┼─────────┼────────┼──────┤\n"
-                
-                for summary in allLocationSummaries {
-                    let shortName = String(summary.name.prefix(22)).padding(toLength: 22, withPad: " ", startingAt: 0)
-                    let acc = String(format: "%3.0f%%", summary.avgAccuracy).padding(toLength: 6, withPad: " ", startingAt: 0)
-                    let valid = String(format: "%3.0f%%", summary.validRate).padding(toLength: 7, withPad: " ", startingAt: 0)
-                    let speed = String(format: "%.1fs", summary.avgSpeed).padding(toLength: 6, withPad: " ", startingAt: 0)
-                    let pois = String(summary.poiCount).padding(toLength: 4, withPad: " ", startingAt: 0)
-                    routeTestResults += "│ \(shortName) │ \(acc) │ \(valid) │ \(speed) │ \(pois) │\n"
-                }
-                
-                routeTestResults += "└────────────────────────┴────────┴─────────┴────────┴──────┘\n"
-                
-                // Overall averages
-                let overallAvgAccuracy = allLocationSummaries.map { $0.avgAccuracy }.reduce(0, +) / Double(allLocationSummaries.count)
-                let overallValidRate = allLocationSummaries.map { $0.validRate }.reduce(0, +) / Double(allLocationSummaries.count)
-                let overallAvgSpeed = allLocationSummaries.map { $0.avgSpeed }.reduce(0, +) / Double(allLocationSummaries.count)
-                
-                // v1.6.47: Calculate variety rate (approximate from valid rate)
-                let overallVarietyRate = min(100, overallValidRate * 1.1)  // Proxy based on valid rate
-                
-                // v1.6.47: Calculate Route Score
-                let routeScore = Self.calculateRouteScore(
-                    validRate: overallValidRate,
-                    avgAccuracy: overallAvgAccuracy,
-                    varietyRate: overallVarietyRate,
-                    avgSpeed: overallAvgSpeed
-                )
-                
-                routeTestResults += "\n🎯 ROUTE SCORE: \(routeScore)/100\n"
-                routeTestResults += "   Components:\n"
-                routeTestResults += "   • Valid Rate: \(String(format: "%.0f%%", overallValidRate)) → \(Int((overallValidRate / 100.0) * 50))/50 pts\n"
-                routeTestResults += "   • Accuracy: \(String(format: "%.0f%%", overallAvgAccuracy)) → \(Int(max(0, (1.0 - abs(overallAvgAccuracy - 100.0) / 30.0)) * 30))/30 pts\n"
-                routeTestResults += "   • Variety: \(String(format: "%.0f%%", overallVarietyRate)) → \(Int((overallVarietyRate / 100.0) * 15))/15 pts\n"
-                routeTestResults += "   • Speed: \(String(format: "%.1fs", overallAvgSpeed)) → \(Int(max(0, min(5.0, (10.0 - overallAvgSpeed) / 8.0 * 5.0))))/5 pts\n"
-                
-                routeTestResults += "\n📈 OVERALL AVERAGES:\n"
-                routeTestResults += "   Accuracy: \(String(format: "%.0f%%", overallAvgAccuracy))\n"
-                routeTestResults += "   Valid rate: \(String(format: "%.0f%%", overallValidRate))\n"
-                routeTestResults += "   Speed: \(String(format: "%.1fs", overallAvgSpeed)) per route\n"
-                
-                // v1.6.41: Show total test duration
-                let totalDuration = Date().timeIntervalSince(batchStartTime)
-                let totalMinutes = Int(totalDuration) / 60
-                let totalSeconds = Int(totalDuration) % 60
-                routeTestResults += "\n⏱️ Total time: \(totalMinutes)m \(totalSeconds)s\n"
-                
-                routeTestResults += "\n🏁 Batch test complete!\n"
-                
-                // Save to storage for later review
-                BatchTestStorage.shared.saveTest(routeTestResults)
-                
-                // v1.6.47: Turn off live progress
-                testProgress.isActive = false
-                
-                isRunningRouteTest = false
-                showRouteTestResults = true
-            }
-        }
-    }
-    
-    /// Run test for a single location and return summary stats
-    func runSingleLocationTest(coordinate: CLLocationCoordinate2D, name: String) async -> (avgAccuracy: Double, validRate: Double, avgSpeed: Double, poiCount: Int) {
-        let durations = stride(from: 5, through: 60, by: 5).map { $0 }  // v1.9.18: Start at 5min
-        let maxRoutesPerDuration = 5
-        var allResults: [(accuracy: Double, time: Double, isValid: Bool)] = []
-        var poiCount = 0
-        
-        // Get POIs - for testing, use cache if available, otherwise fetch WITHOUT caching
-        var pois: [PlaceResult]? = nil
-        if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: coordinate), !cachedPOIs.isEmpty {
-            pois = cachedPOIs
-            print("🧪 [\(name)] Using \(cachedPOIs.count) CACHED POIs")
-        } else {
-            // For testing: fetch POIs but don't cache (bypass limit)
-            print("🧪 [\(name)] Fetching fresh POIs (test mode - no cache)...")
-            pois = try? await mapsService.findNearbyPlacesWithoutCaching(location: coordinate, radiusMeters: 2500)
-        }
-        
-        poiCount = pois?.count ?? 0
-        
-        // v1.6.45: Enhanced logging - show POI sources
-        let googlePOIs = pois?.filter { !$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") }.count ?? 0
-        let applePOIs = pois?.filter { $0.placeId.hasPrefix("apple_") }.count ?? 0
-        let osmPOIs = pois?.filter { $0.placeId.hasPrefix("osm_") }.count ?? 0
-        
-        await MainActor.run {
-            routeTestResults += "📦 POIs: \(poiCount) (Google: \(googlePOIs), Apple: \(applePOIs), OSM: \(osmPOIs))\n"
-        }
-        
-        for (durationIndex, duration) in durations.enumerated() {
-            var excludedPlaceIds = Set<String>()
-            var consecutiveFailures = 0
-            var routesForDuration: [(actual: Int, accuracy: Double, waypoints: String, distance: Int)] = []
-            
-            await MainActor.run {
-                // v1.6.47: Update live progress for this duration
-                testProgress.currentDurationIndex = durationIndex
-                testProgress.currentDuration = duration
-                testProgress.currentStatus = "Testing \(duration)min routes..."
-                
-                routeTestResults += "\n📌 \(duration) MIN:\n"
-            }
-            
-            for routeNum in 1...maxRoutesPerDuration {
-                guard consecutiveFailures < 3 else { break }
-                
-                let startTime = Date()
-                
-                do {
-                    let route = try await mapsService.generateLocalRoute(
-                        from: coordinate,
-                        targetDurationMinutes: duration,
-                        difficulty: nil,
-                        excludePlaceIds: excludedPlaceIds,
-                        prefetchedPOIs: pois
-                    )
-                    
-                    if !route.places.isEmpty && route.durationSeconds > 0 {
-                        let elapsed = Date().timeIntervalSince(startTime)
-                        let actualMin = route.durationSeconds / 60
-                        let accuracy = Double(actualMin) / Double(duration) * 100
-                        // v1.6.43: 75-125% acceptable (symmetric bounds)
-                        // v1.6.44: 70-130% acceptable for 10 min walks only (more tolerance)
-                        // 75-79% = short, 80-120% = valid, 121-125% = long
-                        let lowerBound = duration == 10 ? 70.0 : 75.0
-                        let upperBound = duration == 10 ? 130.0 : 125.0
-                        let isAcceptable = accuracy >= lowerBound && accuracy <= upperBound
-                        let isShort = accuracy >= lowerBound && accuracy < 80
-                        let isLong = accuracy > 120 && accuracy <= upperBound
-                        
-                        allResults.append((accuracy: accuracy, time: elapsed, isValid: isAcceptable))
-                        
-                        // Build waypoint names string
-                        let waypointNames = route.places.prefix(3).map { 
-                            String($0.name.prefix(15)) 
-                        }.joined(separator: " → ")
-                        let moreCount = route.places.count > 3 ? " +\(route.places.count - 3)" : ""
-                        
-                        routesForDuration.append((
-                            actual: actualMin,
-                            accuracy: accuracy,
-                            waypoints: waypointNames + moreCount,
-                            distance: route.distanceMeters
-                        ))
-                        
-                        // Output route details
-                        // v1.6.43: ⚡ for short (75-79%), ✅ for valid (80-120%), 🔷 for long (121-125%)
-                        // v1.6.45: Added generation time to logging
-                        let icon = isShort ? "⚡" : (isLong ? "🔷" : (isAcceptable ? "✅" : (accuracy < 75 ? "📉" : "📈")))
-                        let elapsedStr = String(format: "%.1fs", elapsed)
-                        await MainActor.run {
-                            // v1.6.47: Update live progress
-                            testProgress.totalRoutes += 1
-                            if isAcceptable {
-                                testProgress.validCount += 1
-                            }
-                            testProgress.currentStatus = "\(duration)min R\(routeNum): \(actualMin)min (\(Int(accuracy))%)"
-                            
-                            routeTestResults += "  \(icon) R\(routeNum): \(actualMin)min (\(Int(accuracy))%) \(route.distanceMeters)m ⏱\(elapsedStr)\n"
-                            routeTestResults += "     → \(waypointNames)\(moreCount)\n"
-                        }
-                        
-                        // Add POIs to excluded list
-                        for place in route.places {
-                            excludedPlaceIds.insert(place.placeId)
-                        }
-                        consecutiveFailures = 0
-                    } else {
-                        consecutiveFailures += 1
-                    }
-                } catch {
-                    consecutiveFailures += 1
-                }
-            }
-            
-            // Duration summary - v1.6.43: 75-125% acceptable (symmetric)
-            let validForDuration = routesForDuration.filter { $0.accuracy >= 80 && $0.accuracy <= 120 }.count
-            let shortForDuration = routesForDuration.filter { $0.accuracy >= 75 && $0.accuracy < 80 }.count
-            let longForDuration = routesForDuration.filter { $0.accuracy > 120 && $0.accuracy <= 125 }.count
-            let acceptableForDuration = validForDuration + shortForDuration + longForDuration
-            await MainActor.run {
-                if shortForDuration > 0 || longForDuration > 0 {
-                    var breakdown = "\(validForDuration) valid"
-                    if shortForDuration > 0 { breakdown += " + \(shortForDuration) short" }
-                    if longForDuration > 0 { breakdown += " + \(longForDuration) long" }
-                    routeTestResults += "  📊 \(acceptableForDuration)/\(routesForDuration.count) acceptable (\(breakdown))\n"
-                } else {
-                routeTestResults += "  📊 \(validForDuration)/\(routesForDuration.count) valid\n"
-                }
-            }
-        }
-        
-        // Calculate summary stats - v1.6.43: track short (75-79%) and long (121-125%) separately
-        let avgAccuracy = allResults.isEmpty ? 0 : allResults.map { $0.accuracy }.reduce(0, +) / Double(allResults.count)
-        let acceptableCount = allResults.filter { $0.isValid }.count  // Now includes 75-125%
-        let strictValidCount = allResults.filter { $0.accuracy >= 80 && $0.accuracy <= 120 }.count
-        let shortCount = allResults.filter { $0.accuracy >= 75 && $0.accuracy < 80 }.count
-        let longCount = allResults.filter { $0.accuracy > 120 && $0.accuracy <= 125 }.count
-        let validRate = allResults.isEmpty ? 0 : Double(acceptableCount) / Double(allResults.count) * 100
-        let avgSpeed = allResults.isEmpty ? 0 : allResults.map { $0.time }.reduce(0, +) / Double(allResults.count)
-        
-        await MainActor.run {
-            routeTestResults += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            routeTestResults += "📊 \(name) SUMMARY:\n"
-            routeTestResults += "   Routes: \(allResults.count) | Avg accuracy: \(String(format: "%.0f%%", avgAccuracy))\n"
-            if shortCount > 0 || longCount > 0 {
-                routeTestResults += "   Acceptable (75-125%): \(acceptableCount)/\(allResults.count) (\(String(format: "%.0f%%", validRate)))\n"
-                routeTestResults += "   ├─ Valid (80-120%): \(strictValidCount)\n"
-                if shortCount > 0 && longCount > 0 {
-                    routeTestResults += "   ├─ Short (75-79%): \(shortCount)\n"
-                    routeTestResults += "   └─ Long (121-125%): \(longCount)\n"
-                } else if shortCount > 0 {
-                    routeTestResults += "   └─ Short (75-79%): \(shortCount)\n"
-                } else {
-                    routeTestResults += "   └─ Long (121-125%): \(longCount)\n"
-                }
-            } else {
-                routeTestResults += "   Valid (80-120%): \(acceptableCount)/\(allResults.count) (\(String(format: "%.0f%%", validRate)))\n"
-            }
-            routeTestResults += "   Avg speed: \(String(format: "%.1fs", avgSpeed))\n"
-        }
-        
-        return (avgAccuracy: avgAccuracy, validRate: validRate, avgSpeed: avgSpeed, poiCount: poiCount)
-    }
-    
-    /// Test route generation for all durations (5-60min) and report results
-    func runRouteGenerationTest(at testLocation: CLLocationCoordinate2D? = nil) {
-        // Use provided test location or current location
-        let testCoordinate: CLLocationCoordinate2D
-        let locationName: String
-        
-        if let provided = testLocation {
-            testCoordinate = provided
-            // Identify test location by coordinates
-            if abs(provided.latitude - 53.4115) < 0.01 && abs(provided.longitude - (-1.4577)) < 0.01 {
-                locationName = "S5 7AU (Firth Park)"
-            } else if abs(provided.latitude - 53.3631) < 0.01 && abs(provided.longitude - (-1.4989)) < 0.01 {
-                locationName = "S11 9BF (Ecclesall)"
-            } else if abs(provided.latitude - 53.3447) < 0.01 && abs(provided.longitude - (-1.3633)) < 0.01 {
-                locationName = "S12 4QN (Hackenthorpe)"
-            } else if abs(provided.latitude - 53.4633) < 0.01 && abs(provided.longitude - (-1.4667)) < 0.01 {
-                locationName = "S35 0JW (Chapeltown)"
-            } else {
-                locationName = "Test Location"
-            }
-        } else if let userLocation = locationService.currentLocation {
-            testCoordinate = userLocation.coordinate
-            locationName = "Current Location"
-        } else {
-            routeTestResults = "❌ No location available"
-            showRouteTestResults = true
-            return
-        }
-        
-        isRunningRouteTest = true
-        
-        // v1.6.47: Initialize live progress for single location test
-        testProgress = BatchTestProgress()
-        testProgress.isActive = true
-        testProgress.totalLocations = 1
-        testProgress.currentLocationIndex = 0
-        testProgress.currentLocationName = locationName
-        testProgress.currentStatus = "Starting test..."
-        
-        // Get app version for test header
-        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
-        
-        routeTestResults = "🧪 FULL ROUTE GENERATION TEST\n"
-        routeTestResults += "📱 Version: \(appVersion) (Build \(buildNumber))\n"
-        routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        
-        Task {
-            let durations = stride(from: 5, through: 60, by: 5).map { $0 }  // v1.9.18: Start at 5min
-            let maxRoutesPerDuration = 5  // Try to generate up to 5 routes per duration
-            var allResults: [(duration: Int, routeNum: Int, actual: Int, time: Double, accuracy: Double, status: String, waypoints: Int, distance: Int, routeKey: String, waypointNames: [String])] = []
-            var seenRouteKeys = Set<String>()  // Track unique routes globally
-            var totalRoutesGenerated = 0
-            
-            // Get POIs - check cache first, then prefetched, then fetch fresh
-            var pois: [PlaceResult]? = nil
-            
-            // 1. Check POI cache for this location (FREE - no API call)
-            if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: testCoordinate), !cachedPOIs.isEmpty {
-                pois = cachedPOIs
-                print("🧪 Using \(cachedPOIs.count) CACHED POIs (no API call)")
-            }
-            // 2. Use prefetched POIs if available and we're at current location
-            else if testLocation == nil && !prefetchedPOIs.isEmpty {
-                pois = prefetchedPOIs
-                print("🧪 Using \(prefetchedPOIs.count) prefetched POIs")
-            }
-            // 3. Fetch fresh POIs without caching (bypass location limit for testing)
-            else {
-                print("🧪 ⚠️ Cache empty - fetching POIs WITHOUT caching (test mode)")
-                pois = try? await mapsService.findNearbyPlacesWithoutCaching(location: testCoordinate, radiusMeters: 2500)
-            }
-            
-            await MainActor.run {
-                routeTestResults += "📍 \(locationName): (\(String(format: "%.4f", testCoordinate.latitude)), \(String(format: "%.4f", testCoordinate.longitude)))\n"
-                routeTestResults += "📦 POIs available: \(pois?.count ?? 0)\n"
-                routeTestResults += "🎯 Max routes per duration: \(maxRoutesPerDuration)\n"
-                routeTestResults += "🕐 Test started: \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium))\n"
-                routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            }
-            
-            for (durationIndex, duration) in durations.enumerated() {
-                var excludedPlaceIds = Set<String>()  // Reset for each duration
-                var routesForThisDuration: [(routeNum: Int, actual: Int, time: Double, accuracy: Double, status: String, waypoints: Int, distance: Int, routeKey: String, waypointNames: [String])] = []
-                var consecutiveFailures = 0
-                
-                // v1.6.25: Signature-based deduplication with early stopping
-                var durationSignatures = Set<String>()  // Unique signatures for this duration
-                var consecutiveDuplicates = 0
-                let maxConsecutiveDuplicates = 3  // Stop when variety exhausted
-                var varietyExhausted = false
-                var uniqueRoutesFound = 0
-                
-                await MainActor.run {
-                    // v1.6.47: Update live progress
-                    testProgress.currentDurationIndex = durationIndex
-                    testProgress.currentDuration = duration
-                    testProgress.currentStatus = "Testing \(duration)min routes..."
-                    
-                    routeTestResults += "\n📌 \(duration) MINUTES\n"
-                    routeTestResults += "───────────────────────────────────────\n"
-                }
-                
-                for routeNum in 1...maxRoutesPerDuration {
-                    guard consecutiveFailures < 3 else { break }  // Stop after 3 failures
-                    guard !varietyExhausted else { break }  // v1.6.25: Stop when variety exhausted
-                    
-                    let startTime = Date()
-                    var actualMin = 0
-                    var accuracy: Double = 0
-                    var status = ""
-                    var waypoints = 0
-                    var distance = 0
-                    var routeKey = ""
-                    var waypointNames: [String] = []
-                    
-                    do {
-                        // Try to generate a route, excluding previously used POIs
-                        let result = try await mapsService.generateLocalRoute(
-                            from: testCoordinate,
-                            targetDurationMinutes: duration,
-                            difficulty: nil,
-                            excludePlaceIds: excludedPlaceIds,
-                            prefetchedPOIs: pois
-                        )
-                        
-                        if !result.places.isEmpty && result.durationSeconds > 0 {
-                            actualMin = result.durationSeconds / 60
-                            waypoints = result.places.count
-                            distance = result.distanceMeters
-                            waypointNames = result.places.map { $0.name }
-                            
-                            // Add these POIs to exclusion list for next iteration
-                            for place in result.places {
-                                excludedPlaceIds.insert(place.placeId)
-                            }
-                            
-                            // v1.6.25: Use signature-based duplicate detection (matches app behavior)
-                            let sortedIds = result.places.map { $0.placeId }.sorted().joined(separator: ",")
-                            let distanceBucket = (distance / 100) * 100
-                            let signature = "\(sortedIds)|\(distanceBucket)"
-                            
-                            let isDuplicate = durationSignatures.contains(signature)
-                            
-                            // Also create legacy routeKey for global tracking
-                            let firstPOI = result.places.first?.name.prefix(10) ?? "?"
-                            routeKey = "\(distance)m_\(waypoints)wp_\(firstPOI)"
-                            
-                            // Calculate accuracy as percentage of target
-                            accuracy = Double(actualMin) / Double(duration) * 100
-                            
-                            if isDuplicate {
-                                // v1.6.25: Track consecutive duplicates for early stopping
-                                consecutiveDuplicates += 1
-                                status = "🔁"
-                                
-                                if consecutiveDuplicates >= maxConsecutiveDuplicates {
-                                    varietyExhausted = true
-                                }
-                            } else {
-                                // Unique route found
-                                durationSignatures.insert(signature)
-                                seenRouteKeys.insert(routeKey)
-                                uniqueRoutesFound += 1
-                                consecutiveDuplicates = 0  // Reset on unique find
-                                
-                                // v1.6.39: ⚡ for short (75-79%), ✅ for valid (80-120%)
-                                if accuracy >= 80 && accuracy <= 120 {
-                                    status = "✅"
-                                } else if accuracy >= 75 && accuracy < 80 {
-                                    status = "⚡"  // Short but acceptable
-                                } else if accuracy > 120 && accuracy <= 130 {
-                                    status = "⚠️"  // Marginal (over)
-                                } else if accuracy < 75 {
-                                    status = "📉"  // Too short
-                                } else {
-                                    status = "📈"  // Too long (>130%)
-                                }
-                            }
-                            
-                            consecutiveFailures = 0
-                            totalRoutesGenerated += 1
-                            
-                            // v1.6.47: Update live progress
-                            await MainActor.run {
-                                testProgress.totalRoutes += 1
-                                let isAcceptable = (accuracy >= 75 && accuracy <= 130) && status != "🔁"
-                                if isAcceptable {
-                                    testProgress.validCount += 1
-                                }
-                                testProgress.currentStatus = "\(duration)min R\(routeNum): \(actualMin)min (\(Int(accuracy))%)"
-                            }
-                        } else {
-                            status = "❌"
-                            consecutiveFailures += 1
-                        }
-                    } catch {
-                        consecutiveFailures += 1
-                        let errorMsg = error.localizedDescription
-                        if errorMsg.contains("rate") || errorMsg.contains("Rate") {
-                            status = "🚫"
-                        } else if errorMsg.contains("No route") || errorMsg.contains("no route") {
-                            status = "🔚"  // No more routes possible
-                            break
-                        } else {
-                            status = "💥"
-                        }
-                    }
-                    
-                    let elapsed = Date().timeIntervalSince(startTime)
-                    
-                    if !waypointNames.isEmpty {
-                        routesForThisDuration.append((routeNum: routeNum, actual: actualMin, time: elapsed, accuracy: accuracy, status: status, waypoints: waypoints, distance: distance, routeKey: routeKey, waypointNames: waypointNames))
-                        allResults.append((duration: duration, routeNum: routeNum, actual: actualMin, time: elapsed, accuracy: accuracy, status: status, waypoints: waypoints, distance: distance, routeKey: routeKey, waypointNames: waypointNames))
-                        
-                        // Update UI in real-time
-                        await MainActor.run {
-                            let timeStr = elapsed < 1 ? String(format: "%dms", Int(elapsed * 1000)) : String(format: "%.1fs", elapsed)
-                            let accStr = String(format: "%.0f%%", accuracy)
-                            let namesShort = waypointNames.prefix(3).map { String($0.prefix(15)) }.joined(separator: " → ")
-                            let moreIndicator = waypointNames.count > 3 ? " +\(waypointNames.count - 3)" : ""
-                            
-                            routeTestResults += "  \(status) Route \(routeNum): \(actualMin)min (\(accStr)) \(timeStr)\n"
-                            routeTestResults += "     📍 \(namesShort)\(moreIndicator)\n"
-                        }
-                    }
-                    
-                    // Small delay between routes
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                }
-                
-                // v1.6.39: Improved summary with short routes included
-                await MainActor.run {
-                    let validRoutes = routesForThisDuration.filter { $0.status == "✅" }.count
-                    let shortRoutes = routesForThisDuration.filter { $0.status == "⚡" }.count
-                    let acceptableRoutes = validRoutes + shortRoutes
-                    let exhaustedIndicator = varietyExhausted ? " (variety exhausted)" : ""
-                    if shortRoutes > 0 {
-                        routeTestResults += "  📊 \(uniqueRoutesFound) unique / \(acceptableRoutes) acceptable (\(validRoutes)✅ + \(shortRoutes)⚡)\(exhaustedIndicator)\n"
-                    } else {
-                    routeTestResults += "  📊 \(uniqueRoutesFound) unique / \(validRoutes) valid\(exhaustedIndicator)\n"
-                    }
-                }
-            }
-            
-            // Keep existing summary generation but update counts
-            let results = allResults  // For compatibility with existing summary code
-            
-            // Generate detailed summary
-            await MainActor.run {
-                routeTestResults += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                routeTestResults += "📊 SUMMARY\n"
-                routeTestResults += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                
-                let successful = results.filter { $0.status == "✅" }.count
-                let shortAcceptable = results.filter { $0.status == "⚡" }.count  // v1.6.39
-                let marginal = results.filter { $0.status == "⚠️" }.count
-                let tooShort = results.filter { $0.status == "📉" }.count
-                let tooLong = results.filter { $0.status == "📈" }.count
-                let duplicates = results.filter { $0.status == "🔁" }.count
-                let failed = results.filter { $0.status == "❌" || $0.status == "💥" || $0.status == "🚫" }.count
-                let uniqueRoutes = seenRouteKeys.count
-                
-                let validResults = results.filter { $0.accuracy > 0 }
-                let avgAccuracy = validResults.isEmpty ? 0 : validResults.map { $0.accuracy }.reduce(0, +) / Double(validResults.count)
-                let avgTime = results.map { $0.time }.reduce(0, +) / Double(results.count)
-                
-                // v1.6.25: Calculate per-duration unique counts
-                var durationUniqueMap: [Int: Int] = [:]
-                var currentDuration = 0
-                var currentSignatures = Set<String>()
-                for r in results {
-                    if r.duration != currentDuration {
-                        currentDuration = r.duration
-                        currentSignatures.removeAll()
-                    }
-                    let signature = r.routeKey  // Use routeKey as signature proxy
-                    if !currentSignatures.contains(signature) && r.status != "🔁" {
-                        currentSignatures.insert(signature)
-                        durationUniqueMap[r.duration, default: 0] += 1
-                    }
-                }
-                
-                let requestedTotal = 12 * maxRoutesPerDuration  // 12 durations × 5 routes
-                let varietyRate = Double(uniqueRoutes) / Double(requestedTotal) * 100
-                
-                routeTestResults += "\n📊 ROUTE AVAILABILITY (v1.6.25 - honest counts)\n"
-                routeTestResults += "───────────────────────────────────────\n"
-                routeTestResults += "🎯 Requested: \(requestedTotal) routes (12 durations × \(maxRoutesPerDuration))\n"
-                routeTestResults += "✅ Unique found: \(uniqueRoutes)\n"
-                routeTestResults += "🔁 Duplicates stopped: \(duplicates)\n"
-                routeTestResults += "📈 Variety rate: \(String(format: "%.0f", varietyRate))%\n\n"
-                
-                routeTestResults += "BY ACCURACY (unique routes only):\n"
-                routeTestResults += "✅ On-target (80-120%): \(successful)\n"
-                routeTestResults += "⚡ Short (75-79%):      \(shortAcceptable)\n"
-                routeTestResults += "⚠️ Marginal (121-130%): \(marginal)\n"
-                routeTestResults += "📉 Too short (<75%):    \(tooShort)\n"
-                routeTestResults += "📈 Too long (>130%):    \(tooLong)\n"
-                routeTestResults += "❌ Failed/Error:        \(failed)\n"
-                let totalAcceptable = successful + shortAcceptable
-                routeTestResults += "───────────────────────────────────────\n"
-                routeTestResults += "📊 Total acceptable:    \(totalAcceptable) (\(successful) valid + \(shortAcceptable) short)\n"
-                
-                routeTestResults += "\n📈 ACCURACY STATS:\n"
-                routeTestResults += "   Average: \(String(format: "%.0f", avgAccuracy))% of target\n"
-                
-                if !validResults.isEmpty {
-                    let minAcc = validResults.map { $0.accuracy }.min() ?? 0
-                    let maxAcc = validResults.map { $0.accuracy }.max() ?? 0
-                    routeTestResults += "   Range: \(String(format: "%.0f", minAcc))% - \(String(format: "%.0f", maxAcc))%\n"
-                }
-                
-                routeTestResults += "\n⏱️ SPEED STATS:\n"
-                routeTestResults += "   Average: \(String(format: "%.1f", avgTime))s per route\n"
-                
-                let slowRoutes = results.filter { $0.time > 5 }
-                if !slowRoutes.isEmpty {
-                    routeTestResults += "   Slow (>5s): \(slowRoutes.map { "\($0.duration)min" }.joined(separator: ", "))\n"
-                }
-                
-                let fastRoutes = results.filter { $0.time < 1 }
-                if !fastRoutes.isEmpty {
-                    routeTestResults += "   Fast (<1s): \(fastRoutes.map { "\($0.duration)min" }.joined(separator: ", "))\n"
-                }
-                
-                // Show duplicates (routes reusing same path)
-                let duplicateResults = results.filter { $0.status == "🔁" }
-                if !duplicateResults.isEmpty {
-                    routeTestResults += "\n🔁 DUPLICATE ROUTES (same path reused):\n"
-                    for r in duplicateResults {
-                        routeTestResults += "   \(r.duration)min is same as another route (\(r.distance)m, \(r.waypoints)wp)\n"
-                    }
-                }
-                
-                // Detailed breakdown for problematic routes
-                let problematic = results.filter { ($0.status != "✅" && $0.status != "🔁") && $0.accuracy > 0 }
-                if !problematic.isEmpty {
-                    routeTestResults += "\n⚠️ ROUTES NEEDING ATTENTION:\n"
-                    for r in problematic {
-                        let diff = r.actual - r.duration
-                        let diffStr = diff >= 0 ? "+\(diff)" : "\(diff)"
-                        routeTestResults += "   \(r.duration)min → \(r.actual)min (\(diffStr)min, \(String(format: "%.0f", r.accuracy))%)\n"
-                    }
-                }
-                
-                // v1.6.47: Calculate and display Route Score
-                let varietyRateForScore = Double(uniqueRoutes) / Double(max(1, results.count)) * 100
-                let validRateForScore = Double(successful + shortAcceptable) / Double(max(1, uniqueRoutes)) * 100
-                let routeScore = Self.calculateRouteScore(
-                    validRate: validRateForScore,
-                    avgAccuracy: avgAccuracy,
-                    varietyRate: varietyRateForScore,
-                    avgSpeed: avgTime
-                )
-                
-                routeTestResults += "\n🎯 ROUTE SCORE: \(routeScore)/100\n"
-                
-                routeTestResults += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                routeTestResults += "🕐 Test completed: \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium))\n"
-                
-                // v1.6.45: Save single location test results too
-                BatchTestStorage.shared.saveTest(routeTestResults)
-                print("💾 Single location test saved to storage")
-                
-                // v1.6.47: Turn off live progress
-                testProgress.isActive = false
-                
-                isRunningRouteTest = false
-                showRouteTestResults = true
-            }
-        }
-    }
-    
     func createMarkersFromPlaces(_ places: [PlaceResult], origin: CLLocationCoordinate2D) -> [QRMarker] {
         return places.enumerated().map { index, place in
             // Always use a random breathing exercise (one of the 3 available)
@@ -4678,7 +3840,7 @@ struct LocalRoutePickerSheet: View {
             
             return QRMarker(
                 code: "POI\(index + 1)",
-                name: place.name,
+                name: place.displayName,  // Use cleaned display name (removes grid refs and location suffixes)
                 location: place.vicinity ?? "Local POI",
                 coordinate: place.coordinate,
                 contentType: .breathingExercise,
@@ -4945,18 +4107,32 @@ struct LocalRouteMapPreview: View {
         
         // Log route POI sources
         if let data = generatedData {
-            let googleCount = data.places.filter { !$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") }.count
-            let appleCount = data.places.filter { $0.placeId.hasPrefix("apple_") }.count
-            let osmCount = data.places.filter { $0.placeId.hasPrefix("osm_") }.count
-            print("🗺️ Route POIs: 🌐 Google: \(googleCount), 🍎 Apple: \(appleCount), 🗺️ OSM: \(osmCount)")
+            let googleCount = data.places.filter { $0.source == .google || (!$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") && !$0.placeId.hasPrefix("geograph_")) }.count
+            let appleCount = data.places.filter { $0.source == .apple || $0.placeId.hasPrefix("apple_") }.count
+            let osmCount = data.places.filter { $0.source == .osm || $0.placeId.hasPrefix("osm_") }.count
+            let geographCount = data.places.filter { $0.source == .geograph || $0.placeId.hasPrefix("geograph_") }.count
+            print("🗺️ Route POIs: 🌐 Google: \(googleCount), 🍎 Apple: \(appleCount), 🗺️ OSM: \(osmCount), 📸 Geograph: \(geographCount)")
         }
         
         // Log TOTAL cached POIs for location
         if let cachedPOIs = POICacheService.shared.getCachedPOIs(near: userLoc) {
-            let totalGoogle = cachedPOIs.filter { !$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") }.count
-            let totalApple = cachedPOIs.filter { $0.placeId.hasPrefix("apple_") }.count
-            let totalOSM = cachedPOIs.filter { $0.placeId.hasPrefix("osm_") }.count
-            print("🗺️ TOTAL cached POIs: \(cachedPOIs.count) (🌐 Google: \(totalGoogle), 🍎 Apple: \(totalApple), 🗺️ OSM: \(totalOSM))")
+            let totalGoogle = cachedPOIs.filter { $0.source == .google || (!$0.placeId.hasPrefix("apple_") && !$0.placeId.hasPrefix("osm_") && !$0.placeId.hasPrefix("geograph_")) }.count
+            let totalApple = cachedPOIs.filter { $0.source == .apple || $0.placeId.hasPrefix("apple_") }.count
+            let totalOSM = cachedPOIs.filter { $0.source == .osm || $0.placeId.hasPrefix("osm_") }.count
+            let geographPOIs = cachedPOIs.filter { $0.source == .geograph || $0.placeId.hasPrefix("geograph_") }
+            let totalGeograph = geographPOIs.count
+            print("🗺️ TOTAL cached POIs: \(cachedPOIs.count) (🌐 Google: \(totalGoogle), 🍎 Apple: \(totalApple), 🗺️ OSM: \(totalOSM), 📸 Geograph: \(totalGeograph))")
+            
+            // List all Geograph POIs if any
+            if totalGeograph > 0 {
+                print("📸 ═══════════════════════════════════════════════════════════")
+                print("📸 Geograph POIs (\(totalGeograph) total):")
+                for (index, poi) in geographPOIs.enumerated() {
+                    let distance = distanceBetweenPoints(userLoc, poi.coordinate)
+                    print("📸   [\(index + 1)] \(poi.name) - \(Int(distance))m away")
+                }
+                print("📸 ═══════════════════════════════════════════════════════════")
+            }
         }
         
         // Debug: Check if polyline exists
@@ -5203,7 +4379,7 @@ struct LocalRouteMapPreview: View {
                                         Image(systemName: "mappin.circle.fill")
                                             .font(.caption)
                                             .foregroundColor(.mintGreen)
-                                        Text(place.name)
+                                        Text(place.displayName)
                                             .font(.caption)
                                             .foregroundColor(.primary)
                                     }
@@ -8130,7 +7306,6 @@ extension View {
         locationService: LocationService,
         localRouteDuration: Binding<Int>,
         localRouteUseCustom: Binding<Bool>,
-        pendingBatchTest: Binding<PendingBatchTest>,
         showActiveWalk: Binding<Bool>  // v1.9.28: Show fullscreen ActiveWalkView
         // v1.9.36: pendingActiveWalk now in viewModel for iOS 17 compatibility
     ) -> some View {
@@ -8138,16 +7313,13 @@ extension View {
             .sheet(isPresented: showHelpSheet) {
                 HelpView()
             }
-            .sheet(isPresented: showLocalRoutePicker, onDismiss: {
-                pendingBatchTest.wrappedValue = .none
-            }) {
+            .sheet(isPresented: showLocalRoutePicker) {
                 LocalRoutePickerSheet(
                     viewModel: viewModel,
                     locationService: locationService,
                     selectedDuration: localRouteDuration,
                     useCustomTime: localRouteUseCustom,
                     isPresented: showLocalRoutePicker,
-                    pendingBatchTest: pendingBatchTest,
                     showActiveWalk: showActiveWalk
                 )
             }

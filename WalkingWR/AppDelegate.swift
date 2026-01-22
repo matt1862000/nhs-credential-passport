@@ -53,6 +53,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         print("📱 APNs Token received: \(tokenString.prefix(20))...")
         Messaging.messaging().apnsToken = deviceToken
         print("📱 APNs Token set on Messaging - ready for FCM")
+        
+        // Post notification so other parts of the app can retry FCM operations
+        NotificationCenter.default.post(name: Notification.Name("APNSTokenReady"), object: nil)
+        print("📱 Posted APNSTokenReady notification - FCM operations can now proceed")
     }
     
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {

@@ -74,23 +74,6 @@ struct MainTabView: View {
                 }
                 .tint(.tealAccent)
                 .transition(.opacity)
-                // v1.6.45: Handle batch test notifications - need to switch tabs first
-                .onReceive(NotificationCenter.default.publisher(for: .runBatchTest)) { _ in
-                    print("📬 MainTabView received runBatchTest - switching to Walk tab")
-                    selectedTab = 1  // Switch to Walk tab
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        // Forward to RouteSelectionView via the internal notification
-                        NotificationCenter.default.post(name: .runBatchTestInternal, object: nil)
-                    }
-                }
-                .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTest)) { notification in
-                    print("📬 MainTabView received runSingleLocationTest - switching to Walk tab")
-                    selectedTab = 1  // Switch to Walk tab
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        // Forward with userInfo
-                        NotificationCenter.default.post(name: .runSingleLocationTestInternal, object: nil, userInfo: notification.userInfo)
-                    }
-                }
             }
         }
         .animation(.easeInOut(duration: 0.5), value: showOnboarding)
