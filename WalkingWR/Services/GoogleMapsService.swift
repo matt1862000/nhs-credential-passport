@@ -9965,7 +9965,13 @@ class GoogleMapsService: ObservableObject {
                     continue
                 }
                 
+                // OPTIMIZATION: Quick distance check first (fastest filter)
+                // Only compare POIs that could potentially be merged (within 500m)
+                // This avoids expensive name similarity calculations for distant POIs
                 let distance = distanceBetween(poi.coordinate, otherPOI.coordinate)
+                if distance > 500.0 {
+                    continue  // Too far to merge, skip expensive checks
+                }
                 let otherBaseName = normalizePOIName(otherPOI.name)
                 let otherGridRef = extractGeographGridReference(otherPOI.name)
                 let otherOSMId = extractOSMId(otherPOI.placeId)
@@ -10000,8 +10006,9 @@ class GoogleMapsService: ObservableObject {
                 let hasNameSimilarity = nameSimilarity >= 0.90  // TIGHTENED from 0.85
                 let veryHighSimilarity = nameSimilarity > 0.95   // TIGHTENED from 0.9
                 
-                // Debug logging for potential duplicates
-                if distance <= 500.0 && nameSimilarity > 0.7 {
+                // Debug logging for potential duplicates (only log close matches to reduce noise)
+                // Only log if very close (<100m) or high similarity (>0.85) to reduce log spam
+                if distance <= 100.0 || nameSimilarity > 0.85 {
                     let gridRefInfo: String
                     if hasSharedGridRef {
                         gridRefInfo = "shared: \(poiGridRef ?? "none")"
