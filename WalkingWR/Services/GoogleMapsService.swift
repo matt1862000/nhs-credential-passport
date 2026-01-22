@@ -1332,13 +1332,10 @@ class GoogleMapsService: ObservableObject {
                 print("📦 🎯 Canonical dedup removed \(canonicalRemoved) duplicate POIs from database")
             }
             
-            // 3. Filter POIs inside restricted areas (school grounds, military, etc.)
-            let beforeAreaFilter = dbResults.count
-            dbResults = await filterPOIsInRestrictedAreas(pois: dbResults, location: location, radiusMeters: radiusMeters)
-            let areaFiltered = beforeAreaFilter - dbResults.count
-            if areaFiltered > 0 {
-                print("📦 🏫 Restricted area filter removed \(areaFiltered) inaccessible POIs from database")
-            }
+            // 3. Skip restricted area filtering for database POIs (they're pre-curated)
+            // The restricted POI filter (playcare/nursery) already handles the main issues
+            // Restricted area filtering queries Overpass API which is slow (7-15s per call)
+            // Database POIs are already curated, so we skip this expensive check
             
             // 4. Coordinate validation - removes POIs with incorrect coordinates
             let beforeCoordValidation = dbResults.count
