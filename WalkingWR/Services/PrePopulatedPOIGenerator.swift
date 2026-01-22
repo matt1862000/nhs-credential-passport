@@ -822,10 +822,9 @@ class PrePopulatedPOIGenerator: ObservableObject {
  
  To generate the database:
  1. Run: python3 generate_database.py
- 2. Copy prepopulated_pois.json to WalkingWR/ folder
- 3. Add to Xcode project (if not auto-included)
+ 2. Upload prepopulated_pois.json to Firebase Storage
  
- The app will automatically load the database from the bundle on first launch.
+ The app will automatically download the database from Firebase on first launch.
  
  Optional: Use addRoutesToExistingDatabase() if you need to add routes from the app.
  */

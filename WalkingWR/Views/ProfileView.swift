@@ -1887,7 +1887,7 @@ struct SettingsView: View {
                 await MainActor.run {
                     isGeneratingDatabase = false
                     showDatabaseProgress = false
-                    databaseGenerationStatus = "✅ Routes added!\n\(fileURL.path)\n\nReplace WalkingWR/prepopulated_pois.json with this file."
+                    databaseGenerationStatus = "✅ Routes added!\n\(fileURL.path)\n\nUpload this file to Firebase Storage as prepopulated_pois.json"
                     showDatabaseSuccessAlert = true
                     
                     // Also copy to Desktop for easy access
