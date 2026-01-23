@@ -444,6 +444,14 @@ class PrePopulatedPOIService {
         return (database.postcodeAreas.count, totalPOIs)
     }
     
+    /// Get all postcode areas from the database (for batch testing)
+    func getAllPostcodeAreas() -> [PrePopulatedPOIDatabase.PostcodeAreaPOIs]? {
+        guard let database = loadDatabase() else {
+            return nil
+        }
+        return database.postcodeAreas
+    }
+    
     // MARK: - Private Methods
     
     /// Create JSONDecoder with proper date decoding strategy for ISO8601 with fractional seconds

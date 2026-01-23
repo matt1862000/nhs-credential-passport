@@ -315,7 +315,20 @@ class PrePopulatedPOIGenerator: ObservableObject {
         print("📦 Expected routes: ~\(postcodeAreas.count * 7) (some may fail validation)")
         print("📦 ========================================")
         
-        var postcodeAreaPOIs: [PrePopulatedPOIService.PrePopulatedPOIDatabase.PostcodeAreaPOIs] = []
+        // v2.0.3: Fix concurrency - use actor to safely collect results
+        actor PostcodeAreaCollector {
+            private var areas: [PrePopulatedPOIService.PrePopulatedPOIDatabase.PostcodeAreaPOIs] = []
+            
+            func append(_ area: PrePopulatedPOIService.PrePopulatedPOIDatabase.PostcodeAreaPOIs) {
+                areas.append(area)
+            }
+            
+            func getAll() -> [PrePopulatedPOIService.PrePopulatedPOIDatabase.PostcodeAreaPOIs] {
+                return areas
+            }
+        }
+        
+        let collector = PostcodeAreaCollector()
         
         for (index, area) in postcodeAreas.enumerated() {
             await MainActor.run {
@@ -386,9 +399,11 @@ class PrePopulatedPOIGenerator: ObservableObject {
                 
                 // Generate routes for common durations (5, 10, 15, 20, 30, 45, 60 minutes)
                 print("   🗺️ Generating routes for 7 durations (5, 10, 15, 20, 30, 45, 60 min)...")
+                // v2.0.3: Fix concurrency - build route groups immutably
                 var routeGroups: [PrePopulatedPOIService.PrePopulatedPOIDatabase.PrePopulatedRoute] = []
                 let durationsToGenerate = [5, 10, 15, 20, 30, 45, 60]
                 
+                // Process durations sequentially to avoid concurrency issues
                 for (durationIndex, duration) in durationsToGenerate.enumerated() {
                     await MainActor.run {
                         currentDuration = duration
@@ -455,33 +470,41 @@ class PrePopulatedPOIGenerator: ObservableObject {
                         )
                         
                         // Check if we already have a route group for this duration
+                        // v2.0.3: Fix concurrency - rebuild array immutably instead of mutating
                         if let existingIndex = routeGroups.firstIndex(where: { $0.durationMinutes == duration }) {
                             // Add to existing group (limit to 3 routes per duration to keep file size manageable)
                             let existingGroup = routeGroups[existingIndex]
                             if existingGroup.routes.count < 3 {
-                                var updatedRoutes = existingGroup.routes
-                                updatedRoutes.append(routeData)
-                                routeGroups[existingIndex] = PrePopulatedPOIService.PrePopulatedPOIDatabase.PrePopulatedRoute(
-                                    durationMinutes: duration,
-                                    routes: updatedRoutes
-                                )
-                                
-                                await MainActor.run {
-                                    routesGenerated += 1
-                                    currentStatus = "\(area.postcode): \(duration)min route (\(updatedRoutes.count)/3) - Total: \(routesGenerated)"
-                                }
-                                
-                                print("      ✅ Added \(duration)min route (\(updatedRoutes.count)/3) - Total routes: \(routesGenerated)")
-                            } else {
-                                print("      ⏭️ Skipping \(duration)min route (already have 3)")
+                                // Create new array instead of mutating var
+                                let updatedRoutes = existingGroup.routes + [routeData]
+                                // Rebuild routeGroups array immutably
+                                routeGroups = routeGroups.enumerated().map { idx, group in
+                                    if idx == existingIndex {
+                                        return PrePopulatedPOIService.PrePopulatedPOIDatabase.PrePopulatedRoute(
+                                            durationMinutes: duration,
+                                            routes: updatedRoutes
+                                        )
+                                    }
+                                return group
                             }
+                            
+                            await MainActor.run {
+                                routesGenerated += 1
+                                currentStatus = "\(area.postcode): \(duration)min route (\(updatedRoutes.count)/3) - Total: \(routesGenerated)"
+                            }
+                            
+                            print("      ✅ Added \(duration)min route (\(updatedRoutes.count)/3) - Total routes: \(routesGenerated)")
+                        } else {
+                            print("      ⏭️ Skipping \(duration)min route (already have 3)")
+                        }
                         } else {
                             // Create new route group
                             let routeGroup = PrePopulatedPOIService.PrePopulatedPOIDatabase.PrePopulatedRoute(
                                 durationMinutes: duration,
                                 routes: [routeData]
                             )
-                            routeGroups.append(routeGroup)
+                            // v2.0.3: Fix concurrency - rebuild array immutably
+                            routeGroups = routeGroups + [routeGroup]
                             
                             await MainActor.run {
                                 routesGenerated += 1
@@ -521,7 +544,8 @@ class PrePopulatedPOIGenerator: ObservableObject {
                     routes: routeGroups.isEmpty ? nil : routeGroups
                 )
                 
-                postcodeAreaPOIs.append(areaPOIs)
+                // v2.0.3: Fix concurrency - use actor to safely append
+                await collector.append(areaPOIs)
                 
             } catch {
                 let errorMessage: String
@@ -554,20 +578,21 @@ class PrePopulatedPOIGenerator: ObservableObject {
         let database = PrePopulatedPOIService.PrePopulatedPOIDatabase(
             version: 1,
             lastUpdated: Date(),
-            postcodeAreas: postcodeAreaPOIs
+            postcodeAreas: await collector.getAll()
         )
         
-        let totalPOIs = postcodeAreaPOIs.reduce(0) { $0 + $1.pois.count }
-        let totalRoutes = postcodeAreaPOIs.compactMap { $0.routes }.flatMap { $0 }.reduce(0) { $0 + $1.routes.count }
+        let finalPostcodeAreas = await collector.getAll()
+        let totalPOIs = finalPostcodeAreas.reduce(0) { $0 + $1.pois.count }
+        let totalRoutes = finalPostcodeAreas.compactMap { $0.routes }.flatMap { $0 }.reduce(0) { $0 + $1.routes.count }
         
         await MainActor.run {
             isGenerating = false
-            currentStatus = "✅ Complete! \(postcodeAreaPOIs.count) areas, \(totalPOIs) POIs, \(totalRoutes) routes"
+            currentStatus = "✅ Complete! \(finalPostcodeAreas.count) areas, \(totalPOIs) POIs, \(totalRoutes) routes"
         }
         
         print("\n📦 ✅ Database generation complete!")
         print("   📊 Summary:")
-        print("   - Postcode areas: \(postcodeAreaPOIs.count)/8")
+        print("   - Postcode areas: \(finalPostcodeAreas.count)/8")
         print("   - Total POIs: \(totalPOIs)")
         print("   - Total routes: \(totalRoutes)")
         print("   - Routes generated this session: \(routesGenerated)")
@@ -732,16 +757,23 @@ class PrePopulatedPOIGenerator: ObservableObject {
                     )
                     
                     // Check if we already have a route group for this duration
+                    // v2.0.3: Fix concurrency - rebuild array immutably instead of mutating
                     if let existingIndex = routeGroups.firstIndex(where: { $0.durationMinutes == duration }) {
                         // Add to existing group (limit to 3 routes per duration to keep file size manageable)
                         let existingGroup = routeGroups[existingIndex]
                         if existingGroup.routes.count < 3 {
-                            var updatedRoutes = existingGroup.routes
-                            updatedRoutes.append(routeData)
-                            routeGroups[existingIndex] = PrePopulatedPOIService.PrePopulatedPOIDatabase.PrePopulatedRoute(
-                                durationMinutes: duration,
-                                routes: updatedRoutes
-                            )
+                            // Create new array instead of mutating var
+                            let updatedRoutes = existingGroup.routes + [routeData]
+                            // Rebuild routeGroups array immutably
+                            routeGroups = routeGroups.enumerated().map { idx, group in
+                                if idx == existingIndex {
+                                    return PrePopulatedPOIService.PrePopulatedPOIDatabase.PrePopulatedRoute(
+                                        durationMinutes: duration,
+                                        routes: updatedRoutes
+                                    )
+                                }
+                                return group
+                            }
                             print("      ✅ Added \(duration)min route (\(updatedRoutes.count)/3)")
                         } else {
                             print("      ⏭️ Skipping \(duration)min route (already have 3)")
@@ -752,7 +784,8 @@ class PrePopulatedPOIGenerator: ObservableObject {
                                 durationMinutes: duration,
                                 routes: [routeData]
                             )
-                            routeGroups.append(routeGroup)
+                            // v2.0.3: Fix concurrency - rebuild array immutably
+                            routeGroups = routeGroups + [routeGroup]
                             
                             await MainActor.run {
                                 routesGenerated += 1

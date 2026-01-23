@@ -18,7 +18,21 @@ struct ProfileView: View {
     // Settings moved to WaitTimeView (Delay tab)
     @State private var showHelpSheet = false
     @State private var showIntroduction = false
+    @State private var isTestingRoutes = false
+    @State private var testingPostcode: String? = nil
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) var colorScheme
+    
+    // Debug postcodes with their center coordinates
+    private let debugPostcodes: [(postcode: String, lat: Double, lon: Double, description: String)] = [
+        ("S5 7JT", 53.4109, -1.4603, "Northern General Hospital"),
+        ("S35 0JW", 53.4200, -1.4800, "Sheffield area"),
+        ("S1 4JP", 53.3800, -1.4700, "Sheffield city centre"),
+        ("S5 7AU", 53.4100, -1.4500, "Sheffield area"),
+        ("S8 8BG", 53.3500, -1.4800, "Sheffield area"),
+        ("S35 1RQ", 53.4300, -1.4900, "Sheffield area"),
+        ("S11 9BF", 53.3700, -1.5000, "Sheffield area")
+    ]
     
     var body: some View {
         NavigationStack {
@@ -58,6 +72,124 @@ struct ProfileView: View {
                         
                         // Badges section
                         BadgesSection(progress: viewModel.userProgress)
+                        
+                        // Debug: Test Routes button
+                        VStack(spacing: 12) {
+                            Button(action: {
+                                guard let location = viewModel.locationService.currentLocation else {
+                                    print("🧪 [TEST ROUTES] Error: No location available")
+                                    return
+                                }
+                                
+                                isTestingRoutes = true
+                                Task {
+                                    await GoogleMapsService.shared.testRouteGenerationAtIntervals(
+                                        from: location.coordinate
+                                    )
+                                    await MainActor.run {
+                                        isTestingRoutes = false
+                                    }
+                                }
+                            }) {
+                                HStack {
+                                    if isTestingRoutes {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                            .scaleEffect(0.8)
+                                    } else {
+                                        Image(systemName: "wand.and.stars")
+                                    }
+                                    Text(isTestingRoutes ? "Testing Routes..." : "Test Routes")
+                                        .fontWeight(.semibold)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(isTestingRoutes ? Color.gray : Color.tealAccent)
+                                .foregroundColor(.white)
+                                .cornerRadius(12)
+                            }
+                            .disabled(isTestingRoutes || viewModel.locationService.currentLocation == nil)
+                            
+                            if viewModel.locationService.currentLocation == nil {
+                                Text("Location required for testing")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 8)
+                        
+                        // Debug: Test Routes from Postcode Locations
+                        VStack(alignment: .leading, spacing: 16) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "location.circle.fill")
+                                    .foregroundColor(.orange)
+                                Text("Debug: Test Routes from Postcodes")
+                                    .font(.headline)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.primary)
+                            }
+                            
+                            VStack(spacing: 10) {
+                                ForEach(debugPostcodes, id: \.postcode) { postcodeInfo in
+                                    Button(action: {
+                                        testingPostcode = postcodeInfo.postcode
+                                        let coordinate = CLLocationCoordinate2D(
+                                            latitude: postcodeInfo.lat,
+                                            longitude: postcodeInfo.lon
+                                        )
+                                        
+                                        Task {
+                                            print("🧪 [POSTCODE TEST] Starting route tests from \(postcodeInfo.postcode) (\(postcodeInfo.description))")
+                                            await GoogleMapsService.shared.testRouteGenerationAtIntervals(
+                                                from: coordinate
+                                            )
+                                            await MainActor.run {
+                                                testingPostcode = nil
+                                            }
+                                        }
+                                    }) {
+                                        HStack {
+                                            if testingPostcode == postcodeInfo.postcode {
+                                                ProgressView()
+                                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                                    .scaleEffect(0.8)
+                                            } else {
+                                                Image(systemName: "mappin.circle.fill")
+                                            }
+                                            
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(postcodeInfo.postcode)
+                                                    .fontWeight(.semibold)
+                                                Text(postcodeInfo.description)
+                                                    .font(.caption)
+                                                    .opacity(0.9)
+                                            }
+                                            
+                                            Spacer()
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                        .padding(.horizontal, 12)
+                                        .background(
+                                            testingPostcode == postcodeInfo.postcode
+                                                ? Color.gray
+                                                : Color.orange.opacity(0.8)
+                                        )
+                                        .foregroundColor(.white)
+                                        .cornerRadius(10)
+                                    }
+                                    .disabled(testingPostcode != nil)
+                                }
+                            }
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.adaptiveCardBackground(colorScheme))
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .shadow(color: Color.black.opacity(0.1), radius: 8, y: 4)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 8)
                         
                         Spacer(minLength: 100)
                     }
@@ -1786,6 +1918,18 @@ struct SettingsView: View {
     @State private var showHealthKitUnavailable = false
     @State private var showMotionUnavailable = false
     @State private var showHealthKitManageAlert = false
+    @State private var testingPostcode: String? = nil
+    
+    // Debug postcodes with their center coordinates
+    private let debugPostcodes: [(postcode: String, lat: Double, lon: Double, description: String)] = [
+        ("S5 7JT", 53.4109, -1.4603, "Northern General Hospital"),
+        ("S35 0JW", 53.4200, -1.4800, "Sheffield area"),
+        ("S1 4JP", 53.3800, -1.4700, "Sheffield city centre"),
+        ("S5 7AU", 53.4100, -1.4500, "Sheffield area"),
+        ("S8 8BG", 53.3500, -1.4800, "Sheffield area"),
+        ("S35 1RQ", 53.4300, -1.4900, "Sheffield area"),
+        ("S11 9BF", 53.3700, -1.5000, "Sheffield area")
+    ]
     
     // Only show permissions that have been interacted with (not .notDetermined)
     var shouldShowNotifications: Bool {
@@ -2164,6 +2308,169 @@ struct SettingsView: View {
                         }
                         .foregroundColor(.coralPink)
                     }
+                }
+                
+                // Debug: Test Routes from Postcode Locations
+                Section {
+                    // Batch Test: All Postcodes (most prominent)
+                    Button(action: {
+                        testingPostcode = "BATCH_ALL"
+                        Task {
+                            print("🧪 [BATCH TEST] Starting route tests for ALL postcodes in database")
+                            await GoogleMapsService.shared.testRouteGenerationForAllPostcodes()
+                            await MainActor.run {
+                                testingPostcode = nil
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 12) {
+                            if testingPostcode == "BATCH_ALL" {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle())
+                                    .scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "map.fill")
+                                    .font(.title3)
+                                    .foregroundColor(.blue)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("🌍 Test All Postcodes (Batch)")
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                                Text("Tests all postcodes in database (10-60min routes)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
+                            
+                            if testingPostcode != "BATCH_ALL" {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .disabled(testingPostcode != nil)
+                    .foregroundColor(.primary)
+                    
+                    Divider()
+                        .padding(.vertical, 4)
+                    
+                    // Current Location option
+                    Button(action: {
+                        guard let location = locationService.currentLocation else {
+                            print("🧪 [TEST ROUTES] Error: No location available")
+                            return
+                        }
+                        
+                        testingPostcode = "CURRENT"
+                        Task {
+                            print("🧪 [CURRENT LOCATION TEST] Starting route tests from current location")
+                            await GoogleMapsService.shared.testRouteGenerationAtIntervals(
+                                from: location.coordinate
+                            )
+                            await MainActor.run {
+                                testingPostcode = nil
+                            }
+                        }
+                    }) {
+                        HStack(spacing: 12) {
+                            if testingPostcode == "CURRENT" {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle())
+                                    .scaleEffect(0.8)
+                            } else {
+                                Image(systemName: "location.fill")
+                                    .font(.title3)
+                                    .foregroundColor(.tealAccent)
+                            }
+                            
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("📍 Current Location")
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                                if let location = locationService.currentLocation {
+                                    Text(String(format: "%.5f, %.5f", location.coordinate.latitude, location.coordinate.longitude))
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                } else {
+                                    Text("Location unavailable")
+                                        .font(.caption)
+                                        .foregroundColor(.red)
+                                }
+                            }
+                            
+                            Spacer()
+                            
+                            if testingPostcode != "CURRENT" && locationService.currentLocation != nil {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .disabled(testingPostcode != nil || locationService.currentLocation == nil)
+                    .foregroundColor(.primary)
+                    
+                    Divider()
+                        .padding(.vertical, 4)
+                    
+                    // Postcode options
+                    ForEach(debugPostcodes, id: \.postcode) { postcodeInfo in
+                        Button(action: {
+                            testingPostcode = postcodeInfo.postcode
+                            let coordinate = CLLocationCoordinate2D(
+                                latitude: postcodeInfo.lat,
+                                longitude: postcodeInfo.lon
+                            )
+                            
+                            Task {
+                                print("🧪 [POSTCODE TEST] Starting route tests from \(postcodeInfo.postcode) (\(postcodeInfo.description))")
+                                await GoogleMapsService.shared.testRouteGenerationAtIntervals(
+                                    from: coordinate
+                                )
+                                await MainActor.run {
+                                    testingPostcode = nil
+                                }
+                            }
+                        }) {
+                            HStack {
+                                if testingPostcode == postcodeInfo.postcode {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle())
+                                        .scaleEffect(0.8)
+                                } else {
+                                    Image(systemName: "mappin.circle.fill")
+                                        .foregroundColor(.orange)
+                                }
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(postcodeInfo.postcode)
+                                        .fontWeight(.semibold)
+                                    Text(postcodeInfo.description)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                
+                                Spacer()
+                            }
+                        }
+                        .disabled(testingPostcode != nil)
+                        .foregroundColor(.primary)
+                    }
+                } header: {
+                    HStack {
+                        Image(systemName: "location.circle.fill")
+                            .foregroundColor(.orange)
+                        Text("Debug: Test Routes")
+                    }
+                } footer: {
+                    Text("Test route generation from current location or postcode locations. Results will be printed to the console.")
+                        .font(.caption)
                 }
                 
                 aboutSection

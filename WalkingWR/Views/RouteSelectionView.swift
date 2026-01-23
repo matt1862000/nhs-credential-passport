@@ -2213,7 +2213,8 @@ struct LocalRoutePickerSheet: View {
                     let excludedPlaceIds: Set<String> = []
                     let excludedPOIs: [PlaceResult] = []
                     
-                    let result = try await mapsService.generateLocalRouteWithRetry(
+                    // v2.0.2: Use topology-safe route generation (guarantees a route, especially for short walks)
+                    let result = try await mapsService.generateRouteTopologySafe(
                         from: userLocation.coordinate,
                         targetDurationMinutes: selectedDuration,
                         difficulty: nil,
