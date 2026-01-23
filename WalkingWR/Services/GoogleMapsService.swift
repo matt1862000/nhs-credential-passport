@@ -8835,9 +8835,7 @@ class GoogleMapsService: ObservableObject {
                     waypointToRemove = finalRoute.places.count - 1
                 }
                 
-                guard waypointToRemove >= 0 && waypointToRemove < finalRoute.places.count else {
-                    print("⚠️ [PER-LEG-CAP] Invalid waypoint index \(waypointToRemove) for \(finalRoute.places.count) waypoints - skipping trim")
-                } else {
+                if waypointToRemove >= 0 && waypointToRemove < finalRoute.places.count {
                     let culpritPOI = finalRoute.places[waypointToRemove]
                     print("🔧 [PER-LEG-CAP] Trimming waypoint \(waypointToRemove): '\(culpritPOI.name)' (leg \(worstIdx) = \(worstLegMins)min)")
                     
