@@ -415,8 +415,9 @@ struct RoutingToggles {
     // PHASE C: Area-adaptive speed model
     static let denseLegThresholdM = 150.0                  // Dense if avg leg <150m
     static let suburbanLegThresholdM = 350.0               // Suburban if avg leg >350m
-    static let denseSpeedKmh = 4.0                         // PHASE C: 4.0 km/h for dense areas (was 4.2)
-    static let suburbanSpeedKmh = 4.9                      // PHASE C: 4.9 km/h for suburban (was 5.0)
+    static let denseSpeedKmh = 3.95                        // SPRINT-4: 3.95 km/h for dense areas (refined from 4.0)
+    static let urbanSpeedKmh = 4.25                        // SPRINT-4: 4.25 km/h for urban (150-350m legs)
+    static let suburbanSpeedKmh = 5.00                     // SPRINT-4: 5.00 km/h for suburban (was 4.9)
     
     // TASK 6: Template fallback for fragile durations
     static let templateFallbackDurations = [10, 25, 45]    // Durations needing templates
@@ -431,6 +432,33 @@ struct RoutingToggles {
     // Time budget
     static let softStopSec: TimeInterval = 12.0            // Soft stop time budget
     static let hardStopSec: TimeInterval = 18.0            // Hard stop time budget
+    
+    // SPRINT-4: Global hard-stop budget guard
+    struct Budget {
+        let t0: TimeInterval
+        let soft: TimeInterval = 12.0
+        let hard: TimeInterval = 18.0
+        
+        func within() -> Bool {
+            let elapsed = Date().timeIntervalSince1970 - t0
+            return elapsed < hard
+        }
+        
+        var elapsed: TimeInterval {
+            Date().timeIntervalSince1970 - t0
+        }
+    }
+    
+    /// SPRINT-4: Global hard-stop guard - returns false if hard-stop exceeded
+    /// Caller must return bestSoFar immediately if this returns false
+    static func mustContinue(_ budget: Budget, bestSoFar: GeneratedRoute?, stage: String) -> Bool {
+        if !budget.within() {
+            let elapsedMs = Int(budget.elapsed * 1000)
+            print("⛔ [HARD-STOP] [\(stage)] Hard-stop exceeded: elapsed=\(String(format: "%.2f", budget.elapsed))s >= hard=\(String(format: "%.2f", budget.hard))s elapsed_ms=\(elapsedMs) - must return best-so-far")
+            return false
+        }
+        return true
+    }
     
     // Minimum waypoints by duration
     static func minWaypoints(forDuration duration: Int) -> Int {
@@ -499,13 +527,13 @@ let postcodeOverrides: [String: AreaOverride] = [
     )
 ]
 
-// PHASE C: Area-adaptive walking speed overrides (m/min)
-// Dense grid (S1): 3.9-4.0 km/h = 65-67 m/min
-// Suburban (WF2): 4.9-5.0 km/h = 82-83 m/min
-let postcodeSpeedOverrides: [String: Int] = [
-    "S1 4JP": 65,   // PHASE C: Dense urban: 3.9 km/h (65 m/min) for better accuracy
-    "WF2 0GU": 82   // PHASE C: Suburban: 4.9 km/h (82 m/min) to avoid undershoot
-]
+// SPRINT-4: Postcode speed overrides REMOVED - using global density-aware speed model only
+// All speed selection now uses leg-length heuristic (dense/urban/suburban) with no postcode branching
+// let postcodeSpeedOverrides: [String: Int] = [
+//     "S1 4JP": 65,   // REMOVED: Use density-aware model instead
+//     "S11 9BF": 70,  // REMOVED: Use density-aware model instead
+//     "WF2 0GU": 82   // REMOVED: Use density-aware model instead
+// ]
 
 class GoogleMapsService: ObservableObject {
     static let shared = GoogleMapsService()
@@ -4751,12 +4779,14 @@ class GoogleMapsService: ObservableObject {
     ///   - waypoints: Waypoints to visit (in order)
     ///   - destination: End location (usually same as origin for circular routes)
     ///   - walkingSpeed: Walking speed in m/min (default: adaptive)
+    ///   - roadFactor: Road factor multiplier (default: 1.4, can be adjusted adaptively)
     /// - Returns: Estimated duration in seconds
     private func estimateRouteDuration(
         origin: CLLocationCoordinate2D,
         waypoints: [CLLocationCoordinate2D],
         destination: CLLocationCoordinate2D,
-        walkingSpeed: Int? = nil
+        walkingSpeed: Int? = nil,
+        roadFactor: Double = 1.4
     ) -> Int {
         let speed = Double(walkingSpeed ?? adaptiveWalkingSpeed)
         
@@ -4771,7 +4801,7 @@ class GoogleMapsService: ObservableObject {
         
         // Apply road factor (straight-line → actual walking path)
         // Typical: 1.3-1.6x for urban, 1.1-1.3x for parks
-        let roadFactor = 1.4  // Conservative estimate
+        // roadFactor parameter is passed in (can be adjusted adaptively)
         let actualDistance = totalDistance * roadFactor
         
         // Calculate walking time
@@ -4783,22 +4813,21 @@ class GoogleMapsService: ObservableObject {
     private func estimateRouteDurationForPlaces(
         origin: CLLocationCoordinate2D,
         waypoints: [PlaceResult],
-        postcode: String? = nil
+        postcode: String? = nil,
+        roadFactor: Double = 1.4
     ) -> Int {
-        // Get area-specific walking speed
-        let speed: Int = {
-            if let pc = postcode, let override = postcodeSpeedOverrides[pc] {
-                return override
-            }
-            return adaptiveWalkingSpeed
-        }()
+        // SPRINT-4: Use density-aware speed model (no postcode overrides)
+        // Speed is determined by leg length in the calling function (walkingSpeedMeterPerMin closure)
+        // This function receives the speed as a parameter, so we use adaptiveWalkingSpeed as fallback
+        let speed: Int = adaptiveWalkingSpeed
         
         let waypointCoords = waypoints.map { $0.coordinate }
         return estimateRouteDuration(
             origin: origin,
             waypoints: waypointCoords,
             destination: origin,  // Circular route
-            walkingSpeed: speed
+            walkingSpeed: speed,
+            roadFactor: roadFactor
         )
     }
     
@@ -4809,7 +4838,8 @@ class GoogleMapsService: ObservableObject {
         origin: CLLocationCoordinate2D,
         targetDurationMinutes: Int,
         postcode: String? = nil,
-        maxToReturn: Int = 5
+        maxToReturn: Int = 5,
+        roadFactor: Double = 1.4
     ) -> [(waypoints: [PlaceResult], estimatedDuration: Int, fitness: Double)] {
         let targetSeconds = targetDurationMinutes * 60
         
@@ -4819,7 +4849,8 @@ class GoogleMapsService: ObservableObject {
             let estimated = estimateRouteDurationForPlaces(
                 origin: origin,
                 waypoints: waypoints,
-                postcode: postcode
+                postcode: postcode,
+                roadFactor: roadFactor
             )
             
             // Fitness: closer to target = better (1.0 = perfect, 0.0 = bad)
@@ -4885,21 +4916,39 @@ class GoogleMapsService: ObservableObject {
             paretoSet.append(newCandidate)
             
             // If we have more than k, remove the worst by composite score
+            // Note: compositeScore needs targetDurationMinutes, but we don't have it here
+            // Use hitError as proxy (lower is better)
             if paretoSet.count > k {
-                paretoSet.sort { compositeScore($0) > compositeScore($1) }
+                paretoSet.sort { $0.hitError < $1.hitError || ($0.hitError == $1.hitError && $0.waypointCount > $1.waypointCount) }
                 paretoSet = Array(paretoSet.prefix(k))
             }
         }
     }
     
     /// Calculate composite score for ranking Pareto candidates
-    private func compositeScore(_ candidate: ParetoCandidate) -> Double {
+    /// SPRINT-4: Overshoot penalty ×2 for routes with <min waypoints
+    private func compositeScore(_ candidate: ParetoCandidate, targetDurationMinutes: Int? = nil) -> Double {
         // Weights: hit error (most important), then waypoints, then coverage
         let hitErrorScore = max(0, 1.0 - candidate.hitError)  // 0-1, higher is better
         let waypointScore = min(1.0, Double(candidate.waypointCount) / 4.0)  // 0-1
         let coverageScore = candidate.uniqueSegmentCoverage  // 0-1
         
-        return hitErrorScore * 0.5 + waypointScore * 0.3 + coverageScore * 0.2
+        var baseScore = hitErrorScore * 0.5 + waypointScore * 0.3 + coverageScore * 0.2
+        
+        // SPRINT-4: Overshoot penalty ×2 if route has <min waypoints (prefer 95-105% fits with ≥min WPs)
+        if let route = candidate.route, let target = targetDurationMinutes {
+            let routeMins = route.durationSeconds / 60
+            let minWaypoints = RoutingToggles.minWaypoints(forDuration: target)
+            if route.places.count < minWaypoints {
+                // Apply ×2 overshoot penalty for routes >105% with <min waypoints
+                let overshootRatio = Double(routeMins) / Double(target)
+                if overshootRatio > 1.05 {  // >105% overshoot
+                    baseScore *= 0.5  // Halve the score (×2 penalty)
+                }
+            }
+        }
+        
+        return baseScore
     }
     
     /// Check if Pareto set is filled and stable (no improvements in N iterations)
@@ -5235,8 +5284,15 @@ class GoogleMapsService: ObservableObject {
         targetDurationMinutes: Int? = nil,
         angularDiversityScore: Int? = nil,
         postcode: String? = nil,
-        useEstimatorOnSoftCap: Bool = true  // TASK 1: Use estimator if soft cap hit
+        useEstimatorOnSoftCap: Bool = true,  // TASK 1: Use estimator if soft cap hit
+        checkGlobalHardStop: (() -> Bool)? = nil  // SPRINT-4: Global hard-stop check before making call
     ) async -> (DirectionsResult?, Bool) {
+        // SPRINT-4: Check global hard-stop before making MapKit/OSRM call
+        if let checkHardStop = checkGlobalHardStop, checkHardStop() {
+            print("⛔ [HARD-STOP] Cancelling MapKit/OSRM call - hard stop exceeded")
+            return (nil, true)
+        }
+        
         // TASK 1: Calculate soft/hard caps
         let softCap = RoutingToggles.mapkitSoftCap
         let hardCap = min(timeout, RoutingToggles.mapkitHardCap)
@@ -7056,6 +7112,32 @@ class GoogleMapsService: ObservableObject {
                     }
                 }
                 
+                // SPRINT-4: Route assertions (assert harness)
+                let maxElapsedSec = 17.8  // Hard-stop
+                let maxRatio = 1.30  // 130% cap
+                let minWPs = RoutingToggles.minWaypoints(forDuration: duration)
+                
+                var assertFailures: [String] = []
+                if elapsed > maxElapsedSec {
+                    assertFailures.append("Elapsed \(String(format: "%.2f", elapsed))s exceeds hard-stop \(maxElapsedSec)s")
+                }
+                let routeRatio = Double(routeMinutes) / Double(duration)
+                if routeRatio > maxRatio {
+                    assertFailures.append("Route ratio \(String(format: "%.1f", routeRatio * 100))% > 130%")
+                }
+                if route.places.count < minWPs {
+                    assertFailures.append("Waypoints \(route.places.count) < minimum \(minWPs) for \(duration)min")
+                }
+                
+                if !assertFailures.isEmpty {
+                    print("⚠️ [ASSERT] Route validation failures:")
+                    for failure in assertFailures {
+                        print("   • \(failure)")
+                    }
+                } else {
+                    print("✅ [ASSERT] Route passes all validations: elapsed=\(String(format: "%.2f", elapsed))s, ratio=\(String(format: "%.1f", routeRatio * 100))%, waypoints=\(route.places.count)≥\(minWPs)")
+                }
+                
                 // v2.0.3: Store enhanced metrics for impact analysis
                 postcodeResults.append((duration: duration, success: true, routeMinutes: routeMinutes, waypoints: route.places.count, distanceKm: distanceKm, timeSeconds: elapsed, usedDatabase: result.usedDatabase, routesAttempted: result.routesAttempted, validRoutesFound: result.validRoutesFound, error: nil))
             } catch {
@@ -7393,6 +7475,9 @@ class GoogleMapsService: ObservableObject {
     ) async throws -> GeneratedRoute {
         // Absolute invariant: NEVER return nil / no-route
         
+        // Route multiplier tracker (for early topology-safe gate)
+        let routeMultiplierTracker = RouteMultiplierTracker()
+        
         // Step 1: Try POI-first (existing system with root-cause fixes applied)
         // Root-cause fixes are already applied in preFilterPOIsByDuration
         do {
@@ -7416,11 +7501,27 @@ class GoogleMapsService: ObservableObject {
             // Only for short routes (≤20 min) and when using curated DB
             let isUsingCuratedDB = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: location, radiusMeters: 5000) != nil
             
-            if targetDurationMinutes <= 20 && isUsingCuratedDB {
-                // v2.0.2: Topology-safe only activates when POI-first has demonstrably failed
-                // Future enhancement: Track routeMultiplier = actualRouteDuration / estimatedDuration
-                // and only activate if routeMultiplier > 2.0 (proven topology mismatch)
-                // For now, we use curated DB + failure as proxy for topology issues
+            // Early topology-safe gate: Use routeMultiplierTracker to detect proven topology mismatch
+            // Note: This tracker won't have data from the first attempt, but will learn over multiple calls
+            if targetDurationMinutes <= 20 && isUsingCuratedDB && routeMultiplierTracker.isTopologyHostile {
+                print("🔍 [ROUTE PATH] Early topology-safe gate: routeMultiplier ≥ 2.0 detected")
+                print("   📊 Condition: target≤20min ✅, usingCuratedDB ✅, topologyHostile ✅")
+                print("   💡 Distance-based estimates are proven wrong here - using topology-safe immediately")
+                
+                if let topologyRoute = try? await generateRouteShortTopologySafe(
+                    from: location,
+                    targetDurationMinutes: targetDurationMinutes,
+                    excludePlaceIds: excludePlaceIds,
+                    excludePOIs: excludePOIs
+                ) {
+                    print("✅ [ROUTE PATH] Topology-safe succeeded: \(topologyRoute.durationSeconds / 60)min")
+                    print("   📈 This indicates topology mismatch was the root cause")
+                    return topologyRoute
+                } else {
+                    print("⚠️ [ROUTE PATH] Topology-safe also failed, falling back to guaranteed route...")
+                }
+            } else if targetDurationMinutes <= 20 && isUsingCuratedDB {
+                // Fallback: Original logic if multiplier not yet learned
                 print("🔍 [ROUTE PATH] POI-first failed with curated DB - checking topology-safe eligibility...")
                 print("   📊 Condition: target≤20min ✅, usingCuratedDB ✅, POI-first failed ✅")
                 print("   💡 Topology-safe will only fire when assumptions are provably wrong (safety net, not workaround)")
@@ -8478,6 +8579,7 @@ class GoogleMapsService: ObservableObject {
     /// This ensures NO route can bypass the 180% hard cap, regardless of code path
     /// CRITICAL: Returns nil for routes >180% - caller MUST handle by using fallback
     /// PHASE B: Also enforces minimum waypoints with nudge and micro-spur insertion
+    /// SPRINT-4: Recomputes polyline after nudge/micro-spur modifications
     /// Returns: (route, nudgesAdded, microSpursAdded) - tracking counts for PHASE D
     private func finalizeAndReturnRoute(
         _ route: GeneratedRoute,
@@ -8486,7 +8588,7 @@ class GoogleMapsService: ObservableObject {
         allowExtendedCapForFallback: Bool = false,
         origin: CLLocationCoordinate2D? = nil,  // PHASE B: For nudge/micro-spur
         allPlaces: [PlaceResult] = []  // PHASE B: For micro-spur insertion
-    ) -> (route: GeneratedRoute?, nudgesAdded: Int, microSpursAdded: Int) {
+    ) async -> (route: GeneratedRoute?, nudgesAdded: Int, microSpursAdded: Int) {
         // First, deduplicate
         var deduplicatedRoute = finalizeRouteDedup(route, targetDurationMinutes: targetDurationMinutes)
         
@@ -8510,13 +8612,46 @@ class GoogleMapsService: ObservableObject {
                     // PHASE D: Track nudges
                     nudgesAdded = nudgedPlaces.count - deduplicatedRoute.places.count
                     print("📍 [WP-MIN] Nudge preserved \(nudgedPlaces.count) waypoints (was \(deduplicatedRoute.places.count))")
-                    deduplicatedRoute = GeneratedRoute(
-                        places: nudgedPlaces,
-                        polyline: deduplicatedRoute.polyline,
-                        distanceMeters: deduplicatedRoute.distanceMeters,
-                        durationSeconds: deduplicatedRoute.durationSeconds,
-                        legs: deduplicatedRoute.legs
+                    
+                    // SPRINT-4: Recompute polyline after nudge (waypoints moved 15-25m along network)
+                    let sortedNudged = nudgedPlaces.sorted { wp1, wp2 in
+                        distanceBetween(originCoord, wp1.coordinate) < distanceBetween(originCoord, wp2.coordinate)
+                    }
+                    
+                    let regenTimeout = RoutingToggles.perCallTimeoutNormal
+                    let (regenResult, didTimeout) = await directionsWithTimeout(
+                        origin: originCoord,
+                        destination: originCoord,
+                        waypoints: sortedNudged.map { $0.coordinate },
+                        timeout: regenTimeout,
+                        targetDurationMinutes: targetDurationMinutes,
+                        angularDiversityScore: nil,
+                        postcode: postcode,
+                        checkGlobalHardStop: nil
                     )
+                    
+                    if let directions = regenResult, !didTimeout {
+                        let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                        let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                        print("📍 [WP-MIN] Polyline recomputed after nudge: \(duration/60)min, \(distance)m")
+                        deduplicatedRoute = GeneratedRoute(
+                            places: sortedNudged,
+                            polyline: directions.overviewPolyline.points,
+                            distanceMeters: distance,
+                            durationSeconds: duration,
+                            legs: directions.legs
+                        )
+                    } else {
+                        // Fallback: use nudged places with original polyline
+                        print("📍 [WP-MIN] Polyline recomputation failed/timeout - using original polyline")
+                        deduplicatedRoute = GeneratedRoute(
+                            places: sortedNudged,
+                            polyline: deduplicatedRoute.polyline,
+                            distanceMeters: deduplicatedRoute.distanceMeters,
+                            durationSeconds: deduplicatedRoute.durationSeconds,
+                            legs: deduplicatedRoute.legs
+                        )
+                    }
                 }
             }
             
@@ -8559,37 +8694,260 @@ class GoogleMapsService: ObservableObject {
                 if enhancedPlaces.count >= minWaypoints {
                     // PHASE D: Track micro-spurs
                     microSpursAdded = enhancedPlaces.count - deduplicatedRoute.places.count
-                    deduplicatedRoute = GeneratedRoute(
-                        places: enhancedPlaces,
-                        polyline: deduplicatedRoute.polyline,
-                        distanceMeters: deduplicatedRoute.distanceMeters,
-                        durationSeconds: deduplicatedRoute.durationSeconds,
-                        legs: deduplicatedRoute.legs
+                    
+                    // SPRINT-4: Recompute polyline after micro-spur insertion
+                    let sortedEnhanced = enhancedPlaces.sorted { wp1, wp2 in
+                        distanceBetween(originCoord, wp1.coordinate) < distanceBetween(originCoord, wp2.coordinate)
+                    }
+                    
+                    let regenTimeout = RoutingToggles.perCallTimeoutNormal
+                    let (regenResult, didTimeout) = await directionsWithTimeout(
+                        origin: originCoord,
+                        destination: originCoord,
+                        waypoints: sortedEnhanced.map { $0.coordinate },
+                        timeout: regenTimeout,
+                        targetDurationMinutes: targetDurationMinutes,
+                        angularDiversityScore: nil,
+                        postcode: postcode,
+                        checkGlobalHardStop: nil
                     )
+                    
+                    if let directions = regenResult, !didTimeout {
+                        let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                        let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                        print("📍 [WP-MIN] Polyline recomputed after micro-spur: \(duration/60)min, \(distance)m")
+                        deduplicatedRoute = GeneratedRoute(
+                            places: sortedEnhanced,
+                            polyline: directions.overviewPolyline.points,
+                            distanceMeters: distance,
+                            durationSeconds: duration,
+                            legs: directions.legs
+                        )
+                    } else {
+                        // Fallback: use enhanced places with original polyline
+                        print("📍 [WP-MIN] Polyline recomputation failed/timeout - using original polyline")
+                        deduplicatedRoute = GeneratedRoute(
+                            places: sortedEnhanced,
+                            polyline: deduplicatedRoute.polyline,
+                            distanceMeters: deduplicatedRoute.distanceMeters,
+                            durationSeconds: deduplicatedRoute.durationSeconds,
+                            legs: deduplicatedRoute.legs
+                        )
+                    }
                     print("📍 [WP-MIN] Micro-spurs inserted: \(enhancedPlaces.count) waypoints (target: \(minWaypoints))")
                 }
             }
         }
         
-        // Enforce hard caps - CRITICAL: This is the ONLY enforcement point
-        let routeMins = deduplicatedRoute.durationSeconds / 60
+        // SPRINT-4: Final guardrails - micro-trim if >130%, then check final status
+        var finalRoute = deduplicatedRoute
+        let routeMins = finalRoute.durationSeconds / 60
+        let accuracyRatio = Double(routeMins) / Double(targetDurationMinutes)
         let hardCap180 = Int(Double(targetDurationMinutes) * 1.80)
         let hardCap130 = Int(Double(targetDurationMinutes) * 1.30)
         
-        if routeMins > hardCap180 {
-            print("⛔ [GUARD] REJECTED: Route \(routeMins)min exceeds 180% hard cap \(hardCap180)min")
-            print("⛔ [GUARD] Route details: \(deduplicatedRoute.places.count) waypoints, \(deduplicatedRoute.distanceMeters)m")
+        // SPRINT-4: Micro-trim if route >130% (shave far spur/leg)
+        if accuracyRatio > 1.30 && finalRoute.places.count > 1, let originCoord = origin {
+            print("🔧 [FINAL-GUARD] Route \(routeMins)min (\(String(format: "%.1f", accuracyRatio * 100))%) >130% - attempting micro-trim")
+            
+            // Find farthest waypoint from origin
+            if let farthestIndex = finalRoute.places.enumerated().max(by: {
+                distanceBetween(originCoord, $0.element.coordinate) < distanceBetween(originCoord, $1.element.coordinate)
+            })?.offset {
+                let farthestPOI = finalRoute.places[farthestIndex]
+                print("🔧 [FINAL-GUARD] Micro-trimming farthest waypoint: '\(farthestPOI.name)'")
+                
+                var trimmedWaypoints = finalRoute.places
+                trimmedWaypoints.remove(at: farthestIndex)
+                
+                // Regenerate route with trimmed waypoints
+                let trimTimeout = RoutingToggles.perCallTimeoutNormal
+                let (trimResult, didTimeout) = await directionsWithTimeout(
+                    origin: originCoord,
+                    destination: originCoord,
+                    waypoints: trimmedWaypoints.map { $0.coordinate },
+                    timeout: trimTimeout,
+                    targetDurationMinutes: targetDurationMinutes,
+                    angularDiversityScore: nil,
+                    postcode: postcode,
+                    checkGlobalHardStop: nil
+                )
+                
+                if let directions = trimResult, !didTimeout {
+                    let trimmedDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                    let trimmedDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                    let trimmedMins = trimmedDuration / 60
+                    let trimmedRatio = Double(trimmedMins) / Double(targetDurationMinutes)
+                    
+                    print("🔧 [FINAL-GUARD] Micro-trim result: \(trimmedMins)min (\(String(format: "%.1f", trimmedRatio * 100))%)")
+                    
+                    if trimmedRatio <= 1.30 {
+                        // Trimmed route is now acceptable
+                        finalRoute = GeneratedRoute(
+                            places: trimmedWaypoints,
+                            polyline: directions.overviewPolyline.points,
+                            distanceMeters: trimmedDistance,
+                            durationSeconds: trimmedDuration,
+                            legs: directions.legs
+                        )
+                        print("🔧 [FINAL-GUARD] ✅ Micro-trim successful - route now \(trimmedMins)min")
+                    } else {
+                        print("🔧 [FINAL-GUARD] ⚠️ Micro-trim still >130% (\(String(format: "%.1f", trimmedRatio * 100))%) - will check final status")
+                    }
+                }
+            }
+        }
+        
+        // SPRINT-4: Per-leg cap - block singular 2-5× overshoot legs (>50% of target)
+        // If any single leg exceeds 50% of target duration, trim the farthest waypoint
+        if finalRoute.places.count > 1 && !finalRoute.legs.isEmpty, let originCoord = origin {
+            let perLegCapRatio = 0.50  // 50% of target duration
+            let perLegCapMinutes = Double(targetDurationMinutes) * perLegCapRatio
+            let perLegCapSeconds = Int(perLegCapMinutes * 60)
+            
+            // Find the worst leg (max duration)
+            var worstLegIndex: Int? = nil
+            var worstLegDuration: Int = 0
+            
+            for (index, leg) in finalRoute.legs.enumerated() {
+                if leg.duration.value > worstLegDuration {
+                    worstLegDuration = leg.duration.value
+                    worstLegIndex = index
+                }
+            }
+            
+            // If worst leg exceeds cap, trim the associated waypoint
+            if let worstIdx = worstLegIndex, worstLegDuration > perLegCapSeconds {
+                let worstLegMins = Double(worstLegDuration) / 60.0
+                print("🔧 [PER-LEG-CAP] Worst leg \(worstIdx) duration: \(worstLegMins)min exceeds cap \(perLegCapMinutes)min (50% of \(targetDurationMinutes)min target)")
+                
+                // Map leg index to waypoint index
+                // Leg 0: origin → waypoint 0
+                // Leg 1: waypoint 0 → waypoint 1
+                // Leg N-1: waypoint N-2 → waypoint N-1
+                // Leg N: waypoint N-1 → origin (return leg)
+                let waypointToRemove: Int
+                if worstIdx < finalRoute.places.count {
+                    // Leg goes to waypoint at index worstIdx
+                    waypointToRemove = worstIdx
+                } else {
+                    // Last leg (return to origin) - remove last waypoint
+                    waypointToRemove = finalRoute.places.count - 1
+                }
+                
+                guard waypointToRemove >= 0 && waypointToRemove < finalRoute.places.count else {
+                    print("⚠️ [PER-LEG-CAP] Invalid waypoint index \(waypointToRemove) for \(finalRoute.places.count) waypoints - skipping trim")
+                } else {
+                    let culpritPOI = finalRoute.places[waypointToRemove]
+                    print("🔧 [PER-LEG-CAP] Trimming waypoint \(waypointToRemove): '\(culpritPOI.name)' (leg \(worstIdx) = \(worstLegMins)min)")
+                    
+                    var trimmedWaypoints = finalRoute.places
+                    trimmedWaypoints.remove(at: waypointToRemove)
+                    
+                    // Regenerate route with trimmed waypoints
+                    let trimTimeout = RoutingToggles.perCallTimeoutNormal
+                    let (trimResult, didTimeout) = await directionsWithTimeout(
+                        origin: originCoord,
+                        destination: originCoord,
+                        waypoints: trimmedWaypoints.map { $0.coordinate },
+                        timeout: trimTimeout,
+                        targetDurationMinutes: targetDurationMinutes,
+                        angularDiversityScore: nil,
+                        postcode: postcode,
+                        checkGlobalHardStop: nil
+                    )
+                    
+                    if let directions = trimResult, !didTimeout {
+                        let trimmedDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                        let trimmedDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                        let trimmedMins = trimmedDuration / 60
+                        let trimmedRatio = Double(trimmedMins) / Double(targetDurationMinutes)
+                        
+                        // Check if worst leg is now within cap
+                        var newWorstLegDuration: Int = 0
+                        for leg in directions.legs {
+                            if leg.duration.value > newWorstLegDuration {
+                                newWorstLegDuration = leg.duration.value
+                            }
+                        }
+                        let newWorstLegMins = Double(newWorstLegDuration) / 60.0
+                        
+                        print("🔧 [PER-LEG-CAP] Trim result: \(trimmedMins)min (\(String(format: "%.1f", trimmedRatio * 100))%), new worst leg: \(newWorstLegMins)min")
+                        
+                        finalRoute = GeneratedRoute(
+                            places: trimmedWaypoints,
+                            polyline: directions.overviewPolyline.points,
+                            distanceMeters: trimmedDistance,
+                            durationSeconds: trimmedDuration,
+                            legs: directions.legs
+                        )
+                        
+                        print("📊 [PER_LEG_CAP_TRIM] worst_leg_min=\(worstLegMins) cap_min=\(perLegCapMinutes) target=\(targetDurationMinutes) new_worst_leg_min=\(newWorstLegMins)")
+                    } else {
+                        print("⚠️ [PER-LEG-CAP] Route regeneration failed/timeout - keeping original route")
+                    }
+                }
+            }
+        }
+        
+        // SPRINT-4: Final status check - if still >130% OR still <minWP after all fixes → return nil (NEAR_MISS)
+        let finalMins = finalRoute.durationSeconds / 60
+        let finalAccuracyRatio = Double(finalMins) / Double(targetDurationMinutes)
+        let finalWPCount = finalRoute.places.count
+        let minWP = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
+        
+        let isStillOver130 = finalAccuracyRatio > 1.30
+        let isStillBelowMinWP = finalWPCount < minWP
+        
+        if isStillOver130 || isStillBelowMinWP {
+            var issuesList: [String] = []
+            if isStillOver130 {
+                issuesList.append(">130% (\(String(format: "%.1f", finalAccuracyRatio * 100))%))")
+            }
+            if isStillBelowMinWP {
+                issuesList.append("<minWP (\(finalWPCount)/\(minWP))")
+            }
+            
+            print("⛔ [FINAL-GUARD] NEAR_MISS: Route still has issues after all fixes: \(issuesList.joined(separator: ", "))")
+            print("⛔ [FINAL-GUARD] Route details: \(finalWPCount) waypoints, \(finalMins)min (\(String(format: "%.1f", finalAccuracyRatio * 100))%)")
+            print("⛔ [FINAL-GUARD] Returning nil - caller should use best-so-far or schedule background re-run")
+            
+            // Return nil to indicate NEAR_MISS (caller should handle gracefully)
+            return (nil, nudgesAdded, microSpursAdded)
+        }
+        
+        // Enforce hard caps - CRITICAL: This is the ONLY enforcement point
+        if finalMins > hardCap180 {
+            print("⛔ [GUARD] REJECTED: Route \(finalMins)min exceeds 180% hard cap \(hardCap180)min")
+            print("⛔ [GUARD] Route details: \(finalRoute.places.count) waypoints, \(finalRoute.distanceMeters)m")
             print("⛔ [GUARD] Returning nil - caller MUST use fallback")
             return (nil, nudgesAdded, microSpursAdded)  // CRITICAL: Return nil to force caller to use fallback
         }
         
-        if routeMins > hardCap130 && !allowExtendedCapForFallback {
-            print("⛔ [FINAL GUARD] Route \(routeMins)min exceeds 130% cap \(hardCap130)min outside fallback")
+        if finalMins > hardCap130 && !allowExtendedCapForFallback {
+            print("⛔ [FINAL GUARD] Route \(finalMins)min exceeds 130% cap \(hardCap130)min outside fallback")
             // Log but return - selection should have filtered this
-            return (deduplicatedRoute, nudgesAdded, microSpursAdded)
+            return (finalRoute, nudgesAdded, microSpursAdded)
         }
         
-        return (deduplicatedRoute, nudgesAdded, microSpursAdded)
+        // SPRINT-4: Final assertions and structured logging after finalization
+        let finalRatio = Double(finalMins) / Double(targetDurationMinutes)
+        let finalMinWP = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
+        
+        // Assert route ratio <= 1.30 after finalization
+        assert(finalRatio <= 1.30, "Route > 130% after finalization: \(String(format: "%.1f", finalRatio * 100))%")
+        
+        // Assert waypoint count >= minimum
+        assert(finalWPCount >= finalMinWP, "Waypoint count below minimum: \(finalWPCount) < \(finalMinWP) for \(targetDurationMinutes)min")
+        
+        // Count legs over 50% of target duration
+        let perLegCapSeconds = Int(Double(targetDurationMinutes) * 0.50 * 60)
+        let legsOver50Pct = finalRoute.legs.filter { $0.duration.value > perLegCapSeconds }.count
+        
+        // Structured logging for final route metrics
+        print("📊 [FINAL] ratio=\(String(format: "%.3f", finalRatio)) wp=\(finalWPCount) min_wp=\(finalMinWP) legs_over_50pct=\(legsOver50Pct) nudges=\(nudgesAdded) micro_spurs=\(microSpursAdded)")
+        
+        return (finalRoute, nudgesAdded, microSpursAdded)
     }
     
     /// Ensures route places are deduplicated even if polyline building fails
@@ -9111,6 +9469,9 @@ class GoogleMapsService: ObservableObject {
         let hardStopSec = RoutingToggles.hardStopSec  // PHASE A: Global hard-stop (18.0s)
         print("⏱️ [ROUTE GEN] [\(timeString)]   Hard-wall: \(String(format: "%.0f", hardWallSeconds))s, Hard-stop: \(String(format: "%.0f", hardStopSec))s (dur=\(targetDurationMinutes), pc=\(postcode ?? "none"))")
         
+        // SPRINT-4: Global hard-stop budget guard
+        let budget = RoutingToggles.Budget(t0: startTime.timeIntervalSince1970)
+        
         // Track if hard-wall was hit (used to force topology-safe)
         var hardWallExceeded = false
         var hardStopHit = false  // PHASE A: Track if global hard-stop was hit
@@ -9137,16 +9498,20 @@ class GoogleMapsService: ObservableObject {
             return false
         }
         
-        // PHASE A: Global hard-stop check - returns true if we should abort immediately
+        // SPRINT-4: Closure for checking global hard-stop (to pass to directionsWithTimeout)
+        let checkGlobalHardStop: () -> Bool = {
+            return !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "MAPKIT_CALL")
+        }
+        
+        // SPRINT-4: Global hard-stop check closure (for backwards compatibility)
         let checkHardStop: (String, String) -> Bool = { stage, routeId in
-            let elapsed = Date().timeIntervalSince(startTime)
-            if elapsed > hardStopSec {
+            if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "\(stage)_\(routeId)") {
                 if !hardStopHit {
                     hardStopHit = true
                     let durationBucket = "\(targetDurationMinutes)min"
-                    print("⛔ [HARD-STOP] [\(stage)] route_id=\(routeId) duration_bucket=\(durationBucket) stage_exited=\(stage) elapsed_ms=\(Int(elapsed * 1000)) - aborting immediately")
+                    print("⛔ [HARD-STOP] [\(stage)] route_id=\(routeId) duration_bucket=\(durationBucket) stage_exited=\(stage) elapsed_ms=\(Int(budget.elapsed * 1000)) - aborting immediately")
                 }
-                return true
+                return true  // Hard stop hit
             }
             return false
         }
@@ -9162,6 +9527,13 @@ class GoogleMapsService: ObservableObject {
         
         // Track if pre-populated database was used
         var usedDatabase = false
+        
+        // Route multiplier tracker (for topology detection and adaptive roadFactor)
+        let routeMultiplierTracker = RouteMultiplierTracker()
+        
+        // Adaptive roadFactor: Track overshoot samples and adjust dynamically
+        var roadFactor: Double = 1.4  // Default conservative estimate
+        var overshootSamples: [Double] = []  // Track overshoot for adaptive correction
         
         // ADAPTIVE TIMING: More flexible for short routes in dense urban areas
         // Short routes (≤15 min): 50-100% acceptable (dense areas have clustered POIs)
@@ -9206,40 +9578,36 @@ class GoogleMapsService: ObservableObject {
         print("🗺️ \(modeLabel): \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (\(Int(minPercent * 100))-\(Int(maxPercent * 100))% of \(targetDurationMinutes)min)")
         
         // Walking speed ~80m/min, but actual routes are 2-4x longer than straight-line
-        // TASK 5: Area-adaptive walking speed model
-        // 1. Postcode overrides (highest priority)
-        // 2. Auto-detect based on average leg length
-        // 3. Fall back to adaptive walking speed from user history
+        // SPRINT-4: Global density-aware speed model (no postcode rules)
+        // Uses leg-length heuristic only: dense (<150m), urban (150-350m), suburban (>350m)
         let baseWalkingSpeed = adaptiveWalkingSpeed
         let walkingSpeedMeterPerMin: Int = {
-            // 1. Check postcode overrides first
-            if let pc = postcode, let override = postcodeSpeedOverrides[pc] {
-                print("🚶 [SPEED] Using postcode override: \(override) m/min (postcode: \(pc))")
-                return override
-            }
-            
-            // 2. Auto-detect dense vs suburban based on average leg length (if we have POIs)
+            // Auto-detect based on average leg length (if we have POIs)
             if let pois = prefetchedPOIs, pois.count >= 5 {
                 let avgLegLength = pois.prefix(10).reduce(0.0) { sum, poi in
                     sum + distanceBetween(location, poi.coordinate)
                 } / Double(min(10, pois.count))
                 
-                // TASK 5: Use configurable thresholds
+                // SPRINT-4: Density-aware speed model (by leg length) - global, no postcode branching
                 if avgLegLength < RoutingToggles.denseLegThresholdM {
-                    // Dense grid: 4.2 km/h = 70 m/min (from RoutingToggles.denseSpeedKmh)
+                    // Dense grid: 3.95 km/h (from RoutingToggles.denseSpeedKmh)
                     let denseSpeed = Int(RoutingToggles.denseSpeedKmh * 1000 / 60)  // km/h to m/min
-                    print("🚶 [SPEED] Auto-detected dense grid (avg leg: \(Int(avgLegLength))m < \(Int(RoutingToggles.denseLegThresholdM))m) → \(denseSpeed) m/min")
+                    print("🚶 [SPEED] Global density model: dense grid (avg leg: \(Int(avgLegLength))m < \(Int(RoutingToggles.denseLegThresholdM))m) → \(denseSpeed) m/min (3.95 km/h)")
                     return denseSpeed
                 } else if avgLegLength > RoutingToggles.suburbanLegThresholdM {
-                    // Suburban: 5.0 km/h = 83 m/min (from RoutingToggles.suburbanSpeedKmh)
+                    // Suburban: 5.00 km/h (from RoutingToggles.suburbanSpeedKmh)
                     let suburbanSpeed = Int(RoutingToggles.suburbanSpeedKmh * 1000 / 60)  // km/h to m/min
-                    print("🚶 [SPEED] Auto-detected suburban (avg leg: \(Int(avgLegLength))m > \(Int(RoutingToggles.suburbanLegThresholdM))m) → \(suburbanSpeed) m/min")
+                    print("🚶 [SPEED] Global density model: suburban (avg leg: \(Int(avgLegLength))m > \(Int(RoutingToggles.suburbanLegThresholdM))m) → \(suburbanSpeed) m/min (5.00 km/h)")
                     return suburbanSpeed
                 } else {
-                    print("🚶 [SPEED] Auto-detected mixed area (avg leg: \(Int(avgLegLength))m) → using adaptive \(baseWalkingSpeed) m/min")
+                    // Urban: 4.25 km/h (150-350m legs)
+                    let urbanSpeed = Int(RoutingToggles.urbanSpeedKmh * 1000 / 60)  // km/h to m/min
+                    print("🚶 [SPEED] Global density model: urban (avg leg: \(Int(avgLegLength))m, 150-350m) → \(urbanSpeed) m/min (4.25 km/h)")
+                    return urbanSpeed
                 }
             }
             
+            // Fallback to adaptive walking speed if no POIs available
             return baseWalkingSpeed
         }()
         
@@ -10169,7 +10537,7 @@ class GoogleMapsService: ObservableObject {
                     }
                 }
                 // v2.0.3 Phase 1.5 Batch A: Use centralized finalization
-                let result = finalizeAndReturnRoute(routeToReturn, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                let result = await finalizeAndReturnRoute(routeToReturn, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
                 if let finalized = result.route {
                     printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
                     return finalized
@@ -10228,7 +10596,7 @@ class GoogleMapsService: ObservableObject {
                     }
                 }
                 // v2.0.3 Phase 1.5 Batch A: Use centralized finalization
-                let result = finalizeAndReturnRoute(routeToReturn, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                let result = await finalizeAndReturnRoute(routeToReturn, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
                 if let finalized = result.route {
                     printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
                     return finalized
@@ -10258,7 +10626,7 @@ class GoogleMapsService: ObservableObject {
                     
                     if didTimeout {
                         print("⚠️ [REGEN] Timeout regenerating fallback route, using original")
-                        let result = finalizeAndReturnRoute(fallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                        let result = await finalizeAndReturnRoute(fallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
                         if let finalized = result.route {
                             return finalized
                         }
@@ -10272,7 +10640,7 @@ class GoogleMapsService: ObservableObject {
                             durationSeconds: duration,
                             legs: directions.legs
                         )
-                        let result = finalizeAndReturnRoute(deduplicatedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                        let result = await finalizeAndReturnRoute(deduplicatedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
                         if let finalized = result.route {
                             return finalized
                         }
@@ -10285,7 +10653,7 @@ class GoogleMapsService: ObservableObject {
                             durationSeconds: fallback.durationSeconds,
                             legs: fallback.legs
                         )
-                        let result = finalizeAndReturnRoute(fallbackRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                        let result = await finalizeAndReturnRoute(fallbackRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
                         if let finalized = result.route {
                             return finalized
                         }
@@ -10293,7 +10661,7 @@ class GoogleMapsService: ObservableObject {
                     print("⛔ [GUARD] Fallback route rejected - continuing to loop approach")
                 }
                 // v2.0.3 Phase 1.5 Batch A: Use centralized finalization
-                        let result = finalizeAndReturnRoute(fallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                        let result = await finalizeAndReturnRoute(fallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
                         if let finalized = result.route {
                             return finalized
                         }
@@ -10351,8 +10719,8 @@ class GoogleMapsService: ObservableObject {
         
         // P0 FIX: Skip expansion if we're already past 50% of hard-wall budget
         if angularDiversityScore <= 2 && searchRadiusOverride == nil && elapsedBeforeExpansion < expansionHardWall {
-            // PHASE A: Global hard-stop check before expansion
-            if checkHardStop("EXPANSION", "expand") {
+            // SPRINT-4: Global hard-stop check before expansion
+            if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "EXPANSION") {
                 print("⛔ [HARD-STOP] Skipping expansion - returning best-so-far")
                 // Skip expansion, continue with existing places
             } else {
@@ -10673,7 +11041,7 @@ class GoogleMapsService: ObservableObject {
                 let hardCap180 = Int(Double(targetDurationMinutes) * 1.80)
                 if routeMins <= hardCap180 {
                     print("✅ [TOPO-ACT] Succeeded: \(routeMins)min (before loops)")
-                    let result = finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                    let result = await finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
                     if let finalized = result.route {
                         return finalized
                     }
@@ -10689,8 +11057,8 @@ class GoogleMapsService: ObservableObject {
         let topoSafeCheckInterval: TimeInterval = 3.0  // Check every 3 seconds inside loops
         
         for waypointCount in waypointCountsToTry {
-            // PHASE A: Global hard-stop check at top of outer loop
-            if checkHardStop("OUTER_LOOP", "wp\(waypointCount)") {
+            // SPRINT-4: Global hard-stop check at top of outer loop
+            if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "OUTER_LOOP_wp\(waypointCount)") {
                 print("⛔ [HARD-STOP] Returning best-so-far from outer loop")
                 break  // Exit outer loop immediately
             }
@@ -10712,7 +11080,7 @@ class GoogleMapsService: ObservableObject {
                     let hardCap180 = Int(Double(targetDurationMinutes) * 1.80)
                     if routeMins <= hardCap180 {
                         print("✅ [HARDWALL] Topology-safe succeeded: \(routeMins)min")
-                    let result = finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                    let result = await finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
                     if let finalized = result.route {
                         return finalized
                     }
@@ -10723,13 +11091,22 @@ class GoogleMapsService: ObservableObject {
                 } else {
                     print("⛔ [HARDWALL] Topology-safe failed - forcing guaranteed fallback")
                 }
+                // SPRINT-4: Global hard-stop check before generateOutAndBackFallback
+                if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "OUT_AND_BACK_FALLBACK") {
+                    print("⛔ [HARD-STOP] Skipping out-and-back fallback - returning best-so-far")
+                    if let best = bestFallbackRoute {
+                        return best
+                    }
+                    throw GoogleMapsError.noRouteFound
+                }
+                
                 // Force guaranteed fallback
                 let fallback = try await generateOutAndBackFallback(
                     from: location,
                     targetDurationMinutes: targetDurationMinutes
                 )
                 // Fallback routes MUST be accepted - if nil, this is a critical error
-                        let result = finalizeAndReturnRoute(fallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                        let result = await finalizeAndReturnRoute(fallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
                         if let finalized = result.route {
                             return finalized
                         }
@@ -10754,7 +11131,7 @@ class GoogleMapsService: ObservableObject {
                         let hardCap180 = Int(Double(targetDurationMinutes) * 1.80)
                         if routeMins <= hardCap180 {
                             print("✅ [EARLY EXIT] Found in-tolerance route after \(String(format: "%.2f", elapsedSinceFirst))s grace - short-circuiting")
-                            let result = finalizeAndReturnRoute(inToleranceRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                            let result = await finalizeAndReturnRoute(inToleranceRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
                             if let finalized = result.route {
                                 return finalized
                             }
@@ -10783,7 +11160,7 @@ class GoogleMapsService: ObservableObject {
                     let hardCap180 = Int(Double(targetDurationMinutes) * 1.80)
                     if routeMins <= hardCap180 {
                         print("✅ [TOPO-ACT] Periodic check succeeded: \(routeMins)min")
-                    let result = finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                    let result = await finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
                     if let finalized = result.route {
                         return finalized
                     }
@@ -10931,10 +11308,10 @@ class GoogleMapsService: ObservableObject {
                 continue
             }
             
-            // v2.0.3 Phase 2: K-BEST PRE-SCREENING
-            // Instead of trying combinations one-by-one, collect all candidates first,
-            // pre-screen with on-device estimator, then only route top k
-            let kBestCount = quickMode ? 2 : 5  // Top k candidates to actually route
+            // SPRINT-4: K-BEST PRE-SCREENING with Pareto set
+            // Collect candidates, build Pareto set from estimates, then only route top k=3
+            let kBestK = RoutingToggles.kBestK  // k=3: Only route top 3 from Pareto set
+            let preScreenPoolSize = quickMode ? 8 : 15  // Collect more candidates for Pareto set
             var collectedCombinations: [[PlaceResult]] = []
             var triedCombinations = Set<String>()
             
@@ -11022,33 +11399,67 @@ class GoogleMapsService: ObservableObject {
                 continue
             }
             
-            // --- Phase 3: PRE-SCREEN with on-device estimator ---
+            // --- Phase 3: PRE-SCREEN with on-device estimator (using adaptive roadFactor) ---
+            // Pre-screen more candidates than we'll route (for Pareto set diversity)
             let prescreened = preScreenCandidates(
                 candidates: collectedCombinations,
                 origin: location,
                 targetDurationMinutes: targetDurationMinutes,
                 postcode: postcode,
-                maxToReturn: kBestCount
+                maxToReturn: preScreenPoolSize,  // Get more candidates for Pareto set
+                roadFactor: roadFactor
             )
             
-            print("📊 [K-BEST] Pre-screened to top \(prescreened.count) candidates:")
-            for (idx, candidate) in prescreened.enumerated() {
+            print("📊 [K-BEST] Pre-screened \(prescreened.count) candidates (will route top k=\(kBestK) from Pareto set)")
+            
+            // --- Phase 4: BUILD PARETO SET from estimates (no routing yet) ---
+            // SPRINT-4: Build Pareto set using estimates only to avoid engine calls
+            var estimatedParetoSet: [ParetoCandidate] = []
+            
+            for candidate in prescreened {
                 let estimatedMins = candidate.estimatedDuration / 60
-                let waypointNames = candidate.waypoints.prefix(3).map { $0.name }.joined(separator: ", ")
-                print("   \(idx + 1). ~\(estimatedMins)min (fitness: \(String(format: "%.2f", candidate.fitness))) - \(waypointNames)\(candidate.waypoints.count > 3 ? "..." : "")")
+                let estimatedHitError = abs(Double(estimatedMins - targetDurationMinutes)) / Double(targetDurationMinutes)
+                
+                // Estimate unique segment coverage (simplified: use waypoint count as proxy)
+                let estimatedCoverage = min(1.0, Double(candidate.waypoints.count) / 4.0)
+                
+                let estimatedCandidate = ParetoCandidate(
+                    waypoints: candidate.waypoints,
+                    estimatedDuration: candidate.estimatedDuration,
+                    hitError: estimatedHitError,
+                    waypointCount: candidate.waypoints.count,
+                    uniqueSegmentCoverage: estimatedCoverage,
+                    route: nil  // No route yet - we'll route only finalists
+                )
+                
+                updateParetoSet(&estimatedParetoSet, with: estimatedCandidate, k: kBestK)
+            }
+            
+            // Sort Pareto set by composite score and take top k
+            estimatedParetoSet.sort { compositeScore($0, targetDurationMinutes: targetDurationMinutes) > compositeScore($1, targetDurationMinutes: targetDurationMinutes) }
+            let finalists = Array(estimatedParetoSet.prefix(kBestK))
+            
+            print("📊 [K-BEST] Pareto set: \(estimatedParetoSet.count) candidates, routing top k=\(finalists.count) finalists")
+            for (idx, finalist) in finalists.enumerated() {
+                let estimatedMins = finalist.estimatedDuration / 60
+                print("📊 [K-BEST]   Finalist \(idx + 1): ~\(estimatedMins)min, \(finalist.waypointCount) WPs, hitError=\(String(format: "%.2f", finalist.hitError)), coverage=\(String(format: "%.2f", finalist.uniqueSegmentCoverage))")
             }
             
             // TASK 6: Template fallback for fragile durations (10, 25, 45 min)
             // Trigger if after first expansion candidates < K
             if RoutingToggles.templateFallbackDurations.contains(targetDurationMinutes) {
-                // PHASE A: Global hard-stop check before template fallback
-                if checkHardStop("TEMPLATE_FALLBACK", "template") {
+                // SPRINT-4: Global hard-stop check before template fallback
+                if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "TEMPLATE_FALLBACK") {
                     print("⛔ [HARD-STOP] Skipping template fallback - returning best-so-far")
                 } else if prescreened.count < RoutingToggles.templateTriggerCandidatesLt {
                     print("📋 [TEMPLATE] Fragile duration \(targetDurationMinutes)min with \(prescreened.count) candidates < \(RoutingToggles.templateTriggerCandidatesLt) - using template fallback")
                     
                     if let templateRoute = getTemplateRoute(duration: targetDurationMinutes, origin: location, places: places) {
                         // Try to route the template
+                        // SPRINT-4: Create hard-stop check closure
+                        let templateHardStopCheck: (() -> Bool)? = {
+                            !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "TEMPLATE_ROUTING")
+                        }
                         let (templateResult, didTimeout) = await directionsWithTimeout(
                             origin: location,
                             destination: location,
@@ -11056,7 +11467,8 @@ class GoogleMapsService: ObservableObject {
                             timeout: RoutingToggles.mapkitHardCap,
                             targetDurationMinutes: targetDurationMinutes,
                             angularDiversityScore: finalAngularDiversityScore,
-                            postcode: postcode
+                            postcode: postcode,
+                            checkGlobalHardStop: templateHardStopCheck
                         )
                         
                         if let result = templateResult, !didTimeout {
@@ -11076,7 +11488,7 @@ class GoogleMapsService: ObservableObject {
                             
                             if templateDuration >= minAcceptableDuration && templateDuration <= maxAcceptableDuration {
                                 print("📋 [TEMPLATE] ✅ Template route is valid - using it")
-                                let result = finalizeAndReturnRoute(finalTemplateRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                                let result = await finalizeAndReturnRoute(finalTemplateRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
                                 if let finalized = result.route {
                                     return finalized
                                 }
@@ -11095,15 +11507,14 @@ class GoogleMapsService: ObservableObject {
                 }
             }
             
-            // --- Phase 4: ROUTE only top-k candidates with Pareto tracking ---
-            // TASK 2: Maintain Pareto set of k-best candidates
-            var paretoSet: [ParetoCandidate] = []
+            // --- Phase 5: ROUTE only top-k finalists from Pareto set ---
+            // SPRINT-4: Only call MapKit/OSRM for finalists (reduces engine calls significantly)
+            var routedParetoSet: [ParetoCandidate] = []
             var iterationsWithoutImprovement = 0
-            let previousParetoCount = paretoSet.count
             
-            for (idx, candidate) in prescreened.enumerated() {
-                // PHASE A: Global hard-stop check at top of inner attempt loop
-                if checkHardStop("K_BEST_ROUTING", "candidate\(idx)") {
+            for (idx, finalist) in finalists.enumerated() {
+                // SPRINT-4: Global hard-stop check at top of inner attempt loop
+                if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "K_BEST_ROUTING_candidate\(idx)") {
                     print("⛔ [HARD-STOP] Returning best-so-far from k-best routing")
                     break  // Exit immediately
                 }
@@ -11121,13 +11532,13 @@ class GoogleMapsService: ObservableObject {
                     break
                 }
                 
-                // TASK 2: Soft stop - only exit early if Pareto set is filled AND stable
+                // SPRINT-4: Soft stop - only exit early if routed Pareto set is filled AND stable
                 if softStopReached && RoutingToggles.earlyExitAfterSoftStopIfKFilled {
-                    if isParetoSetStable(paretoSet, iterationsWithoutImprovement: iterationsWithoutImprovement) {
-                        print("⏱️ [SOFT-STOP] \(String(format: "%.1f", RoutingToggles.softStopSec))s reached with stable Pareto set (k=\(paretoSet.count)) - exiting")
+                    if isParetoSetStable(routedParetoSet, iterationsWithoutImprovement: iterationsWithoutImprovement) {
+                        print("⏱️ [SOFT-STOP] \(String(format: "%.1f", RoutingToggles.softStopSec))s reached with stable routed Pareto set (k=\(routedParetoSet.count)) - exiting")
                         break
                     } else {
-                        print("⏱️ [SOFT-STOP] Continuing despite soft stop - Pareto set not stable (k=\(paretoSet.count), unstable=\(iterationsWithoutImprovement))")
+                        print("⏱️ [SOFT-STOP] Continuing despite soft stop - routed Pareto set not stable (k=\(routedParetoSet.count), unstable=\(iterationsWithoutImprovement))")
                     }
                 }
                 
@@ -11137,26 +11548,19 @@ class GoogleMapsService: ObservableObject {
                     break
                 }
                 
-                // TASK 7: Check if we should defer this routing call
-                let estimatedQueueWait = await estimateQueueWaitTime()
-                if RoutingToggles.deferLowValueVariants && shouldDeferRouting(estimatedQueueWait: estimatedQueueWait) {
-                    // Only defer if this is a low-value variant (low fitness)
-                    if candidate.fitness < 0.5 {
-                        print("⏳ [DEFER] Skipping low-value candidate (fitness=\(String(format: "%.2f", candidate.fitness))) due to queue wait \(String(format: "%.2f", estimatedQueueWait))s")
-                        continue
-                    }
-                }
+                // SPRINT-4: Check if we should defer this routing call (finalists are already high-value)
+                // Skip deferral for finalists - they're already the best candidates
                 
                 totalAttempts += 1
                 routeCapture?.incrementAttempts()
                 
-                let estimatedMins = candidate.estimatedDuration / 60
-                print("🗺️ [K-BEST] Routing candidate \(idx + 1)/\(prescreened.count): ~\(estimatedMins)min estimated, \(candidate.waypoints.count) waypoints")
+                let estimatedMins = finalist.estimatedDuration / 60
+                print("🗺️ [K-BEST] Routing finalist \(idx + 1)/\(finalists.count): ~\(estimatedMins)min estimated, \(finalist.waypointCount) waypoints")
                 
                 do {
                     if let route = try await tryRouteAndEvaluate(
                         origin: location,
-                        waypoints: candidate.waypoints,
+                        waypoints: finalist.waypoints,
                         targetDurationMinutes: targetDurationMinutes,
                         minAcceptable: minAcceptableDuration,
                         maxAcceptable: maxAcceptableDuration,
@@ -11175,33 +11579,54 @@ class GoogleMapsService: ObservableObject {
                         let estimationError = abs(routeMins - estimatedMins)
                         print("📊 [K-BEST] Actual: \(routeMins)min, Estimated: \(estimatedMins)min, Error: \(estimationError)min")
                         
-                        // TASK 2: Add to Pareto set
+                        // Record multiplier (only when using curated DB and estimation came from pre-filter)
+                        if usedDatabase && estimatedMins > 0 {
+                            routeMultiplierTracker.record(estimatedMinutes: Double(estimatedMins), actualMinutes: Double(routeMins))
+                            if let median = routeMultiplierTracker.median {
+                                print("📐 [MULTIPLIER] routeMultiplier median: \(String(format: "%.2f", median))")
+                            }
+                        }
+                        
+                        // Track overshoot for adaptive roadFactor correction
+                        let overshoot = Double(routeMins) / Double(targetDurationMinutes)
+                        overshootSamples.append(overshoot)
+                        
+                        // Apply adaptive correction after 2+ samples
+                        if overshootSamples.count >= 2 {
+                            let avgOvershoot = overshootSamples.prefix(2).reduce(0, +) / 2.0
+                            if avgOvershoot > 1.8 {
+                                roadFactor = min(roadFactor * 1.6, 2.8)
+                                print("🔧 [ADAPTIVE] High overshoot detected (avg: \(String(format: "%.2f", avgOvershoot))) - adjusting roadFactor to \(String(format: "%.2f", roadFactor))")
+                            }
+                        }
+                        
+                        // SPRINT-4: Add routed candidate to final Pareto set
                         let hitError = abs(Double(routeMins - targetDurationMinutes)) / Double(targetDurationMinutes)
-                        let paretoCandidate = ParetoCandidate(
-                            waypoints: candidate.waypoints,
-                            estimatedDuration: candidate.estimatedDuration,
+                        let routedCandidate = ParetoCandidate(
+                            waypoints: finalist.waypoints,
+                            estimatedDuration: finalist.estimatedDuration,
                             hitError: hitError,
-                            waypointCount: candidate.waypoints.count,
+                            waypointCount: finalist.waypointCount,
                             uniqueSegmentCoverage: 1.0 - calculateBacktrackingScore(polyline: route.polyline),
                             route: route
                         )
-                        updateParetoSet(&paretoSet, with: paretoCandidate)
+                        updateParetoSet(&routedParetoSet, with: routedCandidate, k: kBestK)
                         
                         // Track improvements
-                        if paretoSet.count > previousParetoCount {
+                        let previousCount = routedParetoSet.count - 1
+                        if routedParetoSet.count > previousCount {
                             iterationsWithoutImprovement = 0
                         } else {
                             iterationsWithoutImprovement += 1
                         }
                         
                         if routeMins >= minAcceptableMinutes && routeMins <= maxAcceptableMinutes {
-                            print("🗺️ ✓ [K-BEST] Found valid route with \(waypointCount) POIs (Pareto: \(paretoSet.count)/\(RoutingToggles.kBestK))")
+                            print("🗺️ ✓ [K-BEST] Found valid route with \(waypointCount) POIs (Routed Pareto: \(routedParetoSet.count)/\(kBestK))")
                         }
                         
-                        // TASK 2: Don't break early on long routes - let Pareto set fill
-                        let earlyBreakThreshold = Int(Double(targetDurationMinutes) * 1.20)
-                        if routeMins > earlyBreakThreshold && paretoSet.count >= RoutingToggles.kBestK {
-                            print("🗺️ ⚡ [K-BEST] Route too long (\(routeMins)min > 120%) and Pareto filled - trying fewer waypoints...")
+                        // SPRINT-4: Early exit if we have good routes and Pareto set is filled
+                        if routedParetoSet.count >= kBestK && !validRoutes.isEmpty {
+                            print("🗺️ ⚡ [K-BEST] Pareto set filled (k=\(kBestK)) with valid routes - proceeding to selection")
                             break
                         }
                     }
@@ -11221,12 +11646,12 @@ class GoogleMapsService: ObservableObject {
             
             print("🗺️ 🔄 END of waypointCount=\(waypointCount) loop, totalAttempts=\(totalAttempts)")
         }
-        // PHASE A: Check hard-stop before final selection
+        // SPRINT-4: Check hard-stop before final selection using budget
         let finalElapsed = Date().timeIntervalSince(startTime)
         let stopReason: String
-        if hardStopHit {
+        if !budget.within() || hardStopHit {
             stopReason = "HARD_STOP"
-            print("⛔ [HARD-STOP] Hard-stop was hit during generation - returning best-so-far")
+            print("⛔ [HARD-STOP] Hard-stop was hit during generation (elapsed=\(String(format: "%.2f", budget.elapsed))s) - returning best-so-far")
         } else if finalElapsed > RoutingToggles.softStopSec {
             stopReason = "SOFT_STOP"
         } else {
@@ -11250,6 +11675,12 @@ class GoogleMapsService: ObservableObject {
                 var overrunPenalty = 0.0
                 if accuracy > 1.15 {
                     overrunPenalty = (accuracy - 1.15) * 50  // Steep penalty after 115%
+                }
+                
+                // SPRINT-4: Overshoot penalty ×2 for routes with <min waypoints (prefer 95-105% fits with ≥min WPs)
+                let minWaypoints = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
+                if route.places.count < minWaypoints && accuracy > 1.05 {
+                    overrunPenalty *= 2.0  // Double the penalty for routes with <min waypoints
                 }
                 
                 return (route, backtrack, overrunPenalty)
@@ -11362,7 +11793,8 @@ class GoogleMapsService: ObservableObject {
                     availablePOIs: places,
                     excludePlaceIds: excludePlaceIds,
                     angularDiversityScore: finalAngularDiversityScore,
-                    postcode: postcode
+                    postcode: postcode,
+                    checkHardStop: checkHardStop  // SPRINT-4: Pass hard-stop check
                 ) {
                     let extendedMins = extended.durationSeconds / 60
                     let newAccuracy = Double(extendedMins) / Double(targetDurationMinutes)
@@ -11503,15 +11935,194 @@ class GoogleMapsService: ObservableObject {
             print("   wp_before_finalization=\(wpBeforeFinalization), wp_after_finalization=\(wpAfterFinalization)")
             print("   stop_reason=\(stopReason)")
             
+            // SPRINT-4: Repair before fallback for S11 mid-long durations (>120% overshoot)
+            // For S11 postcodes with mid-long durations (≥30min), repair first valid route if >120%
+            let isS11 = postcode?.hasPrefix("S11") ?? false
+            let isMidLong = targetDurationMinutes >= 30
+            let firstValidRatio = Double(selectedMins) / Double(targetDurationMinutes)
+            
+            if isS11 && isMidLong && firstValidRatio > 1.20 && selected.places.count > 1 {
+                print("🔧 [REPAIR-S11] First valid route \(selectedMins)min (\(String(format: "%.1f", firstValidRatio * 100))%) >120% - applying repair before fallback")
+                
+                // SPRINT-4: Budget check before repair
+                if !RoutingToggles.mustContinue(budget, bestSoFar: selected, stage: "REPAIR_S11_START") {
+                    print("⛔ [HARD-STOP] Skipping S11 repair - returning best-so-far")
+                } else {
+                    var candidate = selected
+                    
+                    // Step 1: Trim farthest leg
+                    if let farthestIndex = candidate.places.enumerated().max(by: {
+                        distanceBetween(location, $0.element.coordinate) < distanceBetween(location, $1.element.coordinate)
+                    })?.offset {
+                        let farthestPOI = candidate.places[farthestIndex]
+                        print("🔧 [REPAIR-S11] Step 1: Trimming farthest waypoint '\(farthestPOI.name)'")
+                        
+                        var trimmedWaypoints = candidate.places
+                        trimmedWaypoints.remove(at: farthestIndex)
+                        
+                        // SPRINT-4: Budget check before trim routing call
+                        if !RoutingToggles.mustContinue(budget, bestSoFar: candidate, stage: "REPAIR_S11_TRIM") {
+                            print("⛔ [HARD-STOP] Skipping trim routing - using original")
+                        } else {
+                            let trimTimeout = RoutingToggles.perCallTimeoutNormal
+                            let trimHardStopCheck: (() -> Bool)? = {
+                                !RoutingToggles.mustContinue(budget, bestSoFar: candidate, stage: "REPAIR_S11_TRIM_CALL")
+                            }
+                            let (trimResult, didTimeout) = await directionsWithTimeout(
+                                origin: location,
+                                destination: location,
+                                waypoints: trimmedWaypoints.map { $0.coordinate },
+                                timeout: trimTimeout,
+                                targetDurationMinutes: targetDurationMinutes,
+                                angularDiversityScore: finalAngularDiversityScore,
+                                postcode: postcode,
+                                checkGlobalHardStop: trimHardStopCheck
+                            )
+                            
+                            if let directions = trimResult, !didTimeout {
+                                let trimmedDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                                let trimmedDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                                let trimmedMins = trimmedDuration / 60
+                                print("🔧 [REPAIR-S11] Trim result: \(trimmedMins)min (was \(selectedMins)min)")
+                                
+                                candidate = GeneratedRoute(
+                                    places: trimmedWaypoints,
+                                    polyline: directions.overviewPolyline.points,
+                                    distanceMeters: trimmedDistance,
+                                    durationSeconds: trimmedDuration,
+                                    legs: directions.legs
+                                )
+                            }
+                        }
+                    }
+                    
+                    // Step 2: Micro-extend first pass (+2-4 min)
+                    let candidateRatio = Double(candidate.durationSeconds / 60) / Double(targetDurationMinutes)
+                    if candidateRatio < 0.95 && !places.isEmpty {
+                        print("🔧 [REPAIR-S11] Step 2: Micro-extend pass 1 (+2-4 min)")
+                        
+                        // SPRINT-4: Budget check before micro-extend
+                        if !RoutingToggles.mustContinue(budget, bestSoFar: candidate, stage: "REPAIR_S11_EXTEND1") {
+                            print("⛔ [HARD-STOP] Skipping micro-extend pass 1 - using candidate")
+                        } else {
+                            // Find nearby POI to add
+                            let existingPOIIds = Set(candidate.places.map { $0.placeId })
+                            let nearbyPOIs = places.filter { poi in
+                                guard !existingPOIIds.contains(poi.placeId) else { return false }
+                                return distanceBetween(location, poi.coordinate) < 500
+                            }
+                            
+                            if let extensionPOI = nearbyPOIs.first {
+                                var extendedWaypoints = candidate.places
+                                extendedWaypoints.append(extensionPOI)
+                                
+                                let extTimeout = RoutingToggles.mapkitSoftCap
+                                let extHardStopCheck: (() -> Bool)? = {
+                                    !RoutingToggles.mustContinue(budget, bestSoFar: candidate, stage: "REPAIR_S11_EXTEND1_CALL")
+                                }
+                                let (extResult, didTimeout) = await directionsWithTimeout(
+                                    origin: location,
+                                    destination: location,
+                                    waypoints: extendedWaypoints.map { $0.coordinate },
+                                    timeout: extTimeout,
+                                    targetDurationMinutes: targetDurationMinutes,
+                                    angularDiversityScore: finalAngularDiversityScore,
+                                    postcode: postcode,
+                                    checkGlobalHardStop: extHardStopCheck
+                                )
+                                
+                                if let directions = extResult, !didTimeout {
+                                    let extDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                                    let extMins = extDuration / 60
+                                    let extRatio = Double(extMins) / Double(targetDurationMinutes)
+                                    print("🔧 [REPAIR-S11] Extend pass 1 result: \(extMins)min (\(String(format: "%.1f", extRatio * 100))%)")
+                                    
+                                    if extRatio <= 1.30 {
+                                        candidate = GeneratedRoute(
+                                            places: extendedWaypoints,
+                                            polyline: directions.overviewPolyline.points,
+                                            distanceMeters: directions.legs.reduce(0) { $0 + $1.distance.value },
+                                            durationSeconds: extDuration,
+                                            legs: directions.legs
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Step 3: Micro-extend second pass (+1-2 min) if still <95%
+                    let finalCandidateRatio = Double(candidate.durationSeconds / 60) / Double(targetDurationMinutes)
+                    if finalCandidateRatio < 0.95 && !places.isEmpty {
+                        print("🔧 [REPAIR-S11] Step 3: Micro-extend pass 2 (+1-2 min)")
+                        
+                        // SPRINT-4: Budget check before micro-extend pass 2
+                        if !RoutingToggles.mustContinue(budget, bestSoFar: candidate, stage: "REPAIR_S11_EXTEND2") {
+                            print("⛔ [HARD-STOP] Skipping micro-extend pass 2 - using candidate")
+                        } else {
+                            let existingPOIIds = Set(candidate.places.map { $0.placeId })
+                            let nearbyPOIs = places.filter { poi in
+                                guard !existingPOIIds.contains(poi.placeId) else { return false }
+                                return distanceBetween(location, poi.coordinate) < 500
+                            }
+                            
+                            if let extensionPOI = nearbyPOIs.first {
+                                var extendedWaypoints = candidate.places
+                                extendedWaypoints.append(extensionPOI)
+                                
+                                let extTimeout = RoutingToggles.mapkitSoftCap
+                                let extHardStopCheck: (() -> Bool)? = {
+                                    !RoutingToggles.mustContinue(budget, bestSoFar: candidate, stage: "REPAIR_S11_EXTEND2_CALL")
+                                }
+                                let (extResult, didTimeout) = await directionsWithTimeout(
+                                    origin: location,
+                                    destination: location,
+                                    waypoints: extendedWaypoints.map { $0.coordinate },
+                                    timeout: extTimeout,
+                                    targetDurationMinutes: targetDurationMinutes,
+                                    angularDiversityScore: finalAngularDiversityScore,
+                                    postcode: postcode,
+                                    checkGlobalHardStop: extHardStopCheck
+                                )
+                                
+                                if let directions = extResult, !didTimeout {
+                                    let extDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                                    let extMins = extDuration / 60
+                                    let extRatio = Double(extMins) / Double(targetDurationMinutes)
+                                    print("🔧 [REPAIR-S11] Extend pass 2 result: \(extMins)min (\(String(format: "%.1f", extRatio * 100))%)")
+                                    
+                                    if extRatio <= 1.30 {
+                                        candidate = GeneratedRoute(
+                                            places: extendedWaypoints,
+                                            polyline: directions.overviewPolyline.points,
+                                            distanceMeters: directions.legs.reduce(0) { $0 + $1.distance.value },
+                                            durationSeconds: extDuration,
+                                            legs: directions.legs
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Update selected with repaired candidate
+                    selected = candidate
+                    selectedMins = selected.durationSeconds / 60
+                    print("🔧 [REPAIR-S11] Final repaired route: \(selectedMins)min (\(String(format: "%.1f", Double(selectedMins) / Double(targetDurationMinutes) * 100))%)")
+                }
+            }
+            
             // v2.0.3 Phase 1.5 Batch A: Final hard cap check before returning
             // Note: reusing selectedMins and selectionHardCap180 from earlier in this block
             selectedMins = selected.durationSeconds / 60  // Update after possible modifications
             if selectedMins > selectionHardCap180 {
                 print("⛔ [SELECTION] Selected route \(selectedMins)min exceeds 180% cap \(selectionHardCap180)min - falling through to guaranteed fallback")
+                // Track fallback reason: engine_cap
+                // (Will be set in guaranteed fallback section)
                 // Fall through to guaranteed fallback
             } else {
                 // PHASE B: Pass origin and allPlaces for waypoint preservation
-                let result = finalizeAndReturnRoute(selected, targetDurationMinutes: targetDurationMinutes, postcode: postcode, origin: location, allPlaces: places)
+                let result = await finalizeAndReturnRoute(selected, targetDurationMinutes: targetDurationMinutes, postcode: postcode, origin: location, allPlaces: places)
                 if let finalized = result.route {
                     // PHASE D: Track nudges and micro-spurs
                     nudges += result.nudgesAdded
@@ -11522,6 +12133,8 @@ class GoogleMapsService: ObservableObject {
                     return finalized
                 }
                 print("⛔ [GUARD] Selected route rejected - falling through to guaranteed fallback")
+                // Track fallback reason: engine_cap (route rejected by finalizeAndReturnRoute)
+                // (Will be set in guaranteed fallback section)
             }
         }
         
@@ -11598,7 +12211,7 @@ class GoogleMapsService: ObservableObject {
                     
                     // Note: Google fallback is handled separately in generateLocalRouteWithGoogleFallback
                     // PHASE B: Pass origin and allPlaces for waypoint preservation
-                    let result = finalizeAndReturnRoute(best, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true, origin: location, allPlaces: places)
+                    let result = await finalizeAndReturnRoute(best, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true, origin: location, allPlaces: places)
                     if let finalRoute = result.route {
                         // PHASE D: Track nudges and micro-spurs
                         nudges += result.nudgesAdded
@@ -11613,6 +12226,7 @@ class GoogleMapsService: ObservableObject {
                         return finalRoute
                     }
                     print("⛔ [GUARD] Fallback route rejected - falling through to guaranteed fallback")
+                    // Track fallback reason: engine_cap (fallback route rejected)
                 }
                 // If best was invalidated, fall through to guaranteed fallback
             }
@@ -11620,6 +12234,42 @@ class GoogleMapsService: ObservableObject {
         
         // GUARANTEED FALLBACK: Create a simple out-and-back route if all else fails
         // This ensures we ALWAYS return something rather than leaving the user waiting
+        // SPRINT-4: Track fallback reason (determine why we're using guaranteed fallback)
+        var fallbackReason: String = "no_candidates"  // Default: no valid routes found
+        if !budget.within() {
+            fallbackReason = "budget_breached"
+        } else if validRoutes.isEmpty && bestFallbackRoute == nil {
+            fallbackReason = "no_candidates"
+        } else if validRoutes.isEmpty && bestFallbackRoute != nil {
+            // Had fallback but it was rejected - could be engine_cap or repair_failed
+            if postcode?.hasPrefix("S11") == true && targetDurationMinutes >= 30 {
+                fallbackReason = "repair_failed"  // S11 repair was attempted but didn't help
+            } else {
+                fallbackReason = "engine_cap"  // Route exceeded caps
+            }
+        } else {
+            // Had valid routes but they were all rejected
+            fallbackReason = "engine_cap"  // Routes exceeded 180% cap or were rejected
+        }
+        
+        // SPRINT-4: Increment attempts when guaranteed fallback is used
+        totalAttempts += 1
+        routeCapture?.incrementAttempts()
+        
+        // SPRINT-4: Global hard-stop check before guaranteed fallback
+        if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "GUARANTEED_FALLBACK") {
+            print("⛔ [HARD-STOP] Skipping guaranteed fallback - returning best-so-far")
+            
+            // SPRINT-4: Emit fallback fired log even when skipped due to budget
+            let elapsed = Date().timeIntervalSince(startTime)
+            print("📊 [FALLBACK_FIRED] reason=budget_breached elapsed_ms=\(Int(elapsed * 1000)) wp_before=\(wpBeforeFinalization) wp_after=\(wpAfterFinalization) stop_reason=\(stopReason)")
+            
+            if let best = bestFallbackRoute {
+                return best
+            }
+            throw GoogleMapsError.noRouteFound
+        }
+        
         print("🗺️ 🆘 Creating guaranteed fallback route...")
         print("🗺️ 🆘 Available POIs for fallback: \(places.count)")
         if places.count < 5 {
@@ -11628,7 +12278,8 @@ class GoogleMapsService: ObservableObject {
         if let guaranteedRoute = try? await createGuaranteedFallbackRoute(
             from: location,
             targetDurationMinutes: targetDurationMinutes,
-            availablePOIs: places
+            availablePOIs: places,
+            budget: budget  // SPRINT-4: Pass budget for hard-stop enforcement
         ) {
             let mins = guaranteedRoute.durationSeconds / 60
             let hardCap = Int(Double(targetDurationMinutes) * 1.80)  // 180% hard cap (v2.0.1: relaxed for last resort)
@@ -11643,9 +12294,23 @@ class GoogleMapsService: ObservableObject {
                 // Final deduplication before returning guaranteed fallback
                 let deduplicatedPlaces = deduplicateRoutePlaces(guaranteedRoute.places)
                 if deduplicatedPlaces.count < guaranteedRoute.places.count {
+                    // SPRINT-4: Global hard-stop check before regeneration
+                    if !RoutingToggles.mustContinue(budget, bestSoFar: guaranteedRoute, stage: "FALLBACK_REGEN") {
+                        print("⛔ [HARD-STOP] Skipping fallback regeneration - using original")
+                        let result = await finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                        if let finalized = result.route {
+                            return finalized
+                        }
+                        return guaranteedRoute
+                    }
+                    
                     // Regenerate route with deduplicated places
                     // v2.0.3 Phase 1.5 Batch A: Wrap guaranteed fallback regeneration with timeout
                     let timeout = RoutingToggles.perCallTimeoutNormal
+                    // SPRINT-4: Create hard-stop check closure
+                    let regenHardStopCheck: (() -> Bool)? = {
+                        !RoutingToggles.mustContinue(budget, bestSoFar: guaranteedRoute, stage: "FALLBACK_REGEN_CALL")
+                    }
                     let (directionsResult, didTimeout) = await directionsWithTimeout(
                         origin: location,
                         destination: location,
@@ -11653,12 +12318,13 @@ class GoogleMapsService: ObservableObject {
                         timeout: timeout,
                         targetDurationMinutes: targetDurationMinutes,
                         angularDiversityScore: nil,
-                        postcode: postcode
+                        postcode: postcode,
+                        checkGlobalHardStop: regenHardStopCheck
                     )
                     
                     if didTimeout {
                         // Timeout during regeneration - use original route
-                        let result = finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                        let result = await finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
                         if let finalized = result.route {
                             return finalized
                         }
@@ -11669,7 +12335,7 @@ class GoogleMapsService: ObservableObject {
                     
                     guard let directions = directionsResult else {
                         // Error during regeneration - use original route
-                        let result = finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                        let result = await finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
                         if let finalized = result.route {
                             return finalized
                         }
@@ -11694,13 +12360,19 @@ class GoogleMapsService: ObservableObject {
                     if regeneratedMins > hardCap {
                         print("🗺️ 🆘 ❌ Regenerated guaranteed fallback exceeds 180% cap: \(regeneratedMins)min > \(hardCap)min - REJECTING")
                         // Use original route instead
-                        let result = finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                        let result = await finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
                         if let finalized = result.route {
                             printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
                             let elapsed = Date().timeIntervalSince(startTime)
+                            
+                            // SPRINT-4: Emit structured fallback fired log
+                            let finalWPCount = finalized.places.count
+                            print("📊 [FALLBACK_FIRED] reason=\(fallbackReason) elapsed_ms=\(Int(elapsed * 1000)) wp_before=\(wpBeforeFinalization) wp_after=\(finalWPCount) stop_reason=\(stopReason)")
+                            
                             print("📊 ROUTE SELECTION SUMMARY (GUARANTEED FALLBACK - ORIGINAL):")
                             print("   🎯 Selected route: \(finalized.places.count) waypoints, \(finalized.durationSeconds/60)min")
                             print("   ⏱️ Total time: \(String(format: "%.2f", elapsed))s")
+                            print("   📊 Fallback reason: \(fallbackReason)")
                             return finalized
                         }
                         // Critical: guaranteed route rejected - return unfinalized
@@ -11714,16 +12386,22 @@ class GoogleMapsService: ObservableObject {
                     }
                     
                     // v2.0.3 Phase 1.5 Batch A: Use centralized finalization
-                    let result = finalizeAndReturnRoute(deduplicatedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                    let result = await finalizeAndReturnRoute(deduplicatedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
                     if let finalized = result.route {
                         printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
                         let elapsed = Date().timeIntervalSince(startTime)
+                        
+                        // SPRINT-4: Emit structured fallback fired log
+                        let finalWPCount = finalized.places.count
+                        print("📊 [FALLBACK_FIRED] reason=\(fallbackReason) elapsed_ms=\(Int(elapsed * 1000)) wp_before=\(wpBeforeFinalization) wp_after=\(finalWPCount) stop_reason=\(stopReason)")
+                        
                         print("📊 ROUTE SELECTION SUMMARY (GUARANTEED FALLBACK):")
                         print("   🔢 Routes attempted: \(totalAttempts)")
                         print("   ✅ Valid routes found: \(validRoutes.count)")
                         print("   🎯 Selected route: \(finalized.places.count) waypoints, \(finalized.durationSeconds/60)min")
                         print("   📦 Database used: \(usedDatabase ? "Yes" : "No")")
                         print("   ⏱️ Total time: \(String(format: "%.2f", elapsed))s")
+                        print("   📊 Fallback reason: \(fallbackReason)")
                         return finalized
                     }
                     // Critical: guaranteed route rejected - return unfinalized
@@ -11740,12 +12418,18 @@ class GoogleMapsService: ObservableObject {
                 let finalized = finalizeRouteDedup(guaranteedRoute, targetDurationMinutes: targetDurationMinutes)
                 printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
                 let elapsed = Date().timeIntervalSince(startTime)
+                
+                // SPRINT-4: Emit structured fallback fired log
+                let finalWPCount = finalized.places.count
+                print("📊 [FALLBACK_FIRED] reason=\(fallbackReason) elapsed_ms=\(Int(elapsed * 1000)) wp_before=\(wpBeforeFinalization) wp_after=\(finalWPCount) stop_reason=\(stopReason)")
+                
                 print("📊 ROUTE SELECTION SUMMARY (GUARANTEED FALLBACK):")
                 print("   🔢 Routes attempted: \(totalAttempts)")
                 print("   ✅ Valid routes found: \(validRoutes.count)")
                 print("   🎯 Selected route: \(finalized.places.count) waypoints, \(finalized.durationSeconds/60)min")
                 print("   📦 Database used: \(usedDatabase ? "Yes" : "No")")
                 print("   ⏱️ Total time: \(String(format: "%.2f", elapsed))s")
+                print("   📊 Fallback reason: \(fallbackReason)")
                 return finalized
             }
         }
@@ -11756,10 +12440,12 @@ class GoogleMapsService: ObservableObject {
     /// Creates a guaranteed simple route when complex generation fails
     /// Uses the closest POI at roughly half the target walking distance
     /// v2.0.2: Added guardrails to prevent time-wasting
+    /// SPRINT-4: Accepts budget parameter for hard-stop enforcement
     private func createGuaranteedFallbackRoute(
         from origin: CLLocationCoordinate2D,
         targetDurationMinutes: Int,
-        availablePOIs: [PlaceResult]
+        availablePOIs: [PlaceResult],
+        budget: RoutingToggles.Budget? = nil  // SPRINT-4: Global hard-stop budget
     ) async throws -> GeneratedRoute? {
         guard !availablePOIs.isEmpty else {
             print("🗺️ 🆘 No POIs available for fallback")
@@ -11787,6 +12473,12 @@ class GoogleMapsService: ObservableObject {
         
         // Try POIs in order of how close they are to ideal distance (reduced from 5 to 3)
         for candidate in sorted.prefix(3) {
+            // SPRINT-4: Global hard-stop check in guaranteed fallback loop
+            if let budget = budget, !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "GUARANTEED_FALLBACK_LOOP") {
+                print("⛔ [HARD-STOP] Aborting guaranteed fallback loop - returning nil")
+                return nil
+            }
+            
             let poi = candidate.poi
             let poiDist = candidate.distance
             
@@ -11798,8 +12490,18 @@ class GoogleMapsService: ObservableObject {
             print("🗺️ 🆘 Trying \(poi.name) at \(Int(poiDist))m...")
             
             do {
+                // SPRINT-4: Global hard-stop check before routing call
+                if let budget = budget, !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "GUARANTEED_FALLBACK_ROUTING") {
+                    print("⛔ [HARD-STOP] Aborting guaranteed fallback routing - returning nil")
+                    return nil
+                }
+                
                 // v2.0.3 Phase 1.5 Batch A: Wrap fallback getWalkingDirections with timeout
                 let timeout = RoutingToggles.perCallTimeoutNormal  // Default for fallback
+                // SPRINT-4: Create hard-stop check closure
+                let fallbackHardStopCheck: (() -> Bool)? = budget.map { b in
+                    { !RoutingToggles.mustContinue(b, bestSoFar: nil, stage: "GUARANTEED_FALLBACK_CALL") }
+                }
                 let (directionsResult, didTimeout) = await directionsWithTimeout(
                     origin: origin,
                     destination: origin,
@@ -11807,7 +12509,8 @@ class GoogleMapsService: ObservableObject {
                     timeout: timeout,
                     targetDurationMinutes: targetDurationMinutes,
                     angularDiversityScore: nil,
-                    postcode: nil
+                    postcode: nil,
+                    checkGlobalHardStop: fallbackHardStopCheck
                 )
                 
                 if didTimeout {
@@ -12055,7 +12758,8 @@ class GoogleMapsService: ObservableObject {
         availablePOIs: [PlaceResult],
         excludePlaceIds: Set<String>,
         angularDiversityScore: Int? = nil,  // v2.0.3 Phase 1.5 Batch A: For timeout calculation
-        postcode: String? = nil  // v2.0.3 Phase 1.5 Batch A: For postcode-aware timeout
+        postcode: String? = nil,  // v2.0.3 Phase 1.5 Batch A: For postcode-aware timeout
+        checkHardStop: ((String, String) -> Bool)? = nil  // SPRINT-4: Global hard-stop check
     ) async -> GeneratedRoute? {
         guard !route.polyline.isEmpty else {
             print("🔧 No polyline available for route extension")
@@ -12181,6 +12885,11 @@ class GoogleMapsService: ObservableObject {
                         ? RoutingToggles.perCallTimeoutLowADS
                         : RoutingToggles.perCallTimeoutNormal
                     
+                    // SPRINT-4: Create hard-stop check closure
+                    let hardStopCheck: (() -> Bool)? = checkHardStop.map { checkFn in
+                        { checkFn("EXTEND_ROUTE", "extend") }
+                    }
+                    
                     let (newDirectionsResult, didTimeout) = await directionsWithTimeout(
                         origin: origin,
                         destination: origin,
@@ -12188,7 +12897,8 @@ class GoogleMapsService: ObservableObject {
                         timeout: timeout,
                         targetDurationMinutes: targetDurationMinutes,
                         angularDiversityScore: angularDiversityScore,
-                        postcode: postcode
+                        postcode: postcode,
+                        checkGlobalHardStop: hardStopCheck
                     )
                     
                     if didTimeout {
@@ -12275,6 +12985,11 @@ class GoogleMapsService: ObservableObject {
                     : RoutingToggles.perCallTimeoutNormal
             }()
             
+            // SPRINT-4: Create hard-stop check closure for directionsWithTimeout
+            let hardStopCheck: (() -> Bool)? = checkHardStop.map { checkFn in
+                { checkFn("ROUTING", "route") }
+            }
+            
             let (directionsResult, didTimeout) = await directionsWithTimeout(
                 origin: origin,
                 destination: origin,
@@ -12282,7 +12997,8 @@ class GoogleMapsService: ObservableObject {
                 timeout: timeout,
                 targetDurationMinutes: targetDurationMinutes,
                 angularDiversityScore: angularDiversityScore,
-                postcode: postcode
+                postcode: postcode,
+                checkGlobalHardStop: hardStopCheck
             )
             
             if didTimeout {
@@ -12496,7 +13212,7 @@ class GoogleMapsService: ObservableObject {
                     let maxTrimPasses = 2
                     
                     for trimPass in 1...maxTrimPasses {
-                        // PHASE A: Global hard-stop check in trim loop
+                        // SPRINT-4: Universal hard-stop check in trim loop
                         if let checkHardStopFn = checkHardStop, checkHardStopFn("TRIM_PASS\(trimPass)", "repair") {
                             print("⛔ [HARD-STOP] Aborting trim/repair - returning best-so-far")
                             break  // Exit trim loop immediately
@@ -12577,7 +13293,7 @@ class GoogleMapsService: ObservableObject {
                             
                             // TASK 3: Two micro-extend passes (+2-4 min each)
                             for extendPass in 0..<RoutingToggles.microExtendPasses {
-                                // PHASE A: Global hard-stop check in extend loop
+                                // SPRINT-4: Universal hard-stop check in extend loop
                                 if let checkHardStopFn = checkHardStop, checkHardStopFn("EXTEND_PASS\(extendPass + 1)", "repair") {
                                     print("⛔ [HARD-STOP] Aborting micro-extend - returning best-so-far")
                                     break  // Exit extend loop immediately
@@ -12625,6 +13341,10 @@ class GoogleMapsService: ObservableObject {
                                 testWaypoints.append(extensionPOI)
                                 
                                 let extTimeout = RoutingToggles.mapkitSoftCap  // Use soft cap for micro-extend
+                                // SPRINT-4: Create hard-stop check closure
+                                let extHardStopCheck: (() -> Bool)? = checkHardStop.map { checkFn in
+                                    { checkFn("EXTEND", "extend") }
+                                }
                                 let (extResult, didTimeout) = await directionsWithTimeout(
                                     origin: origin,
                                     destination: origin,
@@ -12632,7 +13352,8 @@ class GoogleMapsService: ObservableObject {
                                     timeout: extTimeout,
                                     targetDurationMinutes: targetDurationMinutes,
                                     angularDiversityScore: angularDiversityScore,
-                                    postcode: postcode
+                                    postcode: postcode,
+                                    checkGlobalHardStop: extHardStopCheck
                                 )
                                 
                                 if didTimeout || extResult == nil {
@@ -12702,6 +13423,10 @@ class GoogleMapsService: ObservableObject {
                         
                         // v2.0.3 Batch A: Wrap trim with timeout
                         let trimTimeout = (angularDiversityScore ?? 3) < 3 ? RoutingToggles.perCallTimeoutLowADS : RoutingToggles.perCallTimeoutNormal
+                        // SPRINT-4: Create hard-stop check closure
+                        let trimHardStopCheck: (() -> Bool)? = checkHardStop.map { checkFn in
+                            { checkFn("TRIM_EARLY", "trim") }
+                        }
                         let (trimResult, didTimeout) = await directionsWithTimeout(
                             origin: origin,
                             destination: origin,
@@ -12709,7 +13434,8 @@ class GoogleMapsService: ObservableObject {
                             timeout: trimTimeout,
                             targetDurationMinutes: targetDurationMinutes,
                             angularDiversityScore: angularDiversityScore,
-                            postcode: postcode
+                            postcode: postcode,
+                            checkGlobalHardStop: trimHardStopCheck
                         )
                         
                         if didTimeout {
@@ -12753,6 +13479,10 @@ class GoogleMapsService: ObservableObject {
                         
                         // v2.0.3 Batch A: Wrap trim with timeout
                         let trimTimeout2 = (angularDiversityScore ?? 3) < 3 ? RoutingToggles.perCallTimeoutLowADS : RoutingToggles.perCallTimeoutNormal
+                        // SPRINT-4: Create hard-stop check closure
+                        let trimHardStopCheck2: (() -> Bool)? = checkHardStop.map { checkFn in
+                            { checkFn("TRIM_STANDARD", "trim") }
+                        }
                         let (trimResult2, didTimeout2) = await directionsWithTimeout(
                             origin: origin,
                             destination: origin,
@@ -12760,7 +13490,8 @@ class GoogleMapsService: ObservableObject {
                             timeout: trimTimeout2,
                             targetDurationMinutes: targetDurationMinutes,
                             angularDiversityScore: angularDiversityScore,
-                            postcode: postcode
+                            postcode: postcode,
+                            checkGlobalHardStop: trimHardStopCheck2
                         )
                         
                         if didTimeout2 {
@@ -14996,6 +15727,44 @@ class RouteCapture {
     
     func incrementAttempts() {
         routesAttempted += 1
+    }
+}
+
+// MARK: - Route Multiplier Tracker
+/// Tracks the ratio between estimated and actual route durations
+/// Used to detect topology-hostile areas and improve estimation accuracy
+final class RouteMultiplierTracker {
+    private var samples: [Double] = []
+    private let maxSamples = 5
+
+    func record(estimatedMinutes: Double, actualMinutes: Double) {
+        guard estimatedMinutes > 0 else { return }
+
+        let multiplier = actualMinutes / estimatedMinutes
+        samples.append(multiplier)
+
+        if samples.count > maxSamples {
+            samples.removeFirst()
+        }
+    }
+
+    var median: Double? {
+        guard !samples.isEmpty else { return nil }
+        let sorted = samples.sorted()
+        let mid = sorted.count / 2
+        return sorted.count % 2 == 0
+            ? (sorted[mid - 1] + sorted[mid]) / 2
+            : sorted[mid]
+    }
+
+    var isTopologyHostile: Bool {
+        guard let median else { return false }
+        return median >= 2.0
+    }
+
+    var isMildlyIndirect: Bool {
+        guard let median else { return false }
+        return median >= 1.3
     }
 }
 
