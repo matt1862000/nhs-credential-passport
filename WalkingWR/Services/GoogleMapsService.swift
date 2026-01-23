@@ -431,13 +431,14 @@ struct RoutingToggles {
     
     // Time budget
     static let softStopSec: TimeInterval = 12.0            // Soft stop time budget
-    static let hardStopSec: TimeInterval = 18.0            // Hard stop time budget
+    static let hardStopSec: TimeInterval = 17.8            // SPRINT-5: Hard stop with 200ms guard band (was 18.0)
     
     // SPRINT-4: Global hard-stop budget guard
+    // SPRINT-5: Hard stop at 17.8s (200ms guard band before 18s ceiling)
     struct Budget {
         let t0: TimeInterval
         let soft: TimeInterval = 12.0
-        let hard: TimeInterval = 18.0
+        let hard: TimeInterval = 17.8  // SPRINT-5: 200ms guard band to prevent scheduler jitter pushing p99 past 18s
         
         func within() -> Bool {
             let elapsed = Date().timeIntervalSince1970 - t0
@@ -461,9 +462,11 @@ struct RoutingToggles {
     }
     
     // Minimum waypoints by duration
+    // SPRINT-5: Adjusted thresholds to prevent 1-WP collapse
+    // 10-15 min → 2 WPs, 16-34 min → 3 WPs, 35+ min → 4 WPs
     static func minWaypoints(forDuration duration: Int) -> Int {
         if duration <= 15 { return 2 }
-        if duration <= 30 { return 3 }
+        if duration <= 34 { return 3 }  // SPRINT-5: Extended from 30 to 34 to cover mid-range better
         return 4  // 35-60 min
     }
     
@@ -7556,18 +7559,27 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// Topology-safe short-route generator (route-first, POI-enhanced, not POI-dependent)
+    /// SPRINT-5: Added budget parameter for universal hard-stop awareness
     private func generateRouteShortTopologySafe(
         from location: CLLocationCoordinate2D,
         targetDurationMinutes: Int,
         excludePlaceIds: Set<String>,
-        excludePOIs: [PlaceResult]
+        excludePOIs: [PlaceResult],
+        budget: RoutingToggles.Budget? = nil  // SPRINT-5: Optional budget for hard-stop
     ) async throws -> GeneratedRoute? {
         print("🗺️ [TOPOLOGY-SAFE] Starting topology-safe route generation for \(targetDurationMinutes)min route")
+        
+        // SPRINT-5: Check budget before making any MapKit calls
+        if let b = budget, !RoutingToggles.mustContinue(b, bestSoFar: nil, stage: "TOPO_SAFE_START") {
+            print("⛔ [HARD-STOP] Skipping topology-safe generation - budget exceeded")
+            return nil
+        }
         
         let baseRoutes = try await generateNetworkConstrainedCandidates(
             from: location,
             targetMinutes: targetDurationMinutes,
-            attempts: 4
+            attempts: 4,
+            budget: budget  // SPRINT-5: Pass budget
         )
         
         // Early exit: if MapKit can't do this, POIs won't save you
@@ -7606,10 +7618,12 @@ class GoogleMapsService: ObservableObject {
     
     /// Network-constrained candidate generation using MapKit's topology awareness
     /// This uses MapKit's strengths: topology awareness, works in campuses, hospitals, etc.
+    /// SPRINT-5: Added budget parameter for universal hard-stop awareness
     private func generateNetworkConstrainedCandidates(
         from location: CLLocationCoordinate2D,
         targetMinutes: Int,
-        attempts: Int
+        attempts: Int,
+        budget: RoutingToggles.Budget? = nil  // SPRINT-5: Optional budget for hard-stop
     ) async throws -> [GeneratedRoute] {
         let bearings = evenlySpacedBearings(count: attempts)
         let targetDistance = Double(targetMinutes) * Double(adaptiveWalkingSpeed) * 0.9
@@ -7619,6 +7633,11 @@ class GoogleMapsService: ObservableObject {
         var routes: [GeneratedRoute] = []
         
         for (index, bearing) in bearings.enumerated() {
+            // SPRINT-5: Check budget before each MapKit call
+            if let b = budget, !RoutingToggles.mustContinue(b, bestSoFar: nil, stage: "NETWORK_CANDIDATE_\(index)") {
+                print("⛔ [HARD-STOP] Aborting network-constrained generation at candidate \(index) - budget exceeded")
+                break
+            }
             if let route = try? await mapKitOutAndBack(
                 from: location,
                 distanceMeters: targetDistance,
@@ -8587,10 +8606,16 @@ class GoogleMapsService: ObservableObject {
         postcode: String? = nil,
         allowExtendedCapForFallback: Bool = false,
         origin: CLLocationCoordinate2D? = nil,  // PHASE B: For nudge/micro-spur
-        allPlaces: [PlaceResult] = []  // PHASE B: For micro-spur insertion
+        allPlaces: [PlaceResult] = [],  // PHASE B: For micro-spur insertion
+        budget: RoutingToggles.Budget? = nil  // SPRINT-5: Pass budget for universal hard-stop
     ) async -> (route: GeneratedRoute?, nudgesAdded: Int, microSpursAdded: Int) {
         // First, deduplicate
         var deduplicatedRoute = finalizeRouteDedup(route, targetDurationMinutes: targetDurationMinutes)
+        
+        // SPRINT-5: Create hard-stop check closure for finalization engine calls
+        let finalizationHardStopCheck: (() -> Bool)? = budget.map { b in
+            { !RoutingToggles.mustContinue(b, bestSoFar: nil, stage: "FINALIZATION") }
+        }
         
         // PHASE B: Enforce minimum waypoints
         var nudgesAdded = 0
@@ -8627,7 +8652,7 @@ class GoogleMapsService: ObservableObject {
                         targetDurationMinutes: targetDurationMinutes,
                         angularDiversityScore: nil,
                         postcode: postcode,
-                        checkGlobalHardStop: nil
+                        checkGlobalHardStop: finalizationHardStopCheck  // SPRINT-5: Universal hard-stop
                     )
                     
                     if let directions = regenResult, !didTimeout {
@@ -8709,7 +8734,7 @@ class GoogleMapsService: ObservableObject {
                         targetDurationMinutes: targetDurationMinutes,
                         angularDiversityScore: nil,
                         postcode: postcode,
-                        checkGlobalHardStop: nil
+                        checkGlobalHardStop: finalizationHardStopCheck  // SPRINT-5: Universal hard-stop
                     )
                     
                     if let directions = regenResult, !didTimeout {
@@ -8770,7 +8795,7 @@ class GoogleMapsService: ObservableObject {
                     targetDurationMinutes: targetDurationMinutes,
                     angularDiversityScore: nil,
                     postcode: postcode,
-                    checkGlobalHardStop: nil
+                    checkGlobalHardStop: finalizationHardStopCheck  // SPRINT-5: Universal hard-stop
                 )
                 
                 if let directions = trimResult, !didTimeout {
@@ -8852,7 +8877,7 @@ class GoogleMapsService: ObservableObject {
                         targetDurationMinutes: targetDurationMinutes,
                         angularDiversityScore: nil,
                         postcode: postcode,
-                        checkGlobalHardStop: nil
+                        checkGlobalHardStop: finalizationHardStopCheck  // SPRINT-5: Universal hard-stop
                     )
                     
                     if let directions = trimResult, !didTimeout {
@@ -9764,6 +9789,13 @@ class GoogleMapsService: ObservableObject {
             print("⏱️ [TIMING] Free sources fetch COMPLETED in \(String(format: "%.2f", freeSourcesElapsed))s")
             print("🗺️ Free sources: Found \(places.count) POIs (need \(desiredSpots) for route)")
             
+            // SPRINT-5: Budget check AFTER POI fetch - abort if hard-stop already exceeded
+            // This prevents 57+ second POI fetches from wasting additional time in routing
+            if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "POI_FETCH_COMPLETE") {
+                print("⛔ [HARD-STOP] Budget exceeded after POI fetch - aborting route generation")
+                throw GoogleMapsError.noRouteFound
+            }
+            
             // Check if we used the pre-populated database (comprehensive, no need for Google fallback)
             usedDatabase = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: location, radiusMeters: Double(searchRadius)) != nil
             
@@ -9771,6 +9803,10 @@ class GoogleMapsService: ObservableObject {
             // Database POIs are comprehensive and pre-curated, so no Google fallback needed
             // Optimal threshold: 15 POIs covers all standard routes (10-30 min) with buffer for filtering
             if places.count < 15 && !usedDatabase {
+                // SPRINT-5: Budget check before Google fallback - skip if already past soft-stop
+                if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "GOOGLE_FALLBACK_START") {
+                    print("⛔ [HARD-STOP] Skipping Google fallback - budget exceeded")
+                } else {
                 let googleFallbackStartTime = Date()
                 print("🗺️ [FALLBACK] Only \(places.count) POIs from free sources (<15) - fetching Google POIs for better route quality...")
                 print("⏱️ [TIMING] Google fallback fetch STARTED")
@@ -9793,6 +9829,7 @@ class GoogleMapsService: ObservableObject {
                 print("⏱️ [TIMING]   Free sources: \(String(format: "%.2f", freeSourcesElapsed))s")
                 print("⏱️ [TIMING]   Google fallback: \(String(format: "%.2f", googleFallbackElapsed))s")
                 print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                }  // SPRINT-5: Close budget check else block
             } else if usedDatabase {
                 print("🗺️ ✅ Using pre-populated database POIs (\(places.count) POIs) - skipping Google fallback (database is comprehensive)")
                 print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
@@ -11029,17 +11066,24 @@ class GoogleMapsService: ObservableObject {
         let elapsedBeforeLoops = Date().timeIntervalSince(startTime)
         if elapsedBeforeLoops > earlyTopoSafe && validRoutes.isEmpty {
             print("⏱️ [TOPO-ACT] Early topology-safe BEFORE loops (threshold=\(String(format: "%.1f", earlyTopoSafe))s, ADS=\(finalAngularDiversityScore), elapsed=\(String(format: "%.2f", elapsedBeforeLoops))s, pc=\(postcode ?? "none"))")
+            // SPRINT-5: Budget check before topology-safe generation
+            if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "TOPO_SAFE_BEFORE_LOOPS") {
+                print("⛔ [HARD-STOP] Skipping topology-safe before loops - budget exceeded")
+                throw GoogleMapsError.noRouteFound
+            }
             if let topologyRoute = try? await generateRouteShortTopologySafe(
                 from: location,
                 targetDurationMinutes: targetDurationMinutes,
                 excludePlaceIds: excludePlaceIds,
-                excludePOIs: excludePOIs
+                excludePOIs: excludePOIs,
+                budget: budget  // SPRINT-5: Pass budget for hard-stop awareness
             ) {
                 let routeMins = topologyRoute.durationSeconds / 60
                 let hardCap180 = Int(Double(targetDurationMinutes) * 1.80)
                 if routeMins <= hardCap180 {
                     print("✅ [TOPO-ACT] Succeeded: \(routeMins)min (before loops)")
-                    let result = await finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                    // SPRINT-5: Pass budget for universal hard-stop
+                    let result = await finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
                     if let finalized = result.route {
                         return finalized
                     }
@@ -11067,18 +11111,26 @@ class GoogleMapsService: ObservableObject {
             let elapsed = Date().timeIntervalSince(startTime)
             if elapsed > hardWallTimer && validRoutes.isEmpty {
                 print("⛔ [HARDWALL] \(String(format: "%.1f", hardWallTimer))s exceeded; forcing topology-safe/fallback (elapsed=\(String(format: "%.2f", elapsed))s, ADS=\(finalAngularDiversityScore), postcode=\(postcode ?? "none"))")
+                // SPRINT-5: Budget check before hardwall topology-safe
+                if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "TOPO_SAFE_HARDWALL") {
+                    print("⛔ [HARD-STOP] Skipping hardwall topology-safe - budget exceeded")
+                    if let best = bestFallbackRoute { return best }
+                    throw GoogleMapsError.noRouteFound
+                }
                 // Try topology-safe one last time
                 if let topologyRoute = try? await generateRouteShortTopologySafe(
                     from: location,
                     targetDurationMinutes: targetDurationMinutes,
                     excludePlaceIds: excludePlaceIds,
-                    excludePOIs: excludePOIs
+                    excludePOIs: excludePOIs,
+                    budget: budget  // SPRINT-5: Pass budget for hard-stop awareness
                 ) {
                     let routeMins = topologyRoute.durationSeconds / 60
                     let hardCap180 = Int(Double(targetDurationMinutes) * 1.80)
                     if routeMins <= hardCap180 {
                         print("✅ [HARDWALL] Topology-safe succeeded: \(routeMins)min")
-                    let result = await finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                    // SPRINT-5: Pass budget for universal hard-stop
+                    let result = await finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
                     if let finalized = result.route {
                         return finalized
                     }
@@ -11104,7 +11156,8 @@ class GoogleMapsService: ObservableObject {
                     targetDurationMinutes: targetDurationMinutes
                 )
                 // Fallback routes MUST be accepted - if nil, this is a critical error
-                        let result = await finalizeAndReturnRoute(fallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                // SPRINT-5: Pass budget for universal hard-stop
+                        let result = await finalizeAndReturnRoute(fallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true, budget: budget)
                         if let finalized = result.route {
                             return finalized
                         }
@@ -11129,7 +11182,8 @@ class GoogleMapsService: ObservableObject {
                         let hardCap180 = Int(Double(targetDurationMinutes) * 1.80)
                         if routeMins <= hardCap180 {
                             print("✅ [EARLY EXIT] Found in-tolerance route after \(String(format: "%.2f", elapsedSinceFirst))s grace - short-circuiting")
-                            let result = await finalizeAndReturnRoute(inToleranceRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                            // SPRINT-5: Pass budget for universal hard-stop
+                            let result = await finalizeAndReturnRoute(inToleranceRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
                             if let finalized = result.route {
                                 return finalized
                             }
@@ -11145,6 +11199,11 @@ class GoogleMapsService: ObservableObject {
             // v2.0.3 Phase 1.5 Batch A: Periodic topology-safe check INSIDE loops
             let timeSinceLastCheck = Date().timeIntervalSince(lastTopoSafeCheck)
             if timeSinceLastCheck >= topoSafeCheckInterval && elapsed > earlyTopoSafe && validRoutes.isEmpty {
+                // SPRINT-5: Budget check before periodic topology-safe
+                if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "TOPO_SAFE_PERIODIC") {
+                    print("⛔ [HARD-STOP] Skipping periodic topology-safe - budget exceeded")
+                    break  // Exit outer loop
+                }
                 print("⏱️ [TOPO-ACT] Periodic check inside loop (threshold=\(String(format: "%.1f", earlyTopoSafe))s, ADS=\(finalAngularDiversityScore), elapsed=\(String(format: "%.2f", elapsed))s, pc=\(postcode ?? "none"))")
                 lastTopoSafeCheck = Date()
                 
@@ -11152,13 +11211,15 @@ class GoogleMapsService: ObservableObject {
                     from: location,
                     targetDurationMinutes: targetDurationMinutes,
                     excludePlaceIds: excludePlaceIds,
-                    excludePOIs: excludePOIs
+                    excludePOIs: excludePOIs,
+                    budget: budget  // SPRINT-5: Pass budget for hard-stop awareness
                 ) {
                     let routeMins = topologyRoute.durationSeconds / 60
                     let hardCap180 = Int(Double(targetDurationMinutes) * 1.80)
                     if routeMins <= hardCap180 {
                         print("✅ [TOPO-ACT] Periodic check succeeded: \(routeMins)min")
-                    let result = await finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                    // SPRINT-5: Pass budget for universal hard-stop
+                    let result = await finalizeAndReturnRoute(topologyRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
                     if let finalized = result.route {
                         return finalized
                     }
@@ -11486,7 +11547,8 @@ class GoogleMapsService: ObservableObject {
                             
                             if templateDuration >= minAcceptableDuration && templateDuration <= maxAcceptableDuration {
                                 print("📋 [TEMPLATE] ✅ Template route is valid - using it")
-                                let result = await finalizeAndReturnRoute(finalTemplateRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
+                                // SPRINT-5: Pass budget for universal hard-stop
+                                let result = await finalizeAndReturnRoute(finalTemplateRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
                                 if let finalized = result.route {
                                     return finalized
                                 }
@@ -12120,7 +12182,8 @@ class GoogleMapsService: ObservableObject {
                 // Fall through to guaranteed fallback
             } else {
                 // PHASE B: Pass origin and allPlaces for waypoint preservation
-                let result = await finalizeAndReturnRoute(selected, targetDurationMinutes: targetDurationMinutes, postcode: postcode, origin: location, allPlaces: places)
+                // SPRINT-5: Pass budget for universal hard-stop enforcement in finalization
+                let result = await finalizeAndReturnRoute(selected, targetDurationMinutes: targetDurationMinutes, postcode: postcode, origin: location, allPlaces: places, budget: budget)
                 if let finalized = result.route {
                     // PHASE D: Track nudges and micro-spurs
                     nudges += result.nudgesAdded
@@ -12209,7 +12272,8 @@ class GoogleMapsService: ObservableObject {
                     
                     // Note: Google fallback is handled separately in generateLocalRouteWithGoogleFallback
                     // PHASE B: Pass origin and allPlaces for waypoint preservation
-                    let result = await finalizeAndReturnRoute(best, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true, origin: location, allPlaces: places)
+                    // SPRINT-5: Pass budget for universal hard-stop enforcement in finalization
+                    let result = await finalizeAndReturnRoute(best, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true, origin: location, allPlaces: places, budget: budget)
                     if let finalRoute = result.route {
                         // PHASE D: Track nudges and micro-spurs
                         nudges += result.nudgesAdded
@@ -13229,6 +13293,10 @@ class GoogleMapsService: ObservableObject {
                         
                         // Wrap trim with timeout
                         let trimTimeout = (angularDiversityScore ?? 3) < 3 ? RoutingToggles.perCallTimeoutLowADS : RoutingToggles.perCallTimeoutNormal
+                        // SPRINT-5: Create hard-stop check closure for multi-pass repair
+                        let repairHardStopCheck: (() -> Bool)? = checkHardStop.map { checkFn in
+                            { checkFn("REPAIR_TRIM_PASS\(trimPass)", "repair") }
+                        }
                         let (trimResult, didTimeout) = await directionsWithTimeout(
                             origin: origin,
                             destination: origin,
@@ -13236,7 +13304,8 @@ class GoogleMapsService: ObservableObject {
                             timeout: trimTimeout,
                             targetDurationMinutes: targetDurationMinutes,
                             angularDiversityScore: angularDiversityScore,
-                            postcode: postcode
+                            postcode: postcode,
+                            checkGlobalHardStop: repairHardStopCheck  // SPRINT-5: Universal hard-stop
                         )
                         
                         if didTimeout {
