@@ -7043,7 +7043,8 @@ class GoogleMapsService: ObservableObject {
             routesAttempted: routeCapture.routesAttempted,
             validRoutesFound: routeCapture.validRoutes.count,
             usedDatabase: databaseAvailable,
-            generationTime: generationTime
+            generationTime: generationTime,
+            telemetry: routeCapture.telemetry  // v2.0.17: Include telemetry
         )
     }
     
@@ -7118,7 +7119,9 @@ class GoogleMapsService: ObservableObject {
         print("")
         
         // v2.0.3: Enhanced results tuple to capture impact metrics
-        var allResults: [(postcode: String, location: CLLocationCoordinate2D, results: [(duration: Int, success: Bool, routeMinutes: Int?, waypoints: Int?, distanceKm: Double?, timeSeconds: Double?, usedDatabase: Bool?, routesAttempted: Int?, validRoutesFound: Int?, error: String?)])] = []
+        var allResults: [(postcode: String, location: CLLocationCoordinate2D, results: [(duration: Int, success: Bool, routeMinutes: Int?, waypoints: Int?, distanceKm: Double?, timeSeconds: Double?, usedDatabase: Bool?, routesAttempted: Int?, validRoutesFound: Int?, error: String?, telemetry: RouteTelemetry?)])] = []
+        // v2.0.17: Aggregate telemetry across all routes
+        var allTelemetry: [RouteTelemetry] = []
         let overallStartTime = Date()
         
         // v2.0.3: Progress tracking
@@ -7145,7 +7148,7 @@ class GoogleMapsService: ObservableObject {
             // Run the same test as testRouteGenerationAtIntervals
             let durations = stride(from: 10, through: 60, by: 5)
             // v2.0.3: Enhanced results tuple to capture impact metrics
-            var postcodeResults: [(duration: Int, success: Bool, routeMinutes: Int?, waypoints: Int?, distanceKm: Double?, timeSeconds: Double?, usedDatabase: Bool?, routesAttempted: Int?, validRoutesFound: Int?, error: String?)] = []
+            var postcodeResults: [(duration: Int, success: Bool, routeMinutes: Int?, waypoints: Int?, distanceKm: Double?, timeSeconds: Double?, usedDatabase: Bool?, routesAttempted: Int?, validRoutesFound: Int?, error: String?, telemetry: RouteTelemetry?)] = []
             
             // Check if database is available for this location
             let databaseAvailable = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: location, radiusMeters: 5000) != nil
@@ -7250,7 +7253,9 @@ class GoogleMapsService: ObservableObject {
                 }
                 
                 // v2.0.3: Store enhanced metrics for impact analysis
-                postcodeResults.append((duration: duration, success: true, routeMinutes: routeMinutes, waypoints: route.places.count, distanceKm: distanceKm, timeSeconds: elapsed, usedDatabase: result.usedDatabase, routesAttempted: result.routesAttempted, validRoutesFound: result.validRoutesFound, error: nil))
+                // v2.0.17: Include telemetry
+                allTelemetry.append(result.telemetry)
+                postcodeResults.append((duration: duration, success: true, routeMinutes: routeMinutes, waypoints: route.places.count, distanceKm: distanceKm, timeSeconds: elapsed, usedDatabase: result.usedDatabase, routesAttempted: result.routesAttempted, validRoutesFound: result.validRoutesFound, error: nil, telemetry: result.telemetry))
             } catch {
                 let elapsed = Date().timeIntervalSince(startTime)
                 let errorMsg = error.localizedDescription
@@ -7259,7 +7264,7 @@ class GoogleMapsService: ObservableObject {
                 print("   ⚠️ Error: \(errorMsg)")
                 
                 // v2.0.3: Store failure metrics (no routes attempted/found on failure)
-                postcodeResults.append((duration: duration, success: false, routeMinutes: nil, waypoints: nil, distanceKm: nil, timeSeconds: elapsed, usedDatabase: databaseAvailable, routesAttempted: nil, validRoutesFound: nil, error: errorMsg))
+                postcodeResults.append((duration: duration, success: false, routeMinutes: nil, waypoints: nil, distanceKm: nil, timeSeconds: elapsed, usedDatabase: databaseAvailable, routesAttempted: nil, validRoutesFound: nil, error: errorMsg, telemetry: nil))
             }
             }
             
@@ -7286,7 +7291,7 @@ class GoogleMapsService: ObservableObject {
         
         // Aggregate all results
         // v2.0.3: Enhanced results tuple for impact metrics
-        var allRouteResults: [(duration: Int, success: Bool, routeMinutes: Int?, waypoints: Int?, distanceKm: Double?, timeSeconds: Double?, usedDatabase: Bool?, routesAttempted: Int?, validRoutesFound: Int?, error: String?)] = []
+        var allRouteResults: [(duration: Int, success: Bool, routeMinutes: Int?, waypoints: Int?, distanceKm: Double?, timeSeconds: Double?, usedDatabase: Bool?, routesAttempted: Int?, validRoutesFound: Int?, error: String?, telemetry: RouteTelemetry?)] = []
         for postcodeResult in allResults {
             allRouteResults.append(contentsOf: postcodeResult.results)
         }
@@ -7606,15 +7611,15 @@ class GoogleMapsService: ObservableObject {
             "avg_waypoints": String(format: "%.2f", avgWaypointsCalc),
             "routes_ge_2_wp": routesGe2Wp,
             "valid_routes_per_gen": String(format: "%.2f", avgValidRoutesPerGen),
-            "early_commit_opportunities": 0,  // TODO: Aggregate from per-route telemetry
-            "early_commits_taken": 0,  // TODO: Aggregate from per-route telemetry
-            "fallback_fired": 0,  // TODO: Aggregate from per-route telemetry
-            "fallback_over_130pct": 0,  // TODO: Aggregate from per-route telemetry
-            "overshoot_selected_gt_120pct": 0,  // TODO: Aggregate from per-route telemetry
-            "per_leg_cap_applied": 0,  // TODO: Aggregate from per-route telemetry
-            "cap_after_good_candidate": 0,  // TODO: Aggregate from per-route telemetry
+            "early_commit_opportunities": allTelemetry.filter { $0.earlyCommitOpportunity }.count,  // v2.0.17: Aggregate from telemetry
+            "early_commits_taken": allTelemetry.filter { $0.earlyCommitsTaken }.count,  // v2.0.17: Aggregate from telemetry
+            "fallback_fired": allTelemetry.filter { $0.fallbackFired }.count,  // v2.0.17: Aggregate from telemetry
+            "fallback_over_130pct": allTelemetry.filter { $0.fallbackOver130Pct }.count,  // v2.0.17: Aggregate from telemetry
+            "overshoot_selected_gt_120pct": allTelemetry.filter { $0.overshootSelectedGt120Pct }.count,  // v2.0.17: Aggregate from telemetry
+            "per_leg_cap_applied": allTelemetry.filter { $0.perLegCapApplied }.count,  // v2.0.17: Aggregate from telemetry
+            "cap_after_good_candidate": allTelemetry.filter { $0.capAfterGoodCandidate }.count,  // v2.0.17: Aggregate from telemetry
             "bias_table": RoutingToggles.biasTable(),  // v2.0.16: Duration-bucket bias table
-            "sector_quota_used_count": 0  // TODO: Aggregate from per-route telemetry
+            "sector_quota_used_count": allTelemetry.filter { $0.sectorQuotaUsed }.count  // v2.0.17: Aggregate from telemetry
         ]
         
         // Output as one-line JSON
@@ -11555,7 +11560,24 @@ class GoogleMapsService: ObservableObject {
                     } else {
                         print("🆘 [FALLBACK] ❌ Rejected: fallback=\(String(format: "%.1f", fallbackAcc * 100))% >130% (hard quality floor)")
                         fallbackReason = "exceeds_130_percent"
-                        // Do NOT use fallback - return nil or retry
+                        // v2.0.17: Return best-so-far candidate explicitly when fallback fails floor
+                        if let bestSoFar = validRoutes.first {
+                            print("🔄 [FALLBACK] Returning best-so-far candidate: \(bestSoFar.durationSeconds/60)min, \(bestSoFar.places.count) WPs (qualifier: best_so_far_after_floor_block)")
+                            // SPRINT-5: Pass budget for universal hard-stop
+                            let result = await finalizeAndReturnRoute(bestSoFar, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
+                            if let finalized = result.route {
+                                return finalized
+                            }
+                            return bestSoFar
+                        } else if let bestFallback = bestFallbackRoute {
+                            print("🔄 [FALLBACK] Returning best fallback candidate: \(bestFallback.durationSeconds/60)min, \(bestFallback.places.count) WPs (qualifier: best_so_far_after_floor_block)")
+                            let result = await finalizeAndReturnRoute(bestFallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
+                            if let finalized = result.route {
+                                return finalized
+                            }
+                            return bestFallback
+                        }
+                        // If no best-so-far exists, throw error (upstream shows friendly message and retry CTA)
                         throw GoogleMapsError.noRouteFound
                     }
                 } else {
@@ -12660,6 +12682,16 @@ class GoogleMapsService: ObservableObject {
             print("   fallback_accuracy=\(String(format: "%.3f", fallbackAccuracy)) kbest_candidates=\(kBestCandidates) valid_candidates=\(validCandidates)")
             print("   overshoot_selected=\(overshootSelected) early_commit_opportunity=\(earlyCommitOpportunity)")
             
+            // v2.0.17: Capture telemetry in routeCapture for batch aggregation
+            routeCapture?.telemetry.earlyCommitOpportunity = earlyCommitOpportunity
+            routeCapture?.telemetry.earlyCommitsTaken = bestSoFarCommitted
+            routeCapture?.telemetry.fallbackFired = fallbackFired
+            routeCapture?.telemetry.fallbackOver130Pct = (fallbackFired && fallbackAccuracy > 1.30)
+            routeCapture?.telemetry.overshootSelectedGt120Pct = overshootSelected
+            routeCapture?.telemetry.perLegCapApplied = perLegCapApplied
+            routeCapture?.telemetry.capAfterGoodCandidate = capAfterGoodCandidate
+            routeCapture?.telemetry.sectorQuotaUsed = sectorQuotaUsed
+            
             // SPRINT-4: Repair before fallback for S11 mid-long durations (>120% overshoot)
             // For S11 postcodes with mid-long durations (≥30min), repair first valid route if >120%
             let isS11 = postcode?.hasPrefix("S11") ?? false
@@ -13050,6 +13082,23 @@ class GoogleMapsService: ObservableObject {
             } else {
                 print("🗺️ 🆘 ❌ Guaranteed fallback exceeds 130%: \(mins)min (\(String(format: "%.1f", fallbackAcc * 100))%) - REJECTING (hard quality floor)")
                 fallbackReason = "exceeds_130_percent"
+                // v2.0.17: Return best-so-far candidate explicitly when fallback fails floor
+                if let bestSoFar = validRoutes.first {
+                    print("🔄 [FALLBACK] Returning best-so-far candidate: \(bestSoFar.durationSeconds/60)min, \(bestSoFar.places.count) WPs (qualifier: best_so_far_after_floor_block)")
+                    let result = await finalizeAndReturnRoute(bestSoFar, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
+                    if let finalized = result.route {
+                        return finalized
+                    }
+                    return bestSoFar
+                } else if let bestFallback = bestFallbackRoute {
+                    print("🔄 [FALLBACK] Returning best fallback candidate: \(bestFallback.durationSeconds/60)min, \(bestFallback.places.count) WPs (qualifier: best_so_far_after_floor_block)")
+                    let result = await finalizeAndReturnRoute(bestFallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
+                    if let finalized = result.route {
+                        return finalized
+                    }
+                    return bestFallback
+                }
+                // If no best-so-far exists, throw error (upstream shows friendly message and retry CTA)
                 throw GoogleMapsError.noRouteFound  // Never accept >130% fallback
             }
             
@@ -13126,6 +13175,23 @@ class GoogleMapsService: ObservableObject {
                 if regeneratedAcc > 1.30 {
                     print("🗺️ 🆘 ❌ Regenerated guaranteed fallback exceeds 130%: \(regeneratedMins)min (\(String(format: "%.1f", regeneratedAcc * 100))%) - REJECTING (hard quality floor)")
                     fallbackReason = "exceeds_130_percent"
+                    // v2.0.17: Return best-so-far candidate explicitly when fallback fails floor
+                    if let bestSoFar = validRoutes.first {
+                        print("🔄 [FALLBACK] Returning best-so-far candidate: \(bestSoFar.durationSeconds/60)min, \(bestSoFar.places.count) WPs (qualifier: best_so_far_after_floor_block)")
+                        let result = await finalizeAndReturnRoute(bestSoFar, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
+                        if let finalized = result.route {
+                            return finalized
+                        }
+                        return bestSoFar
+                    } else if let bestFallback = bestFallbackRoute {
+                        print("🔄 [FALLBACK] Returning best fallback candidate: \(bestFallback.durationSeconds/60)min, \(bestFallback.places.count) WPs (qualifier: best_so_far_after_floor_block)")
+                        let result = await finalizeAndReturnRoute(bestFallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
+                        if let finalized = result.route {
+                            return finalized
+                        }
+                        return bestFallback
+                    }
+                    // If no best-so-far exists, throw error (upstream shows friendly message and retry CTA)
                     throw GoogleMapsError.noRouteFound  // Never accept >130% fallback
                 }
                 
@@ -13164,6 +13230,23 @@ class GoogleMapsService: ObservableObject {
                 if finalAcc > 1.30 {
                     print("🗺️ 🆘 ❌ Guaranteed fallback exceeds 130% after processing: \(finalMins)min (\(String(format: "%.1f", finalAcc * 100))%) - REJECTING")
                     fallbackReason = "exceeds_130_percent"
+                    // v2.0.17: Return best-so-far candidate explicitly when fallback fails floor
+                    if let bestSoFar = validRoutes.first {
+                        print("🔄 [FALLBACK] Returning best-so-far candidate: \(bestSoFar.durationSeconds/60)min, \(bestSoFar.places.count) WPs (qualifier: best_so_far_after_floor_block)")
+                        let result = await finalizeAndReturnRoute(bestSoFar, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
+                        if let finalized = result.route {
+                            return finalized
+                        }
+                        return bestSoFar
+                    } else if let bestFallback = bestFallbackRoute {
+                        print("🔄 [FALLBACK] Returning best fallback candidate: \(bestFallback.durationSeconds/60)min, \(bestFallback.places.count) WPs (qualifier: best_so_far_after_floor_block)")
+                        let result = await finalizeAndReturnRoute(bestFallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, budget: budget)
+                        if let finalized = result.route {
+                            return finalized
+                        }
+                        return bestFallback
+                    }
+                    // If no best-so-far exists, throw error (upstream shows friendly message and retry CTA)
                     throw GoogleMapsError.noRouteFound
                 }
             }
@@ -16686,6 +16769,20 @@ struct RouteGenerationResult {
     let validRoutesFound: Int
     let usedDatabase: Bool
     let generationTime: TimeInterval
+    let telemetry: RouteTelemetry  // v2.0.17: Telemetry for batch aggregation
+}
+
+// MARK: - Route Telemetry (v2.0.17)
+/// Telemetry captured per route generation
+struct RouteTelemetry {
+    var earlyCommitOpportunity: Bool = false
+    var earlyCommitsTaken: Bool = false
+    var fallbackFired: Bool = false
+    var fallbackOver130Pct: Bool = false
+    var overshootSelectedGt120Pct: Bool = false
+    var perLegCapApplied: Bool = false
+    var capAfterGoodCandidate: Bool = false
+    var sectorQuotaUsed: Bool = false
 }
 
 // MARK: - Route Capture Helper (for testing)
@@ -16694,6 +16791,7 @@ class RouteCapture {
     var validRoutes: [GeneratedRoute] = []
     var routesAttempted: Int = 0
     var usedDatabase: Bool = false
+    var telemetry: RouteTelemetry = RouteTelemetry()  // v2.0.17: Capture telemetry
     
     func addRoute(_ route: GeneratedRoute) {
         validRoutes.append(route)
