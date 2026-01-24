@@ -420,9 +420,11 @@ struct RoutingToggles {
     static let suburbanSpeedKmh = 5.00                     // SPRINT-4: 5.00 km/h for suburban (was 4.9)
     
     // SPRINT-6: Selection scoring nudges
-    static let overshootPenaltyMultiplier = 2.5            // Penalty multiplier for <minWP routes with >1.05 accuracy
-    static let subTargetBonus = 0.01                       // Small bonus for routes ≤100% (favor slightly short)
-    static let waypointScoreBonus = 0.08                   // Bonus per waypoint (was implicit, now explicit)
+    // SPRINT-7 CONFIG TWEAKS: Amplified selection scoring
+    static let overshootPenaltyMultiplier = 3.0            // TWEAK 1: Increased from 2.5 → 3.0 (make >110% noticeably worse)
+    static let subTargetBonus = 0.05                       // TWEAK 1: Increased from 0.01 → 0.05 (undershoot slightly preferred)
+    static let waypointScoreBonus = 0.10                   // TWEAK 1: Increased from 0.08 → 0.10 (reward hitting WP minimums)
+    static let underWPPenalty = 1.0                        // TWEAK 3: Penalty for routes below minWaypoints
     
     // TASK 6: Template fallback for fragile durations
     static let templateFallbackDurations = [10, 25, 45]    // Durations needing templates
@@ -8726,8 +8728,8 @@ class GoogleMapsService: ObservableObject {
             // SPRINT-7: Allow up to two micro-spur insertion passes when below minWaypoints
             // SPRINT-7 HOTFIX: Add time-remaining check to avoid enqueueing work near hard stop
             var spurTries = 0
-            let maxSpurTries = 2  // SPRINT-7: Up to 2 micro-spur insertion passes
-            let minTimeForSpur: TimeInterval = 0.5  // SPRINT-7 HOTFIX: Don't spur if <500ms remaining
+            let maxSpurTries = 3  // TWEAK 2: Increased from 2 → 3 micro-spur passes
+            let minTimeForSpur: TimeInterval = 1.2  // TWEAK 2: Increased from 0.5s → 1.2s (more conservative)
             
             while deduplicatedRoute.places.count < minWaypoints 
                     && spurTries < maxSpurTries 
@@ -11905,24 +11907,31 @@ class GoogleMapsService: ObservableObject {
             let routesWithScores = validRoutes.map { route -> (route: GeneratedRoute, backtrackScore: Double, overrunPenalty: Double, subTargetBonus: Double, waypointBonus: Double) in
                 let backtrack = calculateBacktrackingScore(polyline: route.polyline)
                 
-                // SOFT CAP OVERRUN PENALTY: Routes >115% get penalized
-                // 115% is "this better be really good" threshold
-                // 130% loses 7.5 points, 150% loses 17.5 points
+                // SOFT CAP OVERRUN PENALTY: Routes >110% get penalized (TWEAK 1: lowered from 115%)
+                // TWEAK 1: Start penalty at 110% instead of 115% to reduce overshoot clustering
+                // 120% loses 3 points, 130% loses 6 points (using w_overshoot = 3.0)
                 let accuracy = Double(route.durationSeconds / 60) / Double(targetDurationMinutes)
                 var overrunPenalty = 0.0
-                if accuracy > 1.15 {
-                    overrunPenalty = (accuracy - 1.15) * 50  // Steep penalty after 115%
+                if accuracy > 1.10 {
+                    overrunPenalty = (accuracy - 1.10) * 30  // TWEAK 1: w_overshoot ≈ 3.0 (30 per 10%)
                 }
                 
                 // SPRINT-7: Right-edge penalty for ratio > 1.10 (penalize routes at right edge of tolerance band)
+                // TWEAK 1: Increased from 0.01 → 0.5 to make >110% noticeably worse
                 // This helps ties avoid the 105-110% zone where we see overshoot clustering
-                let rightEdgePenalty = accuracy > 1.10 ? 0.01 : 0.0
+                let rightEdgePenalty = accuracy > 1.10 ? 0.5 : 0.0
                 overrunPenalty += rightEdgePenalty
                 
-                // SPRINT-6: Overshoot penalty ×2.5 for routes with <min waypoints (prefer 95-105% fits with ≥min WPs)
+                // SPRINT-6: Overshoot penalty ×3.0 for routes with <min waypoints (prefer 95-105% fits with ≥min WPs)
                 let minWaypoints = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
                 if route.places.count < minWaypoints && accuracy > 1.05 {
-                    overrunPenalty *= RoutingToggles.overshootPenaltyMultiplier  // 2.5× penalty for routes with <min waypoints
+                    overrunPenalty *= RoutingToggles.overshootPenaltyMultiplier  // 3.0× penalty for routes with <min waypoints
+                }
+                
+                // TWEAK 3: Direct penalty for under-WP routes (demote in scoring rather than hard-reject)
+                // This keeps diversity if others fail, but strongly prefers routes meeting WP minimums
+                if route.places.count < minWaypoints {
+                    overrunPenalty += RoutingToggles.underWPPenalty  // +1.0 penalty for under-WP routes
                 }
                 
                 // SPRINT-6: Small bonus for routes ≤100% (favor slightly short over slightly long in ties)
