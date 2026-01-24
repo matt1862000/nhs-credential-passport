@@ -8502,65 +8502,287 @@ class GoogleMapsService: ObservableObject {
     
     /// UNIFIED DUPLICATE COMPARATOR - Use this everywhere instead of ad-hoc checks
     /// Returns true if two POIs are considered duplicates
+    // MARK: - v2.0.18: Enhanced POI Deduplication (A-F)
+    
+    /// Name signature for fuzzy matching (v2.0.18)
+    private struct NameSignature {
+        let norm: String          // lowercased, diacritics/stopwords removed
+        let tokens: Set<String>   // token set for order-insensitive match
+    }
+    
+    /// Brand/alias map for fuzzy matching (v2.0.18)
+    private static let brandAliasMap: [String: Set<String>] = [
+        "co-op food": ["the co-operative", "co-operative", "coop"],
+        "tesco express": ["tesco"],
+        "sainsbury's local": ["sainsburys", "sainsbury"],
+        "asda express": ["asda"],
+        "morrisons daily": ["morrisons"],
+        "spar": ["spar shop"],
+        "co-op": ["cooperative", "co-operative"]
+    ]
+    
+    /// Create name signature from POI name (v2.0.18)
+    private func createNameSignature(_ name: String) -> NameSignature {
+        let cleaned = GoogleMapsService.cleanPOIDisplayName(name).lowercased()
+        // Remove common stopwords and normalize
+        let stopwords = Set(["the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for"])
+        let tokens = cleaned.split(separator: " ")
+            .map { String($0).trimmingCharacters(in: .whitespaces).trimmingCharacters(in: .punctuationCharacters) }
+            .filter { !$0.isEmpty && !stopwords.contains($0) }
+        return NameSignature(norm: cleaned, tokens: Set(tokens))
+    }
+    
+    /// Jaccard similarity (token overlap) (v2.0.18)
+    private func jaccardSimilarity(_ a: NameSignature, _ b: NameSignature) -> Double {
+        let intersection = a.tokens.intersection(b.tokens).count
+        let union = a.tokens.union(b.tokens).count
+        return union > 0 ? Double(intersection) / Double(union) : 0.0
+    }
+    
+    /// Jaro-Winkler similarity (v2.0.18 - simplified version)
+    private func jaroWinklerSimilarity(_ a: String, _ b: String) -> Double {
+        // Simplified Jaro-Winkler - for exact implementation, use a library
+        // For now, use Levenshtein-based approximation
+        let maxLen = max(a.count, b.count)
+        guard maxLen > 0 else { return 1.0 }
+        
+        // Simple prefix match bonus
+        let prefixLen = min(4, min(a.count, b.count))
+        var prefixMatch = 0
+        for i in 0..<prefixLen {
+            if a[a.index(a.startIndex, offsetBy: i)] == b[b.index(b.startIndex, offsetBy: i)] {
+                prefixMatch += 1
+            } else {
+                break
+            }
+        }
+        
+        // Character overlap (simplified)
+        let setA = Set(a)
+        let setB = Set(b)
+        let intersection = setA.intersection(setB).count
+        let union = setA.union(setB).count
+        let jaro = union > 0 ? Double(intersection) / Double(union) : 0.0
+        
+        // Winkler adjustment (prefix bonus)
+        let winklerBonus = 0.1 * Double(prefixMatch) / 4.0
+        return min(1.0, jaro + winklerBonus)
+    }
+    
+    /// Check brand/alias match (v2.0.18)
+    private func brandAliasMatch(_ a: String, _ b: String) -> Bool {
+        let aNorm = a.lowercased()
+        let bNorm = b.lowercased()
+        
+        for (brand, aliases) in Self.brandAliasMap {
+            if (aNorm.contains(brand) && aliases.contains { bNorm.contains($0) }) ||
+               (bNorm.contains(brand) && aliases.contains { aNorm.contains($0) }) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    /// Fuzzy name similarity check (v2.0.18)
+    private func fuzzyNameSimilar(_ a: NameSignature, _ b: NameSignature) -> Bool {
+        // 1) Token overlap (Jaccard) ≥ 0.7
+        let jaccard = jaccardSimilarity(a, b)
+        if jaccard >= 0.70 {
+            return true
+        }
+        
+        // 2) OR Jaro-Winkler ≥ 0.90 on norm
+        let jaro = jaroWinklerSimilarity(a.norm, b.norm)
+        if jaro >= 0.90 {
+            return true
+        }
+        
+        // 3) OR brandAlias match
+        if brandAliasMatch(a.norm, b.norm) {
+            return true
+        }
+        
+        return false
+    }
+    
+    /// Calculate local POI density (v2.0.18)
+    private func localPOIDensity(_ poi: PlaceResult, allPOIs: [PlaceResult], radiusMeters: Double = 250.0) -> Int {
+        return allPOIs.filter { other in
+            distanceBetween(poi.coordinate, other.coordinate) <= radiusMeters
+        }.count
+    }
+    
+    /// Get base radius by category (v2.0.18)
+    private func baseRadiusForCategory(_ poi: PlaceResult) -> Double {
+        guard let types = poi.types else { return 40.0 }
+        let typeSet = Set(types.map { $0.lowercased() })
+        
+        // Green space / parks
+        if typeSet.contains("park") || typeSet.contains("garden") || typeSet.contains("nature_reserve") {
+            return 75.0
+        }
+        // Civic / monuments
+        if typeSet.contains("church") || typeSet.contains("place_of_worship") || typeSet.contains("monument") {
+            return 60.0
+        }
+        // Retail / food
+        if typeSet.contains("restaurant") || typeSet.contains("food") || typeSet.contains("store") || typeSet.contains("supermarket") {
+            return 35.0
+        }
+        // Pub / cafe
+        if typeSet.contains("bar") || typeSet.contains("cafe") || typeSet.contains("pub") {
+            return 30.0
+        }
+        // Religious
+        if typeSet.contains("church") || typeSet.contains("mosque") || typeSet.contains("synagogue") {
+            return 45.0
+        }
+        // Default
+        return 40.0
+    }
+    
+    /// Adaptive deduplication radius (v2.0.18)
+    private func adaptiveDedupRadius(poi: PlaceResult, localDensity: Int, allPOIs: [PlaceResult]) -> Double {
+        let baseRadius = baseRadiusForCategory(poi)
+        // Adaptive factor (denser area → smaller radius, up to -40%)
+        let shrink = min(0.4, Double(localDensity) / 80.0)
+        return baseRadius * (1.0 - shrink)
+    }
+    
+    /// Quality score for POI (v2.0.18)
+    private func qualityScore(_ poi: PlaceResult) -> Double {
+        var score = 0.0
+        
+        // Opening hours (if available in types or metadata)
+        // Note: PlaceResult doesn't have opening_hours field, so we'll use types richness
+        if let types = poi.types, !types.isEmpty {
+            score += 0.8 * Double(min(types.count, 5)) / 5.0  // Tag count (normalized)
+        }
+        
+        // Source priority
+        switch poi.source {
+        case .google: score += 1.5
+        case .osm: score += 1.0
+        case .geograph: score += 0.8
+        case .apple: score += 0.6
+        case .unknown: score += 0.3
+        }
+        
+        // Name quality (longer, more descriptive names are better)
+        if poi.name.count > 10 {
+            score += 0.5
+        }
+        
+        // Vicinity information
+        if poi.vicinity != nil && !poi.vicinity!.isEmpty {
+            score += 0.6
+        }
+        
+        return score
+    }
+    
+    /// Check if two POIs are in same category family (v2.0.18)
+    private func sameCategoryFamily(_ a: PlaceResult, _ b: PlaceResult) -> Bool {
+        guard let typesA = a.types, let typesB = b.types else { return false }
+        let setA = Set(typesA.map { $0.lowercased() })
+        let setB = Set(typesB.map { $0.lowercased() })
+        return !setA.isDisjoint(with: setB)
+    }
+    
+    /// Deduplication telemetry (v2.0.18)
+    struct DedupTelemetry {
+        var pairsExamined: Int = 0
+        var duplicatesRemoved: Int = 0
+        var clustersFormed: Int = 0
+        var clustersWithCrossOSMEntities: Int = 0
+        var semanticKeptPairs: Int = 0
+        var aliasMatches: Int = 0
+        var brandMatches: Int = 0
+        var distanceThresholdUsed: [String: Double] = [:]
+    }
+    
     /// Note: Internal visibility allows unit tests to access this function
-    /// TASK 4: Updated to use category-aware matching and configurable thresholds
-    func isRouteDuplicate(_ a: PlaceResult, _ b: PlaceResult, requireCategoryMatch: Bool = false) -> Bool {
+    /// v2.0.18: Enhanced with fuzzy matching, adaptive thresholds, and quality scoring
+    func isRouteDuplicate(_ a: PlaceResult, _ b: PlaceResult, requireCategoryMatch: Bool = false, allPOIs: [PlaceResult] = [], dedupTelemetry: inout DedupTelemetry?) -> Bool {
+        dedupTelemetry?.pairsExamined += 1
+        
         // 1. Exact placeId match
         if !a.placeId.isEmpty && !b.placeId.isEmpty && a.placeId == b.placeId {
+            dedupTelemetry?.duplicatesRemoved += 1
             return true
         }
         
         let distance = distanceBetween(a.coordinate, b.coordinate)
         
-        // TASK 4: Category-aware matching - only mark as duplicate if categories overlap
+        // v2.0.18: Category-aware matching
         let categoriesMatch: Bool = {
-            guard let typesA = a.types, let typesB = b.types else { return true }  // If no types, assume match
+            guard let typesA = a.types, let typesB = b.types else { return true }
             return !Set(typesA).isDisjoint(with: Set(typesB))
         }()
         
         // If category match required and categories don't match, not a duplicate
         if requireCategoryMatch || RoutingToggles.requireCategoryMatch {
             if !categoriesMatch && distance >= 20.0 {
-                return false  // Different categories = different POIs (unless <20m)
+                return false
             }
         }
         
-        // TASK 4: Use configurable thresholds (30m for urban/village, 20m for suburban)
-        // For now, use the urban threshold as default (more lenient = fewer false positives)
-        let sameLocationThreshold = RoutingToggles.samePlaceThresholdUrban  // 30m
+        // v2.0.18: Adaptive spatial threshold (B)
+        let localDensity = allPOIs.isEmpty ? 20 : localPOIDensity(a, allPOIs: allPOIs)
+        let adaptiveRadius = adaptiveDedupRadius(poi: a, localDensity: localDensity, allPOIs: allPOIs)
         
-        // 2. Same location (within threshold) - definitive same spot
-        if distance < sameLocationThreshold {
+        // Track threshold used for telemetry
+        let categoryKey = a.types?.first?.lowercased() ?? "other"
+        dedupTelemetry?.distanceThresholdUsed[categoryKey] = adaptiveRadius
+        
+        // 2. Same location (within adaptive threshold) - definitive same spot
+        if distance < adaptiveRadius {
+            dedupTelemetry?.duplicatesRemoved += 1
             return true
         }
         
-        // 3. Same cleaned name and close (within 200m) - likely same place
-        let nameA = GoogleMapsService.cleanPOIDisplayName(a.name).lowercased()
-        let nameB = GoogleMapsService.cleanPOIDisplayName(b.name).lowercased()
-        // IMPORTANT: Both conditions must be true - same cleaned name AND within 200m
-        if nameA == nameB && nameA.count > 0 && distance < 200.0 {
-            // TASK 4: With category matching enabled, also check categories
-            if RoutingToggles.requireCategoryMatch && !categoriesMatch {
-                return false  // Same name but different category = different POIs (e.g., "The Star Inn" vs "The Star Inn Park")
+        // v2.0.18: Fuzzy name matching (A) - replaces exact name equality
+        let sigA = createNameSignature(a.name)
+        let sigB = createNameSignature(b.name)
+        
+        // Check fuzzy similarity
+        let isFuzzyMatch = fuzzyNameSimilar(sigA, sigB)
+        if isFuzzyMatch {
+            // Track alias/brand matches
+            if brandAliasMatch(sigA.norm, sigB.norm) {
+                dedupTelemetry?.brandMatches += 1
+            } else if jaccardSimilarity(sigA, sigB) >= 0.70 {
+                dedupTelemetry?.aliasMatches += 1
             }
             
-            // Debug logging for duplicates that should be caught
-            if nameA.contains("star inn") || nameA.contains("war memorial") || nameA.contains("lindale methodist church") {
-                print("🔍 isRouteDuplicate MATCH: '\(a.name)' vs '\(b.name)' → cleaned: '\(nameA)' == '\(nameB)', distance: \(String(format: "%.1f", distance))m < 200m")
+            // Use adaptive radius for fuzzy matches too
+            if distance < adaptiveRadius * 1.5 {  // Slightly more lenient for fuzzy matches
+                if RoutingToggles.requireCategoryMatch && !categoriesMatch {
+                    return false
+                }
+                dedupTelemetry?.duplicatesRemoved += 1
+                return true
             }
-            return true
         }
         
-        // Debug logging for near-misses
-        if nameA == nameB && nameA.count > 0 && distance >= 200.0 {
-            if nameA.contains("star inn") || nameA.contains("war memorial") || nameA.contains("lindale methodist church") {
-                print("⚠️ isRouteDuplicate NEAR-MISS: '\(a.name)' vs '\(b.name)' → cleaned: '\(nameA)' == '\(nameB)', but distance: \(String(format: "%.1f", distance))m >= 200m")
+        // Legacy: Exact name match (for backward compatibility)
+        let nameA = sigA.norm
+        let nameB = sigB.norm
+        if nameA == nameB && nameA.count > 0 && distance < adaptiveRadius * 1.5 {
+            if RoutingToggles.requireCategoryMatch && !categoriesMatch {
+                return false
             }
-        } else if nameA != nameB && (a.name.lowercased().contains("star inn") || b.name.lowercased().contains("star inn") || a.name.lowercased().contains("war memorial") || b.name.lowercased().contains("war memorial") || a.name.lowercased().contains("lindale methodist church") || b.name.lowercased().contains("lindale methodist church")) {
-            print("⚠️ isRouteDuplicate NAME MISMATCH: '\(a.name)' → '\(nameA)' vs '\(b.name)' → '\(nameB)', distance: \(String(format: "%.1f", distance))m")
+            dedupTelemetry?.duplicatesRemoved += 1
+            return true
         }
         
         return false
+    }
+    
+    /// Overload for backward compatibility (v2.0.18)
+    func isRouteDuplicate(_ a: PlaceResult, _ b: PlaceResult, requireCategoryMatch: Bool = false) -> Bool {
+        var telemetry: DedupTelemetry? = nil
+        return isRouteDuplicate(a, b, requireCategoryMatch: requireCategoryMatch, allPOIs: [], dedupTelemetry: &telemetry)
     }
     
     /// POI Fingerprint - Safety net to catch near-identical cases
@@ -8592,21 +8814,73 @@ class GoogleMapsService: ObservableObject {
         return deduplicated
     }
     
-    /// UNIFIED ROUTE DEDUPLICATION - Final pass with stable order
-    /// Uses unified comparator + fingerprint safety net + aggressive name matching
+    /// UNIFIED ROUTE DEDUPLICATION - Enhanced with fuzzy matching, adaptive thresholds, quality scoring (v2.0.18)
+    /// v2.0.18: Implements A-F improvements: fuzzy match, adaptive radius, OSM conflation, quality scoring, semantic near-duplicates, telemetry
     private func deduplicateRoutePlaces(_ places: [PlaceResult]) -> [PlaceResult] {
         guard places.count > 1 else { return places }
+        
+        // v2.0.18: Initialize telemetry
+        var dedupTelemetry = DedupTelemetry()
         
         print("🔍 DEDUPLICATION: Checking \(places.count) POIs for duplicates...")
         print("🔍 POI list: \(places.enumerated().map { "\($0+1). \($1.name) [\($1.placeId)]" }.joined(separator: ", "))")
         
-        // Step 1: Pairwise duplicate removal using unified comparator
+        // v2.0.18: Step 0: OSM Conflation (C) - Group OSM node/way/relation into canonical features
+        var osmGroups: [String: [PlaceResult]] = [:]
+        var conflatedPlaces: [PlaceResult] = []
+        
+        for place in places {
+            // Create OSM group key (stable key for node/way/relation cluster)
+            if place.source == .osm {
+                let roundedLat = round(place.coordinate.latitude / 0.0001) * 0.0001  // ~11m bins
+                let roundedLon = round(place.coordinate.longitude / 0.0001) * 0.0001
+                let nameBase = createNameSignature(place.name).norm
+                let osmKey = "\(roundedLat),\(roundedLon),\(nameBase)"
+                
+                if osmGroups[osmKey] == nil {
+                    osmGroups[osmKey] = []
+                }
+                osmGroups[osmKey]?.append(place)
+            } else {
+                conflatedPlaces.append(place)
+            }
+        }
+        
+        // v2.0.18: Pick canonical OSM feature (highest quality, most stable geometry)
+        for (_, group) in osmGroups {
+            guard !group.isEmpty else { continue }
+            
+            // Sort by quality score, then by source stability (way/relation > node)
+            let canonical = group.sorted { a, b in
+                let scoreA = qualityScore(a)
+                let scoreB = qualityScore(b)
+                if abs(scoreA - scoreB) > 0.1 {
+                    return scoreA > scoreB
+                }
+                // Prefer way/relation over node (more stable geometry)
+                let aIsNode = a.placeId.contains("node")
+                let bIsNode = b.placeId.contains("node")
+                return !aIsNode && bIsNode
+            }.first!
+            
+            conflatedPlaces.append(canonical)
+            dedupTelemetry.clustersFormed += 1
+            if group.count > 1 {
+                dedupTelemetry.clustersWithCrossOSMEntities += 1
+            }
+        }
+        
+        // Step 1: Pairwise duplicate removal using enhanced comparator
         var deduplicated: [PlaceResult] = []
-        for (index, place) in places.enumerated() {
+        for (index, place) in conflatedPlaces.enumerated() {
             // Check against all already-deduplicated POIs
             var matchedExisting: PlaceResult? = nil
-            let isDuplicate = deduplicated.contains { existing in
-                let isDup = isRouteDuplicate(place, existing)
+            var isDuplicate = false
+            
+            // v2.0.18: Use enhanced isRouteDuplicate with telemetry
+            isDuplicate = deduplicated.contains { existing in
+                var telemetry: DedupTelemetry? = dedupTelemetry
+                let isDup = isRouteDuplicate(place, existing, allPOIs: conflatedPlaces, dedupTelemetry: &telemetry)
                 if isDup {
                     matchedExisting = existing
                 }
@@ -8614,26 +8888,48 @@ class GoogleMapsService: ObservableObject {
             }
             
             if isDuplicate, let matched = matchedExisting {
+                // v2.0.18: Quality scoring (D) - keep higher quality POI
+                let placeQuality = qualityScore(place)
+                let matchedQuality = qualityScore(matched)
+                
+                // If current POI is significantly better, replace the matched one
+                if placeQuality > matchedQuality + 0.5 {
+                    if let matchedIndex = deduplicated.firstIndex(where: { $0.placeId == matched.placeId }) {
+                        deduplicated[matchedIndex] = place
+                        print("🔄 Route dedup [\(index + 1)/\(conflatedPlaces.count)]: Replaced '\(matched.name)' (quality: \(String(format: "%.2f", matchedQuality))) with '\(place.name)' (quality: \(String(format: "%.2f", placeQuality)))")
+                        continue
+                    }
+                }
+                
+                // Otherwise, keep the matched one (already in deduplicated)
                 let distance = distanceBetween(place.coordinate, matched.coordinate)
-                let nameA = GoogleMapsService.cleanPOIDisplayName(place.name).lowercased()
-                let nameB = GoogleMapsService.cleanPOIDisplayName(matched.name).lowercased()
+                let nameA = createNameSignature(place.name).norm
+                let nameB = createNameSignature(matched.name).norm
                 let reason: String
                 if place.placeId == matched.placeId {
                     reason = "same placeId: \(place.placeId)"
                 } else if distance < 20.0 {
                     reason = "same location (\(String(format: "%.1f", distance))m)"
                 } else {
-                    reason = "same cleaned name '\(nameA)' == '\(nameB)' (\(String(format: "%.1f", distance))m)"
+                    reason = "fuzzy name match '\(nameA)' ≈ '\(nameB)' (\(String(format: "%.1f", distance))m)"
                 }
-                print("🚫 Route dedup [\(index + 1)/\(places.count)]: Removed '\(place.name)' [\(place.placeId)] (\(reason)) - matched '\(matched.name)' [\(matched.placeId)]")
+                print("🚫 Route dedup [\(index + 1)/\(conflatedPlaces.count)]: Removed '\(place.name)' [\(place.placeId)] (\(reason)) - matched '\(matched.name)' [\(matched.placeId)]")
             } else {
-                deduplicated.append(place)
-                // Log all POIs to see what's being kept (especially for debugging duplicates)
-                // Always log if it's a problematic POI or if route is small
-                let cleanedName = GoogleMapsService.cleanPOIDisplayName(place.name).lowercased()
-                let isProblematic = cleanedName.contains("star inn") || cleanedName.contains("war memorial") || cleanedName.contains("lindale methodist church")
-                if isProblematic || places.count <= 10 || index < 3 || index >= places.count - 2 {
-                    print("✅ Route dedup [\(index + 1)/\(places.count)]: Kept '\(place.name)' [\(place.placeId)] (cleaned: '\(cleanedName)')")
+                // v2.0.18: Check for semantic near-duplicates (E) - keep if different category and improves route
+                var shouldKeep = true
+                if let existing = deduplicated.first(where: { existing in
+                    let dist = distanceBetween(place.coordinate, existing.coordinate)
+                    return dist < 25.0 && !sameCategoryFamily(place, existing)
+                }) {
+                    // Different category, very close - keep both (enriches route)
+                    deduplicated.append(place)
+                    dedupTelemetry.semanticKeptPairs += 1
+                    print("✅ Route dedup [\(index + 1)/\(conflatedPlaces.count)]: Kept semantic near-duplicate '\(place.name)' (different category from '\(existing.name)')")
+                    shouldKeep = false
+                }
+                
+                if shouldKeep {
+                    deduplicated.append(place)
                 }
             }
         }
@@ -8643,61 +8939,55 @@ class GoogleMapsService: ObservableObject {
         deduplicated = deduplicateByFingerprint(deduplicated)
         if deduplicated.count < beforeFingerprint {
             let removed = beforeFingerprint - deduplicated.count
+            dedupTelemetry.duplicatesRemoved += removed
             print("🔍 Fingerprint safety net: Removed \(removed) additional near-duplicate(s)")
         }
         
-        // Step 3: Aggressive name-based deduplication (catches same name within 200m)
-        let beforeNameDedup = deduplicated.count
-        deduplicated = debugNearbyNameDupes(deduplicated)
-        if deduplicated.count < beforeNameDedup {
-            let removed = beforeNameDedup - deduplicated.count
-            print("🔍 Name-based deduplication: Removed \(removed) additional duplicate(s) by name")
-        }
-        
-        // Step 4: FINAL AGGRESSIVE PASS - Check ALL pairs again with 250m threshold for same cleaned name
+        // v2.0.18: Step 3: Final pass with enhanced fuzzy matching
         var finalDeduplicated: [PlaceResult] = []
         for place in deduplicated {
-            let nameA = GoogleMapsService.cleanPOIDisplayName(place.name).lowercased()
             var matchedExisting: PlaceResult? = nil
-            let isDuplicate = finalDeduplicated.contains { existing in
-                let nameB = GoogleMapsService.cleanPOIDisplayName(existing.name).lowercased()
-                let distance = distanceBetween(place.coordinate, existing.coordinate)
-                // VERY AGGRESSIVE: same cleaned name within 250m = duplicate (increased from 200m)
-                // This catches cases like "The Star Inn" vs "SE2922 : The Star Inn, Batley Road, Kirkhamgate"
-                if nameA == nameB && nameA.count > 0 && distance <= 250.0 {
+            var isDuplicate = false
+            
+            isDuplicate = finalDeduplicated.contains { existing in
+                var telemetry: DedupTelemetry? = dedupTelemetry
+                let isDup = isRouteDuplicate(place, existing, allPOIs: deduplicated, dedupTelemetry: &telemetry)
+                if isDup {
                     matchedExisting = existing
-                    return true
                 }
-                // Also check unified comparator
-                if isRouteDuplicate(place, existing) {
-                    matchedExisting = existing
-                    return true
-                }
-                return false
+                return isDup
             }
             
             if !isDuplicate {
                 finalDeduplicated.append(place)
             } else if let matched = matchedExisting {
-                let distance = distanceBetween(place.coordinate, matched.coordinate)
-                let nameB = GoogleMapsService.cleanPOIDisplayName(matched.name).lowercased()
-                print("🚫 FINAL AGGRESSIVE: Removed '\(place.name)' [\(place.placeId)] - same cleaned name '\(nameA)' == '\(nameB)' as '\(matched.name)' [\(matched.placeId)] @ \(String(format: "%.1f", distance))m")
+                // Quality check: keep better POI
+                let placeQuality = qualityScore(place)
+                let matchedQuality = qualityScore(matched)
+                if placeQuality > matchedQuality + 0.5, let matchedIndex = finalDeduplicated.firstIndex(where: { $0.placeId == matched.placeId }) {
+                    finalDeduplicated[matchedIndex] = place
+                    print("🔄 Final dedup: Replaced '\(matched.name)' with higher quality '\(place.name)'")
+                } else {
+                    let distance = distanceBetween(place.coordinate, matched.coordinate)
+                    print("🚫 FINAL: Removed '\(place.name)' [\(place.placeId)] - duplicate of '\(matched.name)' [\(matched.placeId)] @ \(String(format: "%.1f", distance))m")
+                }
             }
         }
         
-        if finalDeduplicated.count < deduplicated.count {
-            let removed = deduplicated.count - finalDeduplicated.count
-            print("🔍 Final aggressive pass: Removed \(removed) additional duplicate(s)")
-            deduplicated = finalDeduplicated
-        }
+        deduplicated = finalDeduplicated
         
+        // v2.0.18: Output telemetry (F)
         if deduplicated.count < places.count {
             let removed = places.count - deduplicated.count
+            dedupTelemetry.duplicatesRemoved = removed
             print("🚫 Route deduplication: Removed \(removed) duplicate POI(s) from route (kept \(deduplicated.count) of \(places.count))")
             print("🔍 Final POI list: \(deduplicated.enumerated().map { "\($0+1). \($1.name) [\($1.placeId)]" }.joined(separator: ", "))")
         } else {
             print("✅ Route deduplication: No duplicates found (all \(places.count) POIs unique)")
         }
+        
+        // v2.0.18: Emit deduplication telemetry
+        print("📊 [DEDUP_TELEMETRY] pairs_examined=\(dedupTelemetry.pairsExamined) duplicates_removed=\(dedupTelemetry.duplicatesRemoved) clusters_formed=\(dedupTelemetry.clustersFormed) clusters_with_crossOSM_entities=\(dedupTelemetry.clustersWithCrossOSMEntities) semantic_kept_pairs=\(dedupTelemetry.semanticKeptPairs) alias_matches=\(dedupTelemetry.aliasMatches) brand_matches=\(dedupTelemetry.brandMatches) distance_threshold_used=\(dedupTelemetry.distanceThresholdUsed)")
         
         return deduplicated
     }
