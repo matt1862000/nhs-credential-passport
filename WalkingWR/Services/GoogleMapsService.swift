@@ -456,6 +456,13 @@ struct RoutingToggles {
         return ((minutes + 2) / 5) * 5  // Round to nearest 5
     }
     
+    /// Get current bias table for telemetry (v2.0.16)
+    static func biasTable() -> [String: Double] {
+        return _durationBias.reduce(into: [String: Double]()) { result, pair in
+            result[String(pair.key)] = pair.value
+        }
+    }
+    
     /// Get bias correction for a duration bucket (default 1.0 if not set)
     static func biasFor(duration: Int) -> Double {
         let bucket = durationBucket(for: duration)
@@ -7606,7 +7613,7 @@ class GoogleMapsService: ObservableObject {
             "overshoot_selected_gt_120pct": 0,  // TODO: Aggregate from per-route telemetry
             "per_leg_cap_applied": 0,  // TODO: Aggregate from per-route telemetry
             "cap_after_good_candidate": 0,  // TODO: Aggregate from per-route telemetry
-            "bias_table": "{}",  // TODO: Aggregate duration-bucket bias table
+            "bias_table": RoutingToggles.biasTable(),  // v2.0.16: Duration-bucket bias table
             "sector_quota_used_count": 0  // TODO: Aggregate from per-route telemetry
         ]
         
@@ -12065,7 +12072,9 @@ class GoogleMapsService: ObservableObject {
                         checkHardStop: checkHardStop,  // PHASE A: Pass hard-stop check
                         repairPasses: &repairPasses,  // PHASE D: Pass repair counter
                         budget: budget,  // v2.0.15: Pass budget for timeRemaining checks
-                        startTime: startTime  // v2.0.15: Pass startTime for timeRemaining checks
+                        startTime: startTime,  // v2.0.15: Pass startTime for timeRemaining checks
+                        earlyCommitOpportunity: &earlyCommitOpportunity,  // v2.0.16: Track early commit opportunities
+                        bestSoFarCommitted: &bestSoFarCommitted  // v2.0.16: Track early commits taken
                     ) {
                         let routeMins = route.durationSeconds / 60
                         let estimationError = abs(routeMins - estimatedMins)
@@ -13721,7 +13730,9 @@ class GoogleMapsService: ObservableObject {
         checkHardStop: ((String, String) -> Bool)? = nil,  // PHASE A: Global hard-stop check
         repairPasses: inout Int,  // PHASE D: Track repair passes
         budget: RoutingToggles.Budget? = nil,  // v2.0.15: Budget for timeRemaining checks
-        startTime: Date? = nil  // v2.0.15: Start time for timeRemaining checks
+        startTime: Date? = nil,  // v2.0.15: Start time for timeRemaining checks
+        earlyCommitOpportunity: inout Bool,  // v2.0.16: Track when candidate enters commit band
+        bestSoFarCommitted: inout Bool  // v2.0.16: Track when we actually commit early
     ) async throws -> GeneratedRoute? {
         do {
             let waypointCoords = waypoints.map { $0.coordinate }
@@ -13825,7 +13836,7 @@ class GoogleMapsService: ObservableObject {
                     print("✅ [EARLY EXIT] First valid route found - will short-circuit after 1s grace period")
                 }
                 
-                // v2.0.14: HARD EARLY COMMIT RULE (enhanced - activate more, still safe)
+                // v2.0.16: HARD EARLY COMMIT RULE (enhanced - activate more, still safe)
                 // Commit when in band & WPs met, OR if WPs == min-1 AND a quick repair succeeds
                 // Duration-specific bands: 10-30min → 95-105%, 35-60min → 90-110%
                 // This prevents valid routes from being degraded by later per-leg caps or cascading repairs
@@ -13835,9 +13846,17 @@ class GoogleMapsService: ObservableObject {
                 // Determine target band based on duration
                 let inBandShort = targetDurationMinutes <= 30 && earlyCommitAccuracy >= 0.95 && earlyCommitAccuracy <= 1.05
                 let inBandLong = targetDurationMinutes >= 35 && earlyCommitAccuracy >= 0.90 && earlyCommitAccuracy <= 1.10
-                let goodOrNear = orderedWaypoints.count >= minWP || orderedWaypoints.count == minWP - 1
+                let meetsOrNear = orderedWaypoints.count >= minWP || orderedWaypoints.count == minWP - 1
                 
-                if (inBandShort || inBandLong) && goodOrNear {
+                // v2.0.16: Track early commit opportunity when candidate enters commit band (even if not committed)
+                if (inBandShort || inBandLong) && meetsOrNear {
+                    // Set opportunity if WPs >= min OR (min-1 + successful repair will be checked below)
+                    if orderedWaypoints.count >= minWP {
+                        earlyCommitOpportunity = true
+                    }
+                }
+                
+                if (inBandShort || inBandLong) && meetsOrNear {
                     // Case 1: min-1 WPs - try fast repair if time permits (≥1.2s)
                     if orderedWaypoints.count == minWP - 1 {
                         // v2.0.15: Check timeRemaining >= 1.2s before attempting repair
@@ -13892,6 +13911,9 @@ class GoogleMapsService: ObservableObject {
                                         )
                                         validRoutes.append(repairedRoute)
                                         routeCapture?.addRoute(repairedRoute)
+                                        // v2.0.16: Set telemetry flags on successful commit
+                                        earlyCommitOpportunity = true  // Repair succeeded, so opportunity was taken
+                                        bestSoFarCommitted = true
                                         print("🎯 [EARLY-COMMIT] HARD COMMIT: Returning with repair (\(repairedWPs.count) WPs, \(spurDur/60)min) - skipping caps/trims/repairs/depth")
                                         return finalizeRouteDedup(repairedRoute)
                                     }
@@ -13958,6 +13980,8 @@ class GoogleMapsService: ObservableObject {
                             }
                         }
                         
+                        // v2.0.16: Set telemetry flags on successful commit
+                        bestSoFarCommitted = true
                         // HARD COMMIT: Return immediately, skip ALL further processing (caps/trims/repairs/depth)
                         validRoutes.append(finalRoute)
                         routeCapture?.addRoute(finalRoute)
