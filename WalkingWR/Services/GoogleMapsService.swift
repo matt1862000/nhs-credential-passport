@@ -1459,6 +1459,7 @@ class GoogleMapsService: ObservableObject {
         }
         
         // SPRINT-6: Asymmetric pre-filter bias - keep more sub-100% candidates than over-100%
+        // SPRINT-7: Scale to 70/30 when pool > 40, otherwise 60/40
         // This helps the selector land routes in 90-110% more often
         if accepted.count > 20 {
             // Partition into sub-target and over-target
@@ -1466,9 +1467,10 @@ class GoogleMapsService: ObservableObject {
             let subTarget = accepted.filter { estimateRoundTripMinutes(from: origin, to: $0) <= targetRoundTrip }
             let overTarget = accepted.filter { estimateRoundTripMinutes(from: origin, to: $0) > targetRoundTrip }
             
-            // Keep 60% sub-target, 40% over-target (asymmetric bias toward shorter)
-            let maxSubTarget = max(12, accepted.count * 60 / 100)
-            let maxOverTarget = max(8, accepted.count * 40 / 100)
+            // SPRINT-7: 70/30 for large pools (>40), 60/40 otherwise
+            let (subPct, overPct) = accepted.count > 40 ? (70, 30) : (60, 40)
+            let maxSubTarget = max(12, accepted.count * subPct / 100)
+            let maxOverTarget = max(8, accepted.count * overPct / 100)
             
             // Sort each group by closeness to target
             let sortedSub = subTarget.sorted { poi1, poi2 in
@@ -1489,7 +1491,7 @@ class GoogleMapsService: ObservableObject {
             accepted = biasedSubTarget + biasedOverTarget
             
             if accepted.count < beforeBias {
-                print("🎯 [ASYMMETRIC-BIAS] Reduced from \(beforeBias) to \(accepted.count) candidates (60% sub-target, 40% over-target)")
+                print("🎯 [ASYMMETRIC-BIAS] Reduced from \(beforeBias) to \(accepted.count) candidates (\(subPct)% sub-target, \(overPct)% over-target)")
             }
         }
         
@@ -8721,9 +8723,19 @@ class GoogleMapsService: ObservableObject {
             }
             
             // Step 2: If still below minimum, insert micro-spurs
-            if deduplicatedRoute.places.count < minWaypoints && !allPlaces.isEmpty, let originCoord = origin {
+            // SPRINT-7: Allow up to two micro-spur insertion passes when below minWaypoints
+            var spurTries = 0
+            let maxSpurTries = 2  // SPRINT-7: Up to 2 micro-spur insertion passes
+            
+            while deduplicatedRoute.places.count < minWaypoints 
+                    && spurTries < maxSpurTries 
+                    && !allPlaces.isEmpty, 
+                  let originCoord = origin,
+                  budget?.within() ?? true {  // SPRINT-7: Budget check for each spur pass
+                
+                spurTries += 1
                 let needed = minWaypoints - deduplicatedRoute.places.count
-                print("📍 [WP-MIN] Still below minimum - inserting \(needed) micro-spur(s)")
+                print("📍 [WP-MIN] Spur pass \(spurTries)/\(maxSpurTries): Still below minimum - inserting up to \(needed) micro-spur(s)")
                 
                 // Find nearby POIs not already in route
                 let existingPOIIds = Set(deduplicatedRoute.places.map { $0.placeId })
@@ -8742,6 +8754,12 @@ class GoogleMapsService: ObservableObject {
                     return distanceBetween(originCoord, poi.coordinate) < 800  // Within 800m
                 }
                 
+                // SPRINT-7: If no available POIs left, break early
+                guard !availablePOIs.isEmpty else {
+                    print("📍 [WP-MIN] No more available POIs for micro-spurs - stopping")
+                    break
+                }
+                
                 // Add micro-spurs near start/midpoint
                 var enhancedPlaces = deduplicatedRoute.places
                 let midIndex = max(0, enhancedPlaces.count / 2)
@@ -8751,56 +8769,56 @@ class GoogleMapsService: ObservableObject {
                     distanceBetween($0.coordinate, referencePoint) < distanceBetween($1.coordinate, referencePoint)
                 }
                 
-                for i in 0..<min(needed, sortedPOIs.count) {
+                // SPRINT-7: Insert 1-2 POIs per pass (not all at once)
+                let insertCount = min(2, min(needed, sortedPOIs.count))
+                for i in 0..<insertCount {
                     enhancedPlaces.insert(sortedPOIs[i], at: min(midIndex + i, enhancedPlaces.count))
                     print("📍 [WP-MIN] Inserted micro-spur: \(sortedPOIs[i].name)")
                 }
                 
-                if enhancedPlaces.count >= minWaypoints {
-                    // PHASE D: Track micro-spurs
-                    microSpursAdded = enhancedPlaces.count - deduplicatedRoute.places.count
-                    
-                    // SPRINT-4: Recompute polyline after micro-spur insertion
-                    let sortedEnhanced = enhancedPlaces.sorted { wp1, wp2 in
-                        distanceBetween(originCoord, wp1.coordinate) < distanceBetween(originCoord, wp2.coordinate)
-                    }
-                    
-                    let regenTimeout = RoutingToggles.perCallTimeoutNormal
-                    let (regenResult, didTimeout) = await directionsWithTimeout(
-                        origin: originCoord,
-                        destination: originCoord,
-                        waypoints: sortedEnhanced.map { $0.coordinate },
-                        timeout: regenTimeout,
-                        targetDurationMinutes: targetDurationMinutes,
-                        angularDiversityScore: nil,
-                        postcode: postcode,
-                        checkGlobalHardStop: finalizationHardStopCheck  // SPRINT-5: Universal hard-stop
-                    )
-                    
-                    if let directions = regenResult, !didTimeout {
-                        let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
-                        let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
-                        print("📍 [WP-MIN] Polyline recomputed after micro-spur: \(duration/60)min, \(distance)m")
-                        deduplicatedRoute = GeneratedRoute(
-                            places: sortedEnhanced,
-                            polyline: directions.overviewPolyline.points,
-                            distanceMeters: distance,
-                            durationSeconds: duration,
-                            legs: directions.legs
-                        )
-                    } else {
-                        // Fallback: use enhanced places with original polyline
-                        print("📍 [WP-MIN] Polyline recomputation failed/timeout - using original polyline")
-                        deduplicatedRoute = GeneratedRoute(
-                            places: sortedEnhanced,
-                            polyline: deduplicatedRoute.polyline,
-                            distanceMeters: deduplicatedRoute.distanceMeters,
-                            durationSeconds: deduplicatedRoute.durationSeconds,
-                            legs: deduplicatedRoute.legs
-                        )
-                    }
-                    print("📍 [WP-MIN] Micro-spurs inserted: \(enhancedPlaces.count) waypoints (target: \(minWaypoints))")
+                // Track micro-spurs added
+                microSpursAdded += insertCount
+                
+                // SPRINT-4: Recompute polyline after micro-spur insertion
+                let sortedEnhanced = enhancedPlaces.sorted { wp1, wp2 in
+                    distanceBetween(originCoord, wp1.coordinate) < distanceBetween(originCoord, wp2.coordinate)
                 }
+                
+                let regenTimeout = RoutingToggles.perCallTimeoutNormal
+                let (regenResult, didTimeout) = await directionsWithTimeout(
+                    origin: originCoord,
+                    destination: originCoord,
+                    waypoints: sortedEnhanced.map { $0.coordinate },
+                    timeout: regenTimeout,
+                    targetDurationMinutes: targetDurationMinutes,
+                    angularDiversityScore: nil,
+                    postcode: postcode,
+                    checkGlobalHardStop: finalizationHardStopCheck  // SPRINT-5: Universal hard-stop
+                )
+                
+                if let directions = regenResult, !didTimeout {
+                    let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                    let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                    print("📍 [WP-MIN] Polyline recomputed after micro-spur: \(duration/60)min, \(distance)m")
+                    deduplicatedRoute = GeneratedRoute(
+                        places: sortedEnhanced,
+                        polyline: directions.overviewPolyline.points,
+                        distanceMeters: distance,
+                        durationSeconds: duration,
+                        legs: directions.legs
+                    )
+                } else {
+                    // Fallback: use enhanced places with original polyline
+                    print("📍 [WP-MIN] Polyline recomputation failed/timeout - using original polyline")
+                    deduplicatedRoute = GeneratedRoute(
+                        places: sortedEnhanced,
+                        polyline: deduplicatedRoute.polyline,
+                        distanceMeters: deduplicatedRoute.distanceMeters,
+                        durationSeconds: deduplicatedRoute.durationSeconds,
+                        legs: deduplicatedRoute.legs
+                    )
+                }
+                print("📍 [WP-MIN] After spur pass \(spurTries): \(deduplicatedRoute.places.count) waypoints (target: \(minWaypoints))")
             }
         }
         
@@ -8948,58 +8966,80 @@ class GoogleMapsService: ObservableObject {
                         print("📊 [PER_LEG_CAP_TRIM] worst_leg_min=\(worstLegMins) cap_min=\(perLegCapMinutes) target=\(targetDurationMinutes) new_worst_leg_min=\(newWorstLegMins)")
                         
                         // SPRINT-6: Micro-extend after trim if route fell below 92-95%
+                        // SPRINT-7: Allow a second extend pass if still below 92-93%
                         // This turns hard trims into in-band finishes
-                        if trimmedRatio < 0.95 && !allPlaces.isEmpty {
-                            print("🔧 [POST-TRIM-EXTEND] Route fell to \(String(format: "%.1f", trimmedRatio * 100))% after trim - attempting micro-extend")
+                        var currentRatio = trimmedRatio
+                        var currentWaypoints = trimmedWaypoints
+                        var extendPass = 0
+                        let maxExtendPasses = 2  // SPRINT-7: Up to 2 extend passes
+                        
+                        while currentRatio < 0.95 && extendPass < maxExtendPasses && !allPlaces.isEmpty && (budget?.within() ?? true) {
+                            extendPass += 1
+                            // SPRINT-7: Second pass only if below 92-93%
+                            if extendPass > 1 && currentRatio >= 0.93 {
+                                print("🔧 [POST-TRIM-EXTEND] Ratio \(String(format: "%.1f", currentRatio * 100))% ≥93% - skipping second extend pass")
+                                break
+                            }
+                            
+                            print("🔧 [POST-TRIM-EXTEND] Pass \(extendPass)/\(maxExtendPasses): Route at \(String(format: "%.1f", currentRatio * 100))% - attempting micro-extend")
                             
                             // Find nearby POIs not already in route
-                            let existingIds = Set(trimmedWaypoints.map { $0.placeId })
+                            let existingIds = Set(currentWaypoints.map { $0.placeId })
                             let nearbyPOIs = allPlaces.filter { poi in
                                 !existingIds.contains(poi.placeId) &&
                                 distanceBetween(originCoord, poi.coordinate) < 600  // Within 600m
                             }.sorted { distanceBetween(originCoord, $0.coordinate) < distanceBetween(originCoord, $1.coordinate) }
                             
-                            if let nearestPOI = nearbyPOIs.first {
-                                var extendedWaypoints = trimmedWaypoints
-                                let midIdx = max(0, extendedWaypoints.count / 2)
-                                extendedWaypoints.insert(nearestPOI, at: min(midIdx, extendedWaypoints.count))
+                            guard let nearestPOI = nearbyPOIs.first else {
+                                print("🔧 [POST-TRIM-EXTEND] No more nearby POIs available - stopping")
+                                break
+                            }
+                            
+                            var extendedWaypoints = currentWaypoints
+                            let midIdx = max(0, extendedWaypoints.count / 2)
+                            extendedWaypoints.insert(nearestPOI, at: min(midIdx, extendedWaypoints.count))
+                            
+                            let sortedExtended = extendedWaypoints.sorted { wp1, wp2 in
+                                distanceBetween(originCoord, wp1.coordinate) < distanceBetween(originCoord, wp2.coordinate)
+                            }
+                            
+                            let (extendResult, extendTimeout) = await directionsWithTimeout(
+                                origin: originCoord,
+                                destination: originCoord,
+                                waypoints: sortedExtended.map { $0.coordinate },
+                                timeout: RoutingToggles.perCallTimeoutNormal,
+                                targetDurationMinutes: targetDurationMinutes,
+                                angularDiversityScore: nil,
+                                postcode: postcode,
+                                checkGlobalHardStop: finalizationHardStopCheck
+                            )
+                            
+                            if let extendDirs = extendResult, !extendTimeout {
+                                let extendedDuration = extendDirs.legs.reduce(0) { $0 + $1.duration.value }
+                                let extendedDistance = extendDirs.legs.reduce(0) { $0 + $1.distance.value }
+                                let extendedMins = extendedDuration / 60
+                                let extendedRatio = Double(extendedMins) / Double(targetDurationMinutes)
                                 
-                                let sortedExtended = extendedWaypoints.sorted { wp1, wp2 in
-                                    distanceBetween(originCoord, wp1.coordinate) < distanceBetween(originCoord, wp2.coordinate)
+                                // Accept if improved and within 92-115%
+                                if extendedRatio >= 0.92 && extendedRatio <= 1.15 && extendedRatio > currentRatio {
+                                    print("🔧 [POST-TRIM-EXTEND] ✅ Pass \(extendPass): Extended to \(extendedMins)min (\(String(format: "%.1f", extendedRatio * 100))%)")
+                                    finalRoute = GeneratedRoute(
+                                        places: sortedExtended,
+                                        polyline: extendDirs.overviewPolyline.points,
+                                        distanceMeters: extendedDistance,
+                                        durationSeconds: extendedDuration,
+                                        legs: extendDirs.legs
+                                    )
+                                    currentWaypoints = sortedExtended
+                                    currentRatio = extendedRatio
+                                    microSpursAdded += 1
+                                } else {
+                                    print("🔧 [POST-TRIM-EXTEND] Pass \(extendPass): Extended to \(extendedMins)min (\(String(format: "%.1f", extendedRatio * 100))%) - outside target or no improvement, stopping")
+                                    break
                                 }
-                                
-                                let (extendResult, extendTimeout) = await directionsWithTimeout(
-                                    origin: originCoord,
-                                    destination: originCoord,
-                                    waypoints: sortedExtended.map { $0.coordinate },
-                                    timeout: RoutingToggles.perCallTimeoutNormal,
-                                    targetDurationMinutes: targetDurationMinutes,
-                                    angularDiversityScore: nil,
-                                    postcode: postcode,
-                                    checkGlobalHardStop: finalizationHardStopCheck
-                                )
-                                
-                                if let extendDirs = extendResult, !extendTimeout {
-                                    let extendedDuration = extendDirs.legs.reduce(0) { $0 + $1.duration.value }
-                                    let extendedDistance = extendDirs.legs.reduce(0) { $0 + $1.distance.value }
-                                    let extendedMins = extendedDuration / 60
-                                    let extendedRatio = Double(extendedMins) / Double(targetDurationMinutes)
-                                    
-                                    // Accept if improved and within 92-115%
-                                    if extendedRatio >= 0.92 && extendedRatio <= 1.15 && extendedRatio > trimmedRatio {
-                                        print("🔧 [POST-TRIM-EXTEND] ✅ Extended from \(trimmedMins)min to \(extendedMins)min (\(String(format: "%.1f", extendedRatio * 100))%)")
-                                        finalRoute = GeneratedRoute(
-                                            places: sortedExtended,
-                                            polyline: extendDirs.overviewPolyline.points,
-                                            distanceMeters: extendedDistance,
-                                            durationSeconds: extendedDuration,
-                                            legs: extendDirs.legs
-                                        )
-                                        microSpursAdded += 1
-                                    } else {
-                                        print("🔧 [POST-TRIM-EXTEND] Extended to \(extendedMins)min (\(String(format: "%.1f", extendedRatio * 100))%) - outside target, keeping trimmed")
-                                    }
-                                }
+                            } else {
+                                print("🔧 [POST-TRIM-EXTEND] Pass \(extendPass): Engine call failed/timeout - stopping")
+                                break
                             }
                         }
                     } else {
@@ -11100,6 +11140,7 @@ class GoogleMapsService: ObservableObject {
         
         var totalAttempts = 0
         // v2.0.3: Duration-based attempt caps to control tail latency
+        // SPRINT-7: Tighter caps for 35-60 min routes to steady p95 without harming quality
         let maxTotalAttempts: Int
         if quickMode {
             // Quick mode: use duration-based caps
@@ -11107,10 +11148,10 @@ class GoogleMapsService: ObservableObject {
             switch targetDurationMinutes {
             case 10...20:
                 durationBasedCap = 30  // v2.0.3: Cap at 30 attempts
-            case 21...45:
+            case 21...34:
                 durationBasedCap = 40  // v2.0.3: Cap at 40 attempts
-            case 46...60:
-                durationBasedCap = 50  // v2.0.3: Cap at 50 attempts
+            case 35...60:
+                durationBasedCap = 25  // SPRINT-7: Tighter cap for 35-60 min routes (was 40-50)
             default:
                 durationBasedCap = loopAttemptsLimit  // Fallback for edge cases
             }
@@ -11122,10 +11163,10 @@ class GoogleMapsService: ObservableObject {
             switch targetDurationMinutes {
             case 10...20:
                 durationBasedCap = 30
-            case 21...45:
+            case 21...34:
                 durationBasedCap = 40
-            case 46...60:
-                durationBasedCap = 50
+            case 35...60:
+                durationBasedCap = 25  // SPRINT-7: Tighter cap for 35-60 min routes
             default:
                 durationBasedCap = 20
             }
@@ -11136,10 +11177,10 @@ class GoogleMapsService: ObservableObject {
             switch targetDurationMinutes {
             case 10...20:
                 durationBasedCap = 30
-            case 21...45:
+            case 21...34:
                 durationBasedCap = 40
-            case 46...60:
-                durationBasedCap = 50
+            case 35...60:
+                durationBasedCap = 25  // SPRINT-7: Tighter cap for 35-60 min routes
             default:
                 durationBasedCap = 15
             }
@@ -11150,10 +11191,10 @@ class GoogleMapsService: ObservableObject {
             switch targetDurationMinutes {
             case 10...20:
                 durationBasedCap = 30
-            case 21...45:
+            case 21...34:
                 durationBasedCap = 40
-            case 46...60:
-                durationBasedCap = 50
+            case 35...60:
+                durationBasedCap = 25  // SPRINT-7: Tighter cap for 35-60 min routes
             default:
                 durationBasedCap = 10
             }
@@ -11851,6 +11892,11 @@ class GoogleMapsService: ObservableObject {
                     overrunPenalty = (accuracy - 1.15) * 50  // Steep penalty after 115%
                 }
                 
+                // SPRINT-7: Right-edge penalty for ratio > 1.10 (penalize routes at right edge of tolerance band)
+                // This helps ties avoid the 105-110% zone where we see overshoot clustering
+                let rightEdgePenalty = accuracy > 1.10 ? 0.01 : 0.0
+                overrunPenalty += rightEdgePenalty
+                
                 // SPRINT-6: Overshoot penalty ×2.5 for routes with <min waypoints (prefer 95-105% fits with ≥min WPs)
                 let minWaypoints = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
                 if route.places.count < minWaypoints && accuracy > 1.05 {
@@ -11864,7 +11910,10 @@ class GoogleMapsService: ObservableObject {
                 }
                 
                 // SPRINT-6: Waypoint bonus (more waypoints = better route variety)
-                let waypointBonus = Double(route.places.count) * RoutingToggles.waypointScoreBonus
+                // SPRINT-7: Conditional bonus - add +0.02 per WP when route is within ±10% of target
+                let isCloseFit = abs(1.0 - accuracy) <= 0.10  // Within 90-110%
+                let effectiveWPBonus = RoutingToggles.waypointScoreBonus + (isCloseFit ? 0.02 : 0.0)  // 0.08 + 0.02 = 0.10 for close fits
+                let waypointBonus = Double(route.places.count) * effectiveWPBonus
                 
                 return (route, backtrack, overrunPenalty, subTargetBonus, waypointBonus)
             }
