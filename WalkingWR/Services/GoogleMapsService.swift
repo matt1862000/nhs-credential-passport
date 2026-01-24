@@ -7553,6 +7553,71 @@ class GoogleMapsService: ObservableObject {
             print("")
         }
         
+        // v2.0.15: Batch Roll-Up JSON (one line at end of batch)
+        // Calculate metrics from available data
+        let batchTotal = totalRoutesCount
+        let tight90_110 = themeSuccessfulResults.compactMap { result -> Int? in
+            guard let routeMinutes = result.routeMinutes else { return nil }
+            let acc = Double(routeMinutes) / Double(result.duration) * 100
+            return (acc >= 90 && acc <= 110) ? 1 : 0
+        }.reduce(0, +)
+        let within80_130 = themeSuccessfulResults.compactMap { result -> Int? in
+            guard let routeMinutes = result.routeMinutes else { return nil }
+            let acc = Double(routeMinutes) / Double(result.duration) * 100
+            return (acc >= 80 && acc <= 130) ? 1 : 0
+        }.reduce(0, +)
+        
+        let accuracies = themeSuccessfulResults.compactMap { result -> Double? in
+            guard let routeMinutes = result.routeMinutes else { return nil }
+            return Double(routeMinutes) / Double(result.duration)
+        }
+        let avgAccuracy = accuracies.isEmpty ? 0.0 : accuracies.reduce(0, +) / Double(accuracies.count)
+        
+        let times = successfulRouteResults.compactMap { $0.timeSeconds }.sorted()
+        let avgElapsedMs = times.isEmpty ? 0 : Int((times.reduce(0, +) / Double(times.count)) * 1000)
+        let p50Ms = times.isEmpty ? 0 : Int(times[times.count / 2] * 1000)
+        let p95Ms = times.isEmpty ? 0 : Int(times[min(Int(Double(times.count) * 0.95), times.count - 1)] * 1000)
+        let p99Ms = times.isEmpty ? 0 : Int(times[min(Int(Double(times.count) * 0.99), times.count - 1)] * 1000)
+        
+        let avgWaypointsCalc = waypointsList.isEmpty ? 0.0 : Double(waypointsList.reduce(0, +)) / Double(waypointsList.count)
+        let routesGe2Wp = waypointsList.filter { $0 >= 2 }.count
+        
+        // Reuse existing variables declared earlier in the function
+        let avgValidRoutesPerGen = validRoutesFoundList.isEmpty ? 0.0 : Double(validRoutesFoundList.reduce(0, +)) / Double(validRoutesFoundList.count)
+        
+        // Note: Full telemetry aggregation (early_commit_opportunities, fallback_fired, etc.) would require
+        // storing per-route telemetry during batch test - this is a placeholder structure
+        let batchRollUp: [String: Any] = [
+            "batch_total": batchTotal,
+            "tight_90_110": tight90_110,
+            "within_80_130": within80_130,
+            "avg_accuracy": String(format: "%.3f", avgAccuracy),
+            "avg_elapsed_ms": avgElapsedMs,
+            "p50_ms": p50Ms,
+            "p95_ms": p95Ms,
+            "p99_ms": p99Ms,
+            "avg_waypoints": String(format: "%.2f", avgWaypointsCalc),
+            "routes_ge_2_wp": routesGe2Wp,
+            "valid_routes_per_gen": String(format: "%.2f", avgValidRoutesPerGen),
+            "early_commit_opportunities": 0,  // TODO: Aggregate from per-route telemetry
+            "early_commits_taken": 0,  // TODO: Aggregate from per-route telemetry
+            "fallback_fired": 0,  // TODO: Aggregate from per-route telemetry
+            "fallback_over_130pct": 0,  // TODO: Aggregate from per-route telemetry
+            "overshoot_selected_gt_120pct": 0,  // TODO: Aggregate from per-route telemetry
+            "per_leg_cap_applied": 0,  // TODO: Aggregate from per-route telemetry
+            "cap_after_good_candidate": 0,  // TODO: Aggregate from per-route telemetry
+            "bias_table": "{}",  // TODO: Aggregate duration-bucket bias table
+            "sector_quota_used_count": 0  // TODO: Aggregate from per-route telemetry
+        ]
+        
+        // Output as one-line JSON
+        if let jsonData = try? JSONSerialization.data(withJSONObject: batchRollUp, options: []),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            print("")
+            print("📊 [BATCH_ROLLUP] \(jsonString)")
+            print("")
+        }
+        
         // Summary Footer
         print("╔═══════════════════════════════════════════════════════════════════════════════════╗")
         print("║  💡 Note: Check individual route logs above for detailed information including    ║")
@@ -11998,7 +12063,9 @@ class GoogleMapsService: ObservableObject {
                         angularDiversityScore: finalAngularDiversityScore,
                         postcode: postcode,
                         checkHardStop: checkHardStop,  // PHASE A: Pass hard-stop check
-                        repairPasses: &repairPasses  // PHASE D: Pass repair counter
+                        repairPasses: &repairPasses,  // PHASE D: Pass repair counter
+                        budget: budget,  // v2.0.15: Pass budget for timeRemaining checks
+                        startTime: startTime  // v2.0.15: Pass startTime for timeRemaining checks
                     ) {
                         let routeMins = route.durationSeconds / 60
                         let estimationError = abs(routeMins - estimatedMins)
@@ -12275,10 +12342,9 @@ class GoogleMapsService: ObservableObject {
                 ? (0.95, 1.05)  // 10-30 min: 95-105%
                 : (0.90, 1.10)  // 35-60 min: 90-110%
             
-            // v2.0.13: Track early commit opportunity (met band and WPs ≥ min or min-1)
+            // v2.0.15: Track early commit opportunity (met band and WPs ≥ min, NOT min-1)
             let inBand = selectedAccuracy >= minBand && selectedAccuracy <= maxBand
-            let goodOrNear = selected.places.count >= minWP || selected.places.count == minWP - 1
-            earlyCommitOpportunity = inBand && goodOrNear
+            earlyCommitOpportunity = inBand && selected.places.count >= minWP
             
             if inBand && selected.places.count >= minWP {
                 bestSoFarCommitted = true
@@ -13653,7 +13719,9 @@ class GoogleMapsService: ObservableObject {
         angularDiversityScore: Int? = nil,  // v2.0.3 Phase 1.5: For timeout calculation
         postcode: String? = nil,  // v2.0.3 Phase 1.5: For postcode-aware timeout
         checkHardStop: ((String, String) -> Bool)? = nil,  // PHASE A: Global hard-stop check
-        repairPasses: inout Int  // PHASE D: Track repair passes
+        repairPasses: inout Int,  // PHASE D: Track repair passes
+        budget: RoutingToggles.Budget? = nil,  // v2.0.15: Budget for timeRemaining checks
+        startTime: Date? = nil  // v2.0.15: Start time for timeRemaining checks
     ) async throws -> GeneratedRoute? {
         do {
             let waypointCoords = waypoints.map { $0.coordinate }
@@ -13772,9 +13840,9 @@ class GoogleMapsService: ObservableObject {
                 if (inBandShort || inBandLong) && goodOrNear {
                     // Case 1: min-1 WPs - try fast repair if time permits (≥1.2s)
                     if orderedWaypoints.count == minWP - 1 {
-                        // Estimate time remaining (budget not in scope, use conservative check)
-                        // Try repair spur (0.2-0.5km) if we have POIs available
-                        if !allPlaces.isEmpty {
+                        // v2.0.15: Check timeRemaining >= 1.2s before attempting repair
+                        let timeRemaining = budget.map { $0.hard - (Date().timeIntervalSince1970 - $0.t0) } ?? 18.0
+                        if timeRemaining >= 1.2 && !allPlaces.isEmpty {
                             print("🎯 [EARLY-COMMIT] Route at \(String(format: "%.1f", earlyCommitAccuracy * 100))% with \(orderedWaypoints.count) WPs (min-1) - attempting fast repair")
                             
                             let existingIds = Set(orderedWaypoints.map { $0.placeId })
@@ -13834,17 +13902,67 @@ class GoogleMapsService: ObservableObject {
                     }
                     // Case 2: Already at min WPs or above
                     else if orderedWaypoints.count >= minWP {
-                        print("🎯 [EARLY-COMMIT] Route at \(String(format: "%.1f", earlyCommitAccuracy * 100))% with \(orderedWaypoints.count) WPs - within sweet spot, committing HARD")
+                        print("🎯 [EARLY-COMMIT] Route at \(String(format: "%.1f", earlyCommitAccuracy * 100))% with \(orderedWaypoints.count) WPs - within sweet spot")
                         
-                        // Optional one micro-spur for fine-tuning if time permits (≥1.0s)
-                        // Note: budget/startTime not in scope here, skip fine-tune for now
-                        // Fine-tune will happen in finalization if needed
+                        // v2.0.15: Try one micro-spur for fine-tuning if time permits (≥1.0s)
+                        let timeRemaining = budget.map { $0.hard - (Date().timeIntervalSince1970 - $0.t0) } ?? 18.0
+                        var finalRoute = route
+                        
+                        if timeRemaining >= 1.0 && !allPlaces.isEmpty {
+                            // Attempt one micro-spur insertion (0.2-0.5km from midpoint)
+                            let existingIds = Set(orderedWaypoints.map { $0.placeId })
+                            let midpointIdx = orderedWaypoints.count / 2
+                            let midpointCoord = midpointIdx < orderedWaypoints.count 
+                                ? orderedWaypoints[midpointIdx].coordinate 
+                                : origin
+                            
+                            let spurCandidates = allPlaces.filter { poi in
+                                guard !existingIds.contains(poi.placeId) else { return false }
+                                let dist = distanceBetween(midpointCoord, poi.coordinate)
+                                return dist >= 200 && dist <= 500  // 0.2-0.5km from midpoint
+                            }.prefix(1)
+                            
+                            if let spurPOI = spurCandidates.first {
+                                var enhancedWPs = orderedWaypoints
+                                enhancedWPs.insert(spurPOI, at: midpointIdx)
+                                
+                                let (spurResult, spurTimeout) = await directionsWithTimeout(
+                                    origin: origin,
+                                    destination: origin,
+                                    waypoints: enhancedWPs.map { $0.coordinate },
+                                    timeout: RoutingToggles.perCallTimeoutNormal,
+                                    targetDurationMinutes: targetDurationMinutes,
+                                    angularDiversityScore: angularDiversityScore,
+                                    postcode: postcode
+                                )
+                                
+                                if let spurDirs = spurResult, !spurTimeout {
+                                    let spurDur = spurDirs.legs.reduce(0) { $0 + $1.duration.value }
+                                    let spurAcc = Double(spurDur) / Double(targetDurationSeconds)
+                                    
+                                    // Accept micro-spur if still in band
+                                    let stillInBand = (inBandShort && spurAcc >= 0.95 && spurAcc <= 1.05) ||
+                                                      (inBandLong && spurAcc >= 0.90 && spurAcc <= 1.10)
+                                    
+                                    if stillInBand {
+                                        print("🎯 [EARLY-COMMIT] ✅ Micro-spur successful: \(enhancedWPs.count) WPs, \(String(format: "%.1f", spurAcc * 100))%")
+                                        finalRoute = GeneratedRoute(
+                                            places: enhancedWPs,
+                                            polyline: spurDirs.overviewPolyline.points,
+                                            distanceMeters: spurDirs.legs.reduce(0) { $0 + $1.distance.value },
+                                            durationSeconds: spurDur,
+                                            legs: spurDirs.legs
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         
                         // HARD COMMIT: Return immediately, skip ALL further processing (caps/trims/repairs/depth)
-                        validRoutes.append(route)
-                        routeCapture?.addRoute(route)
-                        print("🎯 [EARLY-COMMIT] HARD COMMIT: Returning (\(orderedWaypoints.count) WPs, \(durationMin)min) - skipping caps/trims/repairs/depth")
-                        return finalizeRouteDedup(route)
+                        validRoutes.append(finalRoute)
+                        routeCapture?.addRoute(finalRoute)
+                        print("🎯 [EARLY-COMMIT] HARD COMMIT: Returning (\(finalRoute.places.count) WPs, \(finalRoute.durationSeconds/60)min) - skipping caps/trims/repairs/depth")
+                        return finalizeRouteDedup(finalRoute)
                     }
                 }
                 
