@@ -421,10 +421,65 @@ struct RoutingToggles {
     
     // SPRINT-6: Selection scoring nudges
     // SPRINT-7 CONFIG TWEAKS: Amplified selection scoring
+    // SPRINT-8: Hinged overshoot penalty + early commit
     static let overshootPenaltyMultiplier = 3.0            // TWEAK 1: Increased from 2.5 → 3.0 (make >110% noticeably worse)
     static let subTargetBonus = 0.05                       // TWEAK 1: Increased from 0.01 → 0.05 (undershoot slightly preferred)
     static let waypointScoreBonus = 0.10                   // TWEAK 1: Increased from 0.08 → 0.10 (reward hitting WP minimums)
-    static let underWPPenalty = 1.0                        // TWEAK 3: Penalty for routes below minWaypoints
+    static let underWPPenalty = 1.5                        // SPRINT-8: Increased from 1.0 → 1.5 (heavier penalty for under-WP)
+    static let overshootHingeThreshold = 1.20              // SPRINT-8: Extra steep penalty above 120%
+    static let overshootHingePenaltyMultiplier = 60.0      // SPRINT-8: Multiplier for 120%+ hinge section
+    static let earlyCommitMinAccuracy = 0.95               // SPRINT-8: Early commit if accuracy ≥ 95%
+    static let earlyCommitMaxAccuracy = 1.05               // SPRINT-8: Early commit if accuracy ≤ 105%
+    static let sectorQuotaEnabled = true                   // SPRINT-8: Enable bearing sector quotas
+    static let sectorQuotaCount = 2                        // SPRINT-8: Max candidates per 90° sector
+    static let sectorCount = 4                             // SPRINT-8: Number of sectors (4 = 90° each)
+    
+    // SPRINT-8: Duration-bucket bias correction (global, no postcode)
+    // Initial biases based on test data showing ~117% average overshoot
+    // Short routes (10-20m) tend to overshoot less, long routes (35-60m) overshoot more
+    private static var _durationBias: [Int: Double] = [
+        10: 1.05,   // Short routes: slight overcorrection
+        15: 1.08,   // 
+        20: 1.10,   // Medium-short: moderate correction
+        25: 1.12,   // 
+        30: 1.14,   // Medium: significant correction
+        35: 1.16,   // Medium-long: heavy correction (these overshoot most)
+        40: 1.17,   // 
+        45: 1.18,   // 
+        50: 1.18,   // Long routes: plateau 
+        55: 1.17,   // 
+        60: 1.16    // Longest routes: slight reduction (less overshoot observed)
+    ]
+    
+    /// Get duration bucket (rounds to nearest 5-min bucket)
+    static func durationBucket(for minutes: Int) -> Int {
+        return ((minutes + 2) / 5) * 5  // Round to nearest 5
+    }
+    
+    /// Get bias correction for a duration bucket (default 1.0 if not set)
+    static func biasFor(duration: Int) -> Double {
+        let bucket = durationBucket(for: duration)
+        return _durationBias[bucket] ?? 1.0
+    }
+    
+    /// Update bias for a duration bucket (call after route completion with actual/target ratio)
+    static func updateBias(duration: Int, actualRatio: Double) {
+        let bucket = durationBucket(for: duration)
+        let currentBias = _durationBias[bucket] ?? 1.0
+        // Exponential moving average with alpha = 0.1 (slow adaptation)
+        let alpha = 0.1
+        let newBias = (1.0 - alpha) * currentBias + alpha * actualRatio
+        // Clamp to reasonable range [0.8, 1.3]
+        _durationBias[bucket] = max(0.8, min(1.3, newBias))
+    }
+    
+    /// Apply bias correction to target duration
+    static func correctedTarget(for targetMinutes: Int) -> Int {
+        let bias = biasFor(duration: targetMinutes)
+        if bias == 1.0 { return targetMinutes }
+        let corrected = Double(targetMinutes) / bias
+        return max(5, Int(corrected.rounded()))
+    }
     
     // TASK 6: Template fallback for fragile durations
     static let templateFallbackDurations = [10, 25, 45]    // Durations needing templates
@@ -8727,8 +8782,21 @@ class GoogleMapsService: ObservableObject {
             // Step 2: If still below minimum, insert micro-spurs
             // SPRINT-7: Allow up to two micro-spur insertion passes when below minWaypoints
             // SPRINT-7 HOTFIX: Add time-remaining check to avoid enqueueing work near hard stop
+            // SPRINT-8: Conditional spur passes based on time and accuracy
             var spurTries = 0
-            let maxSpurTries = 3  // TWEAK 2: Increased from 2 → 3 micro-spur passes
+            let routeAccuracy = Double(deduplicatedRoute.durationSeconds) / Double(targetDurationMinutes * 60)
+            let timeRemainingForCondition = budget.map { $0.hard - (Date().timeIntervalSince1970 - $0.t0) } ?? 18.0
+            
+            // SPRINT-8: Allow 3 spur passes only in safe conditions, otherwise limit to 1
+            let maxSpurTries: Int = {
+                if timeRemainingForCondition >= 1.2 && routeAccuracy >= 0.80 && routeAccuracy <= 1.40 {
+                    return 3  // Safe conditions: allow full 3 passes
+                } else {
+                    return 1  // Conservative: just 1 pass
+                }
+            }()
+            print("📍 [WP-MIN] Spur config: maxPasses=\(maxSpurTries) (timeRemaining=\(String(format: "%.1f", timeRemainingForCondition))s, accuracy=\(String(format: "%.1f", routeAccuracy * 100))%)")
+            
             let minTimeForSpur: TimeInterval = 1.2  // TWEAK 2: Increased from 0.5s → 1.2s (more conservative)
             
             while deduplicatedRoute.places.count < minWaypoints 
@@ -9670,6 +9738,14 @@ class GoogleMapsService: ObservableObject {
         var stageExited: String = "none"  // SPRINT-6: Track which stage caused exit
         var perLegOverCap = false         // SPRINT-6: Track if any leg exceeded 50% of target
         
+        // SPRINT-8: New telemetry fields
+        var bestSoFarCommitted = false    // SPRINT-8: Did we commit early (95-105%)?
+        var biasApplied: Double = 1.0     // SPRINT-8: Duration bias applied
+        var repairAttempted = false       // SPRINT-8: Did we attempt WP repair?
+        var repairSucceeded = false       // SPRINT-8: Did repair meet minWP?
+        var hingePenaltyFired = false     // SPRINT-8: Did hinged penalty (>120%) fire?
+        var sectorQuotaUsed = false       // SPRINT-8: Were sector quotas applied?
+        
         // Helper to check elapsed time and trigger hard-wall if needed
         func checkHardWall(context: String) -> Bool {
             let elapsed = Date().timeIntervalSince(startTime)
@@ -9760,6 +9836,10 @@ class GoogleMapsService: ObservableObject {
         let maxAcceptableMinutes = Int(Double(targetDurationMinutes) * maxPercent)
         let minAcceptableDuration = minAcceptableMinutes * 60
         let maxAcceptableDuration = maxAcceptableMinutes * 60
+        
+        // SPRINT-8: Record bias applied for this duration bucket (for telemetry)
+        biasApplied = RoutingToggles.biasFor(duration: targetDurationMinutes)
+        print("🎯 [BIAS] Duration bucket \(RoutingToggles.durationBucket(for: targetDurationMinutes))min → bias=\(String(format: "%.3f", biasApplied))")
         
         let modeLabel = isQuickMode ? "⚡ QUICK" : (expandedSearch ? "EXPANDED" : "SYSTEMATIC")
         print("🗺️ \(modeLabel): \(minAcceptableMinutes)min to \(maxAcceptableMinutes)min (\(Int(minPercent * 100))-\(Int(maxPercent * 100))% of \(targetDurationMinutes)min)")
@@ -11545,6 +11625,45 @@ class GoogleMapsService: ObservableObject {
                 continue
             }
             
+            // SPRINT-8: SECTOR QUOTA - Diversify first-layer by bearing sectors
+            // Goal: Increase valid-route diversity by ensuring POIs from multiple directions
+            var sectorDiversifiedCandidates = candidatesForCount
+            if RoutingToggles.sectorQuotaEnabled && waypointCount >= 2 {
+                sectorQuotaUsed = true
+                let sectorCount = RoutingToggles.sectorCount  // 4 sectors (90° each)
+                let quotaPerSector = RoutingToggles.sectorQuotaCount  // 2 per sector
+                
+                // Group by sector
+                var sectors: [[PlaceResult]] = Array(repeating: [], count: sectorCount)
+                for poi in candidatesForCount {
+                    let bearing = bearingBetween(location, poi.coordinate)
+                    // Convert bearing (-180 to 180) to sector index (0 to sectorCount-1)
+                    let normalizedBearing = bearing < 0 ? bearing + 360 : bearing
+                    let sectorIdx = Int(normalizedBearing / (360.0 / Double(sectorCount))) % sectorCount
+                    sectors[sectorIdx].append(poi)
+                }
+                
+                // Select up to quota from each sector
+                var diversified: [PlaceResult] = []
+                for (idx, sector) in sectors.enumerated() {
+                    let selected = Array(sector.prefix(quotaPerSector))
+                    diversified.append(contentsOf: selected)
+                    if !selected.isEmpty {
+                        print("🧭 [SECTOR-\(idx)] Selected \(selected.count) POIs: \(selected.prefix(2).map { $0.name }.joined(separator: ", "))")
+                    }
+                }
+                
+                // Add remaining POIs not in diversified set
+                let diversifiedIds = Set(diversified.map { $0.placeId })
+                let remaining = candidatesForCount.filter { !diversifiedIds.contains($0.placeId) }
+                sectorDiversifiedCandidates = diversified + remaining
+                
+                print("🧭 [SECTOR-QUOTA] Diversified \(candidatesForCount.count) → \(diversified.count) first-layer + \(remaining.count) remaining")
+            }
+            
+            // Use sector-diversified candidates for combination collection
+            let finalCandidates = sectorDiversifiedCandidates
+            
             // SPRINT-4: K-BEST PRE-SCREENING with Pareto set
             // Collect candidates, build Pareto set from estimates, then only route top k=3
             let kBestK = RoutingToggles.kBestK  // k=3: Only route top 3 from Pareto set
@@ -11560,11 +11679,11 @@ class GoogleMapsService: ObservableObject {
             }
             
             // --- Phase 1: COLLECT diverse-first combinations ---
-            let diverseFirstCount = min(8, candidatesForCount.count)
+            let diverseFirstCount = min(8, finalCandidates.count)
             for _ in 0..<diverseFirstCount {
                 let minSpacing = (finalAngularDiversityScore == 2) ? 60.0 : nil
                 let selectedWaypoints = selectAngularlyDiverseWaypoints(
-                    from: candidatesForCount,
+                    from: finalCandidates,
                     origin: location,
                     count: waypointCount,
                     enforceMinSpacing: minSpacing
@@ -11578,10 +11697,10 @@ class GoogleMapsService: ObservableObject {
             
             // --- Phase 2: COLLECT weighted-random combinations (if not quick mode) ---
             if !quickMode {
-                let weightedRandomCount = min(16, candidatesForCount.count)
+                let weightedRandomCount = min(16, finalCandidates.count)
                 for _ in 0..<weightedRandomCount {
                     var selectedWaypoints: [PlaceResult] = []
-                    var availableIndices = Array(0..<candidatesForCount.count)
+                    var availableIndices = Array(0..<finalCandidates.count)
                     
                     for _ in 0..<waypointCount {
                         guard !availableIndices.isEmpty else { break }
@@ -11602,7 +11721,7 @@ class GoogleMapsService: ObservableObject {
                         }
                         
                         let candidateIndex = availableIndices[selectedIdx]
-                        selectedWaypoints.append(candidatesForCount[candidateIndex])
+                        selectedWaypoints.append(finalCandidates[candidateIndex])
                         availableIndices.remove(at: selectedIdx)
                     }
                     
@@ -11907,18 +12026,24 @@ class GoogleMapsService: ObservableObject {
             let routesWithScores = validRoutes.map { route -> (route: GeneratedRoute, backtrackScore: Double, overrunPenalty: Double, subTargetBonus: Double, waypointBonus: Double) in
                 let backtrack = calculateBacktrackingScore(polyline: route.polyline)
                 
-                // SOFT CAP OVERRUN PENALTY: Routes >110% get penalized (TWEAK 1: lowered from 115%)
-                // TWEAK 1: Start penalty at 110% instead of 115% to reduce overshoot clustering
-                // 120% loses 3 points, 130% loses 6 points (using w_overshoot = 3.0)
+                // SPRINT-8: HINGED OVERRUN PENALTY
+                // Routes >110% get penalized, routes >120% get EXTRA steep penalty
+                // This prevents selecting 120-180% candidates when 85-105% exist
                 let accuracy = Double(route.durationSeconds / 60) / Double(targetDurationMinutes)
                 var overrunPenalty = 0.0
+                
+                // First hinge: penalty starts at 110%
                 if accuracy > 1.10 {
-                    overrunPenalty = (accuracy - 1.10) * 30  // TWEAK 1: w_overshoot ≈ 3.0 (30 per 10%)
+                    overrunPenalty = (accuracy - 1.10) * 30  // ~3.0 penalty per 10%
                 }
                 
-                // SPRINT-7: Right-edge penalty for ratio > 1.10 (penalize routes at right edge of tolerance band)
-                // TWEAK 1: Increased from 0.01 → 0.5 to make >110% noticeably worse
-                // This helps ties avoid the 105-110% zone where we see overshoot clustering
+                // Second hinge: EXTRA STEEP penalty above 120%
+                if accuracy > RoutingToggles.overshootHingeThreshold {
+                    let hingeExcess = accuracy - RoutingToggles.overshootHingeThreshold
+                    overrunPenalty += hingeExcess * RoutingToggles.overshootHingePenaltyMultiplier  // ~6.0 extra per 10%
+                }
+                
+                // Right-edge penalty for ratio > 1.10
                 let rightEdgePenalty = accuracy > 1.10 ? 0.5 : 0.0
                 overrunPenalty += rightEdgePenalty
                 
@@ -11949,6 +12074,15 @@ class GoogleMapsService: ObservableObject {
                 return (route, backtrack, overrunPenalty, subTargetBonus, waypointBonus)
             }
             
+            // SPRINT-8: Check if any route had hinge penalty (>120%)
+            for routeWithScore in routesWithScores {
+                let acc = Double(routeWithScore.route.durationSeconds / 60) / Double(targetDurationMinutes)
+                if acc > RoutingToggles.overshootHingeThreshold {
+                    hingePenaltyFired = true
+                    break
+                }
+            }
+            
             // SPRINT-6: Composite scoring with sub-target bonus and waypoint bonus
             // Sort by: composite score (lower is better), then closest to target
             let sorted = routesWithScores.sorted { r1, r2 in
@@ -11964,6 +12098,26 @@ class GoogleMapsService: ObservableObject {
                 if abs(score1 - score2) > 0.05 {
                     return score1 < score2
                 }
+                
+                // SPRINT-8: In close ties (score diff < 0.2), prefer the one closer to 1.0
+                // and if equal distance, prefer sub-100% (easier to extend)
+                if abs(score1 - score2) < 0.2 {
+                    let acc1 = Double(r1.route.durationSeconds / 60) / Double(targetDurationMinutes)
+                    let acc2 = Double(r2.route.durationSeconds / 60) / Double(targetDurationMinutes)
+                    let dist1 = abs(1.0 - acc1)
+                    let dist2 = abs(1.0 - acc2)
+                    if abs(dist1 - dist2) > 0.01 {
+                        return dist1 < dist2  // Closer to 1.0 wins
+                    }
+                    // If equally close, prefer sub-100% (easier to extend later)
+                    if acc1 != acc2 && acc1 <= 1.0 && acc2 > 1.0 {
+                        return true  // r1 is sub-100%, prefer it
+                    }
+                    if acc1 != acc2 && acc2 <= 1.0 && acc1 > 1.0 {
+                        return false  // r2 is sub-100%, prefer it
+                    }
+                }
+                
                 // Second: more waypoints is better (tiebreaker)
                 if r1.route.places.count != r2.route.places.count {
                     return r1.route.places.count > r2.route.places.count
@@ -11997,6 +12151,13 @@ class GoogleMapsService: ObservableObject {
             let selectedScore = cappedValidRoutes.first!.backtrackScore
             var selectedMins = selected.durationSeconds / 60
             
+            // SPRINT-8: Check if this route would have triggered early commit (95-105%)
+            let selectedAccuracy = Double(selectedMins) / Double(targetDurationMinutes)
+            if selectedAccuracy >= RoutingToggles.earlyCommitMinAccuracy &&
+               selectedAccuracy <= RoutingToggles.earlyCommitMaxAccuracy {
+                bestSoFarCommitted = true
+            }
+            
             // Double-check: reject if somehow >180% slipped through
             guard selectedMins <= selectionHardCap180 else {
                 print("⛔ [SELECTION] Selected route \(selectedMins)min exceeds 180% cap \(selectionHardCap180)min - rejecting")
@@ -12005,6 +12166,67 @@ class GoogleMapsService: ObservableObject {
             
             print("🗺️ Route backtracking score: \(String(format: "%.0f", selectedScore * 100))% (lower = more loop-like)")
             print("🗺️ Selected route: \(selectedMins)min (cap: \(selectionHardCap180)min)")
+            
+            // SPRINT-8: WP REPAIR STEP after k-best selection but before finalization
+            // Goal: Guaranteed enforcement of minimum waypoint counts
+            let minWP = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
+            if selected.places.count < minWP && budget.within() {
+                repairAttempted = true
+                print("🔧 [WP-REPAIR] Selected route has \(selected.places.count) WPs, need \(minWP) - attempting repair spur")
+                
+                // Find a nearby POI to add as a quick spur (0.2-0.5km, near polyline midpoint)
+                let existingPOIIds = Set(selected.places.map { $0.placeId })
+                let midpointIdx = selected.places.count / 2
+                let midpointCoord = midpointIdx < selected.places.count 
+                    ? selected.places[midpointIdx].coordinate 
+                    : location
+                
+                let spurCandidates = places.filter { poi in
+                    guard !existingPOIIds.contains(poi.placeId) else { return false }
+                    let dist = distanceBetween(midpointCoord, poi.coordinate)
+                    return dist >= 200 && dist <= 500  // 0.2-0.5km from midpoint
+                }.prefix(3)
+                
+                if let spurPOI = spurCandidates.first {
+                    var repairedPlaces = selected.places
+                    repairedPlaces.insert(spurPOI, at: midpointIdx)
+                    
+                    // Quick route call to verify it doesn't blow up duration
+                    do {
+                        let repairDirs = try await getWalkingDirections(
+                            origin: location,
+                            destination: location,
+                            waypoints: repairedPlaces.map { $0.coordinate },
+                            preserveWaypointOrder: false
+                        )
+                        let repairDur = repairDirs.legs.reduce(0) { $0 + $1.duration.value }
+                        let repairDist = repairDirs.legs.reduce(0) { $0 + $1.distance.value }
+                        let repairAccuracy = Double(repairDur) / Double(targetDurationMinutes * 60)
+                        
+                        // Accept repair if within reasonable tolerance (80-150%)
+                        if repairAccuracy >= 0.80 && repairAccuracy <= 1.50 {
+                            selected = GeneratedRoute(
+                                places: repairedPlaces,
+                                polyline: repairDirs.overviewPolyline.points,
+                                distanceMeters: repairDist,
+                                durationSeconds: repairDur,
+                                legs: repairDirs.legs
+                            )
+                            selectedMins = selected.durationSeconds / 60
+                            repairSucceeded = repairedPlaces.count >= minWP
+                            print("🔧 [WP-REPAIR] ✅ Repair successful: \(repairedPlaces.count) WPs, \(selectedMins)min (\(String(format: "%.1f", repairAccuracy * 100))%)")
+                        } else {
+                            print("🔧 [WP-REPAIR] ❌ Repair rejected: \(String(format: "%.1f", repairAccuracy * 100))% outside 80-150% tolerance")
+                        }
+                    } catch {
+                        print("🔧 [WP-REPAIR] ❌ Repair failed: \(error.localizedDescription)")
+                    }
+                } else {
+                    print("🔧 [WP-REPAIR] ❌ No suitable spur candidates within 200-500m of midpoint")
+                }
+                
+                repairSucceeded = selected.places.count >= minWP
+            }
             
             // FINAL DEDUPLICATION: Remove any duplicate POIs before processing
             let deduplicatedPlaces = deduplicateRoutePlaces(selected.places)
@@ -12200,12 +12422,15 @@ class GoogleMapsService: ObservableObject {
             print("   📦 Database used: \(usedDatabase ? "Yes" : "No")")
             print("   ⏱️ Total time: \(String(format: "%.2f", elapsed))s")
             
-            // PHASE D: Per-route summary logging with SPRINT-6 fields
+            // PHASE D: Per-route summary logging with SPRINT-6/8 fields
             print("📊 [TELEMETRY] route_id=\(targetDurationMinutes)min duration_bucket=\(targetDurationMinutes)min elapsed_ms=\(Int(elapsed * 1000))")
             print("   engine_calls={mapkit:\(engineCalls.mapkit), osrm:\(engineCalls.osrm), skipped:\(engineCalls.skipped)}")
             print("   expansions=\(expansions), repair_passes=\(repairPasses), nudges=\(nudges), micro_spurs=\(microSpurs)")
             print("   wp_before_finalization=\(wpBeforeFinalization), wp_after_finalization=\(wpAfterFinalization)")
             print("   stop_reason=\(stopReason) stage_exited=\(stageExited) per_leg_over_cap=\(perLegOverCap)")
+            // SPRINT-8: New telemetry fields
+            print("   best_so_far_committed=\(bestSoFarCommitted) bias_applied=\(String(format: "%.3f", biasApplied))")
+            print("   repair_attempt=\(repairAttempted) repair_success=\(repairSucceeded) hinge_penalty_fired=\(hingePenaltyFired) sector_quota_used=\(sectorQuotaUsed)")
             
             // SPRINT-4: Repair before fallback for S11 mid-long durations (>120% overshoot)
             // For S11 postcodes with mid-long durations (≥30min), repair first valid route if >120%
@@ -13349,6 +13574,69 @@ class GoogleMapsService: ObservableObject {
                 if firstValidRouteFoundAt == nil {
                     firstValidRouteFoundAt = Date()
                     print("✅ [EARLY EXIT] First valid route found - will short-circuit after 1s grace period")
+                }
+                
+                // SPRINT-8: EARLY COMMIT RULE
+                // If route is 95-105% accuracy AND meets WP minimum, commit immediately
+                // This prevents valid routes from being degraded by later per-leg caps or cascading repairs
+                let earlyCommitAccuracy = Double(totalDuration) / Double(targetDurationSeconds)
+                let minWP = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
+                
+                if earlyCommitAccuracy >= RoutingToggles.earlyCommitMinAccuracy && 
+                   earlyCommitAccuracy <= RoutingToggles.earlyCommitMaxAccuracy &&
+                   orderedWaypoints.count >= minWP {
+                    print("🎯 [EARLY-COMMIT] Route at \(String(format: "%.1f", earlyCommitAccuracy * 100))% with \(orderedWaypoints.count) WPs - within sweet spot, committing early")
+                    
+                    // Return the route as-is (skip per-leg caps and later finalizations)
+                    validRoutes.append(route)
+                    routeCapture?.addRoute(route)
+                    print("🎯 [EARLY-COMMIT] Returning early (\(orderedWaypoints.count) WPs, \(durationMin)min)")
+                    return finalizeRouteDedup(route)
+                }
+                
+                // SPRINT-8: If in sweet spot but needs more WPs, try one quick micro-spur
+                if earlyCommitAccuracy >= RoutingToggles.earlyCommitMinAccuracy && 
+                   earlyCommitAccuracy <= RoutingToggles.earlyCommitMaxAccuracy &&
+                   orderedWaypoints.count < minWP && !allPlaces.isEmpty {
+                    print("🎯 [EARLY-COMMIT] Route at \(String(format: "%.1f", earlyCommitAccuracy * 100))% but only \(orderedWaypoints.count) WPs (need \(minWP)) - trying one spur")
+                    
+                    let existingIds = Set(orderedWaypoints.map { $0.placeId })
+                    let nearbyPOIs = allPlaces.filter { poi in
+                        !existingIds.contains(poi.placeId) && 
+                        distanceBetween(origin, poi.coordinate) < 400
+                    }
+                    if let spurPOI = nearbyPOIs.first {
+                        var extendedWPs = orderedWaypoints
+                        extendedWPs.insert(spurPOI, at: max(0, extendedWPs.count / 2))
+                        let (spurResult, spurTimeout) = await directionsWithTimeout(
+                            origin: origin,
+                            destination: origin,
+                            waypoints: extendedWPs.map { $0.coordinate },
+                            timeout: RoutingToggles.perCallTimeoutNormal,
+                            targetDurationMinutes: targetDurationMinutes,
+                            angularDiversityScore: angularDiversityScore,
+                            postcode: postcode
+                        )
+                        if let spurDirs = spurResult, !spurTimeout {
+                            let spurDur = spurDirs.legs.reduce(0) { $0 + $1.duration.value }
+                            let spurDist = spurDirs.legs.reduce(0) { $0 + $1.distance.value }
+                            let spurAcc = Double(spurDur) / Double(targetDurationSeconds)
+                            if spurAcc >= 0.90 && spurAcc <= 1.10 {
+                                print("🎯 [EARLY-COMMIT] Micro-spur added WP, now at \(String(format: "%.1f", spurAcc * 100))%")
+                                let earlyRoute = GeneratedRoute(
+                                    places: extendedWPs,
+                                    polyline: spurDirs.overviewPolyline.points,
+                                    distanceMeters: spurDist,
+                                    durationSeconds: spurDur,
+                                    legs: spurDirs.legs
+                                )
+                                validRoutes.append(earlyRoute)
+                                routeCapture?.addRoute(earlyRoute)
+                                print("🎯 [EARLY-COMMIT] Returning early with spur (\(extendedWPs.count) WPs)")
+                                return finalizeRouteDedup(earlyRoute)
+                            }
+                        }
+                    }
                 }
                 
                 // v1.8.4: EXTEND UNDERSHOOTING ROUTE
