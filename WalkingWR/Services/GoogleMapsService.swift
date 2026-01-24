@@ -12898,6 +12898,7 @@ class GoogleMapsService: ObservableObject {
         }
         
         // GUARANTEED FALLBACK: Create a simple out-and-back route if all else fails
+        // v2.0.14: Hard quality floor - ≤130% everywhere (never accept >130% fallback)
         // This ensures we ALWAYS return something rather than leaving the user waiting
         // SPRINT-4: Track fallback reason (determine why we're using guaranteed fallback)
         // v2.0.13: Use existing fallbackReason telemetry variable (declared at function start)
@@ -12920,6 +12921,22 @@ class GoogleMapsService: ObservableObject {
         // SPRINT-4: Increment attempts when guaranteed fallback is used
         totalAttempts += 1
         routeCapture?.incrementAttempts()
+        
+        // v2.0.14: Before accepting ANY fallback, check quality floor
+        let elapsedSeconds = Date().timeIntervalSince(startTime)
+        let hasViableCandidate = validRoutes.contains { r in
+            let acc = Double(r.durationSeconds / 60) / Double(targetDurationMinutes)
+            return acc >= 0.80 && acc <= 1.20 && r.places.count >= 2
+        }
+        
+        // Quality check: elapsed >= 12.0 AND no viable candidate AND fallback will be <= 130%
+        // Note: We'll check fallback accuracy after generation
+        let qualityOk = elapsedSeconds >= 12.0 && !hasViableCandidate
+        
+        if !qualityOk {
+            print("🆘 [FALLBACK] ❌ Quality check failed: elapsed=\(String(format: "%.1f", elapsedSeconds))s, hasViable=\(hasViableCandidate) - rejecting fallback")
+            throw GoogleMapsError.noRouteFound  // Never accept fallback if quality check fails
+        }
         
         // SPRINT-4: Global hard-stop check before guaranteed fallback
         if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "GUARANTEED_FALLBACK") {
@@ -12947,156 +12964,157 @@ class GoogleMapsService: ObservableObject {
             budget: budget  // SPRINT-4: Pass budget for hard-stop enforcement
         ) {
             let mins = guaranteedRoute.durationSeconds / 60
-            let hardCap = Int(Double(targetDurationMinutes) * 1.80)  // 180% hard cap (v2.0.1: relaxed for last resort)
+            let fallbackAcc = Double(mins) / Double(targetDurationMinutes)
+            fallbackAccuracy = fallbackAcc
             
-            // v2.0.1: Relaxed from 130% to 180% for guaranteed fallback - better to return something than fail
-            if mins > hardCap {
-                print("🗺️ 🆘 ❌ Guaranteed fallback exceeds 180%: \(mins)min > \(hardCap)min - REJECTING")
-                // Fall through to throw error
+            // v2.0.14: Hard quality floor - ≤130% everywhere (never accept >130% fallback)
+            if fallbackAcc <= 1.30 {
+                fallbackFired = true
+                fallbackReason = "quality_floor"
+                print("🗺️ 🆘 ✅ Guaranteed fallback created: \(mins)min (\(String(format: "%.1f", fallbackAcc * 100))%) ≤130%")
             } else {
-                print("🗺️ ✓ Guaranteed fallback created: \(mins)min (target: \(targetDurationMinutes)min)")
-                
-                // Final deduplication before returning guaranteed fallback
-                let deduplicatedPlaces = deduplicateRoutePlaces(guaranteedRoute.places)
-                if deduplicatedPlaces.count < guaranteedRoute.places.count {
-                    // SPRINT-4: Global hard-stop check before regeneration
-                    if !RoutingToggles.mustContinue(budget, bestSoFar: guaranteedRoute, stage: "FALLBACK_REGEN") {
+                print("🗺️ 🆘 ❌ Guaranteed fallback exceeds 130%: \(mins)min (\(String(format: "%.1f", fallbackAcc * 100))%) - REJECTING (hard quality floor)")
+                fallbackReason = "exceeds_130_percent"
+                throw GoogleMapsError.noRouteFound  // Never accept >130% fallback
+            }
+            
+            // Continue with fallback acceptance (already validated ≤130%)
+            print("🗺️ ✓ Guaranteed fallback created: \(mins)min (target: \(targetDurationMinutes)min)")
+            
+            // Final deduplication before returning guaranteed fallback
+            let deduplicatedPlaces = deduplicateRoutePlaces(guaranteedRoute.places)
+            if deduplicatedPlaces.count < guaranteedRoute.places.count {
+                // SPRINT-4: Global hard-stop check before regeneration
+                if !RoutingToggles.mustContinue(budget, bestSoFar: guaranteedRoute, stage: "FALLBACK_REGEN") {
                         print("⛔ [HARD-STOP] Skipping fallback regeneration - using original")
                         let result = await finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
                         if let finalized = result.route {
                             return finalized
                         }
                         return guaranteedRoute
-                    }
-                    
-                    // Regenerate route with deduplicated places
-                    // v2.0.3 Phase 1.5 Batch A: Wrap guaranteed fallback regeneration with timeout
-                    let timeout = RoutingToggles.perCallTimeoutNormal
-                    // SPRINT-4: Create hard-stop check closure
-                    let regenHardStopCheck: (() -> Bool)? = {
-                        !RoutingToggles.mustContinue(budget, bestSoFar: guaranteedRoute, stage: "FALLBACK_REGEN_CALL")
-                    }
-                    let (directionsResult, didTimeout) = await directionsWithTimeout(
-                        origin: location,
-                        destination: location,
-                        waypoints: deduplicatedPlaces.map { $0.coordinate },
-                        timeout: timeout,
-                        targetDurationMinutes: targetDurationMinutes,
-                        angularDiversityScore: nil,
-                        postcode: postcode,
-                        checkGlobalHardStop: regenHardStopCheck
-                    )
-                    
-                    if didTimeout {
-                        // Timeout during regeneration - use original route
-                        let result = await finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
-                        if let finalized = result.route {
-                            return finalized
-                        }
-                        // Critical: guaranteed route rejected - return unfinalized
-                        print("⛔ [CRITICAL] Guaranteed fallback rejected - returning unfinalized")
-                        return guaranteedRoute
-                    }
-                    
-                    guard let directions = directionsResult else {
-                        // Error during regeneration - use original route
-                        let result = await finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
-                        if let finalized = result.route {
-                            return finalized
-                        }
-                        // Critical: guaranteed route rejected - return unfinalized
-                        print("⛔ [CRITICAL] Guaranteed fallback rejected - returning unfinalized")
-                        return guaranteedRoute
-                    }
-                    
-                    let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
-                    let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
-                    let deduplicatedRoute = GeneratedRoute(
-                        places: deduplicatedPlaces,
-                        polyline: directions.overviewPolyline.points,
-                        distanceMeters: distance,
-                        durationSeconds: duration,
-                        legs: directions.legs
-                    )
-                    
-                    // v2.0.3: CRITICAL FIX - Re-check hard cap after regeneration
-                    // Route duration can change after deduplication/regeneration
-                    let regeneratedMins = deduplicatedRoute.durationSeconds / 60
-                    if regeneratedMins > hardCap {
-                        print("🗺️ 🆘 ❌ Regenerated guaranteed fallback exceeds 180% cap: \(regeneratedMins)min > \(hardCap)min - REJECTING")
-                        // Use original route instead
-                        let result = await finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
-                        if let finalized = result.route {
-                            printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
-                            let elapsed = Date().timeIntervalSince(startTime)
-                            
-                            // SPRINT-4: Emit structured fallback fired log
-                            let finalWPCount = finalized.places.count
-                            print("📊 [FALLBACK_FIRED] reason=\(fallbackReason) elapsed_ms=\(Int(elapsed * 1000)) wp_before=\(wpBeforeFinalization) wp_after=\(finalWPCount) stop_reason=\(stopReason)")
-                            
-                            print("📊 ROUTE SELECTION SUMMARY (GUARANTEED FALLBACK - ORIGINAL):")
-                            print("   🎯 Selected route: \(finalized.places.count) waypoints, \(finalized.durationSeconds/60)min")
-                            print("   ⏱️ Total time: \(String(format: "%.2f", elapsed))s")
-                            print("   📊 Fallback reason: \(fallbackReason)")
-                            return finalized
-                        }
-                        // Critical: guaranteed route rejected - return unfinalized
-                        print("⛔ [CRITICAL] Guaranteed fallback rejected - returning unfinalized")
-                        return guaranteedRoute
-                    }
-                    
-                    // Mark POIs as recently used for variety
-                    for place in deduplicatedRoute.places {
-                        markPOIAsUsed(place.placeId)
-                    }
-                    
-                    // v2.0.3 Phase 1.5 Batch A: Use centralized finalization
-                    let result = await finalizeAndReturnRoute(deduplicatedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                }
+                
+                // Regenerate route with deduplicated places
+                // v2.0.3 Phase 1.5 Batch A: Wrap guaranteed fallback regeneration with timeout
+                let timeout = RoutingToggles.perCallTimeoutNormal
+                // SPRINT-4: Create hard-stop check closure
+                let regenHardStopCheck: (() -> Bool)? = {
+                    !RoutingToggles.mustContinue(budget, bestSoFar: guaranteedRoute, stage: "FALLBACK_REGEN_CALL")
+                }
+                let (directionsResult, didTimeout) = await directionsWithTimeout(
+                    origin: location,
+                    destination: location,
+                    waypoints: deduplicatedPlaces.map { $0.coordinate },
+                    timeout: timeout,
+                    targetDurationMinutes: targetDurationMinutes,
+                    angularDiversityScore: nil,
+                    postcode: postcode,
+                    checkGlobalHardStop: regenHardStopCheck
+                )
+                
+                if didTimeout {
+                    // Timeout during regeneration - use original route
+                    let result = await finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
                     if let finalized = result.route {
-                        printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
-                        let elapsed = Date().timeIntervalSince(startTime)
-                        
-                        // SPRINT-4: Emit structured fallback fired log
-                        let finalWPCount = finalized.places.count
-                        print("📊 [FALLBACK_FIRED] reason=\(fallbackReason) elapsed_ms=\(Int(elapsed * 1000)) wp_before=\(wpBeforeFinalization) wp_after=\(finalWPCount) stop_reason=\(stopReason)")
-                        
-                        print("📊 ROUTE SELECTION SUMMARY (GUARANTEED FALLBACK):")
-                        print("   🔢 Routes attempted: \(totalAttempts)")
-                        print("   ✅ Valid routes found: \(validRoutes.count)")
-                        print("   🎯 Selected route: \(finalized.places.count) waypoints, \(finalized.durationSeconds/60)min")
-                        print("   📦 Database used: \(usedDatabase ? "Yes" : "No")")
-                        print("   ⏱️ Total time: \(String(format: "%.2f", elapsed))s")
-                        print("   📊 Fallback reason: \(fallbackReason)")
                         return finalized
                     }
                     // Critical: guaranteed route rejected - return unfinalized
                     print("⛔ [CRITICAL] Guaranteed fallback rejected - returning unfinalized")
-                    return deduplicatedRoute
+                    return guaranteedRoute
+                }
+                
+                guard let directions = directionsResult else {
+                    // Error during regeneration - use original route
+                    let result = await finalizeAndReturnRoute(guaranteedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                    if let finalized = result.route {
+                        return finalized
+                    }
+                    // Critical: guaranteed route rejected - return unfinalized
+                    print("⛔ [CRITICAL] Guaranteed fallback rejected - returning unfinalized")
+                    return guaranteedRoute
+                }
+                
+                let duration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                let distance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                let deduplicatedRoute = GeneratedRoute(
+                    places: deduplicatedPlaces,
+                    polyline: directions.overviewPolyline.points,
+                    distanceMeters: distance,
+                    durationSeconds: duration,
+                    legs: directions.legs
+                )
+                
+                // v2.0.14: CRITICAL FIX - Re-check quality floor after regeneration
+                // Route duration can change after deduplication/regeneration
+                let regeneratedMins = deduplicatedRoute.durationSeconds / 60
+                let regeneratedAcc = Double(regeneratedMins) / Double(targetDurationMinutes)
+                if regeneratedAcc > 1.30 {
+                    print("🗺️ 🆘 ❌ Regenerated guaranteed fallback exceeds 130%: \(regeneratedMins)min (\(String(format: "%.1f", regeneratedAcc * 100))%) - REJECTING (hard quality floor)")
+                    fallbackReason = "exceeds_130_percent"
+                    throw GoogleMapsError.noRouteFound  // Never accept >130% fallback
                 }
                 
                 // Mark POIs as recently used for variety
-                for place in guaranteedRoute.places {
+                for place in deduplicatedRoute.places {
                     markPOIAsUsed(place.placeId)
                 }
                 
-                // FINAL SAFETY WRAPPER: Ensure deduplication on return
-                let finalized = finalizeRouteDedup(guaranteedRoute, targetDurationMinutes: targetDurationMinutes)
-                printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
-                let elapsed = Date().timeIntervalSince(startTime)
-                
-                // SPRINT-4: Emit structured fallback fired log
-                let finalWPCount = finalized.places.count
-                print("📊 [FALLBACK_FIRED] reason=\(fallbackReason) elapsed_ms=\(Int(elapsed * 1000)) wp_before=\(wpBeforeFinalization) wp_after=\(finalWPCount) stop_reason=\(stopReason)")
-                
-                print("📊 ROUTE SELECTION SUMMARY (GUARANTEED FALLBACK):")
-                print("   🔢 Routes attempted: \(totalAttempts)")
-                print("   ✅ Valid routes found: \(validRoutes.count)")
-                print("   🎯 Selected route: \(finalized.places.count) waypoints, \(finalized.durationSeconds/60)min")
-                print("   📦 Database used: \(usedDatabase ? "Yes" : "No")")
-                print("   ⏱️ Total time: \(String(format: "%.2f", elapsed))s")
-                print("   📊 Fallback reason: \(fallbackReason)")
-                return finalized
+                // v2.0.3 Phase 1.5 Batch A: Use centralized finalization
+                let result = await finalizeAndReturnRoute(deduplicatedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
+                if let finalized = result.route {
+                    printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    
+                    // SPRINT-4: Emit structured fallback fired log
+                    let finalWPCount = finalized.places.count
+                    print("📊 [FALLBACK_FIRED] reason=\(fallbackReason) elapsed_ms=\(Int(elapsed * 1000)) wp_before=\(wpBeforeFinalization) wp_after=\(finalWPCount) stop_reason=\(stopReason)")
+                    
+                    print("📊 ROUTE SELECTION SUMMARY (GUARANTEED FALLBACK):")
+                    print("   🔢 Routes attempted: \(totalAttempts)")
+                    print("   ✅ Valid routes found: \(validRoutes.count)")
+                    print("   🎯 Selected route: \(finalized.places.count) waypoints, \(finalized.durationSeconds/60)min")
+                    print("   📦 Database used: \(usedDatabase ? "Yes" : "No")")
+                    print("   ⏱️ Total time: \(String(format: "%.2f", elapsed))s")
+                    print("   📊 Fallback reason: \(fallbackReason)")
+                    return finalized
+                }
+                // Critical: guaranteed route rejected - return unfinalized
+                print("⛔ [CRITICAL] Guaranteed fallback rejected - returning unfinalized")
+                return deduplicatedRoute
+            } else {
+                // No deduplication needed - use route as-is
+                // v2.0.14: Re-check quality floor after any processing
+                let finalMins = guaranteedRoute.durationSeconds / 60
+                let finalAcc = Double(finalMins) / Double(targetDurationMinutes)
+                if finalAcc > 1.30 {
+                    print("🗺️ 🆘 ❌ Guaranteed fallback exceeds 130% after processing: \(finalMins)min (\(String(format: "%.1f", finalAcc * 100))%) - REJECTING")
+                    fallbackReason = "exceeds_130_percent"
+                    throw GoogleMapsError.noRouteFound
+                }
             }
+            
+            // Mark POIs as recently used for variety
+            for place in guaranteedRoute.places {
+                markPOIAsUsed(place.placeId)
+            }
+            
+            // FINAL SAFETY WRAPPER: Ensure deduplication on return
+            let finalized = finalizeRouteDedup(guaranteedRoute, targetDurationMinutes: targetDurationMinutes)
+            printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
+            let elapsed = Date().timeIntervalSince(startTime)
+            
+            // SPRINT-4: Emit structured fallback fired log
+            let finalWPCount = finalized.places.count
+            print("📊 [FALLBACK_FIRED] reason=\(fallbackReason) elapsed_ms=\(Int(elapsed * 1000)) wp_before=\(wpBeforeFinalization) wp_after=\(finalWPCount) stop_reason=\(stopReason)")
+            
+            print("📊 ROUTE SELECTION SUMMARY (GUARANTEED FALLBACK):")
+            print("   🔢 Routes attempted: \(totalAttempts)")
+            print("   ✅ Valid routes found: \(validRoutes.count)")
+            print("   🎯 Selected route: \(finalized.places.count) waypoints, \(finalized.durationSeconds/60)min")
+            print("   📦 Database used: \(usedDatabase ? "Yes" : "No")")
+            print("   ⏱️ Total time: \(String(format: "%.2f", elapsed))s")
+            print("   📊 Fallback reason: \(fallbackReason)")
+            return finalized
         }
         
         throw GoogleMapsError.noRouteFound
@@ -13739,76 +13757,94 @@ class GoogleMapsService: ObservableObject {
                     print("✅ [EARLY EXIT] First valid route found - will short-circuit after 1s grace period")
                 }
                 
-                // SPRINT-8: HARD EARLY COMMIT RULE (v2.0.13)
-                // If route is in target band AND meets WP minimum, commit immediately
+                // v2.0.14: HARD EARLY COMMIT RULE (enhanced - activate more, still safe)
+                // Commit when in band & WPs met, OR if WPs == min-1 AND a quick repair succeeds
                 // Duration-specific bands: 10-30min → 95-105%, 35-60min → 90-110%
                 // This prevents valid routes from being degraded by later per-leg caps or cascading repairs
                 let earlyCommitAccuracy = Double(totalDuration) / Double(targetDurationSeconds)
                 let minWP = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
                 
                 // Determine target band based on duration
-                let (minBand, maxBand): (Double, Double) = targetDurationMinutes <= 30 
-                    ? (0.95, 1.05)  // 10-30 min: 95-105%
-                    : (0.90, 1.10)  // 35-60 min: 90-110%
+                let inBandShort = targetDurationMinutes <= 30 && earlyCommitAccuracy >= 0.95 && earlyCommitAccuracy <= 1.05
+                let inBandLong = targetDurationMinutes >= 35 && earlyCommitAccuracy >= 0.90 && earlyCommitAccuracy <= 1.10
+                let goodOrNear = orderedWaypoints.count >= minWP || orderedWaypoints.count == minWP - 1
                 
-                if earlyCommitAccuracy >= minBand && 
-                   earlyCommitAccuracy <= maxBand &&
-                   orderedWaypoints.count >= minWP {
-                    print("🎯 [EARLY-COMMIT] Route at \(String(format: "%.1f", earlyCommitAccuracy * 100))% with \(orderedWaypoints.count) WPs - within sweet spot (\(String(format: "%.0f", minBand*100))-\(String(format: "%.0f", maxBand*100))%), committing HARD")
-                    
-                    // Optional fine-tune micro-spur if time permits
-                    // Note: budget/startTime not in scope here, skip fine-tune for now
-                    // Fine-tune will happen in finalization if needed
-                    
-                    // HARD COMMIT: Return immediately, skip ALL further processing
-                    validRoutes.append(route)
-                    routeCapture?.addRoute(route)
-                    print("🎯 [EARLY-COMMIT] Returning HARD commit - skipping per-leg caps, trims, repairs (\(orderedWaypoints.count) WPs, \(durationMin)min)")
-                    return finalizeRouteDedup(route)
-                }
-                
-                // SPRINT-8: If in sweet spot but needs more WPs, try one quick micro-spur
-                if earlyCommitAccuracy >= RoutingToggles.earlyCommitMinAccuracy && 
-                   earlyCommitAccuracy <= RoutingToggles.earlyCommitMaxAccuracy &&
-                   orderedWaypoints.count < minWP && !allPlaces.isEmpty {
-                    print("🎯 [EARLY-COMMIT] Route at \(String(format: "%.1f", earlyCommitAccuracy * 100))% but only \(orderedWaypoints.count) WPs (need \(minWP)) - trying one spur")
-                    
-                    let existingIds = Set(orderedWaypoints.map { $0.placeId })
-                    let nearbyPOIs = allPlaces.filter { poi in
-                        !existingIds.contains(poi.placeId) && 
-                        distanceBetween(origin, poi.coordinate) < 400
-                    }
-                    if let spurPOI = nearbyPOIs.first {
-                        var extendedWPs = orderedWaypoints
-                        extendedWPs.insert(spurPOI, at: max(0, extendedWPs.count / 2))
-                        let (spurResult, spurTimeout) = await directionsWithTimeout(
-                            origin: origin,
-                            destination: origin,
-                            waypoints: extendedWPs.map { $0.coordinate },
-                            timeout: RoutingToggles.perCallTimeoutNormal,
-                            targetDurationMinutes: targetDurationMinutes,
-                            angularDiversityScore: angularDiversityScore,
-                            postcode: postcode
-                        )
-                        if let spurDirs = spurResult, !spurTimeout {
-                            let spurDur = spurDirs.legs.reduce(0) { $0 + $1.duration.value }
-                            let spurDist = spurDirs.legs.reduce(0) { $0 + $1.distance.value }
-                            let spurAcc = Double(spurDur) / Double(targetDurationSeconds)
-                            if spurAcc >= 0.90 && spurAcc <= 1.10 {
-                                print("🎯 [EARLY-COMMIT] Micro-spur added WP, now at \(String(format: "%.1f", spurAcc * 100))%")
-                                let earlyRoute = GeneratedRoute(
-                                    places: extendedWPs,
-                                    polyline: spurDirs.overviewPolyline.points,
-                                    distanceMeters: spurDist,
-                                    durationSeconds: spurDur,
-                                    legs: spurDirs.legs
+                if (inBandShort || inBandLong) && goodOrNear {
+                    // Case 1: min-1 WPs - try fast repair if time permits (≥1.2s)
+                    if orderedWaypoints.count == minWP - 1 {
+                        // Estimate time remaining (budget not in scope, use conservative check)
+                        // Try repair spur (0.2-0.5km) if we have POIs available
+                        if !allPlaces.isEmpty {
+                            print("🎯 [EARLY-COMMIT] Route at \(String(format: "%.1f", earlyCommitAccuracy * 100))% with \(orderedWaypoints.count) WPs (min-1) - attempting fast repair")
+                            
+                            let existingIds = Set(orderedWaypoints.map { $0.placeId })
+                            let midpointIdx = orderedWaypoints.count / 2
+                            let midpointCoord = midpointIdx < orderedWaypoints.count 
+                                ? orderedWaypoints[midpointIdx].coordinate 
+                                : origin
+                            
+                            // Repair spur: 0.2-0.5km from midpoint
+                            let spurCandidates = allPlaces.filter { poi in
+                                guard !existingIds.contains(poi.placeId) else { return false }
+                                let dist = distanceBetween(midpointCoord, poi.coordinate)
+                                return dist >= 200 && dist <= 500  // 0.2-0.5km from midpoint
+                            }.prefix(1)
+                            
+                            if let spurPOI = spurCandidates.first {
+                                var repairedWPs = orderedWaypoints
+                                repairedWPs.insert(spurPOI, at: midpointIdx)
+                                
+                                let (spurResult, spurTimeout) = await directionsWithTimeout(
+                                    origin: origin,
+                                    destination: origin,
+                                    waypoints: repairedWPs.map { $0.coordinate },
+                                    timeout: RoutingToggles.perCallTimeoutNormal,
+                                    targetDurationMinutes: targetDurationMinutes,
+                                    angularDiversityScore: angularDiversityScore,
+                                    postcode: postcode
                                 )
-                                validRoutes.append(earlyRoute)
-                                routeCapture?.addRoute(earlyRoute)
-                                print("🎯 [EARLY-COMMIT] Returning early with spur (\(extendedWPs.count) WPs)")
-                                return finalizeRouteDedup(earlyRoute)
+                                
+                                if let spurDirs = spurResult, !spurTimeout {
+                                    let spurDur = spurDirs.legs.reduce(0) { $0 + $1.duration.value }
+                                    let spurDist = spurDirs.legs.reduce(0) { $0 + $1.distance.value }
+                                    let spurAcc = Double(spurDur) / Double(targetDurationSeconds)
+                                    
+                                    // Check if repair succeeded and route is still in band
+                                    let stillInBand = (inBandShort && spurAcc >= 0.95 && spurAcc <= 1.05) ||
+                                                      (inBandLong && spurAcc >= 0.90 && spurAcc <= 1.10)
+                                    
+                                    if stillInBand && repairedWPs.count >= minWP {
+                                        print("🎯 [EARLY-COMMIT] ✅ Fast repair successful: \(repairedWPs.count) WPs, \(String(format: "%.1f", spurAcc * 100))%")
+                                        let repairedRoute = GeneratedRoute(
+                                            places: repairedWPs,
+                                            polyline: spurDirs.overviewPolyline.points,
+                                            distanceMeters: spurDist,
+                                            durationSeconds: spurDur,
+                                            legs: spurDirs.legs
+                                        )
+                                        validRoutes.append(repairedRoute)
+                                        routeCapture?.addRoute(repairedRoute)
+                                        print("🎯 [EARLY-COMMIT] HARD COMMIT: Returning with repair (\(repairedWPs.count) WPs, \(spurDur/60)min) - skipping caps/trims/repairs/depth")
+                                        return finalizeRouteDedup(repairedRoute)
+                                    }
+                                }
                             }
+                            // Fall through if repair fails
                         }
+                    }
+                    // Case 2: Already at min WPs or above
+                    else if orderedWaypoints.count >= minWP {
+                        print("🎯 [EARLY-COMMIT] Route at \(String(format: "%.1f", earlyCommitAccuracy * 100))% with \(orderedWaypoints.count) WPs - within sweet spot, committing HARD")
+                        
+                        // Optional one micro-spur for fine-tuning if time permits (≥1.0s)
+                        // Note: budget/startTime not in scope here, skip fine-tune for now
+                        // Fine-tune will happen in finalization if needed
+                        
+                        // HARD COMMIT: Return immediately, skip ALL further processing (caps/trims/repairs/depth)
+                        validRoutes.append(route)
+                        routeCapture?.addRoute(route)
+                        print("🎯 [EARLY-COMMIT] HARD COMMIT: Returning (\(orderedWaypoints.count) WPs, \(durationMin)min) - skipping caps/trims/repairs/depth")
+                        return finalizeRouteDedup(route)
                     }
                 }
                 
