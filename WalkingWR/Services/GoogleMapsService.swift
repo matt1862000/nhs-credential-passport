@@ -7622,13 +7622,33 @@ class GoogleMapsService: ObservableObject {
             "sector_quota_used_count": allTelemetry.filter { $0.sectorQuotaUsed }.count  // v2.0.17: Aggregate from telemetry
         ]
         
-        // Output as one-line JSON
+        // Quick assertions in the roll-up (small but powerful)
+        assert(batchTotal > 0, "batch_total must be > 0")
+        let earlyCommitsTaken = allTelemetry.filter { $0.earlyCommitsTaken }.count
+        let earlyCommitOpportunities = allTelemetry.filter { $0.earlyCommitOpportunity }.count
+        assert(earlyCommitsTaken <= earlyCommitOpportunities, "early_commits_taken (\(earlyCommitsTaken)) must be <= early_commit_opportunities (\(earlyCommitOpportunities))")
+        let fallbackOver130 = allTelemetry.filter { $0.fallbackOver130Pct }.count
+        assert(fallbackOver130 == 0, "fallback_over_130pct must be 0 (found \(fallbackOver130)) - proves floor enforcement")
+        assert(p50Ms <= p95Ms && p95Ms <= p99Ms, "Percentiles must be ordered: p50 (\(p50Ms)) <= p95 (\(p95Ms)) <= p99 (\(p99Ms))")
+        
+        // Output as one-line JSON - UNCONDITIONAL with explicit END marker for CI
+        var jsonString = ""
         if let jsonData = try? JSONSerialization.data(withJSONObject: batchRollUp, options: []),
-           let jsonString = String(data: jsonData, encoding: .utf8) {
-            print("")
-            print("📊 [BATCH_ROLLUP] \(jsonString)")
-            print("")
+           let json = String(data: jsonData, encoding: .utf8) {
+            jsonString = json
+        } else {
+            // Fallback: create minimal JSON if serialization fails
+            jsonString = "{\"error\":\"serialization_failed\",\"batch_total\":\(batchTotal)}"
         }
+        
+        // Emit unconditionally with explicit END marker so CI can grep it even if harness truncates earlier logs
+        print("###BATCH-END### \(jsonString)")
+        FileHandle.standardOutput.synchronizeFile()  // ensure it hits disk/stdout
+        
+        // Also emit the formatted version for human readability
+        print("")
+        print("📊 [BATCH_ROLLUP] \(jsonString)")
+        print("")
         
         // Summary Footer
         print("╔═══════════════════════════════════════════════════════════════════════════════════╗")
@@ -8871,20 +8891,24 @@ class GoogleMapsService: ObservableObject {
         }
         
         // Step 1: Pairwise duplicate removal using enhanced comparator
+        // C) Route-level dedup: prove the pair loop runs - add explicit counter
+        var pairsExamined = 0
         var deduplicated: [PlaceResult] = []
         for (index, place) in conflatedPlaces.enumerated() {
             // Check against all already-deduplicated POIs
             var matchedExisting: PlaceResult? = nil
             var isDuplicate = false
             
-            // v2.0.18: Use enhanced isRouteDuplicate with telemetry
-            isDuplicate = deduplicated.contains { existing in
+            // C) Count pairs examined in explicit pairwise loop
+            for existing in deduplicated {
+                pairsExamined += 1
                 var telemetry: DedupTelemetry? = dedupTelemetry
                 let isDup = isRouteDuplicate(place, existing, allPOIs: conflatedPlaces, dedupTelemetry: &telemetry)
                 if isDup {
                     matchedExisting = existing
+                    isDuplicate = true
+                    break
                 }
-                return isDup
             }
             
             if isDuplicate, let matched = matchedExisting {
@@ -8944,18 +8968,22 @@ class GoogleMapsService: ObservableObject {
         }
         
         // v2.0.18: Step 3: Final pass with enhanced fuzzy matching
+        // C) Count pairs in final pass too
         var finalDeduplicated: [PlaceResult] = []
         for place in deduplicated {
             var matchedExisting: PlaceResult? = nil
             var isDuplicate = false
             
-            isDuplicate = finalDeduplicated.contains { existing in
+            // C) Count pairs examined in explicit pairwise loop
+            for existing in finalDeduplicated {
+                pairsExamined += 1
                 var telemetry: DedupTelemetry? = dedupTelemetry
                 let isDup = isRouteDuplicate(place, existing, allPOIs: deduplicated, dedupTelemetry: &telemetry)
                 if isDup {
                     matchedExisting = existing
+                    isDuplicate = true
+                    break
                 }
-                return isDup
             }
             
             if !isDuplicate {
@@ -8975,6 +9003,9 @@ class GoogleMapsService: ObservableObject {
         }
         
         deduplicated = finalDeduplicated
+        
+        // C) Set pairs_examined from explicit counter (proves the pair loop runs)
+        dedupTelemetry.pairsExamined = pairsExamined
         
         // v2.0.18: Output telemetry (F)
         if deduplicated.count < places.count {
@@ -12114,7 +12145,14 @@ class GoogleMapsService: ObservableObject {
             }
             
             // Use sector-diversified candidates for combination collection
-            let finalCandidates = sectorDiversifiedCandidates
+            var finalCandidates = sectorDiversifiedCandidates
+            
+            // C) Route-level dedup: emit dedup telemetry at candidate-pool time (pre-route) where POI sets are bigger
+            // Invoke dedup for any candidate pool with ≥2 POIs (not just when clusters were pre-formed)
+            if finalCandidates.count >= 2 {
+                finalCandidates = deduplicateRoutePlaces(finalCandidates)
+                print("📊 [CANDIDATE-POOL-DEDUP] Pool size: \(sectorDiversifiedCandidates.count) → \(finalCandidates.count) after dedup")
+            }
             
             // SPRINT-4: K-BEST PRE-SCREENING with Pareto set
             // Collect candidates, build Pareto set from estimates, then only route top k=3
@@ -14221,10 +14259,12 @@ class GoogleMapsService: ObservableObject {
                 let inBandLong = targetDurationMinutes >= 35 && earlyCommitAccuracy >= 0.90 && earlyCommitAccuracy <= 1.10
                 let meetsOrNear = orderedWaypoints.count >= minWP || orderedWaypoints.count == minWP - 1
                 
-                // v2.0.16: Track early commit opportunity when candidate enters commit band (even if not committed)
+                // B) Loosen early-commit detection: set opportunity when candidate enters commit band
+                // Set the denominator when a candidate enters the commit band, before any finalization/cap/trim
                 if (inBandShort || inBandLong) && meetsOrNear {
-                    // Set opportunity if WPs >= min OR (min-1 + successful repair will be checked below)
-                    if orderedWaypoints.count >= minWP {
+                    // Set opportunity flag once for this route when candidate enters commit band
+                    // This ensures we count opportunities even if a later step steals control
+                    if orderedWaypoints.count >= minWP || (orderedWaypoints.count == minWP - 1) {
                         earlyCommitOpportunity = true
                     }
                 }
