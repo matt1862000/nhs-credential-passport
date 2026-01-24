@@ -8724,14 +8724,25 @@ class GoogleMapsService: ObservableObject {
             
             // Step 2: If still below minimum, insert micro-spurs
             // SPRINT-7: Allow up to two micro-spur insertion passes when below minWaypoints
+            // SPRINT-7 HOTFIX: Add time-remaining check to avoid enqueueing work near hard stop
             var spurTries = 0
             let maxSpurTries = 2  // SPRINT-7: Up to 2 micro-spur insertion passes
+            let minTimeForSpur: TimeInterval = 0.5  // SPRINT-7 HOTFIX: Don't spur if <500ms remaining
             
             while deduplicatedRoute.places.count < minWaypoints 
                     && spurTries < maxSpurTries 
                     && !allPlaces.isEmpty, 
                   let originCoord = origin,
                   budget?.within() ?? true {  // SPRINT-7: Budget check for each spur pass
+                
+                // SPRINT-7 HOTFIX: Time-remaining guard - don't enqueue work near hard stop
+                if let b = budget {
+                    let timeRemaining = b.hard - (Date().timeIntervalSince1970 - b.t0)
+                    if timeRemaining < minTimeForSpur {
+                        print("⛔ [WP-MIN] Only \(String(format: "%.2f", timeRemaining))s remaining - skipping micro-spur")
+                        break
+                    }
+                }
                 
                 spurTries += 1
                 let needed = minWaypoints - deduplicatedRoute.places.count
@@ -8967,13 +8978,24 @@ class GoogleMapsService: ObservableObject {
                         
                         // SPRINT-6: Micro-extend after trim if route fell below 92-95%
                         // SPRINT-7: Allow a second extend pass if still below 92-93%
+                        // SPRINT-7 HOTFIX: Add time-remaining check to avoid enqueueing work near hard stop
                         // This turns hard trims into in-band finishes
                         var currentRatio = trimmedRatio
                         var currentWaypoints = trimmedWaypoints
                         var extendPass = 0
                         let maxExtendPasses = 2  // SPRINT-7: Up to 2 extend passes
+                        let minTimeForExtend: TimeInterval = 0.5  // SPRINT-7 HOTFIX: Don't extend if <500ms remaining
                         
                         while currentRatio < 0.95 && extendPass < maxExtendPasses && !allPlaces.isEmpty && (budget?.within() ?? true) {
+                            // SPRINT-7 HOTFIX: Time-remaining guard - don't enqueue work near hard stop
+                            if let b = budget {
+                                let timeRemaining = b.hard - (Date().timeIntervalSince1970 - b.t0)
+                                if timeRemaining < minTimeForExtend {
+                                    print("⛔ [POST-TRIM-EXTEND] Only \(String(format: "%.2f", timeRemaining))s remaining - skipping extend")
+                                    break
+                                }
+                            }
+                            
                             extendPass += 1
                             // SPRINT-7: Second pass only if below 92-93%
                             if extendPass > 1 && currentRatio >= 0.93 {
@@ -11151,7 +11173,7 @@ class GoogleMapsService: ObservableObject {
             case 21...34:
                 durationBasedCap = 40  // v2.0.3: Cap at 40 attempts
             case 35...60:
-                durationBasedCap = 25  // SPRINT-7: Tighter cap for 35-60 min routes (was 40-50)
+                durationBasedCap = 10  // SPRINT-7 HOTFIX: Much tighter cap for 35-60 min routes (was 25)
             default:
                 durationBasedCap = loopAttemptsLimit  // Fallback for edge cases
             }
