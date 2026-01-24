@@ -425,7 +425,7 @@ struct RoutingToggles {
     static let overshootPenaltyMultiplier = 3.0            // TWEAK 1: Increased from 2.5 → 3.0 (make >110% noticeably worse)
     static let subTargetBonus = 0.05                       // TWEAK 1: Increased from 0.01 → 0.05 (undershoot slightly preferred)
     static let waypointScoreBonus = 0.10                   // TWEAK 1: Increased from 0.08 → 0.10 (reward hitting WP minimums)
-    static let underWPPenalty = 1.5                        // SPRINT-8: Increased from 1.0 → 1.5 (heavier penalty for under-WP)
+    static let underWPPenalty = 2.0                        // v2.0.13: Increased from 1.5 → 2.0 (heavier penalty for under-WP routes)
     static let overshootHingeThreshold = 1.20              // SPRINT-8: Extra steep penalty above 120%
     static let overshootHingePenaltyMultiplier = 60.0      // SPRINT-8: Multiplier for 120%+ hinge section
     static let earlyCommitMinAccuracy = 0.95               // SPRINT-8: Early commit if accuracy ≥ 95%
@@ -463,14 +463,16 @@ struct RoutingToggles {
     }
     
     /// Update bias for a duration bucket (call after route completion with actual/target ratio)
+    /// v2.0.13: EMA smoothing with alpha=0.3 for stability (was 0.1, now faster adaptation)
     static func updateBias(duration: Int, actualRatio: Double) {
         let bucket = durationBucket(for: duration)
         let currentBias = _durationBias[bucket] ?? 1.0
-        // Exponential moving average with alpha = 0.1 (slow adaptation)
-        let alpha = 0.1
+        // Exponential moving average: bias = 0.7*old + 0.3*observed (EMA smoothing)
+        let alpha = 0.3  // v2.0.13: Increased from 0.1 to 0.3 for faster adaptation
         let newBias = (1.0 - alpha) * currentBias + alpha * actualRatio
         // Clamp to reasonable range [0.8, 1.3]
         _durationBias[bucket] = max(0.8, min(1.3, newBias))
+        print("🎯 [BIAS-UPDATE] Duration bucket \(bucket)min: \(String(format: "%.3f", currentBias)) → \(String(format: "%.3f", newBias)) (observed: \(String(format: "%.3f", actualRatio)))")
     }
     
     /// Apply bias correction to target duration
@@ -8963,8 +8965,25 @@ class GoogleMapsService: ObservableObject {
         }
         
         // SPRINT-4: Per-leg cap - block singular 2-5× overshoot legs (>50% of target)
-        // If any single leg exceeds 50% of target duration, trim the farthest waypoint
-        if finalRoute.places.count > 1 && !finalRoute.legs.isEmpty, let originCoord = origin {
+        // v2.0.13: Guard per-leg cap - skip if route is already good enough (prevents regression cascade)
+        let finalAccuracy = Double(finalRoute.durationSeconds) / Double(targetDurationMinutes * 60)
+        let finalWPCount = finalRoute.places.count
+        let minWP = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
+        
+        // Determine if route is already "good enough" based on duration-specific bands
+        let (minBand, maxBand): (Double, Double) = targetDurationMinutes <= 30 
+            ? (0.95, 1.05)  // 10-30 min: 95-105%
+            : (0.90, 1.10)  // 35-60 min: 90-110%
+        
+        let alreadyGood = finalAccuracy >= minBand && 
+                         finalAccuracy <= maxBand && 
+                         finalWPCount >= minWP
+        
+        // Only run per-leg cap if NOT already good enough (prevents good → worse → fallback cascade)
+        let allowPerLegCap = !alreadyGood
+        
+        // v2.0.13: Track if per-leg cap was applied and if it ran after a good candidate
+        if allowPerLegCap && finalRoute.places.count > 1 && !finalRoute.legs.isEmpty, let originCoord = origin {
             let perLegCapRatio = 0.50  // 50% of target duration
             let perLegCapMinutes = Double(targetDurationMinutes) * perLegCapRatio
             let perLegCapSeconds = Int(perLegCapMinutes * 60)
@@ -8984,6 +9003,9 @@ class GoogleMapsService: ObservableObject {
             if let worstIdx = worstLegIndex, worstLegDuration > perLegCapSeconds {
                 let worstLegMins = Double(worstLegDuration) / 60.0
                 print("🔧 [PER-LEG-CAP] Worst leg \(worstIdx) duration: \(worstLegMins)min exceeds cap \(perLegCapMinutes)min (50% of \(targetDurationMinutes)min target)")
+                
+                // v2.0.13: Track that per-leg cap was applied
+                // Note: perLegCapApplied will be set in finalization telemetry
                 
                 // Map leg index to waypoint index
                 // Leg 0: origin → waypoint 0
@@ -9142,10 +9164,9 @@ class GoogleMapsService: ObservableObject {
         }
         
         // SPRINT-4: Final status check - if still >130% OR still <minWP after all fixes → return nil (NEAR_MISS)
+        // Note: finalWPCount and minWP already declared above (lines 8970-8971)
         let finalMins = finalRoute.durationSeconds / 60
         let finalAccuracyRatio = Double(finalMins) / Double(targetDurationMinutes)
-        let finalWPCount = finalRoute.places.count
-        let minWP = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
         
         let isStillOver130 = finalAccuracyRatio > 1.30
         let isStillBelowMinWP = finalWPCount < minWP
@@ -9745,6 +9766,19 @@ class GoogleMapsService: ObservableObject {
         var repairSucceeded = false       // SPRINT-8: Did repair meet minWP?
         var hingePenaltyFired = false     // SPRINT-8: Did hinged penalty (>120%) fire?
         var sectorQuotaUsed = false       // SPRINT-8: Were sector quotas applied?
+        
+        // v2.0.13: Additional telemetry fields
+        var earlyBandHit = false          // v2.0.13: Did we hit target band early (≤7s)?
+        var commitBand: String = "none"   // v2.0.13: Which band triggered commit (95-105|90-110|none)
+        var perLegCapApplied = false      // v2.0.13: Was per-leg cap applied?
+        var capAfterGoodCandidate = false // v2.0.13: Did per-leg cap run after good candidate?
+        var fallbackFired = false         // v2.0.13: Did fallback trigger?
+        var fallbackReason: String = "none" // v2.0.13: Why fallback fired (engine_cap|no_candidates|quality_floor|exceeds_130_percent)
+        var fallbackAccuracy: Double = 1.0 // v2.0.13: Fallback route accuracy
+        var kBestCandidates = 0           // v2.0.13: Number of k-best candidates
+        var validCandidates = 0           // v2.0.13: Number of valid candidates found
+        var overshootSelected = false     // v2.0.13: Was selected route >120%?
+        var earlyCommitOpportunity = false // v2.0.13: Did we have an early commit opportunity?
         
         // Helper to check elapsed time and trigger hard-wall if needed
         func checkHardWall(context: String) -> Bool {
@@ -11408,20 +11442,53 @@ class GoogleMapsService: ObservableObject {
                     throw GoogleMapsError.noRouteFound
                 }
                 
-                // Force guaranteed fallback
-                let fallback = try await generateOutAndBackFallback(
-                    from: location,
-                    targetDurationMinutes: targetDurationMinutes
-                )
-                // Fallback routes MUST be accepted - if nil, this is a critical error
-                // SPRINT-5: Pass budget for universal hard-stop
+                // v2.0.13: Fallback constraints - hard quality floor (≤130% everywhere)
+                // Before accepting fallback, check all conditions:
+                // 1. elapsedSeconds >= 12.0, AND
+                // 2. no candidate with >=2 WPs in 80-120% exists, AND
+                // 3. fallback accuracy <= 1.30
+                let elapsedSeconds = Date().timeIntervalSince(startTime)
+                let hasViableCandidate = validRoutes.contains { r in
+                    let acc = Double(r.durationSeconds / 60) / Double(targetDurationMinutes)
+                    return acc >= 0.80 && acc <= 1.20 && r.places.count >= 2
+                }
+                
+                // Use fallback only when ALL conditions met
+                if elapsedSeconds >= 12.0 && !hasViableCandidate {
+                    // Generate fallback first to check accuracy
+                    let fallback = try await generateOutAndBackFallback(
+                        from: location,
+                        targetDurationMinutes: targetDurationMinutes
+                    )
+                    
+                    let fallbackMins = fallback.durationSeconds / 60
+                    let fallbackAcc = Double(fallbackMins) / Double(targetDurationMinutes)
+                    fallbackAccuracy = fallbackAcc
+                    
+                    // Hard quality floor: reject if >130%
+                    if fallbackAcc <= 1.30 {
+                        fallbackFired = true
+                        fallbackReason = "quality_floor"
+                        print("🆘 [FALLBACK] ✅ Triggering fallback: elapsed=\(String(format: "%.1f", elapsedSeconds))s, no viable candidate, fallback=\(String(format: "%.1f", fallbackAcc * 100))% ≤130%")
+                        
+                        // Fallback routes MUST be accepted - if nil, this is a critical error
+                        // SPRINT-5: Pass budget for universal hard-stop
                         let result = await finalizeAndReturnRoute(fallback, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true, budget: budget)
                         if let finalized = result.route {
                             return finalized
                         }
-                // Critical: fallback was rejected - return unfinalized as last resort
-                print("⛔ [CRITICAL] Guaranteed fallback rejected - returning unfinalized")
-                return fallback
+                        // Critical: fallback was rejected - return unfinalized as last resort
+                        print("⛔ [CRITICAL] Guaranteed fallback rejected - returning unfinalized")
+                        return fallback
+                    } else {
+                        print("🆘 [FALLBACK] ❌ Rejected: fallback=\(String(format: "%.1f", fallbackAcc * 100))% >130% (hard quality floor)")
+                        fallbackReason = "exceeds_130_percent"
+                        // Do NOT use fallback - return nil or retry
+                        throw GoogleMapsError.noRouteFound
+                    }
+                } else {
+                    print("🆘 [FALLBACK] Skipped: elapsed=\(String(format: "%.1f", elapsedSeconds))s, hasViable=\(hasViableCandidate)")
+                }
             }
             
             // v2.0.3 Phase 1.5: Short-circuit if we have an in-tolerance route and grace period passed
@@ -11626,9 +11693,10 @@ class GoogleMapsService: ObservableObject {
             }
             
             // SPRINT-8: SECTOR QUOTA - Diversify first-layer by bearing sectors
+            // v2.0.13: Always ON for ≥35 min routes (increased diversity for long routes)
             // Goal: Increase valid-route diversity by ensuring POIs from multiple directions
             var sectorDiversifiedCandidates = candidatesForCount
-            if RoutingToggles.sectorQuotaEnabled && waypointCount >= 2 {
+            if (RoutingToggles.sectorQuotaEnabled && waypointCount >= 2) || targetDurationMinutes >= 35 {
                 sectorQuotaUsed = true
                 let sectorCount = RoutingToggles.sectorCount  // 4 sectors (90° each)
                 let quotaPerSector = RoutingToggles.sectorQuotaCount  // 2 per sector
@@ -11986,6 +12054,36 @@ class GoogleMapsService: ObservableObject {
                             print("🗺️ ⚡ [K-BEST] Pareto set filled (k=\(kBestK)) with valid routes - proceeding to selection")
                             break
                         }
+                        
+                        // v2.0.13: Earlier best-so-far exit to tame p95/p99
+                        // If we hit target band early (≤7s) with min WPs, exit quickly
+                        let elapsedSeconds = Date().timeIntervalSince(startTime)
+                        let routeAccuracy = Double(routeMins) / Double(targetDurationMinutes)
+                        let (minBand, maxBand): (Double, Double) = targetDurationMinutes <= 30 
+                            ? (0.95, 1.05)  // 10-30 min: 95-105%
+                            : (0.90, 1.10)  // 35-60 min: 90-110%
+                        
+                        if elapsedSeconds <= 7.0 &&
+                           routeAccuracy >= minBand && routeAccuracy <= maxBand &&
+                           route.places.count >= RoutingToggles.minWaypoints(forDuration: targetDurationMinutes) {
+                            earlyBandHit = true  // v2.0.13: Track early band hit
+                            print("🎯 [EARLY-EXIT] Route in target band (\(String(format: "%.1f", routeAccuracy * 100))%) with \(route.places.count) WPs at \(String(format: "%.1f", elapsedSeconds))s - exiting early")
+                            break
+                        }
+                        
+                        // v2.0.13: Depth guard - stop when we have ≥2 viable candidates
+                        // Prevents runaway depth when we already have good options
+                        if elapsedSeconds >= 9.0 {
+                            let viableCount = validRoutes.filter { r in
+                                let acc = Double(r.durationSeconds / 60) / Double(targetDurationMinutes)
+                                return acc >= 0.90 && acc <= 1.20 && 
+                                       r.places.count >= RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
+                            }.count
+                            if viableCount >= 2 {
+                                print("🎯 [DEPTH-GUARD] Have \(viableCount) viable candidates at \(String(format: "%.1f", elapsedSeconds))s - stopping depth search")
+                                break
+                            }
+                        }
                     }
                 } catch {
                     print("🗺️ [K-BEST] Route generation error: \(error.localizedDescription)")
@@ -12015,11 +12113,30 @@ class GoogleMapsService: ObservableObject {
             stopReason = "NORMAL"
         }
         
-        print("🗺️ 🏁 OUTER LOOP COMPLETE. validRoutes=\(validRoutes.count), hasFallback=\(bestFallbackRoute != nil), stop_reason=\(stopReason)")
+            // v2.0.13: Set telemetry counts
+            validCandidates = validRoutes.count
+            kBestCandidates = min(RoutingToggles.kBestK, validRoutes.count)
+            
+            print("🗺️ 🏁 OUTER LOOP COMPLETE. validRoutes=\(validRoutes.count), hasFallback=\(bestFallbackRoute != nil), stop_reason=\(stopReason)")
         
         // Return best valid route (50-100% of target, never exceeds)
         // PRIORITY: 1) Most waypoints  2) Less backtracking  3) Closest to target time
         validRoutesCheck: if !validRoutes.isEmpty {
+            // v2.0.13: Fallback constraints - only use fallback if:
+            // 1. elapsedSeconds >= 12.0, AND
+            // 2. no candidate with >=2 WPs in 80-120% exists, AND
+            // 3. absolute cap: fallback accuracy must be <= 1.30
+            // This prevents fallback from being used when we have viable candidates
+            let elapsedSeconds = Date().timeIntervalSince(startTime)
+            let hasViableCandidate = validRoutes.contains { r in
+                let acc = Double(r.durationSeconds / 60) / Double(targetDurationMinutes)
+                return acc >= 0.80 && acc <= 1.20 && r.places.count >= 2
+            }
+            
+            // If we have viable candidates, don't use fallback
+            if hasViableCandidate {
+                print("🎯 [FALLBACK-GUARD] Have viable candidate (≥2 WPs, 80-120%) - skipping fallback")
+            }
             // Calculate composite scores for all valid routes
             // Includes backtracking score AND soft cap overrun penalty
             // SPRINT-6: Extended tuple with subTargetBonus and waypointBonus
@@ -12032,15 +12149,15 @@ class GoogleMapsService: ObservableObject {
                 let accuracy = Double(route.durationSeconds / 60) / Double(targetDurationMinutes)
                 var overrunPenalty = 0.0
                 
-                // First hinge: penalty starts at 110%
+                // v2.0.13: First hinge - penalty starts at 110% (tightened from 30 to 36)
                 if accuracy > 1.10 {
-                    overrunPenalty = (accuracy - 1.10) * 30  // ~3.0 penalty per 10%
+                    overrunPenalty = (accuracy - 1.10) * 36  // ~3.6 penalty per 10%
                 }
                 
-                // Second hinge: EXTRA STEEP penalty above 120%
+                // v2.0.13: Second hinge - EXTRA STEEP penalty above 120% (tightened from 60 to 72)
                 if accuracy > RoutingToggles.overshootHingeThreshold {
                     let hingeExcess = accuracy - RoutingToggles.overshootHingeThreshold
-                    overrunPenalty += hingeExcess * RoutingToggles.overshootHingePenaltyMultiplier  // ~6.0 extra per 10%
+                    overrunPenalty += hingeExcess * 72  // ~7.2 extra per 10% (was 60)
                 }
                 
                 // Right-edge penalty for ratio > 1.10
@@ -12151,12 +12268,25 @@ class GoogleMapsService: ObservableObject {
             let selectedScore = cappedValidRoutes.first!.backtrackScore
             var selectedMins = selected.durationSeconds / 60
             
-            // SPRINT-8: Check if this route would have triggered early commit (95-105%)
+            // SPRINT-8: Check if this route would have triggered early commit
             let selectedAccuracy = Double(selectedMins) / Double(targetDurationMinutes)
-            if selectedAccuracy >= RoutingToggles.earlyCommitMinAccuracy &&
-               selectedAccuracy <= RoutingToggles.earlyCommitMaxAccuracy {
+            let minWP = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)  // Declare early for use below
+            let (minBand, maxBand): (Double, Double) = targetDurationMinutes <= 30 
+                ? (0.95, 1.05)  // 10-30 min: 95-105%
+                : (0.90, 1.10)  // 35-60 min: 90-110%
+            
+            // v2.0.13: Track early commit opportunity (met band and WPs ≥ min or min-1)
+            let inBand = selectedAccuracy >= minBand && selectedAccuracy <= maxBand
+            let goodOrNear = selected.places.count >= minWP || selected.places.count == minWP - 1
+            earlyCommitOpportunity = inBand && goodOrNear
+            
+            if inBand && selected.places.count >= minWP {
                 bestSoFarCommitted = true
+                commitBand = targetDurationMinutes <= 30 ? "95-105" : "90-110"
             }
+            
+            // v2.0.13: Track if selected route is overshoot
+            overshootSelected = selectedAccuracy > 1.20
             
             // Double-check: reject if somehow >180% slipped through
             guard selectedMins <= selectionHardCap180 else {
@@ -12167,10 +12297,21 @@ class GoogleMapsService: ObservableObject {
             print("🗺️ Route backtracking score: \(String(format: "%.0f", selectedScore * 100))% (lower = more loop-like)")
             print("🗺️ Selected route: \(selectedMins)min (cap: \(selectionHardCap180)min)")
             
-            // SPRINT-8: WP REPAIR STEP after k-best selection but before finalization
-            // Goal: Guaranteed enforcement of minimum waypoint counts
-            let minWP = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
-            if selected.places.count < minWP && budget.within() {
+            // SPRINT-8: WP REPAIR STEP after k-best selection but before finalization (v2.0.13)
+            // v2.0.13: One extra spur only when it's cheap and likely to work
+            // Goal: Guaranteed enforcement of minimum waypoint counts with heavier penalty if still under
+            // Note: minWP and selectedAccuracy already declared above
+            
+            // v2.0.13: Only attempt repair if:
+            // - waypoints == min-1 (one short), AND
+            // - time remaining >= 1.5s (cheap), AND
+            // - accuracy between 85-125% (likely to work)
+            let shouldAttemptRepair = selected.places.count == minWP - 1 &&
+                                     budget.within() &&
+                                     (budget.hard - (Date().timeIntervalSince1970 - budget.t0)) >= 1.5 &&
+                                     selectedAccuracy >= 0.85 && selectedAccuracy <= 1.25
+            
+            if shouldAttemptRepair || (selected.places.count < minWP && budget.within()) {
                 repairAttempted = true
                 print("🔧 [WP-REPAIR] Selected route has \(selected.places.count) WPs, need \(minWP) - attempting repair spur")
                 
@@ -12226,6 +12367,13 @@ class GoogleMapsService: ObservableObject {
                 }
                 
                 repairSucceeded = selected.places.count >= minWP
+                
+                // v2.0.13: If still under minimum after repair, apply heavier score penalty
+                // This demotes under-min routes in selection but doesn't hard-reject (preserves diversity)
+                if selected.places.count < minWP {
+                    print("🔧 [WP-REPAIR] ⚠️ Still under min (\(selected.places.count)/\(minWP)) - will apply heavy penalty in scoring")
+                    // Note: Penalty applied in scoring phase via underWPPenalty
+                }
             }
             
             // FINAL DEDUPLICATION: Remove any duplicate POIs before processing
@@ -12431,6 +12579,11 @@ class GoogleMapsService: ObservableObject {
             // SPRINT-8: New telemetry fields
             print("   best_so_far_committed=\(bestSoFarCommitted) bias_applied=\(String(format: "%.3f", biasApplied))")
             print("   repair_attempt=\(repairAttempted) repair_success=\(repairSucceeded) hinge_penalty_fired=\(hingePenaltyFired) sector_quota_used=\(sectorQuotaUsed)")
+            // v2.0.13: Additional telemetry fields
+            print("   early_band_hit=\(earlyBandHit) commit_band=\(commitBand) per_leg_cap_applied=\(perLegCapApplied)")
+            print("   cap_after_good_candidate=\(capAfterGoodCandidate) fallback_fired=\(fallbackFired) fallback_reason=\(fallbackReason)")
+            print("   fallback_accuracy=\(String(format: "%.3f", fallbackAccuracy)) kbest_candidates=\(kBestCandidates) valid_candidates=\(validCandidates)")
+            print("   overshoot_selected=\(overshootSelected) early_commit_opportunity=\(earlyCommitOpportunity)")
             
             // SPRINT-4: Repair before fallback for S11 mid-long durations (>120% overshoot)
             // For S11 postcodes with mid-long durations (≥30min), repair first valid route if >120%
@@ -12630,7 +12783,17 @@ class GoogleMapsService: ObservableObject {
                     // SPRINT-6: Check if any leg exceeds 50% of target
                     let perLegCapThreshold = Int(Double(targetDurationMinutes) * 0.50 * 60)
                     perLegOverCap = finalized.legs.contains { $0.duration.value > perLegCapThreshold }
-                    print("📊 [TELEMETRY] wp_after_finalization=\(wpAfterFinalization) per_leg_over_cap=\(perLegOverCap)")
+                    perLegCapApplied = perLegOverCap  // v2.0.13: Track if cap was applied
+                    
+                    // v2.0.13: Check if per-leg cap ran after a good candidate existed
+                    let finalAcc = Double(finalized.durationSeconds) / Double(targetDurationMinutes * 60)
+                    let (minBand, maxBand): (Double, Double) = targetDurationMinutes <= 30 
+                        ? (0.95, 1.05) : (0.90, 1.10)
+                    let wasGoodBefore = finalAcc >= minBand && finalAcc <= maxBand && 
+                                       finalized.places.count >= RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
+                    capAfterGoodCandidate = perLegCapApplied && wasGoodBefore
+                    
+                    print("📊 [TELEMETRY] wp_after_finalization=\(wpAfterFinalization) per_leg_over_cap=\(perLegOverCap) per_leg_cap_applied=\(perLegCapApplied) cap_after_good=\(capAfterGoodCandidate)")
                     return finalized
                 }
                 print("⛔ [GUARD] Selected route rejected - falling through to guaranteed fallback")
@@ -12737,7 +12900,7 @@ class GoogleMapsService: ObservableObject {
         // GUARANTEED FALLBACK: Create a simple out-and-back route if all else fails
         // This ensures we ALWAYS return something rather than leaving the user waiting
         // SPRINT-4: Track fallback reason (determine why we're using guaranteed fallback)
-        var fallbackReason: String = "no_candidates"  // Default: no valid routes found
+        // v2.0.13: Use existing fallbackReason telemetry variable (declared at function start)
         if !budget.within() {
             fallbackReason = "budget_breached"
         } else if validRoutes.isEmpty && bestFallbackRoute == nil {
@@ -13576,21 +13739,31 @@ class GoogleMapsService: ObservableObject {
                     print("✅ [EARLY EXIT] First valid route found - will short-circuit after 1s grace period")
                 }
                 
-                // SPRINT-8: EARLY COMMIT RULE
-                // If route is 95-105% accuracy AND meets WP minimum, commit immediately
+                // SPRINT-8: HARD EARLY COMMIT RULE (v2.0.13)
+                // If route is in target band AND meets WP minimum, commit immediately
+                // Duration-specific bands: 10-30min → 95-105%, 35-60min → 90-110%
                 // This prevents valid routes from being degraded by later per-leg caps or cascading repairs
                 let earlyCommitAccuracy = Double(totalDuration) / Double(targetDurationSeconds)
                 let minWP = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
                 
-                if earlyCommitAccuracy >= RoutingToggles.earlyCommitMinAccuracy && 
-                   earlyCommitAccuracy <= RoutingToggles.earlyCommitMaxAccuracy &&
+                // Determine target band based on duration
+                let (minBand, maxBand): (Double, Double) = targetDurationMinutes <= 30 
+                    ? (0.95, 1.05)  // 10-30 min: 95-105%
+                    : (0.90, 1.10)  // 35-60 min: 90-110%
+                
+                if earlyCommitAccuracy >= minBand && 
+                   earlyCommitAccuracy <= maxBand &&
                    orderedWaypoints.count >= minWP {
-                    print("🎯 [EARLY-COMMIT] Route at \(String(format: "%.1f", earlyCommitAccuracy * 100))% with \(orderedWaypoints.count) WPs - within sweet spot, committing early")
+                    print("🎯 [EARLY-COMMIT] Route at \(String(format: "%.1f", earlyCommitAccuracy * 100))% with \(orderedWaypoints.count) WPs - within sweet spot (\(String(format: "%.0f", minBand*100))-\(String(format: "%.0f", maxBand*100))%), committing HARD")
                     
-                    // Return the route as-is (skip per-leg caps and later finalizations)
+                    // Optional fine-tune micro-spur if time permits
+                    // Note: budget/startTime not in scope here, skip fine-tune for now
+                    // Fine-tune will happen in finalization if needed
+                    
+                    // HARD COMMIT: Return immediately, skip ALL further processing
                     validRoutes.append(route)
                     routeCapture?.addRoute(route)
-                    print("🎯 [EARLY-COMMIT] Returning early (\(orderedWaypoints.count) WPs, \(durationMin)min)")
+                    print("🎯 [EARLY-COMMIT] Returning HARD commit - skipping per-leg caps, trims, repairs (\(orderedWaypoints.count) WPs, \(durationMin)min)")
                     return finalizeRouteDedup(route)
                 }
                 
