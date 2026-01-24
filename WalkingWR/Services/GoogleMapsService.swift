@@ -415,9 +415,14 @@ struct RoutingToggles {
     // PHASE C: Area-adaptive speed model
     static let denseLegThresholdM = 150.0                  // Dense if avg leg <150m
     static let suburbanLegThresholdM = 350.0               // Suburban if avg leg >350m
-    static let denseSpeedKmh = 3.95                        // SPRINT-4: 3.95 km/h for dense areas (refined from 4.0)
+    static let denseSpeedKmh = 3.88                        // SPRINT-6: 3.88 km/h for dense areas (was 3.95, helps cut overshoot)
     static let urbanSpeedKmh = 4.25                        // SPRINT-4: 4.25 km/h for urban (150-350m legs)
     static let suburbanSpeedKmh = 5.00                     // SPRINT-4: 5.00 km/h for suburban (was 4.9)
+    
+    // SPRINT-6: Selection scoring nudges
+    static let overshootPenaltyMultiplier = 2.5            // Penalty multiplier for <minWP routes with >1.05 accuracy
+    static let subTargetBonus = 0.01                       // Small bonus for routes ≤100% (favor slightly short)
+    static let waypointScoreBonus = 0.08                   // Bonus per waypoint (was implicit, now explicit)
     
     // TASK 6: Template fallback for fragile durations
     static let templateFallbackDurations = [10, 25, 45]    // Durations needing templates
@@ -1450,6 +1455,41 @@ class GoogleMapsService: ObservableObject {
                 let examples = rejected.filter { $0.reason == "too long" }.prefix(3)
                     .map { "\($0.name) (~\($0.estimated)min)" }.joined(separator: ", ")
                 print("   ❌ Too long (>\(maxDuration)min): \(tooLong) POIs (e.g., \(examples))")
+            }
+        }
+        
+        // SPRINT-6: Asymmetric pre-filter bias - keep more sub-100% candidates than over-100%
+        // This helps the selector land routes in 90-110% more often
+        if accepted.count > 20 {
+            // Partition into sub-target and over-target
+            let targetRoundTrip = targetDurationMinutes
+            let subTarget = accepted.filter { estimateRoundTripMinutes(from: origin, to: $0) <= targetRoundTrip }
+            let overTarget = accepted.filter { estimateRoundTripMinutes(from: origin, to: $0) > targetRoundTrip }
+            
+            // Keep 60% sub-target, 40% over-target (asymmetric bias toward shorter)
+            let maxSubTarget = max(12, accepted.count * 60 / 100)
+            let maxOverTarget = max(8, accepted.count * 40 / 100)
+            
+            // Sort each group by closeness to target
+            let sortedSub = subTarget.sorted { poi1, poi2 in
+                let est1 = estimateRoundTripMinutes(from: origin, to: poi1)
+                let est2 = estimateRoundTripMinutes(from: origin, to: poi2)
+                return abs(targetRoundTrip - est1) < abs(targetRoundTrip - est2)  // Closest to target first
+            }
+            let sortedOver = overTarget.sorted { poi1, poi2 in
+                let est1 = estimateRoundTripMinutes(from: origin, to: poi1)
+                let est2 = estimateRoundTripMinutes(from: origin, to: poi2)
+                return est1 < est2  // Shortest overshoot first
+            }
+            
+            let biasedSubTarget = Array(sortedSub.prefix(maxSubTarget))
+            let biasedOverTarget = Array(sortedOver.prefix(maxOverTarget))
+            
+            let beforeBias = accepted.count
+            accepted = biasedSubTarget + biasedOverTarget
+            
+            if accepted.count < beforeBias {
+                print("🎯 [ASYMMETRIC-BIAS] Reduced from \(beforeBias) to \(accepted.count) candidates (60% sub-target, 40% over-target)")
             }
         }
         
@@ -8906,6 +8946,62 @@ class GoogleMapsService: ObservableObject {
                         )
                         
                         print("📊 [PER_LEG_CAP_TRIM] worst_leg_min=\(worstLegMins) cap_min=\(perLegCapMinutes) target=\(targetDurationMinutes) new_worst_leg_min=\(newWorstLegMins)")
+                        
+                        // SPRINT-6: Micro-extend after trim if route fell below 92-95%
+                        // This turns hard trims into in-band finishes
+                        if trimmedRatio < 0.95 && !allPlaces.isEmpty {
+                            print("🔧 [POST-TRIM-EXTEND] Route fell to \(String(format: "%.1f", trimmedRatio * 100))% after trim - attempting micro-extend")
+                            
+                            // Find nearby POIs not already in route
+                            let existingIds = Set(trimmedWaypoints.map { $0.placeId })
+                            let nearbyPOIs = allPlaces.filter { poi in
+                                !existingIds.contains(poi.placeId) &&
+                                distanceBetween(originCoord, poi.coordinate) < 600  // Within 600m
+                            }.sorted { distanceBetween(originCoord, $0.coordinate) < distanceBetween(originCoord, $1.coordinate) }
+                            
+                            if let nearestPOI = nearbyPOIs.first {
+                                var extendedWaypoints = trimmedWaypoints
+                                let midIdx = max(0, extendedWaypoints.count / 2)
+                                extendedWaypoints.insert(nearestPOI, at: min(midIdx, extendedWaypoints.count))
+                                
+                                let sortedExtended = extendedWaypoints.sorted { wp1, wp2 in
+                                    distanceBetween(originCoord, wp1.coordinate) < distanceBetween(originCoord, wp2.coordinate)
+                                }
+                                
+                                let (extendResult, extendTimeout) = await directionsWithTimeout(
+                                    origin: originCoord,
+                                    destination: originCoord,
+                                    waypoints: sortedExtended.map { $0.coordinate },
+                                    timeout: RoutingToggles.perCallTimeoutNormal,
+                                    targetDurationMinutes: targetDurationMinutes,
+                                    angularDiversityScore: nil,
+                                    postcode: postcode,
+                                    checkGlobalHardStop: finalizationHardStopCheck
+                                )
+                                
+                                if let extendDirs = extendResult, !extendTimeout {
+                                    let extendedDuration = extendDirs.legs.reduce(0) { $0 + $1.duration.value }
+                                    let extendedDistance = extendDirs.legs.reduce(0) { $0 + $1.distance.value }
+                                    let extendedMins = extendedDuration / 60
+                                    let extendedRatio = Double(extendedMins) / Double(targetDurationMinutes)
+                                    
+                                    // Accept if improved and within 92-115%
+                                    if extendedRatio >= 0.92 && extendedRatio <= 1.15 && extendedRatio > trimmedRatio {
+                                        print("🔧 [POST-TRIM-EXTEND] ✅ Extended from \(trimmedMins)min to \(extendedMins)min (\(String(format: "%.1f", extendedRatio * 100))%)")
+                                        finalRoute = GeneratedRoute(
+                                            places: sortedExtended,
+                                            polyline: extendDirs.overviewPolyline.points,
+                                            distanceMeters: extendedDistance,
+                                            durationSeconds: extendedDuration,
+                                            legs: extendDirs.legs
+                                        )
+                                        microSpursAdded += 1
+                                    } else {
+                                        print("🔧 [POST-TRIM-EXTEND] Extended to \(extendedMins)min (\(String(format: "%.1f", extendedRatio * 100))%) - outside target, keeping trimmed")
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         print("⚠️ [PER-LEG-CAP] Route regeneration failed/timeout - keeping original route")
                     }
@@ -9617,9 +9713,9 @@ class GoogleMapsService: ObservableObject {
                 
                 // SPRINT-4: Density-aware speed model (by leg length) - global, no postcode branching
                 if avgLegLength < RoutingToggles.denseLegThresholdM {
-                    // Dense grid: 3.95 km/h (from RoutingToggles.denseSpeedKmh)
+                    // Dense grid: 3.88 km/h (from RoutingToggles.denseSpeedKmh) - SPRINT-6: lowered for better accuracy
                     let denseSpeed = Int(RoutingToggles.denseSpeedKmh * 1000 / 60)  // km/h to m/min
-                    print("🚶 [SPEED] Global density model: dense grid (avg leg: \(Int(avgLegLength))m < \(Int(RoutingToggles.denseLegThresholdM))m) → \(denseSpeed) m/min (3.95 km/h)")
+                    print("🚶 [SPEED] Global density model: dense grid (avg leg: \(Int(avgLegLength))m < \(Int(RoutingToggles.denseLegThresholdM))m) → \(denseSpeed) m/min (\(String(format: "%.2f", RoutingToggles.denseSpeedKmh)) km/h)")
                     return denseSpeed
                 } else if avgLegLength > RoutingToggles.suburbanLegThresholdM {
                     // Suburban: 5.00 km/h (from RoutingToggles.suburbanSpeedKmh)
@@ -11742,7 +11838,8 @@ class GoogleMapsService: ObservableObject {
         validRoutesCheck: if !validRoutes.isEmpty {
             // Calculate composite scores for all valid routes
             // Includes backtracking score AND soft cap overrun penalty
-            let routesWithScores = validRoutes.map { route -> (route: GeneratedRoute, backtrackScore: Double, overrunPenalty: Double) in
+            // SPRINT-6: Extended tuple with subTargetBonus and waypointBonus
+            let routesWithScores = validRoutes.map { route -> (route: GeneratedRoute, backtrackScore: Double, overrunPenalty: Double, subTargetBonus: Double, waypointBonus: Double) in
                 let backtrack = calculateBacktrackingScore(polyline: route.polyline)
                 
                 // SOFT CAP OVERRUN PENALTY: Routes >115% get penalized
@@ -11754,33 +11851,51 @@ class GoogleMapsService: ObservableObject {
                     overrunPenalty = (accuracy - 1.15) * 50  // Steep penalty after 115%
                 }
                 
-                // SPRINT-4: Overshoot penalty ×2 for routes with <min waypoints (prefer 95-105% fits with ≥min WPs)
+                // SPRINT-6: Overshoot penalty ×2.5 for routes with <min waypoints (prefer 95-105% fits with ≥min WPs)
                 let minWaypoints = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
                 if route.places.count < minWaypoints && accuracy > 1.05 {
-                    overrunPenalty *= 2.0  // Double the penalty for routes with <min waypoints
+                    overrunPenalty *= RoutingToggles.overshootPenaltyMultiplier  // 2.5× penalty for routes with <min waypoints
                 }
                 
-                return (route, backtrack, overrunPenalty)
+                // SPRINT-6: Small bonus for routes ≤100% (favor slightly short over slightly long in ties)
+                var subTargetBonus = 0.0
+                if accuracy <= 1.0 && accuracy >= 0.90 {
+                    subTargetBonus = RoutingToggles.subTargetBonus  // 0.01 bonus
+                }
+                
+                // SPRINT-6: Waypoint bonus (more waypoints = better route variety)
+                let waypointBonus = Double(route.places.count) * RoutingToggles.waypointScoreBonus
+                
+                return (route, backtrack, overrunPenalty, subTargetBonus, waypointBonus)
             }
             
-            // Sort by: least overrun penalty, then most waypoints, then least backtracking, then closest to target
+            // SPRINT-6: Composite scoring with sub-target bonus and waypoint bonus
+            // Sort by: composite score (lower is better), then closest to target
             let sorted = routesWithScores.sorted { r1, r2 in
-                // FIRST: Lower overrun penalty is better (kills 150%+ routes)
-                if abs(r1.overrunPenalty - r2.overrunPenalty) > 1.0 {
-                    return r1.overrunPenalty < r2.overrunPenalty
+                // Calculate composite scores: lower = better
+                // overrunPenalty: higher = worse
+                // subTargetBonus: higher = better (subtract from penalty)
+                // waypointBonus: higher = better (subtract from penalty)
+                // backtrackScore: higher = worse
+                let score1 = r1.overrunPenalty - r1.subTargetBonus - r1.waypointBonus + (r1.backtrackScore * 0.5)
+                let score2 = r2.overrunPenalty - r2.subTargetBonus - r2.waypointBonus + (r2.backtrackScore * 0.5)
+                
+                // FIRST: Lower composite score is better
+                if abs(score1 - score2) > 0.05 {
+                    return score1 < score2
                 }
-                // Second: more waypoints is better
+                // Second: more waypoints is better (tiebreaker)
                 if r1.route.places.count != r2.route.places.count {
                     return r1.route.places.count > r2.route.places.count
                 }
-                // Third: less backtracking is better (lower score = more loop-like)
-                if abs(r1.backtrackScore - r2.backtrackScore) > 0.1 {
-                    return r1.backtrackScore < r2.backtrackScore
-                }
-                // Fourth: closer to target is better
+                // Third: closer to target is better (prefer slightly short)
                 let diff1 = abs(targetDurationMinutes - r1.route.durationSeconds / 60)
                 let diff2 = abs(targetDurationMinutes - r2.route.durationSeconds / 60)
-                return diff1 < diff2  // Prefer routes closer to target
+                if diff1 != diff2 {
+                    return diff1 < diff2
+                }
+                // Fourth: prefer shorter if equidistant from target (SPRINT-6: bias toward sub-100%)
+                return r1.route.durationSeconds < r2.route.durationSeconds
             }
             
             // v2.0.3 Phase 1.5 Batch A: Filter out routes >180% BEFORE selection
