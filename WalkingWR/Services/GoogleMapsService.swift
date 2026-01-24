@@ -403,7 +403,7 @@ struct RoutingToggles {
     // TASK 3: Multi-pass repair configuration
     static let overshootRepairThreshold = 1.20             // Trigger repair if >120%
     static let microExtendPasses = 2                       // Number of micro-extend passes
-    static let microExtendAddMin = [2, 4]                  // Minutes to add per pass
+    static let microExtendAddMin = [3, 1]                  // Minutes to add per pass (pass 1: +2-4→3, pass 2: +1-2→1)
     static let duplicateCheckCategoryFirst = true          // Category-based duplicate check
     
     // TASK 4: Waypoint preservation (nudge before prune)
@@ -9507,6 +9507,8 @@ class GoogleMapsService: ObservableObject {
         var microSpurs: Int = 0
         var wpBeforeFinalization = 0
         var wpAfterFinalization = 0
+        var stageExited: String = "none"  // SPRINT-6: Track which stage caused exit
+        var perLegOverCap = false         // SPRINT-6: Track if any leg exceeded 50% of target
         
         // Helper to check elapsed time and trigger hard-wall if needed
         func checkHardWall(context: String) -> Bool {
@@ -9527,10 +9529,12 @@ class GoogleMapsService: ObservableObject {
         }
         
         // SPRINT-4: Global hard-stop check closure (for backwards compatibility)
+        // SPRINT-6: Also tracks stageExited for telemetry
         let checkHardStop: (String, String) -> Bool = { stage, routeId in
             if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "\(stage)_\(routeId)") {
                 if !hardStopHit {
                     hardStopHit = true
+                    stageExited = stage  // SPRINT-6: Track which stage triggered exit
                     let durationBucket = "\(targetDurationMinutes)min"
                     print("⛔ [HARD-STOP] [\(stage)] route_id=\(routeId) duration_bucket=\(durationBucket) stage_exited=\(stage) elapsed_ms=\(Int(budget.elapsed * 1000)) - aborting immediately")
                 }
@@ -9965,41 +9969,54 @@ class GoogleMapsService: ObservableObject {
         let needsMorePOIs = places.count < desiredSpots * 2 || 
                            (targetDurationMinutes <= 15 && places.count < 10)
         if needsMorePOIs {
-            print("🗺️ Fetching more POIs for \(targetDurationMinutes)min route...")
-            
-            // Search at cardinal directions from origin
-            let offsetDistance = 0.005 // ~500m in lat/lng
-            let searchOffsets = [
-                (lat: offsetDistance, lng: 0.0),
-                (lat: -offsetDistance, lng: 0.0),
-                (lat: 0.0, lng: offsetDistance),
-                (lat: 0.0, lng: -offsetDistance)
-            ]
-            
-            for offset in searchOffsets {
-                let offsetLocation = CLLocationCoordinate2D(
-                    latitude: location.latitude + offset.lat,
-                    longitude: location.longitude + offset.lng
-                )
-                if let morePlaces = try? await findNearbyPlaces(
-                    location: offsetLocation,
-                    radiusMeters: 800,
-                    targetDurationMinutes: targetDurationMinutes  // v2.0.3 Phase 2A: For diversity check
-                ) {
-                    for place in morePlaces {
-                        // v1.6.47: Check BOTH duplicate AND exclusion list to prevent excluded POIs sneaking back
-                        let isDuplicate = places.contains(where: { $0.placeId == place.placeId })
-                        let isExcluded = excludePlaceIds.contains(place.placeId)
-                        if !isDuplicate && !isExcluded {
-                            places.append(place)
+            // SPRINT-6: Budget check before offset POI searches (unguarded loop was causing p99 blowouts)
+            if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "OFFSET_POI_SEARCH") {
+                if !hardStopHit { hardStopHit = true; stageExited = "OFFSET_POI_SEARCH" }
+                print("⛔ [HARD-STOP] Skipping offset POI searches - budget exceeded")
+            } else {
+                print("🗺️ Fetching more POIs for \(targetDurationMinutes)min route...")
+                
+                // Search at cardinal directions from origin
+                let offsetDistance = 0.005 // ~500m in lat/lng
+                let searchOffsets = [
+                    (lat: offsetDistance, lng: 0.0),
+                    (lat: -offsetDistance, lng: 0.0),
+                    (lat: 0.0, lng: offsetDistance),
+                    (lat: 0.0, lng: -offsetDistance)
+                ]
+                
+                for offset in searchOffsets {
+                    // SPRINT-6: Check budget before each offset search
+                    if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "OFFSET_POI_\(searchOffsets.firstIndex(where: { $0.lat == offset.lat && $0.lng == offset.lng }) ?? 0)") {
+                        if !hardStopHit { hardStopHit = true; stageExited = "OFFSET_POI_LOOP" }
+                        print("⛔ [HARD-STOP] Aborting offset POI search loop - budget exceeded")
+                        break
+                    }
+                    
+                    let offsetLocation = CLLocationCoordinate2D(
+                        latitude: location.latitude + offset.lat,
+                        longitude: location.longitude + offset.lng
+                    )
+                    if let morePlaces = try? await findNearbyPlaces(
+                        location: offsetLocation,
+                        radiusMeters: 800,
+                        targetDurationMinutes: targetDurationMinutes  // v2.0.3 Phase 2A: For diversity check
+                    ) {
+                        for place in morePlaces {
+                            // v1.6.47: Check BOTH duplicate AND exclusion list to prevent excluded POIs sneaking back
+                            let isDuplicate = places.contains(where: { $0.placeId == place.placeId })
+                            let isExcluded = excludePlaceIds.contains(place.placeId)
+                            if !isDuplicate && !isExcluded {
+                                places.append(place)
+                            }
                         }
                     }
+                    
+                    // Stop if we have enough
+                    if places.count >= desiredSpots * 3 { break }
                 }
-                
-                // Stop if we have enough
-                if places.count >= desiredSpots * 3 { break }
+                print("🗺️ Now have \(places.count) total POIs")
             }
-            print("🗺️ Now have \(places.count) total POIs")
         }
         
         guard !places.isEmpty else {
@@ -11988,12 +12005,12 @@ class GoogleMapsService: ObservableObject {
             print("   📦 Database used: \(usedDatabase ? "Yes" : "No")")
             print("   ⏱️ Total time: \(String(format: "%.2f", elapsed))s")
             
-            // PHASE D: Per-route summary logging
-            print("📊 [TELEMETRY] route_id=\(targetDurationMinutes)min duration_bucket=\(targetDurationMinutes)min")
+            // PHASE D: Per-route summary logging with SPRINT-6 fields
+            print("📊 [TELEMETRY] route_id=\(targetDurationMinutes)min duration_bucket=\(targetDurationMinutes)min elapsed_ms=\(Int(elapsed * 1000))")
             print("   engine_calls={mapkit:\(engineCalls.mapkit), osrm:\(engineCalls.osrm), skipped:\(engineCalls.skipped)}")
             print("   expansions=\(expansions), repair_passes=\(repairPasses), nudges=\(nudges), micro_spurs=\(microSpurs)")
             print("   wp_before_finalization=\(wpBeforeFinalization), wp_after_finalization=\(wpAfterFinalization)")
-            print("   stop_reason=\(stopReason)")
+            print("   stop_reason=\(stopReason) stage_exited=\(stageExited) per_leg_over_cap=\(perLegOverCap)")
             
             // SPRINT-4: Repair before fallback for S11 mid-long durations (>120% overshoot)
             // For S11 postcodes with mid-long durations (≥30min), repair first valid route if >120%
@@ -12190,7 +12207,10 @@ class GoogleMapsService: ObservableObject {
                     microSpurs += result.microSpursAdded
                     // PHASE D: Track waypoints after finalization
                     wpAfterFinalization = finalized.places.count
-                    print("📊 [TELEMETRY] wp_after_finalization=\(wpAfterFinalization)")
+                    // SPRINT-6: Check if any leg exceeds 50% of target
+                    let perLegCapThreshold = Int(Double(targetDurationMinutes) * 0.50 * 60)
+                    perLegOverCap = finalized.legs.contains { $0.duration.value > perLegCapThreshold }
+                    print("📊 [TELEMETRY] wp_after_finalization=\(wpAfterFinalization) per_leg_over_cap=\(perLegOverCap)")
                     return finalized
                 }
                 print("⛔ [GUARD] Selected route rejected - falling through to guaranteed fallback")
