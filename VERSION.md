@@ -4,13 +4,21 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.4 (Build 291)`
+**Current Version:** `2.1.5 (Build 292)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
 ---
 
 ## Version History
+
+### 2.1.5 (Build 292) - EXPERIMENTAL ⚠️
+- **Address-based road snapping**: Waypoints now snap to the road from their address, not just the nearest road
+- Added `extractRoadName()` to parse road names from address strings
+- Added `findRoadByName()` to query OSM for specific roads by name
+- POIs like "Lindale Methodist Church" at "5A Brandy Carr Rd" now snap to "Brandy Carr Rd" instead of nearest road
+- Falls back to nearest road if address road not found
+- **Not recommended for production use**
 
 ### 2.1.4 (Build 291) - EXPERIMENTAL ⚠️
 - **Road snapping fix**: Exclude service roads (driveways) from road snapping queries
@@ -57,4 +65,5 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **186**: Last stable build (1.9.15)
 - **187-289**: Experimental builds (do not use for production)
 - **290**: Previous build (2.0.20) - Enhanced batch telemetry
-- **291**: Current build (2.1.4) - Road snapping fix, MapKit fallback
+- **291**: Previous build (2.1.4) - Road snapping fix, MapKit fallback
+- **292**: Current build (2.1.5) - Address-based road snapping

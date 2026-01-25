@@ -4474,9 +4474,14 @@ class GoogleMapsService: ObservableObject {
             }
             
             if isInsideRestricted {
-                // v2.1.1: POI is inside restricted area - find nearest road point
+                // v2.1.5: POI is inside restricted area - find nearest road point
+                // Prioritizes the road from the POI's address if available
                 // This ensures routes stay on public roads instead of going into schools/private areas
-                if let nearestRoadPoint = await findNearestRoadPoint(near: poi.coordinate, radiusMeters: 50) {
+                let roadName = extractRoadName(from: poi.vicinity)
+                if let roadName = roadName {
+                    print("   🛤️ '\(poi.name)' - preferred road from address: '\(roadName)'")
+                }
+                if let nearestRoadPoint = await findNearestRoadPoint(near: poi.coordinate, radiusMeters: 50, preferredRoadName: roadName) {
                     // Create a new POI with snapped coordinates
                     let snappedGeometry = PlaceGeometry(location: PlaceLocation(lat: nearestRoadPoint.latitude, lng: nearestRoadPoint.longitude))
                     let snappedPOI = PlaceResult(
@@ -4703,7 +4708,151 @@ class GoogleMapsService: ObservableObject {
     /// v2.1.1: Find the nearest public road/path point to a given coordinate
     /// Used to snap waypoints that are inside restricted areas (schools, etc.) to the nearest walkable path
     /// Returns nil if no road found within radius
-    private func findNearestRoadPoint(near coordinate: CLLocationCoordinate2D, radiusMeters: Int) async -> CLLocationCoordinate2D? {
+    /// v2.1.5: Extract road name from address string
+    /// Examples: "5A Brandy Carr Rd" -> "Brandy Carr Rd", "123 Main Street" -> "Main Street"
+    private func extractRoadName(from address: String?) -> String? {
+        guard let address = address, !address.isEmpty else { return nil }
+        
+        // Remove common prefixes like house numbers, postcodes, etc.
+        // Pattern: Optional number/letter prefix, then road name, then optional suffix
+        let patterns = [
+            "^\\d+[A-Za-z]?\\s+",  // "5A " or "123 "
+            "^\\d+\\s+",            // "123 "
+            "^[A-Za-z]+\\s+",       // "The " or "A "
+        ]
+        
+        var cleaned = address.trimmingCharacters(in: .whitespaces)
+        
+        // Remove postcode (UK format: letters + numbers)
+        if let postcodeRange = cleaned.range(of: #"[A-Z]{1,2}\d{1,2}\s?\d[A-Z]{2}"#, options: .regularExpression) {
+            cleaned = String(cleaned[..<postcodeRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+        }
+        
+        // Remove house number prefixes
+        for pattern in patterns {
+            cleaned = cleaned.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+        }
+        
+        // Remove common suffixes
+        let suffixes = [",", "Wakefield", "Kirkhamgate", "WF2", "WF1", "WF3"]
+        for suffix in suffixes {
+            if cleaned.lowercased().hasSuffix(suffix.lowercased()) {
+                cleaned = cleaned.replacingOccurrences(of: suffix, with: "", options: [.caseInsensitive, .anchored, .backwards])
+                cleaned = cleaned.trimmingCharacters(in: .whitespaces)
+            }
+        }
+        
+        // Remove trailing commas and clean up
+        cleaned = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: ", "))
+        
+        // Return if we have a meaningful road name (at least 3 characters)
+        return cleaned.count >= 3 ? cleaned : nil
+    }
+    
+    /// v2.1.5: Find a specific road by name near a coordinate
+    private func findRoadByName(_ roadName: String, near coordinate: CLLocationCoordinate2D, radiusMeters: Int) async -> CLLocationCoordinate2D? {
+        let searchRadius = max(radiusMeters, 150) // Slightly larger radius for name-based search
+        
+        // Escape special regex characters in road name for Overpass query
+        // Overpass uses ~ for case-insensitive regex matching
+        let escapedRoadName = roadName
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: ".", with: "\\.")
+            .replacingOccurrences(of: "^", with: "\\^")
+            .replacingOccurrences(of: "$", with: "\\$")
+            .replacingOccurrences(of: "*", with: "\\*")
+            .replacingOccurrences(of: "+", with: "\\+")
+            .replacingOccurrences(of: "?", with: "\\?")
+            .replacingOccurrences(of: "|", with: "\\|")
+            .replacingOccurrences(of: "(", with: "\\(")
+            .replacingOccurrences(of: ")", with: "\\)")
+            .replacingOccurrences(of: "[", with: "\\[")
+            .replacingOccurrences(of: "]", with: "\\]")
+            .replacingOccurrences(of: "{", with: "\\{")
+            .replacingOccurrences(of: "}", with: "\\}")
+        
+        // Query for roads with matching name (case-insensitive, partial match)
+        // Use ~i for case-insensitive matching in Overpass
+        let query = """
+        [out:json][timeout:10];
+        (
+          way["highway"]["name"~"\(escapedRoadName)"]["access"!="private"]["access"!="no"](around:\(searchRadius),\(coordinate.latitude),\(coordinate.longitude));
+        );
+        out body geom;
+        """
+        
+        guard let url = URL(string: "https://lz4.overpass-api.de/api/interpreter") else {
+            return nil
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = "data=\(query)".data(using: .utf8)
+        request.timeoutInterval = 10
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                return nil
+            }
+            
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let elements = json["elements"] as? [[String: Any]] else {
+                return nil
+            }
+            
+            // Find the closest point on the named road
+            var closestPoint: CLLocationCoordinate2D?
+            var closestDistance = Double.greatestFiniteMagnitude
+            let poiLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            
+            for element in elements {
+                guard let geometry = element["geometry"] as? [[String: Any]] else { continue }
+                
+                // Verify the name matches (case-insensitive)
+                if let tags = element["tags"] as? [String: String],
+                   let name = tags["name"]?.lowercased(),
+                   name.contains(roadName.lowercased()) {
+                    
+                    for node in geometry {
+                        guard let lat = node["lat"] as? Double,
+                              let lon = node["lon"] as? Double else { continue }
+                        
+                        let nodeLocation = CLLocation(latitude: lat, longitude: lon)
+                        let distance = poiLocation.distance(from: nodeLocation)
+                        
+                        if distance < closestDistance {
+                            closestDistance = distance
+                            closestPoint = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                        }
+                    }
+                }
+            }
+            
+            if let point = closestPoint {
+                print("🛤️ Found road '\(roadName)' at \(Int(closestDistance))m from POI")
+            }
+            
+            return closestPoint
+            
+        } catch {
+            print("🛤️ ❌ Failed to find road '\(roadName)': \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    private func findNearestRoadPoint(near coordinate: CLLocationCoordinate2D, radiusMeters: Int, preferredRoadName: String? = nil) async -> CLLocationCoordinate2D? {
+        // v2.1.5: If we have a preferred road name from the address, try that first
+        if let roadName = preferredRoadName {
+            if let namedRoadPoint = await findRoadByName(roadName, near: coordinate, radiusMeters: radiusMeters) {
+                return namedRoadPoint
+            }
+            print("🛤️ ⚠️ Could not find preferred road '\(roadName)', falling back to nearest road")
+        }
+        
         // v2.1.4: Query for PUBLIC roads only - exclude driveways and private access roads
         // Prioritize main roads (residential, primary, secondary, tertiary) over footways/paths
         // EXCLUDE service roads (often school driveways) and paths within private property
@@ -4804,12 +4953,13 @@ class GoogleMapsService: ObservableObject {
         }
     }
     
-    /// v2.1.4: Snap a coordinate to the nearest walkable path with fallback mirrors
+    /// v2.1.5: Snap a coordinate to the nearest walkable path with fallback mirrors
     /// Tries multiple Overpass mirrors if the first one fails
     /// EXCLUDES service roads (driveways) to prevent routing into private areas
-    private func findNearestRoadPointWithFallback(near coordinate: CLLocationCoordinate2D, radiusMeters: Int) async -> CLLocationCoordinate2D? {
-        // Try primary approach first
-        if let result = await findNearestRoadPoint(near: coordinate, radiusMeters: radiusMeters) {
+    /// If preferredRoadName is provided, prioritizes that specific road
+    private func findNearestRoadPointWithFallback(near coordinate: CLLocationCoordinate2D, radiusMeters: Int, preferredRoadName: String? = nil) async -> CLLocationCoordinate2D? {
+        // Try primary approach first (includes preferred road name if provided)
+        if let result = await findNearestRoadPoint(near: coordinate, radiusMeters: radiusMeters, preferredRoadName: preferredRoadName) {
             return result
         }
         
@@ -6465,14 +6615,22 @@ class GoogleMapsService: ObservableObject {
                 return await refreshRouteWithMapKit(route: route, userLocation: userLocation)
             }
             
-            // v2.1.1: Snap waypoints to nearest public road before sending to Google
+            // v2.1.5: Snap waypoints to nearest public road before sending to Google
+            // Prioritizes the road from the marker's address if available
             // This ensures routes stay on public roads and don't go into schools/private areas
             // Run queries in parallel for speed, with fallback mirrors for reliability
             print("🛤️ [ROAD SNAP] Starting waypoint snapping for \(rawWaypoints.count) waypoints...")
             let snappedWaypoints = await withTaskGroup(of: (Int, CLLocationCoordinate2D).self) { group in
                 for (index, waypoint) in rawWaypoints.enumerated() {
                     group.addTask {
-                        if let nearestRoad = await self.findNearestRoadPointWithFallback(near: waypoint, radiusMeters: 100) {
+                        // v2.1.5: Extract road name from marker's location field if available
+                        let marker = route.qrMarkers[index]
+                        let roadName = self.extractRoadName(from: marker.location)
+                        if let roadName = roadName {
+                            print("🛤️ [ROAD SNAP] Waypoint \(index+1) '\(marker.name)' - preferred road: '\(roadName)'")
+                        }
+                        
+                        if let nearestRoad = await self.findNearestRoadPointWithFallback(near: waypoint, radiusMeters: 100, preferredRoadName: roadName) {
                             let distance = CLLocation(latitude: waypoint.latitude, longitude: waypoint.longitude)
                                 .distance(from: CLLocation(latitude: nearestRoad.latitude, longitude: nearestRoad.longitude))
                             if distance > 10 { // Only snap if more than 10m from road
@@ -6824,15 +6982,23 @@ class GoogleMapsService: ObservableObject {
             return nil
         }
         
-        // v2.1.1: Snap waypoints to nearest public road before sending to Google
+        // v2.1.5: Snap waypoints to nearest public road before sending to Google
+        // Prioritizes the road from the marker's address if available
         // This ensures routes stay on public roads and don't go into schools/private areas
         // Run queries in parallel for speed, with fallback mirrors for reliability
         print("🛤️ [ROAD SNAP] Starting waypoint snapping for \(rawWaypoints.count) waypoints...")
         let snappedWaypoints = await withTaskGroup(of: (Int, CLLocationCoordinate2D).self) { group in
             for (index, waypoint) in rawWaypoints.enumerated() {
                 group.addTask {
+                    // v2.1.5: Extract road name from marker's location field if available
+                    let marker = route.qrMarkers[index]
+                    let roadName = self.extractRoadName(from: marker.location)
+                    if let roadName = roadName {
+                        print("🛤️ [ROAD SNAP] Waypoint \(index+1) '\(marker.name)' - preferred road: '\(roadName)'")
+                    }
+                    
                     // Use fallback function for reliability
-                    if let nearestRoad = await self.findNearestRoadPointWithFallback(near: waypoint, radiusMeters: 100) {
+                    if let nearestRoad = await self.findNearestRoadPointWithFallback(near: waypoint, radiusMeters: 100, preferredRoadName: roadName) {
                         let distance = CLLocation(latitude: waypoint.latitude, longitude: waypoint.longitude)
                             .distance(from: CLLocation(latitude: nearestRoad.latitude, longitude: nearestRoad.longitude))
                         if distance > 10 { // Only snap if more than 10m from road
