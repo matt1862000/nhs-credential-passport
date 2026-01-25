@@ -4,13 +4,21 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `1.9.95 (Build 278)`
+**Current Version:** `2.1.4 (Build 279)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
 ---
 
 ## Version History
+
+### 2.1.4 (Build 279) - EXPERIMENTAL ⚠️
+- **Road snapping fix**: Exclude service roads (driveways) from road snapping queries
+- Two-stage Overpass query: prioritize main roads before footways/cycleways
+- Additional tag filtering to skip `service=driveway` and `service=parking_aisle`
+- MapKit fallback for Google Directions API quota/network errors
+- Routes now stay on main roads instead of going into school driveways
+- **Not recommended for production use**
 
 ### 1.9.95 (Build 278) - EXPERIMENTAL ⚠️
 - Fixed restricted POI filtering in route extension path
@@ -44,5 +52,5 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 ## Build Numbers
 
 - **186**: Last stable build (1.9.15)
-- **187-277**: Experimental builds (do not use for production)
-- **278**: Current build (1.9.95) - Restricted POI filtering fix
+- **187-278**: Experimental builds (do not use for production)
+- **279**: Current build (2.1.4) - Road snapping fix, MapKit fallback

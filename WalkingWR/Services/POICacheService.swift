@@ -57,11 +57,16 @@ class POICacheService {
         let longitude: Double
         let types: [String]
         let vicinity: String?
+        let source: String?  // v2.1.0: Track source for ToS compliance (only cache osm/geograph/database)
         
         var coordinate: CLLocationCoordinate2D {
             CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         }
     }
+    
+    // MARK: - ToS-Safe Sources
+    // Only these sources can be cached to comply with Google/Apple Terms of Service
+    static let tosSafeSources: Set<String> = ["osm", "geograph", "database", "unknown"]
     
     // MARK: - Public Methods
     
@@ -83,7 +88,29 @@ class POICacheService {
     }
     
     /// Save POIs for a location
+    /// v2.1.0: Only caches POIs from ToS-safe sources (osm, geograph, database)
+    /// Google and Apple POIs are NOT cached to comply with their Terms of Service
     func cachePOIs(_ pois: [PlaceResult], for location: CLLocationCoordinate2D) {
+        // v2.1.0: Filter to only cache ToS-safe sources (NOT Google or Apple)
+        let safePOIs = pois.filter { poi in
+            let sourceString = poi.source.rawValue
+            let isSafe = Self.tosSafeSources.contains(sourceString)
+            return isSafe
+        }
+        
+        // Log what we're filtering out
+        let googleCount = pois.filter { $0.source.rawValue == "google" }.count
+        let appleCount = pois.filter { $0.source.rawValue == "apple" }.count
+        if googleCount > 0 || appleCount > 0 {
+            print("📦 POI Cache: Skipping \(googleCount) Google + \(appleCount) Apple POIs (ToS compliance)")
+        }
+        
+        // Don't cache if no safe POIs
+        guard !safePOIs.isEmpty else {
+            print("📦 POI Cache: No ToS-safe POIs to cache")
+            return
+        }
+        
         var cached = loadCache()
         
         // Remove any existing cache for nearby location (within matchRadiusMeters)
@@ -104,11 +131,11 @@ class POICacheService {
             cached.removeLast()
         }
         
-        // Create new cache entry
+        // Create new cache entry with only safe POIs
         let newEntry = CachedPOILocation(
             latitude: location.latitude,
             longitude: location.longitude,
-            pois: pois.map { CachedPOI(from: $0) },
+            pois: safePOIs.map { CachedPOI(from: $0) },
             fetchedAt: Date()
         )
         
@@ -121,7 +148,7 @@ class POICacheService {
         }
         
         saveCache(cached)
-        print("📦 POI Cache SAVED: \(pois.count) POIs for location (\(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude)))")
+        print("📦 POI Cache SAVED: \(safePOIs.count) ToS-safe POIs for location (\(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude)))")
     }
     
     /// Clear all cached POIs
@@ -334,10 +361,11 @@ extension POICacheService.CachedPOI {
         self.longitude = place.geometry.location.lng
         self.types = place.types ?? []
         self.vicinity = place.vicinity
+        self.source = place.source.rawValue  // v2.1.0: Preserve source for ToS tracking
     }
     
     func toPlaceResult() -> PlaceResult {
-        PlaceResult(
+        var result = PlaceResult(
             placeId: placeId,
             name: name,
             vicinity: vicinity,
@@ -346,6 +374,11 @@ extension POICacheService.CachedPOI {
             ),
             types: types
         )
+        // v2.1.0: Restore source from cache
+        if let sourceString = source {
+            result.source = POISource(rawValue: sourceString) ?? .unknown
+        }
+        return result
     }
 }
 

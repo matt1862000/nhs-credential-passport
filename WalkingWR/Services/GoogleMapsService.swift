@@ -821,6 +821,12 @@ class GoogleMapsService: ObservableObject {
     private let googleDirectionsCountKey = "googleDirectionsCount"
     private let googleDirectionsDateKey = "googleDirectionsDate"
     
+    // MARK: - v2.1.1: Async MapKit Fallback for Restricted Roads
+    // When Google returns restricted roads, we return immediately and trigger MapKit in background
+    private(set) var lastRouteHadRestrictedRoads = false
+    private var pendingMapKitFallbackWaypoints: [CLLocationCoordinate2D]?
+    private var pendingMapKitFallbackOrigin: CLLocationCoordinate2D?
+    
     // MARK: - v1.9.48: Google Places Quota Protection
     // Temporarily disable Google Places on 429/quota errors
     private var googlePlacesDisabledUntil: Date?
@@ -928,12 +934,12 @@ class GoogleMapsService: ObservableObject {
         Task { await rateLimiter.recordRequest() }
     }
     
-    // MARK: - Leg Time Cache
-    // Caches walking time between origin grid cells and POIs to avoid repeated MapKit calls
-    // Key: (originGrid50m, poiId) → Value: (minutes, meters, timestamp)
+    // MARK: - Leg Time Cache (DISABLED for ToS compliance)
+    // v2.1.0: DISABLED - MapKit walking times cannot be cached per Apple's Terms of Service
+    // Leg times are now always calculated fresh via MapKit
     
     private struct LegCacheKey: Hashable {
-        let originGrid: String  // Lat/Lon rounded to 50m grid
+        let originGrid: String
         let poiId: String
     }
     
@@ -944,45 +950,29 @@ class GoogleMapsService: ObservableObject {
         let updatedAt: Date
     }
     
-    private var legCache: [LegCacheKey: LegCacheValue] = [:]
-    private let legCacheMaxAge: TimeInterval = 7 * 24 * 60 * 60  // 7 days
+    // v2.1.0: Leg cache disabled - keep struct for backward compatibility but don't use
+    // private var legCache: [LegCacheKey: LegCacheValue] = [:]  // DISABLED
     
-    /// Convert coordinate to 50m grid cell string
+    /// Convert coordinate to 50m grid cell string (kept for potential future use)
     private func gridKey(for coordinate: CLLocationCoordinate2D) -> String {
-        // ~50m precision: 0.00045° latitude, 0.0007° longitude at UK latitudes
         let latGrid = round(coordinate.latitude / 0.00045) * 0.00045
         let lonGrid = round(coordinate.longitude / 0.0007) * 0.0007
         return String(format: "%.5f,%.4f", latGrid, lonGrid)
     }
     
     /// Get cached leg time if available
+    /// v2.1.0: DISABLED - always returns nil (ToS compliance)
     private func getCachedLegTime(from origin: CLLocationCoordinate2D, to poi: PlaceResult) -> LegCacheValue? {
-        let key = LegCacheKey(originGrid: gridKey(for: origin), poiId: poi.placeId)
-        
-        guard let cached = legCache[key] else { return nil }
-        
-        // Check if cache is still valid
-        if Date().timeIntervalSince(cached.updatedAt) > legCacheMaxAge {
-            legCache.removeValue(forKey: key)
-            return nil
-        }
-        
-        return cached
+        // v2.1.0: Leg caching disabled for ToS compliance
+        // MapKit walking times cannot be cached per Apple's Terms of Service
+        return nil
     }
     
     /// Cache leg time for future use
+    /// v2.1.0: DISABLED - no-op (ToS compliance)
     private func cacheLegTime(from origin: CLLocationCoordinate2D, to poi: PlaceResult, minutes: Int, meters: Int, polyline: String) {
-        let key = LegCacheKey(originGrid: gridKey(for: origin), poiId: poi.placeId)
-        legCache[key] = LegCacheValue(minutes: minutes, meters: meters, polyline: polyline, updatedAt: Date())
-        
-        // Limit cache size
-        if legCache.count > 500 {
-            // Remove oldest entries
-            let sortedKeys = legCache.sorted { $0.value.updatedAt < $1.value.updatedAt }
-            for (key, _) in sortedKeys.prefix(100) {
-                legCache.removeValue(forKey: key)
-            }
-        }
+        // v2.1.0: Leg caching disabled for ToS compliance
+        // No-op - leg times are always calculated fresh
     }
     
     // MARK: - Recently Used POI Tracking
@@ -1111,6 +1101,7 @@ class GoogleMapsService: ObservableObject {
         let types = Set(poi.types ?? [])
         
         // Restricted name patterns (childcare facilities, playgrounds)
+        // Note: Schools are NOT filtered here - they're allowed if on main road (checked by filterPOIsInRestrictedAreas)
         // Also check without spaces/apostrophes to catch variations like "CJ's Playcare"
         let restrictedNamePatterns = [
             "playcare", "daycare", "preschool", "preschool",
@@ -2113,49 +2104,43 @@ class GoogleMapsService: ObservableObject {
             print("📭 CACHE MISS - No cached POIs within 1km")
             
             // ═══════════════════════════════════════════════════════════════
-            // 🚀 v1.9.48: SMART PARALLEL FETCH WITH EARLY EXIT
-            // - Fetches from all sources simultaneously
-            // - Exits early when we have enough POIs (15+)
-            // - Hard timeout at 3 seconds - never waits for slow OSM
-            // - Gracefully handles Google quota exhaustion
+            // 🚀 v2.1.0: PRIORITY-BASED POI FETCH (ToS Compliant)
+            // Priority Order:
+            // 1. OSM + Geograph + Apple (FREE sources in parallel)
+            // 2. Google (PAID, only if free sources don't provide enough POIs)
+            // 
+            // ToS Compliance:
+            // - Only OSM/Geograph POIs are cached (ToS-safe)
+            // - Apple/Google POIs are used but NOT cached
             // ═══════════════════════════════════════════════════════════════
-            let timeoutSeconds: Double = 3.0
+            let timeoutSeconds: Double = 5.0  // Slightly longer timeout for sequential approach
             let minimumPOIsRequired = 15  // Optimal threshold for route quality
             let startTime = Date()
             
-            print("🚀 SMART PARALLEL FETCH - Up to \(timeoutSeconds)s timeout, need \(minimumPOIsRequired)+ POIs...")
-            
-            // Check if Google is available (API key, quota cooldown, and daily cap)
-            // v1.9.50: Skip Google on first run to save costs (free sources usually sufficient)
-            let googleEnabled = !skipGoogle && !apiKey.isEmpty && canMakeGooglePlacesCall
-            if skipGoogle {
-                print("🌐 [COST OPT] Skipping Google Places on first run - using free sources (Apple/OSM/Geograph)")
-            } else if !googleEnabled {
-                if isGooglePlacesDisabled {
-                    print("🌐 [QUOTA] Google Places temporarily disabled - using Apple/OSM only")
-                } else if !canMakeGooglePlacesCall {
-                    print("🌐 [CAP] Google Places daily cap reached - using Apple/OSM only")
-                }
-            }
+            print("🚀 PRIORITY POI FETCH - Free sources first, Google fallback if needed...")
             
             // Track which sources contributed
             var googleCount = 0
             var appleCount = 0
             var osmCount = 0
             var geographCount = 0
-            var timedOut = false
             
-            // v1.9.50: Calculate maxRealisticDistance for early filtering (Optimization 5: Aggressive POI Pre-filtering)
-            // Filter out obviously too-far POIs during fetch, not after
-            let maxRealisticDistance = Double(radiusMeters) * 2.0  // Allows for winding walking paths
+            // v1.9.50: Calculate maxRealisticDistance for early filtering
+            let maxRealisticDistance = Double(radiusMeters) * 2.0
             
-            allResults = await withTaskGroup(of: SourcedPOIs.self) { group in
+            // ═══════════════════════════════════════════════════════════════
+            // STEP 1: Fetch from FREE sources in parallel (OSM + Geograph + Apple)
+            // ═══════════════════════════════════════════════════════════════
+            print("📍 Step 1: Fetching from FREE sources (OSM + Geograph + Apple)...")
+            
+            var freePOIs: [PlaceResult] = []
+            
+            freePOIs = await withTaskGroup(of: SourcedPOIs.self) { group in
                 var collected: [PlaceResult] = []
                 
                 // 🍎 Apple Maps (FREE, reliable, usually fast)
                 group.addTask { [self] in
                     let pois = await self.searchAppleMapsForPOIsFast(location: location, radiusMeters: radiusMeters)
-                    // Tag with source
                     let taggedPOIs = pois.map { poi -> PlaceResult in
                         var tagged = poi
                         tagged.source = .apple
@@ -2164,11 +2149,10 @@ class GoogleMapsService: ObservableObject {
                     return SourcedPOIs(source: .apple, pois: taggedPOIs)
                 }
                 
-                // 🗺️ OpenStreetMap (FREE, can be slow 15-50s, best-effort)
+                // 🗺️ OpenStreetMap (FREE, can be slow)
                 group.addTask { [self] in
                     do {
                         let pois = try await self.searchOpenStreetMapForPOIs(location: location, radiusMeters: radiusMeters)
-                        // Tag with source
                         let taggedPOIs = pois.map { poi -> PlaceResult in
                             var tagged = poi
                             tagged.source = .osm
@@ -2181,57 +2165,33 @@ class GoogleMapsService: ObservableObject {
                     }
                 }
                 
-                // 🌐 Google Places (PAID Pro SKU - displayName, optional)
-                if googleEnabled {
-                    group.addTask { [self] in
-                        let pois = await self.fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
-                        // Tag with source
-                        let taggedPOIs = pois.map { poi -> PlaceResult in
-                            var tagged = poi
-                            tagged.source = .google
-                            return tagged
-                        }
-                        return SourcedPOIs(source: .google, pois: taggedPOIs)
-                    }
-                }
-                
                 // 📸 Geograph (FREE, experimental - requires API key)
                 if !geographApiKey.isEmpty {
                     group.addTask { [self] in
                         let rawPOIs = await self.searchGeographForPOIs(location: location, radiusMeters: radiusMeters)
                         
-                        // PB-POIRS: Pre-process Geograph POIs (hard exclusion, cluster, score)
-                        // A. Hard exclusion FIRST
+                        // Pre-process Geograph POIs
                         let filtered = rawPOIs.filter { !self.shouldExcludeGeographPOI($0, origin: location) }
-                        // B. Cluster duplicates
                         let clustered = self.clusterGeographPOIs(filtered, origin: location)
-                        // C. Score remaining POIs
                         let scored = clustered.map { poi -> (poi: PlaceResult, score: Double) in
                             let score = self.geographQualityScore(poi)
                             return (poi, score)
                         }
-                        // D. Filter out any zero-scored (safety net)
                         let processed = scored.filter { $0.score > 0.0 }.map { $0.poi }
                         
-                        // Already tagged with source in searchGeographForPOIs
                         return SourcedPOIs(source: .geograph, pois: processed)
                     }
                 }
                 
-                // Collect results as they arrive - first to finish wins
+                // Collect results with timeout
                 while let result = await group.next() {
                     let elapsed = Date().timeIntervalSince(startTime)
                     
-                    // v1.9.50: Filter by distance immediately as POIs arrive (Optimization 5)
-                    // Filter out obviously too-far POIs before deduplication and expensive checks
-                    // v1.9.60: Also filter restricted POIs (playcare/nursery/playground) at source
+                    // Filter by distance and restricted POIs
                     var restrictedFilteredCount = 0
                     let filteredPOIs = result.pois.filter { poi in
                         let distance = distanceBetween(location, poi.coordinate)
-                        if distance > maxRealisticDistance {
-                            return false  // Filter out unrealistic distances
-                        }
-                        // v1.9.60: Filter restricted POIs immediately at source
+                        if distance > maxRealisticDistance { return false }
                         if isRestrictedPOI(poi) {
                             restrictedFilteredCount += 1
                             return false
@@ -2239,62 +2199,34 @@ class GoogleMapsService: ObservableObject {
                         return true
                     }
                     
-                    // Merge filtered POIs with smart deduplication
+                    // Merge with deduplication
                     let beforeCount = collected.count
-                    
-                    // If this is Geograph, use smart merge (already pre-processed)
                     if result.source == .geograph {
-                        collected = self.smartMergeGeographPOIs(
-                            existing: collected,
-                            newGeograph: filteredPOIs,
-                            origin: location
-                        )
+                        collected = self.smartMergeGeographPOIs(existing: collected, newGeograph: filteredPOIs, origin: location)
                     } else {
-                        // For other sources, use standard append + deduplication
                         collected.append(contentsOf: filteredPOIs)
                         collected = self.deduplicatePOIs(collected)
                     }
-                    
                     let added = collected.count - beforeCount
                     
-                    // Track filtered count for logging
-                    let distanceFilteredCount = result.pois.count - filteredPOIs.count - restrictedFilteredCount
-                    if distanceFilteredCount > 0 {
-                        print("   🚫 Filtered \(distanceFilteredCount) distant POIs from \(result.source.rawValue) (>\(Int(maxRealisticDistance))m)")
-                    }
-                    if restrictedFilteredCount > 0 {
-                        print("   🏫 Filtered \(restrictedFilteredCount) restricted POIs from \(result.source.rawValue) (playcare/nursery/playground)")
-                    }
-                    
-                    // Track source contribution (use filtered count)
+                    // Track source contribution
                     switch result.source {
-                    case .google:
-                        googleCount = filteredPOIs.count
-                        print("   🌐 Google: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
                     case .apple:
                         appleCount = filteredPOIs.count
-                        print("   🍎 Apple: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                        print("   🍎 Apple: \(filteredPOIs.count) POIs (+\(added) unique) @ \(String(format: "%.2f", elapsed))s")
                     case .osm:
                         osmCount = filteredPOIs.count
-                        print("   🗺️ OSM: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
+                        print("   🗺️ OSM: \(filteredPOIs.count) POIs (+\(added) unique) @ \(String(format: "%.2f", elapsed))s")
                     case .geograph:
                         geographCount = filteredPOIs.count
-                        print("   📸 Geograph: \(filteredPOIs.count) POIs (+\(added) after dedup) @ \(String(format: "%.2f", elapsed))s")
-                    case .unknown:
-                        print("   ❓ Unknown: \(filteredPOIs.count) POIs @ \(String(format: "%.2f", elapsed))s")
-                    }
-                    
-                    // 🚀 EXIT EARLY: We have enough POIs!
-                    if collected.count >= minimumPOIsRequired {
-                        print("⚡ Got \(collected.count) POIs - exiting early @ \(String(format: "%.2f", elapsed))s")
-                        group.cancelAll()
+                        print("   📸 Geograph: \(filteredPOIs.count) POIs (+\(added) unique) @ \(String(format: "%.2f", elapsed))s")
+                    default:
                         break
                     }
                     
-                    // ⏱️ HARD TIMEOUT: Don't wait for slow sources (OSM can take 50s)
+                    // Timeout check
                     if elapsed >= timeoutSeconds {
-                        timedOut = true
-                        print("⏱️ Timeout reached (\(timeoutSeconds)s) with \(collected.count) POIs - proceeding")
+                        print("⏱️ Timeout reached (\(timeoutSeconds)s) - proceeding with \(collected.count) POIs")
                         group.cancelAll()
                         break
                     }
@@ -2303,15 +2235,66 @@ class GoogleMapsService: ObservableObject {
                 return collected
             }
             
+            let freeSourceTime = Date().timeIntervalSince(startTime)
+            print("📍 Free sources: \(freePOIs.count) POIs in \(String(format: "%.2f", freeSourceTime))s")
+            
+            allResults = freePOIs
+            
+            // ═══════════════════════════════════════════════════════════════
+            // STEP 2: If not enough POIs, fetch from Google (PAID, NOT CACHED)
+            // ═══════════════════════════════════════════════════════════════
+            let googleEnabled = !skipGoogle && !apiKey.isEmpty && canMakeGooglePlacesCall
+            
+            if allResults.count < minimumPOIsRequired && googleEnabled {
+                print("📍 Step 2: Free sources insufficient (\(allResults.count) < \(minimumPOIsRequired)) - fetching from Google...")
+                
+                let googleStartTime = Date()
+                let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
+                
+                // Tag and filter Google POIs
+                var restrictedCount = 0
+                let filteredGooglePOIs = googlePOIs.compactMap { poi -> PlaceResult? in
+                    var tagged = poi
+                    tagged.source = .google
+                    
+                    let distance = distanceBetween(location, tagged.coordinate)
+                    if distance > maxRealisticDistance { return nil }
+                    if isRestrictedPOI(tagged) {
+                        restrictedCount += 1
+                        return nil
+                    }
+                    return tagged
+                }
+                
+                // Merge with existing (Google POIs added but NOT cached)
+                let beforeCount = allResults.count
+                allResults.append(contentsOf: filteredGooglePOIs)
+                allResults = deduplicatePOIs(allResults)
+                let added = allResults.count - beforeCount
+                
+                googleCount = filteredGooglePOIs.count
+                let googleTime = Date().timeIntervalSince(googleStartTime)
+                print("   🌐 Google: \(filteredGooglePOIs.count) POIs (+\(added) unique) @ \(String(format: "%.2f", googleTime))s")
+                if restrictedCount > 0 {
+                    print("   🏫 Filtered \(restrictedCount) restricted Google POIs")
+                }
+            } else if allResults.count >= minimumPOIsRequired {
+                print("📍 Step 2: Skipping Google - have enough POIs (\(allResults.count) >= \(minimumPOIsRequired))")
+            } else if !googleEnabled {
+                if skipGoogle {
+                    print("📍 Step 2: Skipping Google (first run optimization)")
+                } else if !canMakeGooglePlacesCall {
+                    print("📍 Step 2: Skipping Google (quota/cap reached)")
+                }
+            }
+            
             let totalTime = Date().timeIntervalSince(startTime)
             let endTimeString = formatter.string(from: Date())
             print("═══════════════════════════════════════════════════════════════")
-            print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalTime))s\(timedOut ? " (timeout)" : "")")
-            print("📊 Sources: Google=\(googleCount), Apple=\(appleCount), OSM=\(osmCount), Geograph=\(geographCount)")
+            print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalTime))s")
+            print("📊 Sources: OSM=\(osmCount), Geograph=\(geographCount), Apple=\(appleCount), Google=\(googleCount)")
             print("📊 Total unique POIs: \(allResults.count)")
-            if skipGoogle {
-                print("💰 Cost saved: Google Places skipped (free sources only)")
-            }
+            print("💾 ToS Compliance: Only OSM/Geograph POIs will be cached")
             if allResults.count < minimumPOIsRequired {
                 print("⚠️ Low POI count (\(allResults.count) < \(minimumPOIsRequired)) - route options may be limited")
             }
@@ -2469,12 +2452,9 @@ class GoogleMapsService: ObservableObject {
         print("🌐   📊 Fetched: \(googlePOIs.count) POIs")
         print("🌐   ✨ New (after dedup): \(newPOIs.count) POIs")
         
-        // Merge with cache for future use
-        if !newPOIs.isEmpty {
-            let mergedPOIs = existingPOIs + newPOIs
-            POICacheService.shared.cachePOIs(mergedPOIs, for: location)
-            print("🌐   💾 Cache updated: \(mergedPOIs.count) total POIs")
-        }
+        // v2.1.0: Do NOT cache Google POIs (ToS compliance)
+        // Google POIs are returned for immediate use but not persisted
+        print("🌐   ⚠️ Google POIs NOT cached (ToS compliance)")
         
         return newPOIs
     }
@@ -4494,18 +4474,30 @@ class GoogleMapsService: ObservableObject {
             }
             
             if isInsideRestricted {
-                // POI is inside restricted area - check for road access
-                let hasRoadAccess = await checkRoadAccessNearPOI(poi: poi, radiusMeters: 30)
-                
-                if hasRoadAccess {
-                    filteredPOIs.append(poi)
-                    print("   ✅ '\(poi.name)' inside '\(restrictedAreaName)' but has road access - KEPT")
+                // v2.1.1: POI is inside restricted area - find nearest road point
+                // This ensures routes stay on public roads instead of going into schools/private areas
+                if let nearestRoadPoint = await findNearestRoadPoint(near: poi.coordinate, radiusMeters: 50) {
+                    // Create a new POI with snapped coordinates
+                    let snappedGeometry = PlaceGeometry(location: PlaceLocation(lat: nearestRoadPoint.latitude, lng: nearestRoadPoint.longitude))
+                    let snappedPOI = PlaceResult(
+                        placeId: poi.placeId,
+                        name: poi.name,
+                        vicinity: poi.vicinity,
+                        geometry: snappedGeometry,
+                        types: poi.types,
+                        source: poi.source
+                    )
+                    filteredPOIs.append(snappedPOI)
+                    let distance = CLLocation(latitude: poi.coordinate.latitude, longitude: poi.coordinate.longitude)
+                        .distance(from: CLLocation(latitude: nearestRoadPoint.latitude, longitude: nearestRoadPoint.longitude))
+                    print("   ✅ '\(poi.name)' inside '\(restrictedAreaName)' - snapped to road (\(Int(distance))m)")
                 } else {
+                    // No road found nearby - exclude this POI
                     excludedCount += 1
-                    print("   ❌ '\(poi.name)' inside '\(restrictedAreaName)' with NO road access - EXCLUDED")
+                    print("   ❌ '\(poi.name)' inside '\(restrictedAreaName)' with NO nearby road - EXCLUDED")
                 }
             } else {
-                // Not inside any restricted area - keep it
+                // Not inside any restricted area - keep it as-is
                 filteredPOIs.append(poi)
             }
         }
@@ -4706,6 +4698,197 @@ class GoogleMapsService: ObservableObject {
         } catch {
             return false // Fail closed - assume NO access if query fails (safer)
         }
+    }
+    
+    /// v2.1.1: Find the nearest public road/path point to a given coordinate
+    /// Used to snap waypoints that are inside restricted areas (schools, etc.) to the nearest walkable path
+    /// Returns nil if no road found within radius
+    private func findNearestRoadPoint(near coordinate: CLLocationCoordinate2D, radiusMeters: Int) async -> CLLocationCoordinate2D? {
+        // v2.1.4: Query for PUBLIC roads only - exclude driveways and private access roads
+        // Prioritize main roads (residential, primary, secondary, tertiary) over footways/paths
+        // EXCLUDE service roads (often school driveways) and paths within private property
+        let searchRadius = max(radiusMeters, 100) // Minimum 100m search radius
+        
+        // First query: Main public roads only (highest priority)
+        let mainRoadQuery = """
+        [out:json][timeout:10];
+        (
+          way["highway"~"residential|primary|secondary|tertiary|unclassified|living_street|trunk|road"]["access"!="private"]["access"!="no"](around:\(searchRadius),\(coordinate.latitude),\(coordinate.longitude));
+        );
+        out body geom;
+        """
+        
+        // Try main roads first
+        if let mainRoadResult = await executeRoadSnapQuery(mainRoadQuery, coordinate: coordinate, description: "main road") {
+            return mainRoadResult
+        }
+        
+        // Fallback: Include public footways/cycleways (but NOT service roads or paths within private areas)
+        let fallbackQuery = """
+        [out:json][timeout:10];
+        (
+          way["highway"="footway"]["access"!="private"]["access"!="no"]["foot"!="private"](around:\(searchRadius),\(coordinate.latitude),\(coordinate.longitude));
+          way["highway"="cycleway"]["access"!="private"]["access"!="no"](around:\(searchRadius),\(coordinate.latitude),\(coordinate.longitude));
+          way["highway"="pedestrian"]["access"!="private"]["access"!="no"](around:\(searchRadius),\(coordinate.latitude),\(coordinate.longitude));
+        );
+        out body geom;
+        """
+        
+        return await executeRoadSnapQuery(fallbackQuery, coordinate: coordinate, description: "footway/cycleway")
+    }
+    
+    /// v2.1.4: Helper to execute road snap query
+    private func executeRoadSnapQuery(_ query: String, coordinate: CLLocationCoordinate2D, description: String) async -> CLLocationCoordinate2D? {
+        guard let url = URL(string: "https://lz4.overpass-api.de/api/interpreter") else {
+            return nil
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = "data=\(query)".data(using: .utf8)
+        request.timeoutInterval = 10
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                return nil
+            }
+            
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let elements = json["elements"] as? [[String: Any]] else {
+                return nil
+            }
+            
+            // Find the closest point on any road
+            var closestPoint: CLLocationCoordinate2D?
+            var closestDistance = Double.greatestFiniteMagnitude
+            let poiLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            
+            for element in elements {
+                // Get the geometry (node coordinates) for this way
+                guard let geometry = element["geometry"] as? [[String: Any]] else { continue }
+                
+                // v2.1.4: Skip if this way has tags indicating private/restricted access
+                if let tags = element["tags"] as? [String: String] {
+                    if tags["service"] == "driveway" || tags["service"] == "parking_aisle" { continue }
+                    if tags["access"] == "private" || tags["access"] == "no" { continue }
+                    if tags["foot"] == "private" || tags["foot"] == "no" { continue }
+                }
+                
+                for node in geometry {
+                    guard let lat = node["lat"] as? Double,
+                          let lon = node["lon"] as? Double else { continue }
+                    
+                    let nodeLocation = CLLocation(latitude: lat, longitude: lon)
+                    let distance = poiLocation.distance(from: nodeLocation)
+                    
+                    if distance < closestDistance {
+                        closestDistance = distance
+                        closestPoint = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                    }
+                }
+            }
+            
+            if let point = closestPoint {
+                print("🛤️ Found nearest \(description): \(Int(closestDistance))m from POI at (\(String(format: "%.6f", point.latitude)), \(String(format: "%.6f", point.longitude)))")
+            }
+            
+            return closestPoint
+            
+        } catch {
+            print("🛤️ ❌ Failed to find nearest \(description): \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    /// v2.1.4: Snap a coordinate to the nearest walkable path with fallback mirrors
+    /// Tries multiple Overpass mirrors if the first one fails
+    /// EXCLUDES service roads (driveways) to prevent routing into private areas
+    private func findNearestRoadPointWithFallback(near coordinate: CLLocationCoordinate2D, radiusMeters: Int) async -> CLLocationCoordinate2D? {
+        // Try primary approach first
+        if let result = await findNearestRoadPoint(near: coordinate, radiusMeters: radiusMeters) {
+            return result
+        }
+        
+        // If primary failed, try alternative mirror
+        print("🛤️ Primary Overpass failed, trying alternative mirror...")
+        
+        let searchRadius = max(radiusMeters, 100)
+        
+        // v2.1.4: Only main public roads, NO service roads (which are often driveways)
+        let query = """
+        [out:json][timeout:15];
+        (
+          way["highway"~"residential|primary|secondary|tertiary|unclassified|living_street|trunk|road"]["access"!="private"]["access"!="no"](around:\(searchRadius),\(coordinate.latitude),\(coordinate.longitude));
+          way["highway"="footway"]["access"!="private"]["access"!="no"]["foot"!="private"](around:\(searchRadius),\(coordinate.latitude),\(coordinate.longitude));
+        );
+        out body geom;
+        """
+        
+        let mirrors = [
+            "https://overpass-api.de/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter"
+        ]
+        
+        for mirror in mirrors {
+            guard let url = URL(string: mirror) else { continue }
+            
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.httpBody = "data=\(query)".data(using: .utf8)
+            request.timeoutInterval = 15
+            
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                
+                guard let httpResponse = response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200 else { continue }
+                
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let elements = json["elements"] as? [[String: Any]] else { continue }
+                
+                var closestPoint: CLLocationCoordinate2D?
+                var closestDistance = Double.greatestFiniteMagnitude
+                let poiLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                
+                for element in elements {
+                    guard let geometry = element["geometry"] as? [[String: Any]] else { continue }
+                    
+                    // v2.1.4: Skip if this way has tags indicating private/restricted access
+                    if let tags = element["tags"] as? [String: String] {
+                        if tags["service"] == "driveway" || tags["service"] == "parking_aisle" { continue }
+                        if tags["access"] == "private" || tags["access"] == "no" { continue }
+                    }
+                    
+                    for node in geometry {
+                        guard let lat = node["lat"] as? Double,
+                              let lon = node["lon"] as? Double else { continue }
+                        
+                        let nodeLocation = CLLocation(latitude: lat, longitude: lon)
+                        let distance = poiLocation.distance(from: nodeLocation)
+                        
+                        if distance < closestDistance {
+                            closestDistance = distance
+                            closestPoint = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                        }
+                    }
+                }
+                
+                if let point = closestPoint {
+                    print("🛤️ ✅ Fallback mirror found main road point: \(Int(closestDistance))m from POI")
+                    return point
+                }
+            } catch {
+                continue
+            }
+        }
+        
+        print("🛤️ ❌ All Overpass mirrors failed to find nearest main road")
+        return nil
     }
     
     /// Fallback filter when Overpass is unavailable - filter by suspicious names/types
@@ -6135,6 +6318,123 @@ class GoogleMapsService: ObservableObject {
         return refreshedRoute
     }
     
+    // MARK: - v2.1.3: Refresh Route with MapKit using pre-snapped waypoints
+    /// Used as fallback when Google quota is exceeded - uses already-snapped waypoints for better route
+    private func refreshRouteWithMapKitUsingSnappedWaypoints(
+        route: WalkingRoute,
+        userLocation: CLLocationCoordinate2D,
+        snappedWaypoints: [CLLocationCoordinate2D]
+    ) async -> WalkingRoute? {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("🍎 [MAPKIT SNAPPED] [\(timeString)] Starting MapKit route with \(snappedWaypoints.count) snapped waypoints")
+        
+        guard !snappedWaypoints.isEmpty else {
+            print("🍎 [MAPKIT SNAPPED] ⚠️ No waypoints - returning nil")
+            return nil
+        }
+        
+        // Get MapKit directions using snapped waypoints
+        let freshDirections = await getMapKitDirectionsForRoute(
+            origin: userLocation,
+            waypoints: snappedWaypoints,
+            destination: userLocation  // Round trip
+        )
+        
+        // Get fresh polyline from MapKit
+        var freshPolylinePoints: [CLLocationCoordinate2D] = []
+        var totalDistance = 0
+        var totalDuration = 0
+        
+        let allPoints = [userLocation] + snappedWaypoints + [userLocation]
+        
+        for i in 0..<(allPoints.count - 1) {
+            let legOrigin = allPoints[i]
+            let legDestination = allPoints[i + 1]
+            
+            await checkMapKitRateLimit()
+            
+            let request = MKDirections.Request()
+            request.source = MKMapItem(placemark: MKPlacemark(coordinate: legOrigin))
+            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: legDestination))
+            request.transportType = .walking
+            
+            do {
+                let directions = MKDirections(request: request)
+                let response = try await directions.calculate()
+                
+                if let mapKitRoute = response.routes.first {
+                    // Extract coordinates from MKPolyline using getCoordinates
+                    let pointCount = mapKitRoute.polyline.pointCount
+                    var routePoints = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
+                    mapKitRoute.polyline.getCoordinates(&routePoints, range: NSRange(location: 0, length: pointCount))
+                    
+                    let routeDistance = Int(mapKitRoute.distance)
+                    let routeDuration = Int(mapKitRoute.expectedTravelTime)
+                    
+                    freshPolylinePoints.append(contentsOf: routePoints)
+                    totalDistance += routeDistance
+                    totalDuration += routeDuration
+                    print("🍎 [MAPKIT SNAPPED] Leg \(i): \(routeDistance)m, \(routePoints.count) points")
+                }
+            } catch {
+                print("🍎 [MAPKIT SNAPPED] ⚠️ Leg \(i) failed: \(error.localizedDescription)")
+                // Add straight line as fallback for this leg
+                freshPolylinePoints.append(legOrigin)
+                freshPolylinePoints.append(legDestination)
+            }
+        }
+        
+        // Encode the fresh polyline
+        let freshEncodedPolyline = encodePolyline(freshPolylinePoints)
+        let durationMinutes = max(1, totalDuration / 60)
+        
+        print("🍎 [MAPKIT SNAPPED] ✅ Complete: \(totalDistance)m, \(freshPolylinePoints.count) polyline points, \(freshDirections.count) directions")
+        
+        // Update markers with snapped coordinates for activation
+        var updatedMarkers: [QRMarker] = []
+        for (index, marker) in route.qrMarkers.enumerated() {
+            if index < snappedWaypoints.count {
+                let snappedCoord = snappedWaypoints[index]
+                let updatedMarker = QRMarker(
+                    code: marker.code,
+                    name: marker.name,
+                    location: marker.location,
+                    coordinate: snappedCoord,  // Snapped to road for activation
+                    contentType: marker.contentType,
+                    content: marker.content,
+                    pointsValue: marker.pointsValue
+                )
+                updatedMarkers.append(updatedMarker)
+            } else {
+                updatedMarkers.append(marker)
+            }
+        }
+        
+        let elapsed = Date().timeIntervalSince(startTime)
+        print("🍎 [MAPKIT SNAPPED] [\(timeString)] Completed in \(String(format: "%.2f", elapsed))s")
+        
+        return WalkingRoute(
+            name: route.name,
+            description: route.description,
+            durationMinutes: durationMinutes,
+            distanceMeters: totalDistance > 0 ? totalDistance : route.distanceMeters,
+            difficulty: route.difficulty,
+            isIndoor: route.isIndoor,
+            isAccessible: route.isAccessible,
+            landmarks: route.landmarks,
+            icon: route.icon,
+            color: route.color,
+            qrMarkers: updatedMarkers,
+            routeType: route.routeType,
+            encodedPolyline: freshEncodedPolyline.isEmpty ? route.encodedPolyline : freshEncodedPolyline,
+            walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
+        )
+    }
+    
     // MARK: - v1.8.9: Refresh Route with Google Directions (Apple fallback)
     /// Tries Google Directions first for better quality, falls back to Apple MapKit if quota reached
     func refreshRouteWithGoogleThenMapKit(
@@ -6165,10 +6465,41 @@ class GoogleMapsService: ObservableObject {
                 return await refreshRouteWithMapKit(route: route, userLocation: userLocation)
             }
             
-            // Optimize waypoint order locally (Nearest Neighbor) to stay in Essentials SKU
-            let waypoints = performLocalOptimization(origin: userLocation, waypoints: rawWaypoints)
+            // v2.1.1: Snap waypoints to nearest public road before sending to Google
+            // This ensures routes stay on public roads and don't go into schools/private areas
+            // Run queries in parallel for speed, with fallback mirrors for reliability
+            print("🛤️ [ROAD SNAP] Starting waypoint snapping for \(rawWaypoints.count) waypoints...")
+            let snappedWaypoints = await withTaskGroup(of: (Int, CLLocationCoordinate2D).self) { group in
+                for (index, waypoint) in rawWaypoints.enumerated() {
+                    group.addTask {
+                        if let nearestRoad = await self.findNearestRoadPointWithFallback(near: waypoint, radiusMeters: 100) {
+                            let distance = CLLocation(latitude: waypoint.latitude, longitude: waypoint.longitude)
+                                .distance(from: CLLocation(latitude: nearestRoad.latitude, longitude: nearestRoad.longitude))
+                            if distance > 10 { // Only snap if more than 10m from road
+                                print("🛤️ [ROAD SNAP] Waypoint \(index+1) snapped to road (\(Int(distance))m)")
+                                return (index, nearestRoad)
+                            } else {
+                                print("🛤️ [ROAD SNAP] Waypoint \(index+1) already on road (within 10m)")
+                            }
+                        } else {
+                            print("🛤️ [ROAD SNAP] ⚠️ Waypoint \(index+1) could not be snapped - using original")
+                        }
+                        return (index, waypoint) // Keep original if already on road or no road found
+                    }
+                }
+                
+                var results = [(Int, CLLocationCoordinate2D)]()
+                for await result in group {
+                    results.append(result)
+                }
+                return results.sorted { $0.0 < $1.0 }.map { $0.1 }
+            }
+            print("🛤️ [ROAD SNAP] Waypoint snapping complete")
             
-            print("🌐   🎯 Waypoints: \(waypoints.count) (optimized locally)")
+            // Optimize waypoint order locally (Nearest Neighbor) to stay in Essentials SKU
+            let waypoints = performLocalOptimization(origin: userLocation, waypoints: snappedWaypoints)
+            
+            print("🌐   🎯 Waypoints: \(waypoints.count) (optimized locally, road-snapped)")
             for (index, waypoint) in waypoints.enumerated() {
                 print("🌐      [\(index + 1)] (\(String(format: "%.5f", waypoint.latitude)), \(String(format: "%.5f", waypoint.longitude)))")
             }
@@ -6364,6 +6695,26 @@ class GoogleMapsService: ObservableObject {
                             details: "\(waypoints.count) waypoints, \(legsCount) legs, \(durationMinutes)min"
                         )
                         
+                        // v2.1.1: Update QRMarker coordinates with snapped road positions
+                        var updatedMarkers: [QRMarker] = []
+                        for (index, marker) in route.qrMarkers.enumerated() {
+                            if index < snappedWaypoints.count {
+                                let snappedCoord = snappedWaypoints[index]
+                                let updatedMarker = QRMarker(
+                                    code: marker.code,
+                                    name: marker.name,
+                                    location: marker.location,
+                                    coordinate: snappedCoord,
+                                    contentType: marker.contentType,
+                                    content: marker.content,
+                                    pointsValue: marker.pointsValue
+                                )
+                                updatedMarkers.append(updatedMarker)
+                            } else {
+                                updatedMarkers.append(marker)
+                            }
+                        }
+                        
                         // Create updated route with Google data (using detailed polyline if available)
                         let googleRoute = WalkingRoute(
                             name: route.name,
@@ -6376,7 +6727,7 @@ class GoogleMapsService: ObservableObject {
                             landmarks: route.landmarks,
                             icon: route.icon,
                             color: route.color,
-                            qrMarkers: route.qrMarkers,
+                            qrMarkers: updatedMarkers,
                             routeType: route.routeType,
                             encodedPolyline: polylineToUse.isEmpty ? route.encodedPolyline : polylineToUse,
                             walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
@@ -6473,13 +6824,59 @@ class GoogleMapsService: ObservableObject {
             return nil
         }
         
+        // v2.1.1: Snap waypoints to nearest public road before sending to Google
+        // This ensures routes stay on public roads and don't go into schools/private areas
+        // Run queries in parallel for speed, with fallback mirrors for reliability
+        print("🛤️ [ROAD SNAP] Starting waypoint snapping for \(rawWaypoints.count) waypoints...")
+        let snappedWaypoints = await withTaskGroup(of: (Int, CLLocationCoordinate2D).self) { group in
+            for (index, waypoint) in rawWaypoints.enumerated() {
+                group.addTask {
+                    // Use fallback function for reliability
+                    if let nearestRoad = await self.findNearestRoadPointWithFallback(near: waypoint, radiusMeters: 100) {
+                        let distance = CLLocation(latitude: waypoint.latitude, longitude: waypoint.longitude)
+                            .distance(from: CLLocation(latitude: nearestRoad.latitude, longitude: nearestRoad.longitude))
+                        if distance > 10 { // Only snap if more than 10m from road
+                            print("🛤️ [ROAD SNAP] Waypoint \(index+1) snapped to road (\(Int(distance))m)")
+                            return (index, nearestRoad)
+                        } else {
+                            print("🛤️ [ROAD SNAP] Waypoint \(index+1) already on road (within 10m)")
+                        }
+                    } else {
+                        print("🛤️ [ROAD SNAP] ⚠️ Waypoint \(index+1) could not be snapped - using original")
+                    }
+                    return (index, waypoint) // Keep original if already on road or no road found
+                }
+            }
+            
+            var results = [(Int, CLLocationCoordinate2D)]()
+            for await result in group {
+                results.append(result)
+            }
+            return results.sorted { $0.0 < $1.0 }.map { $0.1 }
+        }
+        print("🛤️ [ROAD SNAP] Waypoint snapping complete")
+        
+        // v2.1.2: Log comparison of original vs snapped coordinates
+        for (index, (original, snapped)) in zip(rawWaypoints, snappedWaypoints).enumerated() {
+            let distance = CLLocation(latitude: original.latitude, longitude: original.longitude)
+                .distance(from: CLLocation(latitude: snapped.latitude, longitude: snapped.longitude))
+            if distance > 1 {
+                print("🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m")
+                print("   Original: (\(String(format: "%.6f", original.latitude)), \(String(format: "%.6f", original.longitude)))")
+                print("   Snapped:  (\(String(format: "%.6f", snapped.latitude)), \(String(format: "%.6f", snapped.longitude)))")
+            } else {
+                print("🛤️ [ROAD SNAP] Waypoint \(index+1): unchanged (already on road)")
+            }
+        }
+        
         // Optimize waypoint order locally (Nearest Neighbor) to stay in Essentials SKU
-        let waypoints = performLocalOptimization(origin: userLocation, waypoints: rawWaypoints)
+        let waypoints = performLocalOptimization(origin: userLocation, waypoints: snappedWaypoints)
         
         // Build waypoints string
         let waypointsParam = waypoints.map { 
             String(format: "%.6f,%.6f", $0.latitude, $0.longitude)
         }.joined(separator: "|")
+        print("🛤️ [ROAD SNAP] Final waypoints for Google: \(waypointsParam)")
         
         // Google Directions API URL
         var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
@@ -6536,7 +6933,25 @@ class GoogleMapsService: ObservableObject {
                   let firstRoute = routes.first else {
                 let errorStatus = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["status"] as? String ?? "unknown"
                 print("🌐 [GOOGLE-ONLY REFRESH]   ❌ API status: \(errorStatus)")
-                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ API status: \(errorStatus) - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
+                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ API status: \(errorStatus) (elapsed: \(String(format: "%.2f", elapsed))s)")
+                
+                // v2.1.3: Fall back to MapKit when Google quota exceeded or request denied
+                // This way we still use the snapped waypoints even if Google fails
+                if errorStatus == "OVER_QUERY_LIMIT" || errorStatus == "REQUEST_DENIED" {
+                    print("🍎 [MAPKIT FALLBACK] Google quota/access issue - falling back to MapKit with snapped waypoints")
+                    let mapKitRoute = await refreshRouteWithMapKitUsingSnappedWaypoints(
+                        route: route,
+                        userLocation: userLocation,
+                        snappedWaypoints: snappedWaypoints
+                    )
+                    if let result = mapKitRoute {
+                        let totalElapsed = Date().timeIntervalSince(startTime)
+                        print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ✅ MapKit fallback succeeded (total elapsed: \(String(format: "%.2f", totalElapsed))s)")
+                        return result
+                    }
+                }
+                
+                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Returning nil - no fallback available")
                 return nil
             }
             
@@ -6604,7 +7019,65 @@ class GoogleMapsService: ObservableObject {
             
             let durationMinutes = max(1, totalDuration / 60)
             
+            // v2.1.0: Debug logging for polyline quality
+            let finalPointCount = stepPolylinePointCount > polylinePointCount ? stepPolylinePointCount : polylinePointCount
+            print("🗺️ [POLYLINE DEBUG] Google refresh polyline: \(finalPointCount) points (overview: \(polylinePointCount), steps: \(stepPolylinePointCount))")
+            if finalPolyline.isEmpty {
+                print("🚨 [POLYLINE DEBUG] WARNING: No polyline from Google - route will show straight lines!")
+            } else if finalPointCount < 10 {
+                print("⚠️ [POLYLINE DEBUG] WARNING: Low-quality polyline (\(finalPointCount) points) - may not follow roads accurately")
+            }
+            
+            // v2.1.0: Check for restricted roads in directions (but DON'T block on MapKit fallback)
+            let restrictedKeywords = ["restricted", "private road", "no access", "private access", "restricted-usage"]
+            var hasRestrictedRoads = false
+            for direction in freshDirections {
+                let instructionLower = direction.instruction.lowercased()
+                for keyword in restrictedKeywords {
+                    if instructionLower.contains(keyword) {
+                        print("⚠️ [RESTRICTED ROAD] Direction contains '\(keyword)': \(direction.instruction)")
+                        hasRestrictedRoads = true
+                    }
+                }
+            }
+            
+            // v2.1.1: If restricted roads detected, log warning but return Google route immediately
+            // MapKit fallback will be triggered asynchronously by the caller
+            if hasRestrictedRoads {
+                print("⚠️ [RESTRICTED ROAD] Google route uses restricted roads - returning immediately, caller can trigger MapKit fallback")
+                // Set flag for caller to know MapKit fallback is needed
+                self.lastRouteHadRestrictedRoads = true
+                self.pendingMapKitFallbackWaypoints = waypoints
+                self.pendingMapKitFallbackOrigin = userLocation
+            } else {
+                self.lastRouteHadRestrictedRoads = false
+            }
+            
             print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ✅ SUCCESS: \(durationMinutes)min, \(totalDistance)m, \(freshDirections.count) steps (elapsed: \(String(format: "%.2f", elapsed))s)")
+            
+            // v2.1.2: Keep original marker positions for display, but use snapped coordinates for:
+            // 1. Route polyline (already done - Google got snapped waypoints)
+            // 2. Marker ACTIVATION (update coordinates so user triggers at road, not inside restricted area)
+            // The marker LABEL stays at original position, but activation zone is on the road
+            var updatedMarkers: [QRMarker] = []
+            for (index, marker) in route.qrMarkers.enumerated() {
+                if index < snappedWaypoints.count {
+                    let snappedCoord = snappedWaypoints[index]
+                    // Update marker coordinate to snapped position for activation detection
+                    let updatedMarker = QRMarker(
+                        code: marker.code,
+                        name: marker.name,
+                        location: marker.location,
+                        coordinate: snappedCoord,  // Snapped to road for activation
+                        contentType: marker.contentType,
+                        content: marker.content,
+                        pointsValue: marker.pointsValue
+                    )
+                    updatedMarkers.append(updatedMarker)
+                } else {
+                    updatedMarkers.append(marker)
+                }
+            }
             
             return WalkingRoute(
                 name: route.name,
@@ -6617,7 +7090,7 @@ class GoogleMapsService: ObservableObject {
                 landmarks: route.landmarks,
                 icon: route.icon,
                 color: route.color,
-                qrMarkers: route.qrMarkers,
+                qrMarkers: updatedMarkers,  // Markers with snapped coordinates for activation
                 routeType: route.routeType,
                 encodedPolyline: finalPolyline.isEmpty ? route.encodedPolyline : finalPolyline,
                 walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
@@ -6625,9 +7098,135 @@ class GoogleMapsService: ObservableObject {
             
         } catch {
             let elapsed = Date().timeIntervalSince(startTime)
-            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Error: \(error.localizedDescription) - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Error: \(error.localizedDescription) (elapsed: \(String(format: "%.2f", elapsed))s)")
+            
+            // v2.1.3: Fall back to MapKit on network errors (timeout, connection issues)
+            // This ensures user gets a corrected route even if Google is unreachable
+            print("🍎 [MAPKIT FALLBACK] Google network error - falling back to MapKit with snapped waypoints")
+            if let mapKitRoute = await refreshRouteWithMapKitUsingSnappedWaypoints(
+                route: route,
+                userLocation: userLocation,
+                snappedWaypoints: snappedWaypoints
+            ) {
+                let totalElapsed = Date().timeIntervalSince(startTime)
+                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ✅ MapKit fallback succeeded (total elapsed: \(String(format: "%.2f", totalElapsed))s)")
+                return mapKitRoute
+            }
+            
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ MapKit fallback also failed - returning nil")
             return nil
         }
+    }
+    
+    /// v2.1.1: Async MapKit fallback for when Google returned restricted roads
+    /// Call this AFTER showing the Google route to get a better MapKit route
+    /// Returns nil if MapKit fails or wasn't needed
+    func getMapKitFallbackRoute(for route: WalkingRoute) async -> WalkingRoute? {
+        guard lastRouteHadRestrictedRoads,
+              let waypoints = pendingMapKitFallbackWaypoints,
+              let origin = pendingMapKitFallbackOrigin else {
+            print("🗺️ [MAPKIT FALLBACK] No pending fallback needed")
+            return nil
+        }
+        
+        let startTime = Date()
+        print("🗺️ [MAPKIT FALLBACK] Starting async MapKit fallback for restricted road route...")
+        
+        // Clear pending state
+        pendingMapKitFallbackWaypoints = nil
+        pendingMapKitFallbackOrigin = nil
+        lastRouteHadRestrictedRoads = false
+        
+        // Get MapKit directions
+        let mapKitDirections = await getMapKitDirectionsForRoute(
+            origin: origin,
+            waypoints: waypoints,
+            destination: origin
+        )
+        
+        // Get MapKit polyline
+        var mapKitPolylinePoints: [CLLocationCoordinate2D] = []
+        var mapKitDistance = 0
+        var mapKitDuration = 0
+        
+        let allPoints = [origin] + waypoints + [origin]
+        for i in 0..<(allPoints.count - 1) {
+            let legOrigin = allPoints[i]
+            let legDestination = allPoints[i + 1]
+            
+            await checkMapKitRateLimit()
+            
+            let request = MKDirections.Request()
+            request.source = MKMapItem(placemark: MKPlacemark(coordinate: legOrigin))
+            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: legDestination))
+            request.transportType = .walking
+            
+            let directions = MKDirections(request: request)
+            recordMapKitRequest()
+            
+            do {
+                let response = try await directions.calculate()
+                if let mkRoute = response.routes.first {
+                    let pointCount = mkRoute.polyline.pointCount
+                    var coords = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
+                    mkRoute.polyline.getCoordinates(&coords, range: NSRange(location: 0, length: pointCount))
+                    mapKitPolylinePoints.append(contentsOf: coords)
+                    mapKitDistance += Int(mkRoute.distance)
+                    mapKitDuration += Int(mkRoute.expectedTravelTime)
+                }
+            } catch {
+                print("⚠️ [MAPKIT FALLBACK] Leg \(i+1) failed: \(error.localizedDescription)")
+            }
+        }
+        
+        // Check if MapKit gave us a valid route
+        guard !mapKitPolylinePoints.isEmpty && !mapKitDirections.isEmpty else {
+            print("⚠️ [MAPKIT FALLBACK] Failed - no valid MapKit route")
+            return nil
+        }
+        
+        let mapKitDurationMinutes = max(1, mapKitDuration / 60)
+        let mapKitPolyline = encodePolyline(mapKitPolylinePoints)
+        let elapsed = Date().timeIntervalSince(startTime)
+        
+        print("✅ [MAPKIT FALLBACK] Success in \(String(format: "%.2f", elapsed))s: \(mapKitDurationMinutes)min, \(mapKitDistance)m, \(mapKitPolylinePoints.count) polyline points")
+        
+        // v2.1.1: Update QRMarker coordinates with snapped road positions
+        var updatedMarkers: [QRMarker] = []
+        for (index, marker) in route.qrMarkers.enumerated() {
+            if index < waypoints.count {
+                let snappedCoord = waypoints[index]
+                let updatedMarker = QRMarker(
+                    code: marker.code,
+                    name: marker.name,
+                    location: marker.location,
+                    coordinate: snappedCoord,
+                    contentType: marker.contentType,
+                    content: marker.content,
+                    pointsValue: marker.pointsValue
+                )
+                updatedMarkers.append(updatedMarker)
+            } else {
+                updatedMarkers.append(marker)
+            }
+        }
+        
+        return WalkingRoute(
+            name: route.name,
+            description: route.description,
+            durationMinutes: mapKitDurationMinutes,
+            distanceMeters: mapKitDistance > 0 ? mapKitDistance : route.distanceMeters,
+            difficulty: route.difficulty,
+            isIndoor: route.isIndoor,
+            isAccessible: route.isAccessible,
+            landmarks: route.landmarks,
+            icon: route.icon,
+            color: route.color,
+            qrMarkers: updatedMarkers,
+            routeType: route.routeType,
+            encodedPolyline: mapKitPolyline,
+            walkingDirections: mapKitDirections
+        )
     }
     
     /// Extract maneuver type from instruction text
@@ -6641,6 +7240,217 @@ class GoogleMapsService: ObservableObject {
         if lowercased.contains("arrive") || lowercased.contains("destination") { return "arrive" }
         if lowercased.contains("u-turn") { return "uturn" }
         return "straight"
+    }
+    
+    // MARK: - v2.1.0: Live Return Directions (ToS Compliant)
+    
+    /// Get live return directions from current location to destination via Google Directions API
+    /// v2.1.0: Used for return journey when user reaches last waypoint
+    /// Directions are NOT cached (ToS compliance)
+    /// - Parameters:
+    ///   - origin: Current location (where user is now)
+    ///   - destination: Where to go (typically start point for return journey)
+    /// - Returns: Tuple of (directions, polyline points) or nil if failed
+    func getReturnDirectionsLive(
+        from origin: CLLocationCoordinate2D,
+        to destination: CLLocationCoordinate2D
+    ) async -> (directions: [WalkingDirection], polyline: [CLLocationCoordinate2D])? {
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let timeString = formatter.string(from: startTime)
+        
+        print("🌐 [RETURN DIRECTIONS] [\(timeString)] 🚀 getReturnDirectionsLive() STARTED")
+        print("🌐 [RETURN DIRECTIONS]   Origin: (\(String(format: "%.5f", origin.latitude)), \(String(format: "%.5f", origin.longitude)))")
+        print("🌐 [RETURN DIRECTIONS]   Destination: (\(String(format: "%.5f", destination.latitude)), \(String(format: "%.5f", destination.longitude)))")
+        
+        // Check if we can use Google Directions
+        guard hasAPIKey else {
+            print("🌐 [RETURN DIRECTIONS] [\(timeString)] ❌ No API key - returning nil")
+            return nil
+        }
+        
+        guard canUseGoogleDirectionsRefresh else {
+            print("🌐 [RETURN DIRECTIONS] [\(timeString)] ❌ Google quota exhausted - returning nil")
+            return nil
+        }
+        
+        // Google Directions API URL (simple A to B route)
+        var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
+        urlString += "origin=\(String(format: "%.6f,%.6f", origin.latitude, origin.longitude))"
+        urlString += "&destination=\(String(format: "%.6f,%.6f", destination.latitude, destination.longitude))"
+        urlString += "&mode=walking"
+        urlString += "&key=\(apiKey)"
+        
+        guard let url = URL(string: urlString) else {
+            print("🌐 [RETURN DIRECTIONS] [\(timeString)] ❌ Invalid URL - returning nil")
+            return nil
+        }
+        
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 10.0 // 10 second timeout
+            if let bundleId = Bundle.main.bundleIdentifier {
+                request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+            }
+            
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 10.0
+            config.timeoutIntervalForResource = 15.0
+            let session = URLSession(configuration: config)
+            let (data, response) = try await session.data(for: request)
+            let elapsed = Date().timeIntervalSince(startTime)
+            
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                print("🌐 [RETURN DIRECTIONS] [\(timeString)] ❌ HTTP error - status: \(statusCode) (elapsed: \(String(format: "%.2f", elapsed))s)")
+                return nil
+            }
+            
+            recordGoogleDirectionsCall()
+            
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let status = json["status"] as? String,
+                  status == "OK",
+                  let routes = json["routes"] as? [[String: Any]],
+                  let firstRoute = routes.first else {
+                let errorStatus = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["status"] as? String ?? "unknown"
+                print("🌐 [RETURN DIRECTIONS] [\(timeString)] ❌ API status: \(errorStatus) (elapsed: \(String(format: "%.2f", elapsed))s)")
+                return nil
+            }
+            
+            // Parse polyline
+            var polylinePoints: [CLLocationCoordinate2D] = []
+            if let overviewPolyline = firstRoute["overview_polyline"] as? [String: Any],
+               let points = overviewPolyline["points"] as? String {
+                polylinePoints = decodePolyline(points)
+            }
+            
+            // Also try to get more detailed polyline from steps
+            var stepPolylinePoints: [CLLocationCoordinate2D] = []
+            var directions: [WalkingDirection] = []
+            var totalDistance = 0
+            var totalDuration = 0
+            
+            if let legs = firstRoute["legs"] as? [[String: Any]] {
+                for leg in legs {
+                    if let distance = leg["distance"] as? [String: Any],
+                       let distValue = distance["value"] as? Int {
+                        totalDistance += distValue
+                    }
+                    if let duration = leg["duration"] as? [String: Any],
+                       let durValue = duration["value"] as? Int {
+                        totalDuration += durValue
+                    }
+                    
+                    if let steps = leg["steps"] as? [[String: Any]] {
+                        for step in steps {
+                            let instruction = (step["html_instructions"] as? String)?
+                                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) ?? "Continue"
+                            let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
+                            let stepDistValue = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
+                            let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
+                            let maneuver = step["maneuver"] as? String ?? "straight"
+                            
+                            if let stepPolyline = step["polyline"] as? [String: Any],
+                               let stepPoints = stepPolyline["points"] as? String {
+                                let decodedStepPoints = decodePolyline(stepPoints)
+                                stepPolylinePoints.append(contentsOf: decodedStepPoints)
+                            }
+                            
+                            directions.append(WalkingDirection(
+                                instruction: instruction,
+                                distance: stepDistText,
+                                distanceMeters: stepDistValue,
+                                duration: stepDurText,
+                                maneuver: maneuver
+                            ))
+                        }
+                    }
+                }
+            }
+            
+            // Use detailed step polyline if available (more points = follows roads better)
+            let finalPolyline = stepPolylinePoints.count > polylinePoints.count ? stepPolylinePoints : polylinePoints
+            let durationMinutes = max(1, totalDuration / 60)
+            
+            // v2.1.0: Debug logging for polyline quality
+            print("🗺️ [POLYLINE DEBUG] Return directions polyline: \(finalPolyline.count) points (overview: \(polylinePoints.count), steps: \(stepPolylinePoints.count))")
+            if finalPolyline.isEmpty {
+                print("🚨 [POLYLINE DEBUG] WARNING: No polyline for return route!")
+            } else if finalPolyline.count < 10 {
+                print("⚠️ [POLYLINE DEBUG] WARNING: Low-quality return polyline (\(finalPolyline.count) points)")
+            }
+            
+            // v2.1.0: Check for restricted roads in return directions
+            let restrictedKeywords = ["restricted", "private road", "no access", "private access", "restricted-usage"]
+            var hasRestrictedRoads = false
+            for direction in directions {
+                let instructionLower = direction.instruction.lowercased()
+                for keyword in restrictedKeywords {
+                    if instructionLower.contains(keyword) {
+                        print("⚠️ [RESTRICTED ROAD] Return direction contains '\(keyword)': \(direction.instruction)")
+                        hasRestrictedRoads = true
+                    }
+                }
+            }
+            
+            // v2.1.0: If restricted roads detected, fall back to MapKit for better walking paths
+            if hasRestrictedRoads {
+                print("🔄 [RESTRICTED ROAD FALLBACK] Google return route uses restricted roads - trying MapKit...")
+                
+                await checkMapKitRateLimit()
+                
+                let request = MKDirections.Request()
+                request.source = MKMapItem(placemark: MKPlacemark(coordinate: origin))
+                request.destination = MKMapItem(placemark: MKPlacemark(coordinate: destination))
+                request.transportType = .walking
+                
+                let mkDirections = MKDirections(request: request)
+                recordMapKitRequest()
+                
+                do {
+                    let response = try await mkDirections.calculate()
+                    if let mkRoute = response.routes.first {
+                        // Extract polyline
+                        let pointCount = mkRoute.polyline.pointCount
+                        var coords = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
+                        mkRoute.polyline.getCoordinates(&coords, range: NSRange(location: 0, length: pointCount))
+                        
+                        // Extract directions from MapKit steps
+                        var mapKitDirections: [WalkingDirection] = []
+                        for step in mkRoute.steps {
+                            if !step.instructions.isEmpty {
+                                mapKitDirections.append(WalkingDirection(
+                                    instruction: step.instructions,
+                                    distance: "\(Int(step.distance))m",
+                                    distanceMeters: Int(step.distance),
+                                    duration: "",
+                                    maneuver: extractManeuverType(from: step.instructions)
+                                ))
+                            }
+                        }
+                        
+                        let mkDurationMinutes = max(1, Int(mkRoute.expectedTravelTime / 60))
+                        print("✅ [RESTRICTED ROAD FALLBACK] MapKit return route: \(mkDurationMinutes)min, \(Int(mkRoute.distance))m, \(coords.count) polyline points")
+                        print("🌐 [RETURN DIRECTIONS] [\(timeString)] ✅ SUCCESS (via MapKit fallback): \(mkDurationMinutes)min, \(Int(mkRoute.distance))m, \(mapKitDirections.count) steps (elapsed: \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s)")
+                        
+                        return (mapKitDirections, coords)
+                    }
+                } catch {
+                    print("⚠️ [RESTRICTED ROAD FALLBACK] MapKit failed: \(error.localizedDescription) - using Google route despite restricted roads")
+                }
+            }
+            
+            print("🌐 [RETURN DIRECTIONS] [\(timeString)] ✅ SUCCESS: \(durationMinutes)min, \(totalDistance)m, \(directions.count) steps, \(finalPolyline.count) polyline points (elapsed: \(String(format: "%.2f", elapsed))s)")
+            
+            return (directions, finalPolyline)
+            
+        } catch {
+            let elapsed = Date().timeIntervalSince(startTime)
+            print("🌐 [RETURN DIRECTIONS] [\(timeString)] ❌ Error: \(error.localizedDescription) (elapsed: \(String(format: "%.2f", elapsed))s)")
+            return nil
+        }
     }
     
     // MARK: - Batch Walking Directions (Parallel MapKit Calls)

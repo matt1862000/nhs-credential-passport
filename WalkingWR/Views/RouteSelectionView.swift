@@ -2317,6 +2317,17 @@ struct LocalRoutePickerSheet: View {
                     let routeName = templateContent.name
                     let description = templateContent.description
                     
+                    // v2.1.0: Debug logging for polyline quality at route creation
+                    let polylinePointCount = result.polyline.isEmpty ? 0 : PolylineDecoder.decode(result.polyline).count
+                    if result.polyline.isEmpty {
+                        print("🚨 [ROUTE CREATION] '\(routeName)': NO POLYLINE from route generation!")
+                        print("🚨 [ROUTE CREATION] Route will show straight lines between waypoints")
+                    } else if polylinePointCount < 10 {
+                        print("⚠️ [ROUTE CREATION] '\(routeName)': Low-quality polyline (\(polylinePointCount) points)")
+                    } else {
+                        print("✅ [ROUTE CREATION] '\(routeName)': Good polyline with \(polylinePointCount) points")
+                    }
+                    
                     // Create the walking route with actual polyline and directions
                     let localRoute = WalkingRoute(
                         name: routeName,
@@ -2575,145 +2586,93 @@ struct LocalRoutePickerSheet: View {
         print("⏱️ [LET'S GO] [\(timeString)]   Route: '\(route.name)'")
         print("⏱️ [LET'S GO] [\(timeString)]   Duration: \(route.durationMinutes)min, Waypoints: \(route.qrMarkers.count)")
         
-        // v1.9.22: Cancel background generation immediately to free up MapKit quota
+        // v2.1.0: Cancel background generation immediately
         shouldCancelBackgroundWork = true
         print("⏱️ [LET'S GO] [\(timeString)] 🛑 Cancelling background generation to prioritize user action")
         
-        // v1.9.22: Check if route was already refreshed (front-loaded)
-        if isRouteRefreshed && generatedRoute?.name == route.name {
-            print("⏱️ [LET'S GO] [\(timeString)] ⚡ Route already refreshed (front-loaded) - using cached refresh")
-            // Route was already refreshed, use it directly
-            Task { @MainActor in
-                isStartingWalk = false
-                routeRefreshStatus = nil  // v1.9.28: Clear status
-                viewModel.selectRoute(route)
-                viewModel.startWalk()
-                // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
-                print("🔍 [iOS17 DEBUG] [\(timeString)] showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
-                print("🔍 [iOS17 DEBUG] [\(timeString)] pendingActiveWalk BEFORE: \(viewModel.pendingActiveWalk)")
-                if viewModel.showPreWalkWellbeing {
-                    viewModel.pendingActiveWalk = true
-                    print("🔍 [iOS17 DEBUG] [\(timeString)] pendingActiveWalk AFTER set: \(viewModel.pendingActiveWalk)")
-                    print("⏱️ [LET'S GO] [\(timeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
-                    isPresented = false
-                    print("🔍 [iOS17 DEBUG] [\(timeString)] isPresented set to false")
-                } else {
-                    isPresented = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        print("🔍 [iOS17 DEBUG] Setting showActiveWalk = true (no pre-walk check)")
-                        showActiveWalk = true
-                    }
-                    print("⏱️ [LET'S GO] [\(timeString)] 🗺️ Walk started (front-loaded) - showing fullscreen ActiveWalkView")
-                }
+        // v2.1.1: INSTANT MAP DISPLAY
+        // Show map immediately with current route, refresh directions in background
+        // This eliminates the delay when tapping "Let's Go"
+        
+        // Start walk IMMEDIATELY with current route
+        viewModel.selectRoute(route)
+        viewModel.startWalk()
+        
+        // Show map right away
+        if viewModel.showPreWalkWellbeing {
+            viewModel.pendingActiveWalk = true
+            print("⏱️ [LET'S GO] [\(timeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
+            isPresented = false
+        } else {
+            isPresented = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                showActiveWalk = true
             }
-            return
+            print("⏱️ [LET'S GO] [\(timeString)] 🗺️ Walk started INSTANTLY - showing map with current route")
         }
         
-        // v1.9.39: Only refresh if Google API is available and working
-        // If Google fails or unavailable, use original route immediately (instant start)
-        // This avoids the 15-50s MapKit fallback wait
+        let instantElapsed = Date().timeIntervalSince(startTime)
+        print("⏱️ [LET'S GO] [\(timeString)] ✅ Instant start: \(String(format: "%.3f", instantElapsed))s")
         
+        // v2.1.1: Refresh directions in BACKGROUND (map already visible)
+        // When Google returns, update the route - map will refresh automatically
+        // If Google has restricted roads, trigger MapKit fallback
         Task {
-            let taskStartTime = Date()
-            let taskTimeString = formatter.string(from: taskStartTime)
+            let taskTimeString = formatter.string(from: Date())
             
-            // Get user location for potential refresh
-            let userLocation = locationService.currentLocation?.coordinate
-            
-            // v1.9.39: Try Google-only refresh (no MapKit fallback)
-            // If Google fails, just use the original route
-            var routeToUse = route
-            var usedGoogleRefresh = false
-            
-            if let location = userLocation, mapsService.hasAPIKey {
-                print("⏱️ [LET'S GO] [\(taskTimeString)] 🌐 Trying Google-only refresh...")
-                await MainActor.run {
-                    isStartingWalk = true
-                    // No status text - just show spinner
-                }
-                
-                // Try Google refresh with 5s timeout - if fails, use original route
-                if let refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
-                    route: route,
-                    userLocation: location
-                ) {
-                    routeToUse = refreshedRoute
-                    usedGoogleRefresh = true
-                    print("⏱️ [LET'S GO] [\(taskTimeString)] ✅ Google refresh succeeded!")
-                } else {
-                    print("⏱️ [LET'S GO] [\(taskTimeString)] ⚡ Google unavailable/failed - using original route (instant start)")
-                }
-            } else {
-                if userLocation == nil {
-                    print("⏱️ [LET'S GO] [\(taskTimeString)] ⚡ No location - using original route (instant start)")
-                } else {
-                    print("⏱️ [LET'S GO] [\(taskTimeString)] ⚡ No Google API key - using original route (instant start)")
-                }
+            // Get user location for refresh
+            guard let userLocation = locationService.currentLocation?.coordinate,
+                  mapsService.hasAPIKey else {
+                print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] ⚡ No location/API key - keeping original route")
+                return
             }
             
-            // Start walk with either refreshed or original route
-            await MainActor.run {
-                let mainActorTime = Date()
-                let mainActorTimeString = formatter.string(from: mainActorTime)
-                
-                isStartingWalk = false
-                routeRefreshStatus = nil
-                
-                // Print route quality summary
-                print("")
-                print("╔═══════════════════════════════════════════════════════════╗")
-                print("║       🚶 ROUTE QUALITY SUMMARY                            ║")
-                print("╠═══════════════════════════════════════════════════════════╣")
-                print("║ Route: \(routeToUse.name.prefix(45))")
-                print("║ Duration: \(routeToUse.durationMinutes)min | Distance: \(routeToUse.distanceMeters)m")
-                print("║ Waypoints: \(routeToUse.qrMarkers.count)")
-                print("║ Directions: \(routeToUse.walkingDirections.count) steps")
-                print("║ Refresh: \(usedGoogleRefresh ? "✅ Google" : "⚡ Skipped (instant start)")")
-                print("╚═══════════════════════════════════════════════════════════╝")
-                print("")
-                
-                viewModel.selectRoute(routeToUse)
-                viewModel.startWalk()
-                
-                // v1.9.41: Background MapKit refresh when Google API wasn't available
-                // This gives instant start + better navigation from refreshed route
-                if !usedGoogleRefresh {
-                    print("⏱️ [BG REFRESH] [\(mainActorTimeString)] 🔄 Launching background MapKit refresh...")
-                    let routeForRefresh = routeToUse
-                    let viewModelRef = viewModel
-                    let locationServiceRef = locationService
-                    let mapsServiceRef = mapsService
+            print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] 🌐 Fetching live Google Directions in background...")
+            
+            // Try Google refresh in background
+            if let refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
+                route: route,
+                userLocation: userLocation
+            ) {
+                await MainActor.run {
+                    let refreshTimeString = formatter.string(from: Date())
                     
-                    Task.detached(priority: .utility) {
-                        await self.refreshRouteInBackground(
-                            route: routeForRefresh,
-                            viewModel: viewModelRef,
-                            locationService: locationServiceRef,
-                            mapsService: mapsServiceRef
-                        )
-                    }
+                    // Update the route with Google directions - map will refresh
+                    viewModel.updateCurrentRoute(refreshedRoute)
+                    
+                    let googleElapsed = Date().timeIntervalSince(startTime)
+                    print("⏱️ [BACKGROUND REFRESH] [\(refreshTimeString)] ✅ Google route shown (total: \(String(format: "%.2f", googleElapsed))s)")
+                    
+                    // Debug polyline quality
+                    let polylinePoints = refreshedRoute.routePath.count
+                    let hasPolyline = refreshedRoute.encodedPolyline != nil && !refreshedRoute.encodedPolyline!.isEmpty
+                    print("🗺️ [POLYLINE DEBUG] Google route: hasPolyline=\(hasPolyline), points=\(polylinePoints)")
                 }
                 
-                let totalElapsed = Date().timeIntervalSince(startTime)
-                print("⏱️ [LET'S GO] [\(mainActorTimeString)] ✅ Total time: \(String(format: "%.2f", totalElapsed))s")
-                
-                // v1.9.36: Use viewModel.pendingActiveWalk for iOS 17 compatibility
-                print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
-                print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] pendingActiveWalk BEFORE: \(viewModel.pendingActiveWalk)")
-                if viewModel.showPreWalkWellbeing {
-                    viewModel.pendingActiveWalk = true
-                    print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] pendingActiveWalk AFTER set: \(viewModel.pendingActiveWalk)")
-                    print("⏱️ [LET'S GO] [\(mainActorTimeString)] ⏳ Pre-walk anxiety check showing - map will appear after")
-                    isPresented = false
-                    print("🔍 [iOS17 DEBUG] [\(mainActorTimeString)] isPresented set to false")
-                } else {
-                    isPresented = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        print("🔍 [iOS17 DEBUG] Setting showActiveWalk = true (no pre-walk check)")
-                        showActiveWalk = true
+                // v2.1.1: Check if Google had restricted roads - trigger MapKit fallback
+                if mapsService.lastRouteHadRestrictedRoads {
+                    print("🗺️ [MAPKIT FALLBACK] Google route has restricted roads - fetching MapKit alternative...")
+                    
+                    if let mapKitRoute = await mapsService.getMapKitFallbackRoute(for: refreshedRoute) {
+                        await MainActor.run {
+                            let mapKitTimeString = formatter.string(from: Date())
+                            
+                            // Update with better MapKit route
+                            viewModel.updateCurrentRoute(mapKitRoute)
+                            
+                            let totalElapsed = Date().timeIntervalSince(startTime)
+                            print("⏱️ [MAPKIT FALLBACK] [\(mapKitTimeString)] ✅ MapKit route applied (total: \(String(format: "%.2f", totalElapsed))s)")
+                            
+                            // Debug polyline quality
+                            let polylinePoints = mapKitRoute.routePath.count
+                            print("🗺️ [POLYLINE DEBUG] MapKit route: \(polylinePoints) points")
+                        }
+                    } else {
+                        print("⏱️ [MAPKIT FALLBACK] MapKit failed - keeping Google route (with restricted roads warning)")
                     }
-                    print("⏱️ [LET'S GO] [\(mainActorTimeString)] 🗺️ Walk started - showing fullscreen ActiveWalkView")
                 }
+            } else {
+                print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] ⚠️ Google refresh failed - keeping original route")
             }
         }
     }

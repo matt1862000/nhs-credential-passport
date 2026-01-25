@@ -2036,8 +2036,8 @@ struct EmbeddedWalkMapView: View {
         return segment
     }
     
-    /// Calculate return route from last waypoint to start using MapKit (fallback)
-    /// Only called if extraction from routePath fails
+    /// Calculate return route from last waypoint to start using Google Directions API
+    /// v2.1.0: Uses live Google Directions (ToS compliant - no caching)
     private func calculateReturnRouteFromLastWaypoint() {
         guard let currentRoute = viewModel.walkSession.currentRoute,
               let lastWaypoint = currentRoute.qrMarkers.last,
@@ -2046,122 +2046,91 @@ struct EmbeddedWalkMapView: View {
             return
         }
         
-        // Don't recalculate if we already have this route
-        if returnRoute != nil {
-            print("📍 Return route already calculated, using existing")
+        // Don't recalculate if we already have directions
+        if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
+            print("📍 Return route already available, using existing")
             return
         }
         
-        print("📍 Fallback: Calculating return route from last waypoint to start using MapKit...")
+        print("📍 Calculating return route from last waypoint to start via Google Directions...")
         isShowingReturnRoute = true
         
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: lastWaypoint.coordinate))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: startPoint))
-        request.transportType = .walking
-        
-        let directions = MKDirections(request: request)
-        // v1.9.16: Capture main actor-isolated properties before Sendable closure
-        let hasCachedReturnRoute = viewModel.hasCachedReturnRoute
-        let cachedReturnRoutePolyline = viewModel.cachedReturnRoutePolyline
-        directions.calculate { [self] response, error in
-            if let error = error {
-                print("⚠️ Return route calculation failed: \(error.localizedDescription)")
-                // Fallback to cached route if available
-                if hasCachedReturnRoute && !cachedReturnRoutePolyline.isEmpty {
-                    print("✅ Falling back to cached return route")
+        // v2.1.0: Use live Google Directions API (no MapKit caching for ToS compliance)
+        Task {
+            if let result = await GoogleMapsService.shared.getReturnDirectionsLive(
+                from: lastWaypoint.coordinate,
+                to: startPoint
+            ) {
+                await MainActor.run {
+                    print("✅ Live return directions from last waypoint: \(result.directions.count) steps, \(result.polyline.count) points")
+                    
+                    // Store for this session (in-memory only, not persisted)
+                    self.viewModel.cachedReturnDirections = result.directions
+                    self.viewModel.cachedReturnRoutePolyline = result.polyline
+                    self.viewModel.hasCachedReturnRoute = true
+                    
+                    // Switch to return route directions
+                    if !result.directions.isEmpty {
+                        self.viewModel.isUsingReturnDirections = true
+                        self.viewModel.locationService.startDirectionMonitoring(
+                            directions: result.directions,
+                            routePath: result.polyline,
+                            skipPassedWaypoints: true
+                        )
+                        print("📍 Switched to live return route directions: \(result.directions.count) steps")
+                    }
                 }
-                return
-            }
-            
-            if let route = response?.routes.first {
-                DispatchQueue.main.async {
-                    print("✅ Return route calculated via MapKit: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
-                    self.returnRoute = route
+            } else {
+                await MainActor.run {
+                    print("⚠️ Google Directions failed for return route - navigation may be limited")
                 }
             }
         }
     }
     
     /// Calculate walking directions from current location back to starting point
-    /// v1.9.16: Calculate return route with offline fallback
-    /// Strategy: Show cached route immediately, then try fresh calculation if online
+    /// v2.1.0: Uses live Google Directions API (ToS compliant - no caching)
     private func calculateReturnRoute() {
-        // Don't recalculate if we already have a return route
-        guard returnRoute == nil else {
-            print("📍 Return route already calculated, skipping...")
-            return
-        }
-        
         guard let currentLocation = viewModel.locationService.currentLocation,
               let currentRoute = viewModel.walkSession.currentRoute,
-              let startPoint = currentRoute.routePath.first else {
+              let startPoint = viewModel.walkSession.startLocation ?? currentRoute.routePath.first else {
             print("📍 Cannot calculate return route - missing location or start point")
             return
         }
         
-        print("📍 Calculating return route to start point...")
+        print("📍 Calculating return route to start point via Google Directions...")
         isShowingReturnRoute = true
         
-        // STEP 1: If we have a cached return route, show it immediately (works offline)
-        if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
-            print("📍 Using cached return route (showing immediately)")
-            applyCachedReturnRoute()
-        }
-        
-        // STEP 2: Try to recalculate from actual location (if online, more accurate)
-        print("📍 Attempting fresh return route calculation from actual location...")
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: currentLocation.coordinate))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: startPoint))
-        request.transportType = .walking
-        
-        let directions = MKDirections(request: request)
-        // v1.9.16: Capture main actor-isolated properties before Sendable closure
-        let hasCachedRoute = viewModel.hasCachedReturnRoute
-        directions.calculate { response, error in
-            
-            if let error = error {
-                print("⚠️ Fresh return route calculation failed: \(error.localizedDescription)")
-                // If we don't have cached route, show error
-                if !hasCachedRoute {
-                    print("❌ No cached route available - return route unavailable")
-                } else {
-                    print("✅ Falling back to cached return route (offline mode)")
-                }
-                return
-            }
-            
-            if let route = response?.routes.first {
-                DispatchQueue.main.async {
-                    print("✅ Fresh return route calculated: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
+        // v2.1.0: Use live Google Directions API (no caching for ToS compliance)
+        Task {
+            if let result = await GoogleMapsService.shared.getReturnDirectionsLive(
+                from: currentLocation.coordinate,
+                to: startPoint
+            ) {
+                await MainActor.run {
+                    print("✅ Live return directions received: \(result.directions.count) steps, \(result.polyline.count) points")
                     
-                    // Use the fresh route (more accurate from actual location)
-                    self.returnRoute = route
-                    
-                    // Extract directions and polyline
-                    let returnDirections = self.extractDirectionsFromMKRoute(route)
-                    self.viewModel.cachedReturnDirections = returnDirections
-                    
-                    let polyline = route.polyline
-                    let pointCount = polyline.pointCount
-                    var returnPath = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
-                    polyline.getCoordinates(&returnPath, range: NSRange(location: 0, length: pointCount))
-                    
-                    // Update cache with fresh route
-                    self.viewModel.cachedReturnRoutePolyline = returnPath
+                    // Store for this session (in-memory only, not persisted)
+                    self.viewModel.cachedReturnDirections = result.directions
+                    self.viewModel.cachedReturnRoutePolyline = result.polyline
                     self.viewModel.hasCachedReturnRoute = true
                     
                     // Switch to return route directions
-                    if !returnDirections.isEmpty {
+                    if !result.directions.isEmpty {
                         self.viewModel.isUsingReturnDirections = true
                         self.viewModel.locationService.startDirectionMonitoring(
-                            directions: returnDirections,
-                            routePath: returnPath,
-                            skipPassedWaypoints: true  // v1.9.65: Mid-walk switch, skip passed waypoints
+                            directions: result.directions,
+                            routePath: result.polyline,
+                            skipPassedWaypoints: true
                         )
-                        print("📍 Switched to fresh return route directions: \(returnDirections.count) steps")
+                        print("📍 Switched to live return route directions: \(result.directions.count) steps")
                     }
+                }
+            } else {
+                await MainActor.run {
+                    print("⚠️ Google Directions failed - using route polyline for visual (no turn-by-turn)")
+                    // Fall back to just showing the route segment without turn-by-turn directions
+                    self.viewModel.isUsingReturnDirections = true
                 }
             }
         }

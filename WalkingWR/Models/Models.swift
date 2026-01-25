@@ -440,9 +440,18 @@ struct WalkingRoute: Identifiable, Hashable {
     /// Uses Google's encoded polyline if available, otherwise falls back to marker coordinates
     var routePath: [CLLocationCoordinate2D] {
         if let polyline = encodedPolyline, !polyline.isEmpty {
-            return PolylineDecoder.decode(polyline)
+            let decoded = PolylineDecoder.decode(polyline)
+            // v2.1.0: Debug logging for polyline quality
+            if decoded.count < 5 {
+                print("⚠️ [POLYLINE DEBUG] '\(name)': Low point count (\(decoded.count) points) - may show incorrect path")
+            } else {
+                print("✅ [POLYLINE DEBUG] '\(name)': Valid polyline with \(decoded.count) points")
+            }
+            return decoded
         }
-        // Fallback to marker coordinates if no polyline
+        // Fallback to marker coordinates if no polyline - THIS CREATES STRAIGHT LINES!
+        print("🚨 [POLYLINE DEBUG] '\(name)': NO POLYLINE - falling back to straight lines between \(qrMarkers.count) markers!")
+        print("🚨 [POLYLINE DEBUG] This will draw lines that cut across buildings/fields instead of following roads")
         return qrMarkers.map { $0.coordinate }
     }
     

@@ -592,6 +592,21 @@ class WaitingRoomViewModel: ObservableObject {
         selectedRoute = route
     }
     
+    /// v2.1.1: Update current route with refreshed data (e.g., after background Google Directions fetch)
+    /// Updates both selectedRoute and walkSession.currentRoute so map refreshes automatically
+    func updateCurrentRoute(_ route: WalkingRoute) {
+        selectedRoute = route
+        if walkSession.isActive {
+            walkSession.currentRoute = route
+            
+            // v2.1.1: Update direction monitoring with new directions
+            if !route.walkingDirections.isEmpty {
+                locationService.updateDirections(route.walkingDirections, routePath: route.routePath)
+            }
+        }
+        print("🔄 [ROUTE UPDATE] Route updated: '\(route.name)' with \(route.walkingDirections.count) directions, \(route.routePath.count) polyline points")
+    }
+    
     // MARK: - Permission Requests (Just-in-Time)
     
     /// Request permissions needed for walking - called when user starts a walk
@@ -860,49 +875,14 @@ class WaitingRoomViewModel: ObservableObject {
         print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ endWalk() completed")
     }
     
-    // v1.9.16: Pre-calculate return route from last waypoint to start (for offline fallback)
+    // v2.1.0: Pre-calculation of return route DISABLED for ToS compliance
+    // MapKit directions cannot be cached. Return directions will be fetched live
+    // from Google Directions API when user reaches the last waypoint.
     private func preCalculateReturnRoute(route: WalkingRoute) {
-        guard let lastWaypoint = route.qrMarkers.last,
-              let startPoint = route.routePath.first else {
-            print("📍 Cannot pre-calculate return route - missing waypoint or start point")
-            return
-        }
-        
-        print("📍 Pre-calculating return route from last waypoint to start...")
-        
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: lastWaypoint.coordinate))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: startPoint))
-        request.transportType = .walking
-        
-        let directions = MKDirections(request: request)
-        directions.calculate { [weak self] response, error in
-            guard let self = self else { return }
-            
-            if let error = error {
-                print("⚠️ Pre-calculate return route error: \(error.localizedDescription) - will try fresh calculation when needed")
-                return
-            }
-            
-            if let route = response?.routes.first {
-                DispatchQueue.main.async {
-                    // Extract polyline
-                    let polyline = route.polyline
-                    let pointCount = polyline.pointCount
-                    var returnPath = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
-                    polyline.getCoordinates(&returnPath, range: NSRange(location: 0, length: pointCount))
-                    
-                    // Cache polyline and directions
-                    self.cachedReturnRoutePolyline = returnPath
-                    
-                    let returnDirections = self.extractDirectionsFromMKRoute(route)
-                    self.cachedReturnDirections = returnDirections
-                    self.hasCachedReturnRoute = true
-                    
-                    print("✅ Pre-calculated return route cached: \(route.expectedTravelTime / 60) min, \(route.distance) meters, \(returnDirections.count) steps")
-                }
-            }
-        }
+        // v2.1.0: DISABLED - no MapKit caching for ToS compliance
+        // Return directions will be fetched live when user reaches last waypoint
+        print("📍 Return route will be fetched live via Google when needed (ToS compliance)")
+        hasCachedReturnRoute = false
     }
     
     // v1.9.16: Extract walking directions from MKRoute steps (helper for pre-calculation)

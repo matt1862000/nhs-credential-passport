@@ -504,6 +504,66 @@ class LocationService: NSObject, ObservableObject {
         NotificationService.shared.cancelDirectionNotifications()
     }
     
+    /// v2.1.1: Update directions while walk is in progress (e.g., after background refresh)
+    /// Preserves current progress and only updates directions that haven't been shown yet
+    func updateDirections(_ directions: [WalkingDirection], routePath: [CLLocationCoordinate2D]) {
+        guard isMonitoringDirections else {
+            print("📍 [DIRECTION UPDATE] Not currently monitoring - starting fresh")
+            startDirectionMonitoring(directions: directions, routePath: routePath, skipPassedWaypoints: true)
+            return
+        }
+        
+        // Preserve current progress
+        let previousIndex = currentDirectionIndex
+        let previousNotified = notifiedDirectionIndices
+        
+        // Rebuild waypoints with new directions
+        var newWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String, polylineIndex: Int)] = []
+        var cumulativeDistance: Double = 0
+        var routeIndex = 0
+        let totalRoutePoints = routePath.count
+        
+        for direction in directions {
+            let targetDistance = cumulativeDistance + Double(direction.distanceMeters) / 2
+            var accumulatedDistance: Double = 0
+            
+            while routeIndex < totalRoutePoints - 1 {
+                let start = routePath[routeIndex]
+                let end = routePath[routeIndex + 1]
+                let segmentDistance = CLLocation(latitude: start.latitude, longitude: start.longitude)
+                    .distance(from: CLLocation(latitude: end.latitude, longitude: end.longitude))
+                
+                if accumulatedDistance + segmentDistance >= targetDistance {
+                    break
+                }
+                accumulatedDistance += segmentDistance
+                routeIndex += 1
+            }
+            
+            let waypointPolylineIndex = routeIndex
+            let waypointCoord = routeIndex < routePath.count ? routePath[routeIndex] : (routePath.last ?? CLLocationCoordinate2D())
+            
+            newWaypoints.append((
+                coordinate: waypointCoord,
+                instruction: direction.instruction,
+                distance: direction.distance,
+                polylineIndex: waypointPolylineIndex
+            ))
+            
+            cumulativeDistance += Double(direction.distanceMeters)
+        }
+        
+        // Update waypoints and route path
+        directionWaypoints = newWaypoints
+        cachedRoutePath = routePath
+        
+        // Restore progress (clamp to valid range)
+        currentDirectionIndex = min(previousIndex, max(0, directionWaypoints.count - 1))
+        notifiedDirectionIndices = previousNotified.filter { $0 < directionWaypoints.count }
+        
+        print("📍 [DIRECTION UPDATE] Updated directions: \(directionWaypoints.count) waypoints, preserved index \(currentDirectionIndex), routePath: \(cachedRoutePath.count) points")
+    }
+    
     /// Check if user is approaching any direction waypoint and send notification
     /// v1.9.71: Adds GPS accuracy filtering and movement confirmation to prevent jitter from advancing waypoints
     private func checkDirectionWaypoints(currentLocation: CLLocation) {

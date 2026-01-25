@@ -371,75 +371,15 @@ class RouteCacheService {
     }
     
     /// Cache routes for a location and duration (rounded to nearest 5 minutes)
-    /// v1.6.45: Now also caches directions for instant load
+    /// v2.1.0: DISABLED for ToS compliance - dynamically generated routes use MapKit polylines
+    /// which cannot be cached per Apple's Terms of Service.
+    /// Only pre-populated database routes are available (via PrePopulatedPOIService).
     func cacheRoutes(_ routes: [GeneratedRoute], at location: CLLocationCoordinate2D, durationMinutes: Int, names: [String?] = [], descriptions: [String?] = [], directions: [[WalkingDirection]] = []) {
-        var cached = loadCache()
-        
-        // Round to nearest 5 minutes for consistent caching
-        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
-        
-        // Remove expired entries
-        cached = cached.filter { !$0.isExpired }
-        
-        // Remove any existing entry for this location/duration (using rounded)
-        cached = cached.filter { entry in
-            let distance = distanceBetween(entry.coordinate, location)
-            return !(distance <= matchRadiusMeters && entry.durationMinutes == roundedDuration)
-        }
-        
-        // Convert routes to cached format (cache ALL routes - no duplicate filtering)
-        var cachedRoutes: [CachedRoute] = []
-        
-        for (index, route) in routes.enumerated() {
-            // v1.6.45: Cache directions if provided
-            let routeDirections: [CachedDirection]? = directions.indices.contains(index) && !directions[index].isEmpty
-                ? directions[index].map { CachedDirection.from($0) }
-                : nil
-            
-            cachedRoutes.append(CachedRoute(
-                places: route.places.map { place in
-                    CachedPlace(
-                        placeId: place.placeId,
-                        name: place.name,
-                        latitude: place.coordinate.latitude,
-                        longitude: place.coordinate.longitude,
-                        types: place.types ?? [],
-                        vicinity: place.vicinity
-                    )
-                },
-                polyline: route.polyline,
-                distanceMeters: route.distanceMeters,
-                durationSeconds: route.durationSeconds,
-                name: names.indices.contains(index) ? names[index] : nil,
-                description: descriptions.indices.contains(index) ? descriptions[index] : nil,
-                directions: routeDirections
-            ))
-        }
-        
-        // If no routes to cache, skip
-        guard !cachedRoutes.isEmpty else {
-            print("📦 Route Cache: No routes to cache")
-            return
-        }
-        
-        // Add new entry (using rounded duration)
-        let newEntry = CachedRouteSet(
-            latitude: location.latitude,
-            longitude: location.longitude,
-            durationMinutes: roundedDuration,
-            routes: cachedRoutes,
-            createdAt: Date()
-        )
-        cached.append(newEntry)
-        
-        // Trim to max size (remove oldest first)
-        if cached.count > maxCachedRouteSets {
-            cached.sort { $0.createdAt > $1.createdAt }
-            cached = Array(cached.prefix(maxCachedRouteSets))
-        }
-        
-        saveCache(cached)
-        print("📦 Route Cache: Saved \(cachedRoutes.count) routes for \(roundedDuration)min (requested \(durationMinutes)min) at (\(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude)))")
+        // v2.1.0: Route caching disabled for ToS compliance
+        // Dynamically generated routes use MapKit polylines which cannot be cached
+        // Pre-populated routes are already in the database and don't need to be cached here
+        print("📦 Route Cache: Skipping cache (ToS compliance - routes use MapKit polylines)")
+        print("📦 Route Cache: \(routes.count) routes available for this session only")
     }
     
     /// Clear all cached routes
@@ -452,198 +392,14 @@ class RouteCacheService {
     }
     
     /// Merge new routes into existing cache (smart quality-based update)
-    /// - If new route has >50% overlap with existing, replace ONLY if new route has better quality
-    /// - If new route is unique (<50% overlap with all), add it if under limit or better than worst
-    /// - Quality = duration accuracy + POI variety - skip penalty
-    /// Returns: (added: Int, replaced: Int) counts
+    /// v2.1.0: DISABLED for ToS compliance - dynamically generated routes use MapKit polylines
+    /// which cannot be cached per Apple's Terms of Service.
+    /// Returns: (added: 0, replaced: 0) - no caching performed
     func mergeRoutes(_ routes: [GeneratedRoute], at location: CLLocationCoordinate2D, durationMinutes: Int, names: [String?] = [], descriptions: [String?] = [], directions: [[WalkingDirection]] = []) -> (added: Int, replaced: Int) {
-        var cached = loadCache()
-        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
-        
-        // Remove expired entries
-        cached = cached.filter { !$0.isExpired }
-        
-        // Find existing entry for this location/duration
-        let existingIndex = cached.firstIndex { entry in
-            let distance = distanceBetween(entry.coordinate, location)
-            return distance <= matchRadiusMeters && entry.durationMinutes == roundedDuration
-        }
-        
-        var existingRoutes: [CachedRoute] = existingIndex != nil ? cached[existingIndex!].routes : []
-        var added = 0
-        var replaced = 0
-        var skipped = 0
-        
-        print("📦 ═══════════════════════════════════════════════════════════")
-        print("📦 MERGE START: \(routes.count) new routes → cache (existing: \(existingRoutes.count), max: \(maxRoutesPerDuration))")
-        for (i, r) in routes.enumerated() {
-            let pois = r.places.map { $0.name }.joined(separator: " → ")
-            print("📦   New[\(i+1)]: \(r.durationSeconds/60)min - \(pois)")
-        }
-        for (i, r) in existingRoutes.enumerated() {
-            let pois = r.places.map { $0.name }.joined(separator: " → ")
-            print("📦   Existing[\(i+1)]: \(r.durationMinutes)min (skip:\(r.skipCount)) - \(pois)")
-        }
-        print("📦 ───────────────────────────────────────────────────────────")
-        
-        for (index, route) in routes.enumerated() {
-            let newPlaceIds = Set(route.places.map { $0.placeId })
-            let routeName = names.indices.contains(index) ? (names[index] ?? "Route \(index + 1)") : "Route \(index + 1)"
-            let poiNames = route.places.map { $0.name }.joined(separator: " → ")
-            
-            // v1.9.52: Convert new route places to CachedPlace for primary POI extraction
-            let newCachedPlaces = route.places.map { place in
-                CachedPlace(
-                    placeId: place.placeId,
-                    name: place.name,
-                    latitude: place.coordinate.latitude,
-                    longitude: place.coordinate.longitude,
-                    types: place.types ?? [],
-                    vicinity: place.vicinity
-                )
-            }
-            let newPrimaryPOI = RouteCacheService.extractPrimaryPOI(from: newCachedPlaces)
-            
-            // Find existing route with highest overlap (considering both placeId AND primary POI)
-            var highestOverlap = 0.0
-            var highestOverlapIndex: Int? = nil
-            var hasSamePrimaryPOI = false  // v1.9.52: Track if overlap is due to primary POI match
-            
-            for (existingIdx, existing) in existingRoutes.enumerated() {
-                let existingPlaceIds = Set(existing.places.map { $0.placeId })
-                let overlap = newPlaceIds.intersection(existingPlaceIds).count
-                var overlapPercent = Double(overlap) / Double(max(1, newPlaceIds.count))
-                var thisPrimaryPOIMatch = false
-                
-                // v1.9.52: CRITICAL - If routes share the same primary POI, treat as high overlap!
-                // This prevents "Star Inn Saunter" and "Star Inn Peek" from both existing
-                let existingPrimaryPOI = RouteCacheService.extractPrimaryPOI(from: existing.places)
-                if let newPrimary = newPrimaryPOI, let existingPrimary = existingPrimaryPOI {
-                    if newPrimary == existingPrimary {
-                        // Same primary POI = treat as 75% overlap (guarantees replacement decision)
-                        overlapPercent = max(overlapPercent, 0.75)
-                        thisPrimaryPOIMatch = true
-                        print("📦   🎯 Same primary POI '\(newPrimary)' detected vs existing route - treating as 75%+ overlap")
-                    }
-                }
-                
-                if overlapPercent > highestOverlap {
-                    highestOverlap = overlapPercent
-                    highestOverlapIndex = existingIdx
-                    hasSamePrimaryPOI = thisPrimaryPOIMatch
-                }
-            }
-            
-            // Log reason for overlap if due to primary POI
-            let overlapReason = hasSamePrimaryPOI ? "same primary POI" : "\(Int(highestOverlap * 100))% placeId"
-            
-            // Create cached route
-            let routeDirections: [CachedDirection]? = directions.indices.contains(index) && !directions[index].isEmpty
-                ? directions[index].map { CachedDirection.from($0) }
-                : nil
-            
-            let newCachedRoute = CachedRoute(
-                places: route.places.map { place in
-                    CachedPlace(
-                        placeId: place.placeId,
-                        name: place.name,
-                        latitude: place.coordinate.latitude,
-                        longitude: place.coordinate.longitude,
-                        types: place.types ?? [],
-                        vicinity: place.vicinity
-                    )
-                },
-                polyline: route.polyline,
-                distanceMeters: route.distanceMeters,
-                durationSeconds: route.durationSeconds,
-                name: names.indices.contains(index) ? names[index] : nil,
-                description: descriptions.indices.contains(index) ? descriptions[index] : nil,
-                directions: routeDirections,
-                skipCount: 0,
-                createdAt: Date()
-            )
-            
-            let newQuality = newCachedRoute.qualityScore(targetDurationMinutes: roundedDuration)
-            
-            if highestOverlap > 0.50, let replaceIdx = highestOverlapIndex {
-                // Route has high overlap - only replace if new route is BETTER quality
-                let existingQuality = existingRoutes[replaceIdx].qualityScore(targetDurationMinutes: roundedDuration)
-                
-                if newQuality > existingQuality {
-                    let oldName = existingRoutes[replaceIdx].name ?? "Unnamed"
-                    existingRoutes[replaceIdx] = newCachedRoute
-                    replaced += 1
-                    print("📦   🔄 '\(routeName)' REPLACED '\(oldName)' (quality \(Int(newQuality)) > \(Int(existingQuality)), \(overlapReason) overlap)")
-                } else {
-                    skipped += 1
-                    print("📦   ⏭️ '\(routeName)' SKIPPED - lower quality (\(Int(newQuality)) ≤ \(Int(existingQuality))), \(overlapReason) overlap")
-                }
-            } else {
-                // Unique route - add if under limit, or replace worst if better
-                if existingRoutes.count < maxRoutesPerDuration {
-                    existingRoutes.append(newCachedRoute)
-                    added += 1
-                    print("📦   ➕ '\(routeName)' (\(poiNames)) ADDED (quality: \(Int(newQuality)), overlap: \(Int(highestOverlap * 100))%)")
-                } else {
-                    // At limit - find worst quality route and replace if new is better
-                    var worstIndex = 0
-                    var worstQuality = existingRoutes[0].qualityScore(targetDurationMinutes: roundedDuration)
-                    
-                    for (idx, existing) in existingRoutes.enumerated() {
-                        let quality = existing.qualityScore(targetDurationMinutes: roundedDuration)
-                        if quality < worstQuality {
-                            worstQuality = quality
-                            worstIndex = idx
-                        }
-                    }
-                    
-                    if newQuality > worstQuality {
-                        let oldName = existingRoutes[worstIndex].name ?? "Unnamed"
-                        existingRoutes[worstIndex] = newCachedRoute
-                        replaced += 1
-                        print("📦   🔄 '\(routeName)' (\(poiNames)) REPLACED worst '\(oldName)' (quality \(Int(newQuality)) > \(Int(worstQuality)))")
-                    } else {
-                        skipped += 1
-                        print("📦   ⏭️ '\(routeName)' (\(poiNames)) SKIPPED - at limit (quality \(Int(newQuality)) ≤ worst \(Int(worstQuality)))")
-                    }
-                }
-            }
-        }
-        
-        // Update or create cache entry
-        let newEntry = CachedRouteSet(
-            latitude: location.latitude,
-            longitude: location.longitude,
-            durationMinutes: roundedDuration,
-            routes: existingRoutes,
-            createdAt: Date()
-        )
-        
-        if let idx = existingIndex {
-            cached[idx] = newEntry
-        } else {
-            cached.append(newEntry)
-        }
-        
-        // Trim to max size
-        if cached.count > maxCachedRouteSets {
-            cached.sort { $0.createdAt > $1.createdAt }
-            cached = Array(cached.prefix(maxCachedRouteSets))
-        }
-        
-        saveCache(cached)
-        let skippedText = skipped > 0 ? ", \(skipped) skipped (lower quality)" : ""
-        print("📦 ───────────────────────────────────────────────────────────")
-        print("📦 MERGE COMPLETE: \(added) added, \(replaced) replaced\(skippedText)")
-        print("📦 Final cache (\(existingRoutes.count) routes):")
-        for (i, r) in existingRoutes.enumerated() {
-            let pois = r.places.map { $0.name }.joined(separator: " → ")
-            let quality = Int(r.qualityScore(targetDurationMinutes: roundedDuration))
-            print("📦   [\(i+1)] \(r.name ?? "Unnamed") - \(r.durationMinutes)min (quality:\(quality)) - \(pois)")
-        }
-        print("📦 ═══════════════════════════════════════════════════════════")
-        
-        return (added, replaced)
+        // v2.1.0: Route caching disabled for ToS compliance
+        print("📦 Route Merge: Skipping cache (ToS compliance - routes use MapKit polylines)")
+        print("📦 Route Merge: \(routes.count) routes available for this session only")
+        return (0, 0)
     }
     
     /// v1.6.46: Increment skip count for a route (user shuffled past it)
