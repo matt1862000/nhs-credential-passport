@@ -43,6 +43,9 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var currentMarker: QRMarker? = nil
     @Published var visitedMarkerIds: Set<UUID> = []
     
+    // v2.1.7: Track last waypoint activation time to prevent rapid multiple activations
+    private var lastWaypointActivationTime: Date?
+    
     // v1.9.13: Home arrival detection
     @Published var showHomeArrivalPrompt: Bool = false
     @Published var hasReachedHome: Bool = false
@@ -854,6 +857,7 @@ class WaitingRoomViewModel: ObservableObject {
         selectedRoute = nil
         visitedMarkerIds = []
         currentMarker = nil
+        lastWaypointActivationTime = nil // v2.1.7: Reset activation timer
         
         // v1.9.15: Reset cached directions
         cachedOriginalDirections = []
@@ -1136,8 +1140,20 @@ class WaitingRoomViewModel: ObservableObject {
                 routePath: routePath
             )
             
+            // v2.1.7: Prevent rapid multiple waypoint activations (safeguard for close waypoints)
+            let minTimeBetweenActivations: TimeInterval = 30.0 // 30 seconds
+            let timeSinceLastActivation = lastWaypointActivationTime.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
+            let canActivate = timeSinceLastActivation >= minTimeBetweenActivations
+            
             if userDistanceToMarker < activationRadius {
+                // Check if another waypoint was activated recently
+                if !canActivate {
+                    print("📍 Waypoint activation blocked: \(marker.name) (distance: \(Int(userDistanceToMarker))m, radius: \(Int(activationRadius))m) - too soon after last activation (\(String(format: "%.1f", timeSinceLastActivation))s < \(minTimeBetweenActivations)s)")
+                    continue // Skip this waypoint, check next one
+                }
+                
                 print("📍 Waypoint activated: \(marker.name) (distance: \(Int(userDistanceToMarker))m, radius: \(Int(activationRadius))m)")
+                lastWaypointActivationTime = Date() // Track activation time
                 currentMarker = marker
                 visitedMarkerIds.insert(marker.id)
                 walkSession.markersScanned.append(marker)

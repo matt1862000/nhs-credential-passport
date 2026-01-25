@@ -10,6 +10,27 @@ import CoreLocation
 import MapKit
 import Combine
 
+// MARK: - Debug Logging Helper
+extension String {
+    func appendLine(toFile path: String) {
+        let url = URL(fileURLWithPath: path)
+        // Ensure directory exists
+        let directory = url.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
+        
+        if let fileHandle = try? FileHandle(forWritingTo: url) {
+            defer { try? fileHandle.close() }
+            try? fileHandle.seekToEnd()
+            if let data = (self + "\n").data(using: .utf8) {
+                try? fileHandle.write(contentsOf: data)
+            }
+        } else {
+            // File doesn't exist, create it
+            try? (self + "\n").write(to: url, atomically: false, encoding: .utf8)
+        }
+    }
+}
+
 // MARK: - Async Semaphore (Simple Implementation)
 /// Simple async semaphore to limit concurrency
 private actor AsyncSemaphore {
@@ -6167,10 +6188,12 @@ class GoogleMapsService: ObservableObject {
     ///   - waypoints: Array of waypoint coordinates (POI locations)
     ///   - destination: End point (usually same as origin for round-trips)
     /// - Returns: Array of WalkingDirection for turn-by-turn navigation
+    /// v2.1.6: Get MapKit directions with waypoint-specific arrival instructions
     func getMapKitDirectionsForRoute(
         origin: CLLocationCoordinate2D,
         waypoints: [CLLocationCoordinate2D],
-        destination: CLLocationCoordinate2D
+        destination: CLLocationCoordinate2D,
+        waypointNames: [String] = []
     ) async -> [WalkingDirection] {
         // v1.9.25: Acquire semaphore to prevent concurrent MapKit calls
         await rateLimiter.acquire()
@@ -6180,6 +6203,7 @@ class GoogleMapsService: ObservableObject {
         
         // Build the list of points: origin → waypoints → destination
         let allPoints = [origin] + waypoints + [destination]
+        let isReturnRoute = origin.latitude == destination.latitude && origin.longitude == destination.longitude
         
         print("🍎 Getting MapKit directions for \(allPoints.count - 1) legs...")
         
@@ -6187,6 +6211,8 @@ class GoogleMapsService: ObservableObject {
         for i in 0..<(allPoints.count - 1) {
             let legOrigin = allPoints[i]
             let legDestination = allPoints[i + 1]
+            let isLastLeg = i == allPoints.count - 2
+            let isReturnLeg = isLastLeg && isReturnRoute && waypoints.count > 0
             
             // Check rate limit
             await checkMapKitRateLimit()
@@ -6229,10 +6255,13 @@ class GoogleMapsService: ObservableObject {
                     }
                 }
                 
-                guard let finalResponse = response, let _ = finalResponse.routes.first else { continue }
+                guard let finalResponse = response, let route = finalResponse.routes.first else { continue }
+                
+                // Find the last step with instructions (to identify arrival step)
+                let lastStepWithInstructions = route.steps.lastIndex(where: { !$0.instructions.isEmpty })
                 
                 // Extract step-by-step directions
-                for step in finalResponse.routes.first!.steps {
+                for (stepIndex, step) in route.steps.enumerated() {
                     guard !step.instructions.isEmpty else { continue }
                     
                     let stepDistance = Int(step.distance)
@@ -6243,8 +6272,40 @@ class GoogleMapsService: ObservableObject {
                     // Extract maneuver type from instructions
                     let maneuver = extractManeuverType(from: step.instructions)
                     
+                    var instruction = step.instructions
+                    let isLastStepOfLeg = stepIndex == lastStepWithInstructions
+                    
+                    // v2.1.6: Replace arrival instructions with waypoint-specific text
+                    if isLastStepOfLeg {
+                        let instructionLower = instruction.lowercased()
+                        let isArrivalInstruction = instructionLower.contains("destination is on your right") ||
+                                                 instructionLower.contains("destination is on your left") ||
+                                                 instructionLower.contains("the destination is on your right") ||
+                                                 instructionLower.contains("the destination is on your left") ||
+                                                 instructionLower.contains("arrive at") ||
+                                                 instructionLower.contains("arrive") ||
+                                                 (instructionLower.contains("destination") && (instructionLower.contains("on your right") || instructionLower.contains("on your left")))
+                        
+                        if isArrivalInstruction {
+                            if isReturnLeg {
+                                // Last leg is return to origin
+                                instruction = "Return to starting point"
+                            } else if i < waypointNames.count {
+                                // Intermediate waypoint - create waypoint-specific instruction
+                                let waypointIndex = i + 1 // 1-indexed for display
+                                let waypointName = waypointNames[i]
+                                
+                                // Determine left/right from original instruction
+                                let side = instructionLower.contains("right") ? "right" : "left"
+                                
+                                instruction = "Waypoint \(waypointIndex) (\(waypointName)) is on your \(side)"
+                            }
+                            // If i >= waypointNames.count but not return leg, keep original instruction
+                        }
+                    }
+                    
                     let direction = WalkingDirection(
-                        instruction: step.instructions,
+                        instruction: instruction,
                         distance: formatDistance(stepDistance),
                         distanceMeters: stepDistance,
                         duration: durationText,
@@ -6296,10 +6357,12 @@ class GoogleMapsService: ObservableObject {
         
         // Get fresh MapKit directions
         let directionsStartTime = Date()
+        let waypointNames = route.qrMarkers.map { $0.name }
         let freshDirections = await getMapKitDirectionsForRoute(
             origin: userLocation,
             waypoints: waypoints,
-            destination: userLocation  // Round trip
+            destination: userLocation,  // Round trip
+            waypointNames: waypointNames
         )
         let directionsElapsed = Date().timeIntervalSince(directionsStartTime)
         print("⏱️ [ROUTE REFRESH] [\(timeString)]   getMapKitDirectionsForRoute() took \(String(format: "%.2f", directionsElapsed))s")
@@ -6488,10 +6551,12 @@ class GoogleMapsService: ObservableObject {
         }
         
         // Get MapKit directions using snapped waypoints
+        let waypointNames = route.qrMarkers.map { $0.name }
         let freshDirections = await getMapKitDirectionsForRoute(
             origin: userLocation,
             waypoints: snappedWaypoints,
-            destination: userLocation  // Round trip
+            destination: userLocation,  // Round trip
+            waypointNames: waypointNames
         )
         
         // Get fresh polyline from MapKit
@@ -7304,10 +7369,12 @@ class GoogleMapsService: ObservableObject {
         lastRouteHadRestrictedRoads = false
         
         // Get MapKit directions
+        let waypointNames = route.qrMarkers.map { $0.name }
         let mapKitDirections = await getMapKitDirectionsForRoute(
             origin: origin,
             waypoints: waypoints,
-            destination: origin
+            destination: origin,
+            waypointNames: waypointNames
         )
         
         // Get MapKit polyline
@@ -9001,6 +9068,11 @@ class GoogleMapsService: ObservableObject {
             }
         }
         
+        // v2.1.7: Final distance check before returning (catches any waypoints that got too close)
+        if let enhanced = bestEnhanced {
+            return await removeCloseWaypoints(from: enhanced, minDistance: 100, origin: location)
+        }
+        
         return bestEnhanced
     }
     
@@ -9013,6 +9085,14 @@ class GoogleMapsService: ObservableObject {
     ) async throws -> GeneratedRoute? {
         // Get the route waypoint (currently just the destination)
         guard let destination = baseRoute.places.first?.coordinate else {
+            return nil
+        }
+        
+        // v2.1.7: Check distance before inserting POI
+        let minInsertDistance: Double = 100
+        let poiToDestinationDistance = distanceBetween(poi.coordinate, destination)
+        if poiToDestinationDistance < minInsertDistance {
+            print("🗺️ [ENHANCE] Skipping '\(poi.name)' - too close to destination (\(String(format: "%.1f", poiToDestinationDistance))m < \(minInsertDistance)m)")
             return nil
         }
         
@@ -9039,13 +9119,16 @@ class GoogleMapsService: ObservableObject {
         let totalDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
         let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
         
-        return GeneratedRoute(
+        let route = GeneratedRoute(
             places: [poi, baseRoute.places.first!],
             polyline: directions.overviewPolyline.points,
             distanceMeters: totalDistance,
             durationSeconds: totalDuration,
             legs: directions.legs
         )
+        
+        // v2.1.7: Final distance check (road snapping can bring waypoints closer)
+        return await removeCloseWaypoints(from: route, minDistance: 100, origin: location)
     }
     
     /// Hard guarantee fallback: simple out-and-back to nearest reachable point
@@ -10047,24 +10130,105 @@ class GoogleMapsService: ObservableObject {
     /// Ensures route places are deduplicated even if polyline building fails
     /// Also exposed for RouteSelectionView to use
     func finalizeRouteDedupForView(_ route: GeneratedRoute) -> GeneratedRoute {
+        // #region agent log
+        if route.places.count > 1 {
+            let distances = (0..<route.places.count-1).map { i in
+                distanceBetween(route.places[i].coordinate, route.places[i+1].coordinate)
+            }
+            let logData: [String: Any] = [
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "F",
+                "location": "GoogleMapsService.swift:10112",
+                "message": "finalizeRouteDedupForView: entry",
+                "data": [
+                    "waypointCount": route.places.count,
+                    "waypoints": route.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                    "distances": distances,
+                    "minDistance": distances.min() ?? 0
+                ],
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+            ]
+            if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+               let logString = String(data: logJSON, encoding: .utf8) {
+                logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+            }
+        }
+        // #endregion
+        
         print("🛡️ VIEW LAYER: Final deduplication check before storing route")
         print("🛡️ VIEW LAYER: Input route has \(route.places.count) POIs: \(route.places.map { $0.name }.joined(separator: ", "))")
         let deduplicatedPlaces = deduplicateRoutePlaces(route.places)
         
         guard deduplicatedPlaces.count < route.places.count else {
             print("🛡️ VIEW LAYER: No duplicates found - all \(route.places.count) POIs are unique")
+            // #region agent log
+            if route.places.count > 1 {
+                let distances = (0..<route.places.count-1).map { i in
+                    distanceBetween(route.places[i].coordinate, route.places[i+1].coordinate)
+                }
+                let logData: [String: Any] = [
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "F",
+                    "location": "GoogleMapsService.swift:10119",
+                    "message": "finalizeRouteDedupForView: exit (no duplicates)",
+                    "data": [
+                        "waypointCount": route.places.count,
+                        "waypoints": route.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                        "distances": distances,
+                        "minDistance": distances.min() ?? 0
+                    ],
+                    "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                ]
+                if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+                   let logString = String(data: logJSON, encoding: .utf8) {
+                    logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                }
+            }
+            // #endregion
             return route
         }
         
         print("🛡️ VIEW LAYER: Removed \(route.places.count - deduplicatedPlaces.count) duplicate(s) before storing")
         print("🛡️ VIEW LAYER: Final route has \(deduplicatedPlaces.count) POIs: \(deduplicatedPlaces.map { $0.name }.joined(separator: ", "))")
-        return GeneratedRoute(
+        
+        let finalRoute = GeneratedRoute(
             places: deduplicatedPlaces,
             polyline: route.polyline,
             distanceMeters: route.distanceMeters,
             durationSeconds: route.durationSeconds,
             legs: route.legs
         )
+        
+        // #region agent log
+        if deduplicatedPlaces.count > 1 {
+            let distances = (0..<deduplicatedPlaces.count-1).map { i in
+                distanceBetween(deduplicatedPlaces[i].coordinate, deduplicatedPlaces[i+1].coordinate)
+            }
+            let logData: [String: Any] = [
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "F",
+                "location": "GoogleMapsService.swift:10130",
+                "message": "finalizeRouteDedupForView: exit (deduplicated)",
+                "data": [
+                    "originalCount": route.places.count,
+                    "deduplicatedCount": deduplicatedPlaces.count,
+                    "finalWaypoints": deduplicatedPlaces.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                    "distances": distances,
+                    "minDistance": distances.min() ?? 0
+                ],
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+            ]
+            if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+               let logString = String(data: logJSON, encoding: .utf8) {
+                logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+            }
+        }
+        // #endregion
+        
+        return finalRoute
     }
     
     /// FINAL SAFETY WRAPPER - Call this at EVERY return site
@@ -10227,10 +10391,21 @@ class GoogleMapsService: ObservableObject {
                 }
                 
                 // SPRINT-7: Insert 1-2 POIs per pass (not all at once)
+                // v2.1.7: Check distances when inserting micro-spurs
                 let insertCount = min(2, min(needed, sortedPOIs.count))
+                let minMicroSpurDistance: Double = 100  // Same as waypoint distance
                 for i in 0..<insertCount {
-                    enhancedPlaces.insert(sortedPOIs[i], at: min(midIndex + i, enhancedPlaces.count))
-                    print("📍 [WP-MIN] Inserted micro-spur: \(sortedPOIs[i].name)")
+                    let candidatePOI = sortedPOIs[i]
+                    // Check if candidate is too close to any existing waypoint
+                    let tooClose = enhancedPlaces.contains { existing in
+                        distanceBetween(candidatePOI.coordinate, existing.coordinate) < minMicroSpurDistance
+                    }
+                    if tooClose {
+                        print("📍 [WP-MIN] Skipping micro-spur '\(candidatePOI.name)' - too close to existing waypoint")
+                        continue
+                    }
+                    enhancedPlaces.insert(candidatePOI, at: min(midIndex + i, enhancedPlaces.count))
+                    print("📍 [WP-MIN] Inserted micro-spur: \(candidatePOI.name)")
                 }
                 
                 // Track micro-spurs added
@@ -10276,6 +10451,11 @@ class GoogleMapsService: ObservableObject {
                     )
                 }
                 print("📍 [WP-MIN] After spur pass \(spurTries): \(deduplicatedRoute.places.count) waypoints (target: \(minWaypoints))")
+                
+                // v2.1.7: Remove close waypoints after micro-spur insertion
+                if deduplicatedRoute.places.count > 1, let originCoord = origin {
+                    deduplicatedRoute = await removeCloseWaypoints(from: deduplicatedRoute, minDistance: 100, origin: originCoord)
+                }
             }
         }
         
@@ -10483,6 +10663,16 @@ class GoogleMapsService: ObservableObject {
                                 break
                             }
                             
+                            // v2.1.7: Check distance before inserting during post-trim extend
+                            let minExtendDistance: Double = 100
+                            let tooClose = currentWaypoints.contains { existing in
+                                distanceBetween(nearestPOI.coordinate, existing.coordinate) < minExtendDistance
+                            }
+                            if tooClose {
+                                print("🔧 [POST-TRIM-EXTEND] Skipping '\(nearestPOI.name)' - too close to existing waypoint")
+                                break  // No more valid POIs to extend with
+                            }
+                            
                             var extendedWaypoints = currentWaypoints
                             let midIdx = max(0, extendedWaypoints.count / 2)
                             extendedWaypoints.insert(nearestPOI, at: min(midIdx, extendedWaypoints.count))
@@ -10593,6 +10783,11 @@ class GoogleMapsService: ObservableObject {
         // Structured logging for final route metrics
         print("📊 [FINAL] ratio=\(String(format: "%.3f", finalRatio)) wp=\(finalWPCount) min_wp=\(finalMinWP) legs_over_50pct=\(legsOver50Pct) nudges=\(nudgesAdded) micro_spurs=\(microSpursAdded)")
         
+        // v2.1.7: Final distance check before returning (catches any waypoints that got too close)
+        if finalRoute.places.count > 1, let originCoord = origin {
+            finalRoute = await removeCloseWaypoints(from: finalRoute, minDistance: 100, origin: originCoord)
+        }
+        
         return (finalRoute, nudgesAdded, microSpursAdded)
     }
     
@@ -10600,6 +10795,32 @@ class GoogleMapsService: ObservableObject {
     /// v2.0.3: Final safety wrapper with hard cap enforcement
     /// This is the last line of defense against routes exceeding acceptable limits
     private func finalizeRouteDedup(_ route: GeneratedRoute, targetDurationMinutes: Int? = nil) -> GeneratedRoute {
+        // #region agent log
+        if route.places.count > 1 {
+            let distances = (0..<route.places.count-1).map { i in
+                distanceBetween(route.places[i].coordinate, route.places[i+1].coordinate)
+            }
+            let logData: [String: Any] = [
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "E",
+                "location": "GoogleMapsService.swift:10660",
+                "message": "finalizeRouteDedup: entry",
+                "data": [
+                    "waypointCount": route.places.count,
+                    "waypoints": route.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                    "distances": distances,
+                    "minDistance": distances.min() ?? 0
+                ],
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+            ]
+            if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+               let logString = String(data: logJSON, encoding: .utf8) {
+                try? logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+            }
+        }
+        // #endregion
+        
         print("🔒 FINAL SAFETY WRAPPER: Deduplicating route with \(route.places.count) places before return")
         if route.places.count > 1 {
             print("🔒 FINAL SAFETY: Input POIs: \(route.places.enumerated().map { "\($0+1). \($1.name) [\($1.placeId)]" }.joined(separator: ", "))")
@@ -10623,6 +10844,33 @@ class GoogleMapsService: ObservableObject {
         
         print("🔒 FINAL SAFETY: Removed \(route.places.count - deduplicatedPlaces.count) duplicate(s), returning deduplicated route")
         print("🔒 FINAL SAFETY: Final POIs: \(deduplicatedPlaces.enumerated().map { "\($0+1). \($1.name) [\($1.placeId)]" }.joined(separator: ", "))")
+        
+        // #region agent log
+        if deduplicatedPlaces.count > 1 {
+            let distances = (0..<deduplicatedPlaces.count-1).map { i in
+                distanceBetween(deduplicatedPlaces[i].coordinate, deduplicatedPlaces[i+1].coordinate)
+            }
+            let logData: [String: Any] = [
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "E",
+                "location": "GoogleMapsService.swift:10686",
+                "message": "finalizeRouteDedup: exit",
+                "data": [
+                    "originalCount": route.places.count,
+                    "deduplicatedCount": deduplicatedPlaces.count,
+                    "finalWaypoints": deduplicatedPlaces.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                    "distances": distances,
+                    "minDistance": distances.min() ?? 0
+                ],
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+            ]
+            if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+               let logString = String(data: logJSON, encoding: .utf8) {
+                try? logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+            }
+        }
+        // #endregion
         
         // Return with deduplicated places (polyline will be regenerated by caller if needed)
         let finalRoute = GeneratedRoute(
@@ -10861,11 +11109,41 @@ class GoogleMapsService: ObservableObject {
             
             // Skip if too close to any existing waypoint
             let currentCoordinates = currentWaypointsList.map { $0.coordinate }
+            var closestDistance: Double = .greatestFiniteMagnitude
+            var closestWaypointName: String = ""
             let tooClose = currentCoordinates.contains { coord in
-                distanceBetween(candidate.coordinate, coord) < minWaypointDistance
+                let dist = distanceBetween(candidate.coordinate, coord)
+                if dist < closestDistance {
+                    closestDistance = dist
+                    if let closestPOI = currentWaypointsList.first(where: { $0.coordinate.latitude == coord.latitude && $0.coordinate.longitude == coord.longitude }) {
+                        closestWaypointName = closestPOI.name
+                    }
+                }
+                return dist < minWaypointDistance
             }
             if tooClose {
-                print("🗺️ 📍 Skipping \(candidate.name) - too close to existing waypoint")
+                // #region agent log
+                let logData: [String: Any] = [
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "A",
+                    "location": "GoogleMapsService.swift:10908",
+                    "message": "tryExtendRoute: candidate too close",
+                    "data": [
+                        "candidateName": candidate.name,
+                        "closestWaypointName": closestWaypointName,
+                        "distance": closestDistance,
+                        "minWaypointDistance": minWaypointDistance,
+                        "existingWaypoints": currentWaypointsList.map { $0.name }
+                    ],
+                    "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                ]
+                if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+                   let logString = String(data: logJSON, encoding: .utf8) {
+                    logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                }
+                // #endregion
+                print("🗺️ 📍 Skipping \(candidate.name) - too close to existing waypoint (\(String(format: "%.1f", closestDistance))m from '\(closestWaypointName)')")
                 continue
             }
             
@@ -11031,8 +11309,12 @@ class GoogleMapsService: ObservableObject {
         }
         
         await MainActor.run { enhancementStatus = nil }
+        
+        // v2.1.7: Remove close waypoints before returning (waypoint sorting/reordering can bring them closer)
+        let spacedRoute = await removeCloseWaypoints(from: currentRoute, minDistance: 100, origin: origin)
+        
         // FINAL SAFETY WRAPPER: Ensure deduplication on return
-        return finalizeRouteDedup(currentRoute)
+        return finalizeRouteDedup(spacedRoute)
     }
     
     // MARK: - Generate Local Walking Route
@@ -13818,9 +14100,10 @@ class GoogleMapsService: ObservableObject {
                 }
             }
             
-            // Remove waypoints that are too close together (should be ~5 min / 300m+ apart)
+            // Remove waypoints that are too close together (should be ~100m+ apart)
             // v1.8.10: Now async - regenerates polyline when waypoints removed
-            selected = await removeCloseWaypoints(from: selected, minDistance: 250, origin: location)
+            // v2.1.7: Standardized to 100m for all durations (was 250m for longer routes)
+            selected = await removeCloseWaypoints(from: selected, minDistance: 100, origin: location)
             
             var finalMins = selected.durationSeconds / 60
             
@@ -13839,14 +14122,59 @@ class GoogleMapsService: ObservableObject {
                     postcode: postcode,
                     checkHardStop: checkHardStop  // SPRINT-4: Pass hard-stop check
                 ) {
+                    // #region agent log
+                    let logData4: [String: Any] = [
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "A",
+                        "location": "GoogleMapsService.swift:13888",
+                        "message": "tryExtendRoute: returned extended route",
+                        "data": [
+                            "originalWaypoints": selected.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                            "extendedWaypoints": extended.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                            "distances": extended.places.count > 1 ? (0..<extended.places.count-1).map { i in
+                                distanceBetween(extended.places[i].coordinate, extended.places[i+1].coordinate)
+                            } : []
+                        ],
+                        "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                    ]
+                    if let logJSON4 = try? JSONSerialization.data(withJSONObject: logData4),
+                       let logString4 = String(data: logJSON4, encoding: .utf8) {
+                        try? logString4.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                    }
+                    // #endregion
+                    
                     let extendedMins = extended.durationSeconds / 60
                     let newAccuracy = Double(extendedMins) / Double(targetDurationMinutes)
                     if newAccuracy >= 0.95 && newAccuracy <= 1.10 {
                         print("🔧 ✅ Extended route: \(finalMins)min → \(extendedMins)min (\(Int(newAccuracy * 100))%)")
                         // CRITICAL: Extended route is already deduplicated by tryExtendRoute's finalizeRouteDedup
                         // But ensure it's still deduplicated in case of any edge cases (intermediate, will be finalized at return)
-                        selected = finalizeRouteDedup(extended, targetDurationMinutes: targetDurationMinutes)
+                        // v2.1.7: Remove close waypoints again after extension (road snapping can bring waypoints closer)
+                        var extendedWithSpacing = await removeCloseWaypoints(from: extended, minDistance: 100, origin: location)
+                        selected = finalizeRouteDedup(extendedWithSpacing, targetDurationMinutes: targetDurationMinutes)
                         finalMins = selected.durationSeconds / 60
+                        
+                        // #region agent log
+                        let logData5: [String: Any] = [
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "A",
+                            "location": "GoogleMapsService.swift:13894",
+                            "message": "After extension: final waypoints",
+                            "data": [
+                                "finalWaypoints": selected.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                                "distances": selected.places.count > 1 ? (0..<selected.places.count-1).map { i in
+                                    distanceBetween(selected.places[i].coordinate, selected.places[i+1].coordinate)
+                                } : []
+                            ],
+                            "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                        ]
+                        if let logJSON5 = try? JSONSerialization.data(withJSONObject: logData5),
+                           let logString5 = String(data: logJSON5, encoding: .utf8) {
+                            try? logString5.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                        }
+                        // #endregion
                     } else {
                         print("🔧 ⏭️ Extension would be \(extendedMins)min (\(Int(newAccuracy * 100))%) - keeping original")
                     }
@@ -13940,6 +14268,9 @@ class GoogleMapsService: ObservableObject {
             
             // v2.0.3 Phase 1.5 Batch A: Use centralized finalization (intermediate, will be finalized again at return)
             selected = finalizeRouteDedup(selected, targetDurationMinutes: targetDurationMinutes)
+            
+            // v2.1.7: Final distance check before returning (road snapping and final deduplication can bring waypoints closer)
+            selected = await removeCloseWaypoints(from: selected, minDistance: 100, origin: location)
             
             // totalAttempts already tracks all routes attempted
             
@@ -14224,9 +14555,10 @@ class GoogleMapsService: ObservableObject {
                 print("🗺️ ❌ Fallback route exceeds 150% cap: \(mins)min > \(hardCap)min - REJECTING")
                 // Don't return this route, fall through to guaranteed fallback
             } else {
-                // Remove waypoints that are too close together (should be ~5 min / 300m+ apart)
+                // Remove waypoints that are too close together (should be ~100m+ apart)
                 // v1.8.10: Now async - regenerates polyline when waypoints removed
-                best = await removeCloseWaypoints(from: best, minDistance: 250, origin: location)
+                // v2.1.7: Standardized to 100m for all durations (was 250m for longer routes)
+                best = await removeCloseWaypoints(from: best, minDistance: 100, origin: location)
                 
                 // Check if route is within 80-100% tolerance
                 let toleranceMin = Int(Double(targetDurationMinutes) * 0.80)
@@ -14824,8 +15156,64 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// Remove waypoints that are too close together (keeps first one in each cluster)
+    /// v2.1.7: Synchronous version for cached routes (filters waypoints without regenerating polyline)
+    /// Use this for cached routes that need immediate filtering without async polyline regeneration
+    func filterCloseWaypointsSync(from route: GeneratedRoute, minDistance: Double) -> GeneratedRoute {
+        guard route.places.count > 1 else {
+            return route
+        }
+        
+        var filteredPlaces: [PlaceResult] = []
+        
+        for place in route.places {
+            let tooClose = filteredPlaces.contains { kept in
+                distanceBetween(kept.coordinate, place.coordinate) < minDistance
+            }
+            
+            if !tooClose {
+                filteredPlaces.append(place)
+            } else {
+                print("🗺️ [CACHE-FILTER] Removed '\(place.name)' - too close to another waypoint (< \(minDistance)m)")
+            }
+        }
+        
+        if filteredPlaces.count != route.places.count {
+            print("🗺️ [CACHE-FILTER] Filtered cached route: \(route.places.count) → \(filteredPlaces.count) waypoints (minDistance: \(minDistance)m)")
+            // Return route with filtered places (polyline won't match, but waypoints are valid)
+            return GeneratedRoute(
+                places: filteredPlaces,
+                polyline: route.polyline,  // Keep original polyline (might not match filtered waypoints)
+                distanceMeters: route.distanceMeters,
+                durationSeconds: route.durationSeconds,
+                legs: route.legs
+            )
+        }
+        
+        return route
+    }
+    
     /// v1.8.10: Now async - regenerates polyline when waypoints are removed to fix Star Inn bug
     private func removeCloseWaypoints(from route: GeneratedRoute, minDistance: Double, origin: CLLocationCoordinate2D) async -> GeneratedRoute {
+        // #region agent log
+        let logData1: [String: Any] = [
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "C",
+            "location": "GoogleMapsService.swift:14874",
+            "message": "removeCloseWaypoints: entry",
+            "data": [
+                "waypointCount": route.places.count,
+                "minDistance": minDistance,
+                "waypoints": route.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] }
+            ],
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+        ]
+        if let logJSON1 = try? JSONSerialization.data(withJSONObject: logData1),
+           let logString1 = String(data: logJSON1, encoding: .utf8) {
+            try? logString1.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+        }
+        // #endregion
+        
         guard route.places.count > 1 else {
             // FINAL SAFETY WRAPPER: Ensure deduplication on return
             return finalizeRouteDedup(route)
@@ -14835,16 +15223,66 @@ class GoogleMapsService: ObservableObject {
         
         for place in route.places {
             // Check if this place is too close to any already-kept place
+            var closestDistance: Double = .greatestFiniteMagnitude
+            var closestWaypointName: String = ""
             let tooClose = filteredPlaces.contains { kept in
-                distanceBetween(kept.coordinate, place.coordinate) < minDistance
+                let dist = distanceBetween(kept.coordinate, place.coordinate)
+                if dist < closestDistance {
+                    closestDistance = dist
+                    closestWaypointName = kept.name
+                }
+                return dist < minDistance
             }
             
             if !tooClose {
                 filteredPlaces.append(place)
             } else {
-                print("🗺️ Removed '\(place.name)' - too close to another waypoint")
+                // #region agent log
+                let logData2: [String: Any] = [
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "C",
+                    "location": "GoogleMapsService.swift:14890",
+                    "message": "removeCloseWaypoints: removed too close",
+                    "data": [
+                        "removedName": place.name,
+                        "closestWaypointName": closestWaypointName,
+                        "distance": closestDistance,
+                        "minDistance": minDistance
+                    ],
+                    "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                ]
+                if let logJSON2 = try? JSONSerialization.data(withJSONObject: logData2),
+                   let logString2 = String(data: logJSON2, encoding: .utf8) {
+                    try? logString2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                }
+                // #endregion
+                print("🗺️ Removed '\(place.name)' - too close to another waypoint (\(String(format: "%.1f", closestDistance))m from '\(closestWaypointName)')")
             }
         }
+        
+        // #region agent log
+        let logData3: [String: Any] = [
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "C",
+            "location": "GoogleMapsService.swift:14895",
+            "message": "removeCloseWaypoints: exit",
+            "data": [
+                "originalCount": route.places.count,
+                "filteredCount": filteredPlaces.count,
+                "finalWaypoints": filteredPlaces.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                "distances": filteredPlaces.count > 1 ? (0..<filteredPlaces.count-1).map { i in
+                    distanceBetween(filteredPlaces[i].coordinate, filteredPlaces[i+1].coordinate)
+                } : []
+            ],
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+        ]
+        if let logJSON3 = try? JSONSerialization.data(withJSONObject: logData3),
+           let logString3 = String(data: logJSON3, encoding: .utf8) {
+            try? logString3.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+        }
+        // #endregion
         
         // v1.8.10: Regenerate polyline if waypoints were removed
         if filteredPlaces.count != route.places.count {

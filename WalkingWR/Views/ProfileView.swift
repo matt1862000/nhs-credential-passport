@@ -18,21 +18,8 @@ struct ProfileView: View {
     // Settings moved to WaitTimeView (Delay tab)
     @State private var showHelpSheet = false
     @State private var showIntroduction = false
-    @State private var isTestingRoutes = false
-    @State private var testingPostcode: String? = nil
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) var colorScheme
-    
-    // Debug postcodes with their center coordinates
-    private let debugPostcodes: [(postcode: String, lat: Double, lon: Double, description: String)] = [
-        ("S5 7JT", 53.4109, -1.4603, "Northern General Hospital"),
-        ("S35 0JW", 53.4200, -1.4800, "Sheffield area"),
-        ("S1 4JP", 53.3800, -1.4700, "Sheffield city centre"),
-        ("S5 7AU", 53.4100, -1.4500, "Sheffield area"),
-        ("S8 8BG", 53.3500, -1.4800, "Sheffield area"),
-        ("S35 1RQ", 53.4300, -1.4900, "Sheffield area"),
-        ("S11 9BF", 53.3700, -1.5000, "Sheffield area")
-    ]
     
     var body: some View {
         NavigationStack {
@@ -72,124 +59,6 @@ struct ProfileView: View {
                         
                         // Badges section
                         BadgesSection(progress: viewModel.userProgress)
-                        
-                        // Debug: Test Routes button
-                        VStack(spacing: 12) {
-                            Button(action: {
-                                guard let location = viewModel.locationService.currentLocation else {
-                                    print("🧪 [TEST ROUTES] Error: No location available")
-                                    return
-                                }
-                                
-                                isTestingRoutes = true
-                                Task {
-                                    await GoogleMapsService.shared.testRouteGenerationAtIntervals(
-                                        from: location.coordinate
-                                    )
-                                    await MainActor.run {
-                                        isTestingRoutes = false
-                                    }
-                                }
-                            }) {
-                                HStack {
-                                    if isTestingRoutes {
-                                        ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                            .scaleEffect(0.8)
-                                    } else {
-                                        Image(systemName: "wand.and.stars")
-                                    }
-                                    Text(isTestingRoutes ? "Testing Routes..." : "Test Routes")
-                                        .fontWeight(.semibold)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(isTestingRoutes ? Color.gray : Color.tealAccent)
-                                .foregroundColor(.white)
-                                .cornerRadius(12)
-                            }
-                            .disabled(isTestingRoutes || viewModel.locationService.currentLocation == nil)
-                            
-                            if viewModel.locationService.currentLocation == nil {
-                                Text("Location required for testing")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
-                        
-                        // Debug: Test Routes from Postcode Locations
-                        VStack(alignment: .leading, spacing: 16) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "location.circle.fill")
-                                    .foregroundColor(.orange)
-                                Text("Debug: Test Routes from Postcodes")
-                                    .font(.headline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
-                            }
-                            
-                            VStack(spacing: 10) {
-                                ForEach(debugPostcodes, id: \.postcode) { postcodeInfo in
-                                    Button(action: {
-                                        testingPostcode = postcodeInfo.postcode
-                                        let coordinate = CLLocationCoordinate2D(
-                                            latitude: postcodeInfo.lat,
-                                            longitude: postcodeInfo.lon
-                                        )
-                                        
-                                        Task {
-                                            print("🧪 [POSTCODE TEST] Starting route tests from \(postcodeInfo.postcode) (\(postcodeInfo.description))")
-                                            await GoogleMapsService.shared.testRouteGenerationAtIntervals(
-                                                from: coordinate
-                                            )
-                                            await MainActor.run {
-                                                testingPostcode = nil
-                                            }
-                                        }
-                                    }) {
-                                        HStack {
-                                            if testingPostcode == postcodeInfo.postcode {
-                                                ProgressView()
-                                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                                    .scaleEffect(0.8)
-                                            } else {
-                                                Image(systemName: "mappin.circle.fill")
-                                            }
-                                            
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(postcodeInfo.postcode)
-                                                    .fontWeight(.semibold)
-                                                Text(postcodeInfo.description)
-                                                    .font(.caption)
-                                                    .opacity(0.9)
-                                            }
-                                            
-                                            Spacer()
-                                        }
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 10)
-                                        .padding(.horizontal, 12)
-                                        .background(
-                                            testingPostcode == postcodeInfo.postcode
-                                                ? Color.gray
-                                                : Color.orange.opacity(0.8)
-                                        )
-                                        .foregroundColor(.white)
-                                        .cornerRadius(10)
-                                    }
-                                    .disabled(testingPostcode != nil)
-                                }
-                            }
-                        }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.adaptiveCardBackground(colorScheme))
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .shadow(color: Color.black.opacity(0.1), radius: 8, y: 4)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 8)
                         
                         Spacer(minLength: 100)
                     }
@@ -2501,6 +2370,8 @@ struct SettingsView: View {
                         }
                         .padding(.vertical, 4)
                     }
+                } header: {
+                    Text("Debug")
                 }
                 
                 // Care Opinion Feedback Section

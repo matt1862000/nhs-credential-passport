@@ -4,13 +4,28 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.5 (Build 292)`
+**Current Version:** `2.1.5 (Build 294)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
 ---
 
 ## Version History
+
+### 2.1.5 (Build 294) - EXPERIMENTAL ⚠️
+- **Comprehensive waypoint distance enforcement**: Standardized all `removeCloseWaypoints` calls to 100m minimum distance across all route durations (10-60 min)
+- **Cached route filtering**: Added synchronous distance filtering for cached/pre-populated routes to ensure waypoints are ≥100m apart even when loaded from cache
+- **All code paths covered**: Added distance checks to route enhancement, micro-spur insertion, post-trim extension, and topology-safe route generation
+- **Waypoint sorting protection**: Added distance check after waypoint sorting in `enhanceRouteWithWaypoints` to prevent sorting from bringing waypoints closer
+- **Not recommended for production use**
+
+### 2.1.5 (Build 293) - EXPERIMENTAL ⚠️
+- **Waypoint distance enforcement**: Added `removeCloseWaypoints` calls after route extension and before final return to ensure minimum 100m spacing
+- **Waypoint activation safeguard**: Added 30-second cooldown between waypoint activations to prevent accidental double-activation
+- **Dynamic text sizing**: Banner and directions list text now scales down to fit without truncation (no ellipsis)
+- **Color improvements**: Black backgrounds in dark mode, vibrant teal in light mode for better contrast and less washed-out appearance
+- **Route Point filtering**: Filter out placeholder "Route Point" POIs from waypoint display
+- **Not recommended for production use**
 
 ### 2.1.5 (Build 292) - EXPERIMENTAL ⚠️
 - **Address-based road snapping**: Waypoints now snap to the road from their address, not just the nearest road
@@ -66,4 +81,6 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **187-289**: Experimental builds (do not use for production)
 - **290**: Previous build (2.0.20) - Enhanced batch telemetry
 - **291**: Previous build (2.1.4) - Road snapping fix, MapKit fallback
-- **292**: Current build (2.1.5) - Address-based road snapping
+- **292**: Previous build (2.1.5) - Address-based road snapping
+- **293**: Previous build (2.1.5) - Waypoint distance fixes, dynamic text sizing, color improvements
+- **294**: Current build (2.1.5) - Comprehensive waypoint distance enforcement for all routes and cached routes

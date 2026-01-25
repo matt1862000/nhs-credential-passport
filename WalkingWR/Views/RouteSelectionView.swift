@@ -36,6 +36,7 @@ private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async
 import MapKit
 import CoreLocation
 
+
 struct RouteSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var showLocalRoutePicker: Bool
@@ -1893,10 +1894,15 @@ struct LocalRoutePickerSheet: View {
                         print("⚡ Using cached directions - instant load!")
                     }
                     
+                    // v2.1.7: Filter close waypoints from cached routes (cached routes may have been generated before distance fixes)
+                    let filteredCachedRoute = mapsService.filterCloseWaypointsSync(from: firstCached.route, minDistance: 100)
+                    
                     // Create minimal markers (quick creation, will enhance in background)
                     let firstMarkers = await MainActor.run {
                         // Quick marker creation - minimal processing for instant display
-                        firstCached.route.places.enumerated().map { index, place in
+                        // Filter out placeholder "Route Point" POIs - these are just topology markers, not real waypoints
+                        let realPlaces = filteredCachedRoute.places.filter { $0.name != "Route Point" }
+                        return realPlaces.enumerated().map { index, place in
                             let content = WellbeingContent.breathingExercises.randomElement() ?? WellbeingContent.breathingExercises[0]
                             return QRMarker(
                                 code: "POI\(index + 1)",
@@ -1914,27 +1920,58 @@ struct LocalRoutePickerSheet: View {
                     
                     let firstRoute = WalkingRoute(
                         name: firstCached.name ?? "Local Discovery",
-                        description: firstCached.description ?? "A \(firstCached.route.formattedDuration) walk passing \(firstCached.route.places.count) local points of interest.",
-                        durationMinutes: max(1, firstCached.route.durationMinutes),
-                        distanceMeters: firstCached.route.distanceMeters,
+                        description: firstCached.description ?? "A \(filteredCachedRoute.formattedDuration) walk passing \(filteredCachedRoute.places.count) local points of interest.",
+                        durationMinutes: max(1, filteredCachedRoute.durationMinutes),
+                        distanceMeters: filteredCachedRoute.distanceMeters,
                         difficulty: firstRouteDifficulty,
                         isIndoor: false,
                         isAccessible: true,
-                        landmarks: ["Start"] + firstCached.route.places.map { $0.name } + ["Return"],
+                        landmarks: ["Start"] + filteredCachedRoute.places.map { $0.name } + ["Return"],
                         icon: "location.fill",
                         color: .tealAccent,
                         qrMarkers: firstMarkers,
                         routeType: .local,
-                        encodedPolyline: firstCached.route.polyline,
+                        encodedPolyline: filteredCachedRoute.polyline,
                         walkingDirections: firstDirections,
-                        usedOSRMRouting: firstCached.route.usedOSRM
+                        usedOSRMRouting: filteredCachedRoute.usedOSRM
                     )
                     
-                    loadedRoutes.append((route: firstRoute, data: firstCached.route, isDeadZoneFallback: firstCached.isDeadZoneFallback))
+                    loadedRoutes.append((route: firstRoute, data: filteredCachedRoute, isDeadZoneFallback: firstCached.isDeadZoneFallback))
                     loadedPlaceIdSets.append(Set(firstCached.route.places.map { $0.placeId }))
                     
                     // v1.9.24: Show first route IMMEDIATELY (<0.1s), enhance in background
                     await MainActor.run {
+                        // #region agent log
+                        if firstRoute.qrMarkers.count > 1 {
+                            let distances = (0..<firstRoute.qrMarkers.count-1).map { i in
+                                let loc1 = CLLocation(latitude: firstRoute.qrMarkers[i].coordinate.latitude, longitude: firstRoute.qrMarkers[i].coordinate.longitude)
+                                let loc2 = CLLocation(latitude: firstRoute.qrMarkers[i+1].coordinate.latitude, longitude: firstRoute.qrMarkers[i+1].coordinate.longitude)
+                                return loc1.distance(from: loc2)
+                            }
+                            let logData: [String: Any] = [
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "H",
+                                "location": "RouteSelectionView.swift:1959",
+                                "message": "Cached route assigned: final waypoint distances",
+                                "data": [
+                                    "routeName": firstRoute.name,
+                                    "waypointCount": firstRoute.qrMarkers.count,
+                                    "waypoints": firstRoute.qrMarkers.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                                    "distances": distances,
+                                    "minDistance": distances.min() ?? 0,
+                                    "source": "cache",
+                                    "places": firstCached.route.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] }
+                                ],
+                                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                            ]
+                            if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+                               let logString = String(data: logJSON, encoding: .utf8) {
+                                logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                            }
+                        }
+                        // #endregion
+                        
                         isGenerating = false
                         routeGenerationComplete = true  // Mark complete so user can see first route
                         allRoutes = loadedRoutes
@@ -1990,7 +2027,36 @@ struct LocalRoutePickerSheet: View {
                             }
                             
                             enhancedMarkers = await MainActor.run {
-                                createMarkersFromPlaces(firstCached.route.places, origin: userLocation.coordinate)
+                                // #region agent log
+                                if firstCached.route.places.count > 1 {
+                                    let distances = (0..<firstCached.route.places.count-1).map { i in
+                                        let loc1 = CLLocation(latitude: firstCached.route.places[i].coordinate.latitude, longitude: firstCached.route.places[i].coordinate.longitude)
+                                        let loc2 = CLLocation(latitude: firstCached.route.places[i+1].coordinate.latitude, longitude: firstCached.route.places[i+1].coordinate.longitude)
+                                        return loc1.distance(from: loc2)
+                                    }
+                                    let logData: [String: Any] = [
+                                        "sessionId": "debug-session",
+                                        "runId": "run1",
+                                        "hypothesisId": "H",
+                                        "location": "RouteSelectionView.swift:1994",
+                                        "message": "Cached route: waypoint distances",
+                                        "data": [
+                                            "routeName": firstCached.name ?? "Unknown",
+                                            "waypointCount": firstCached.route.places.count,
+                                            "waypoints": firstCached.route.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                                            "distances": distances,
+                                            "minDistance": distances.min() ?? 0,
+                                            "source": "cache"
+                                        ],
+                                        "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                                    ]
+                                    if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+                                       let logString = String(data: logJSON, encoding: .utf8) {
+                                        logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                                    }
+                                }
+                                // #endregion
+                                return createMarkersFromPlaces(firstCached.route.places, origin: userLocation.coordinate)
                             }
                             needsUpdate = true
                         }
@@ -2005,7 +2071,7 @@ struct LocalRoutePickerSheet: View {
                             }
                             
                             enhancedDirections = await MainActor.run {
-                                extractWalkingDirections(from: firstCached.route.legs)
+                                extractWalkingDirections(from: firstCached.route.legs, waypoints: firstCached.route.places)
                             }
                             
                             // Get MapKit directions if still empty
@@ -2019,10 +2085,12 @@ struct LocalRoutePickerSheet: View {
                                 
                                 print("🍎 Enhancing first route with MapKit directions...")
                                 let waypointCoords = firstCached.route.places.map { $0.coordinate }
+                                let waypointNames = firstCached.route.places.map { $0.name }
                                 enhancedDirections = await mapsService.getMapKitDirectionsForRoute(
                                     origin: userLocation.coordinate,
                                     waypoints: waypointCoords,
-                                    destination: userLocation.coordinate
+                                    destination: userLocation.coordinate,
+                                    waypointNames: waypointNames
                                 )
                             }
                             
@@ -2075,8 +2143,11 @@ struct LocalRoutePickerSheet: View {
                         await withTaskGroup(of: (route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool, placeIds: Set<String>).self) { group in
                             for (index, cached) in cachedRoutes.dropFirst().enumerated() {
                                 group.addTask {
+                                    // v2.1.7: Filter close waypoints from cached routes (cached routes may have been generated before distance fixes)
+                                    let filteredCachedRoute = mapsService.filterCloseWaypointsSync(from: cached.route, minDistance: 100)
+                                    
                                     let markers = await MainActor.run {
-                                        createMarkersFromPlaces(cached.route.places, origin: userLocation.coordinate)
+                                        createMarkersFromPlaces(filteredCachedRoute.places, origin: userLocation.coordinate)
                                     }
                                     
                                     var directions: [WalkingDirection] = []
@@ -2084,32 +2155,32 @@ struct LocalRoutePickerSheet: View {
                                         directions = cachedDirections
                                     } else {
                                         directions = await MainActor.run {
-                                            extractWalkingDirections(from: cached.route.legs)
+                                            extractWalkingDirections(from: filteredCachedRoute.legs, waypoints: filteredCachedRoute.places)
                                         }
                                     }
                                     
-                                    let routeDifficulty: RouteDifficulty = cached.route.durationMinutes <= 10 ? .easy : (cached.route.durationMinutes <= 20 ? .moderate : .challenging)
+                                    let routeDifficulty: RouteDifficulty = filteredCachedRoute.durationMinutes <= 10 ? .easy : (filteredCachedRoute.durationMinutes <= 20 ? .moderate : .challenging)
                                     
                                     let localRoute = WalkingRoute(
                                         name: cached.name ?? "Local Discovery",
-                                        description: cached.description ?? "A \(cached.route.formattedDuration) walk passing \(cached.route.places.count) local points of interest.",
-                                        durationMinutes: max(1, cached.route.durationMinutes),
-                                        distanceMeters: cached.route.distanceMeters,
+                                        description: cached.description ?? "A \(filteredCachedRoute.formattedDuration) walk passing \(filteredCachedRoute.places.count) local points of interest.",
+                                        durationMinutes: max(1, filteredCachedRoute.durationMinutes),
+                                        distanceMeters: filteredCachedRoute.distanceMeters,
                                         difficulty: routeDifficulty,
                                         isIndoor: false,
                                         isAccessible: true,
-                                        landmarks: ["Start"] + cached.route.places.map { $0.name } + ["Return"],
+                                        landmarks: ["Start"] + filteredCachedRoute.places.map { $0.name } + ["Return"],
                                         icon: "location.fill",
                                         color: .tealAccent,
                                         qrMarkers: markers,
                                         routeType: .local,
-                                        encodedPolyline: cached.route.polyline,
+                                        encodedPolyline: filteredCachedRoute.polyline,
                                         walkingDirections: directions,
-                                        usedOSRMRouting: cached.route.usedOSRM
+                                        usedOSRMRouting: filteredCachedRoute.usedOSRM
                                     )
                                     
-                                    let placeIds = Set(cached.route.places.map { $0.placeId })
-                                    return (route: localRoute, data: cached.route, isDeadZoneFallback: cached.isDeadZoneFallback, placeIds: placeIds)
+                                    let placeIds = Set(filteredCachedRoute.places.map { $0.placeId })
+                                    return (route: localRoute, data: filteredCachedRoute, isDeadZoneFallback: cached.isDeadZoneFallback, placeIds: placeIds)
                                 }
                             }
                             
@@ -2124,6 +2195,39 @@ struct LocalRoutePickerSheet: View {
                             
                             // Update UI with all loaded routes
                             await MainActor.run {
+                                // #region agent log
+                                for (idx, bgRoute) in backgroundRoutes.enumerated() {
+                                    if bgRoute.route.qrMarkers.count > 1 {
+                                        let distances = (0..<bgRoute.route.qrMarkers.count-1).map { i in
+                                            let loc1 = CLLocation(latitude: bgRoute.route.qrMarkers[i].coordinate.latitude, longitude: bgRoute.route.qrMarkers[i].coordinate.longitude)
+                                            let loc2 = CLLocation(latitude: bgRoute.route.qrMarkers[i+1].coordinate.latitude, longitude: bgRoute.route.qrMarkers[i+1].coordinate.longitude)
+                                            return loc1.distance(from: loc2)
+                                        }
+                                        let logData: [String: Any] = [
+                                            "sessionId": "debug-session",
+                                            "runId": "run1",
+                                            "hypothesisId": "G",
+                                            "location": "RouteSelectionView.swift:2192",
+                                            "message": "Background route added: final waypoint distances",
+                                            "data": [
+                                                "routeName": bgRoute.route.name,
+                                                "routeIndex": allRoutes.count + idx,
+                                                "waypointCount": bgRoute.route.qrMarkers.count,
+                                                "waypoints": bgRoute.route.qrMarkers.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                                                "distances": distances,
+                                                "minDistance": distances.min() ?? 0,
+                                                "source": "background"
+                                            ],
+                                            "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                                        ]
+                                        if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+                                           let logString = String(data: logJSON, encoding: .utf8) {
+                                            logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                                        }
+                                    }
+                                }
+                                // #endregion
+                                
                                 allRoutes.append(contentsOf: backgroundRoutes)
                                 shownPlaceIdSets.append(contentsOf: backgroundPlaceIdSets)
                                 
@@ -2290,7 +2394,7 @@ struct LocalRoutePickerSheet: View {
                     
                     // Extract walking directions from OSRM/Google legs (in parallel with naming)
                     var directions = await MainActor.run {
-                        extractWalkingDirections(from: result.legs)
+                        extractWalkingDirections(from: result.legs, waypoints: result.places)
                     }
                     
                     // v1.6.14: If no directions (OSRM was used), get them from Apple MapKit
@@ -2298,10 +2402,12 @@ struct LocalRoutePickerSheet: View {
                         print("🍎 No directions from route - getting from MapKit...")
                         let mapKitStartTime = Date()
                         let waypointCoords = result.places.map { $0.coordinate }
+                        let waypointNames = result.places.map { $0.name }
                         directions = await mapsService.getMapKitDirectionsForRoute(
                             origin: userLocation.coordinate,
                             waypoints: waypointCoords,
-                            destination: userLocation.coordinate
+                            destination: userLocation.coordinate,
+                            waypointNames: waypointNames
                         )
                         print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - MapKit directions took \(String(format: "%.2f", Date().timeIntervalSince(mapKitStartTime)))s")
                     }
@@ -2365,6 +2471,35 @@ struct LocalRoutePickerSheet: View {
                     }
                     
                     await MainActor.run {
+                        // #region agent log
+                        if localRoute.qrMarkers.count > 1 {
+                            let distances = (0..<localRoute.qrMarkers.count-1).map { i in
+                                let loc1 = CLLocation(latitude: localRoute.qrMarkers[i].coordinate.latitude, longitude: localRoute.qrMarkers[i].coordinate.longitude)
+                                let loc2 = CLLocation(latitude: localRoute.qrMarkers[i+1].coordinate.latitude, longitude: localRoute.qrMarkers[i+1].coordinate.longitude)
+                                return loc1.distance(from: loc2)
+                            }
+                            let logData: [String: Any] = [
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "G",
+                                "location": "RouteSelectionView.swift:2375",
+                                "message": "Route assigned to view: final waypoint distances",
+                                "data": [
+                                    "routeName": localRoute.name,
+                                    "waypointCount": localRoute.qrMarkers.count,
+                                    "waypoints": localRoute.qrMarkers.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                                    "distances": distances,
+                                    "minDistance": distances.min() ?? 0
+                                ],
+                                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                            ]
+                            if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+                               let logString = String(data: logJSON, encoding: .utf8) {
+                                logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                            }
+                        }
+                        // #endregion
+                        
                         isGenerating = false
                         routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
                         generatedRoute = localRoute
@@ -2544,7 +2679,41 @@ struct LocalRoutePickerSheet: View {
     
     @ViewBuilder
     private func mapPreviewSection(route: WalkingRoute) -> some View {
-        ZStack {
+        // #region agent log - Log when route is displayed in UI
+        let _ = {
+            if route.qrMarkers.count > 1 {
+                let distances = (0..<route.qrMarkers.count-1).map { i in
+                    let loc1 = CLLocation(latitude: route.qrMarkers[i].coordinate.latitude, longitude: route.qrMarkers[i].coordinate.longitude)
+                    let loc2 = CLLocation(latitude: route.qrMarkers[i+1].coordinate.latitude, longitude: route.qrMarkers[i+1].coordinate.longitude)
+                    return loc1.distance(from: loc2)
+                }
+                let logData: [String: Any] = [
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "G",
+                    "location": "RouteSelectionView.swift:2642",
+                    "message": "Route displayed in UI: final waypoint distances",
+                    "data": [
+                        "routeName": route.name,
+                        "routeIndex": currentRouteIndex,
+                        "waypointCount": route.qrMarkers.count,
+                        "waypoints": route.qrMarkers.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                        "distances": distances,
+                        "minDistance": distances.min() ?? 0,
+                        "source": "ui_display"
+                    ],
+                    "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                ]
+                if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+                   let logString = String(data: logJSON, encoding: .utf8) {
+                    logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                    print("📊 [DEBUG LOG] Logged route '\(route.name)' with \(route.qrMarkers.count) waypoints, min distance: \(distances.min() ?? 0)m")
+                }
+            }
+        }()
+        // #endregion
+        
+        return ZStack {
             LocalRouteMapPreview(
                 route: route,
                 userLocation: locationService.currentLocation?.coordinate,
@@ -2901,7 +3070,7 @@ struct LocalRoutePickerSheet: View {
                     }
                     
                     var directions = await MainActor.run {
-                        extractWalkingDirections(from: result.legs)
+                        extractWalkingDirections(from: result.legs, waypoints: result.places)
                     }
                     
                     // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
@@ -2927,10 +3096,12 @@ struct LocalRoutePickerSheet: View {
                     // v1.6.14: If no directions, get them from Apple MapKit (in parallel with naming)
                     if directions.isEmpty && !result.places.isEmpty {
                         let waypointCoords = result.places.map { $0.coordinate }
+                        let waypointNames = result.places.map { $0.name }
                         directions = await mapsService.getMapKitDirectionsForRoute(
                             origin: userLocation.coordinate,
                             waypoints: waypointCoords,
-                            destination: userLocation.coordinate
+                            destination: userLocation.coordinate,
+                            waypointNames: waypointNames
                         )
                     }
                     
@@ -3042,6 +3213,38 @@ struct LocalRoutePickerSheet: View {
             // Show next pre-generated route instantly
             currentRouteIndex += 1
             let nextRoute = allRoutes[currentRouteIndex]
+            
+            // #region agent log
+            if nextRoute.route.qrMarkers.count > 1 {
+                let distances = (0..<nextRoute.route.qrMarkers.count-1).map { i in
+                    let loc1 = CLLocation(latitude: nextRoute.route.qrMarkers[i].coordinate.latitude, longitude: nextRoute.route.qrMarkers[i].coordinate.longitude)
+                    let loc2 = CLLocation(latitude: nextRoute.route.qrMarkers[i+1].coordinate.latitude, longitude: nextRoute.route.qrMarkers[i+1].coordinate.longitude)
+                    return loc1.distance(from: loc2)
+                }
+                let logData: [String: Any] = [
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "G",
+                    "location": "RouteSelectionView.swift:3143",
+                    "message": "Route displayed (shuffle): final waypoint distances",
+                    "data": [
+                        "routeName": nextRoute.route.name,
+                        "routeIndex": currentRouteIndex,
+                        "waypointCount": nextRoute.route.qrMarkers.count,
+                        "waypoints": nextRoute.route.qrMarkers.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                        "distances": distances,
+                        "minDistance": distances.min() ?? 0,
+                        "source": "shuffle"
+                    ],
+                    "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                ]
+                if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+                   let logString = String(data: logJSON, encoding: .utf8) {
+                    logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                }
+            }
+            // #endregion
+            
             generatedRoute = nextRoute.route
             generatedRouteData = nextRoute.data
             // Check if this route has been viewed before
@@ -3056,6 +3259,38 @@ struct LocalRoutePickerSheet: View {
             // v1.6.45: At last route - cycle back to route 1 (no dialog)
             currentRouteIndex = 0
             let firstRoute = allRoutes[0]
+            
+            // #region agent log
+            if firstRoute.route.qrMarkers.count > 1 {
+                let distances = (0..<firstRoute.route.qrMarkers.count-1).map { i in
+                    let loc1 = CLLocation(latitude: firstRoute.route.qrMarkers[i].coordinate.latitude, longitude: firstRoute.route.qrMarkers[i].coordinate.longitude)
+                    let loc2 = CLLocation(latitude: firstRoute.route.qrMarkers[i+1].coordinate.latitude, longitude: firstRoute.route.qrMarkers[i+1].coordinate.longitude)
+                    return loc1.distance(from: loc2)
+                }
+                let logData: [String: Any] = [
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "G",
+                    "location": "RouteSelectionView.swift:3157",
+                    "message": "Route displayed (cycle back): final waypoint distances",
+                    "data": [
+                        "routeName": firstRoute.route.name,
+                        "routeIndex": 0,
+                        "waypointCount": firstRoute.route.qrMarkers.count,
+                        "waypoints": firstRoute.route.qrMarkers.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                        "distances": distances,
+                        "minDistance": distances.min() ?? 0,
+                        "source": "cycle"
+                    ],
+                    "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                ]
+                if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+                   let logString = String(data: logJSON, encoding: .utf8) {
+                    logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                }
+            }
+            // #endregion
+            
             generatedRoute = firstRoute.route
             generatedRouteData = firstRoute.data
             isRecycledRoute = true  // Always recycled when cycling back
@@ -3168,16 +3403,18 @@ struct LocalRoutePickerSheet: View {
                     }
                     
                     var directions = await MainActor.run {
-                        extractWalkingDirections(from: result.legs)
+                        extractWalkingDirections(from: result.legs, waypoints: result.places)
                     }
                     
                     // v1.6.14: If no directions, get them from Apple MapKit
                     if directions.isEmpty && !result.places.isEmpty {
                         let waypointCoords = result.places.map { $0.coordinate }
+                        let waypointNames = result.places.map { $0.name }
                         directions = await mapsService.getMapKitDirectionsForRoute(
                             origin: userLocation.coordinate,
                             waypoints: waypointCoords,
-                            destination: userLocation.coordinate
+                            destination: userLocation.coordinate,
+                            waypointNames: waypointNames
                         )
                     }
                     
@@ -3384,10 +3621,12 @@ struct LocalRoutePickerSheet: View {
                             
                             if directions.isEmpty && !result.places.isEmpty {
                                 let waypointCoords = result.places.map { $0.coordinate }
+                                let waypointNames = result.places.map { $0.name }
                                 directions = await mapsService.getMapKitDirectionsForRoute(
                                     origin: userLocation.coordinate,
                                     waypoints: waypointCoords,
-                                    destination: userLocation.coordinate
+                                    destination: userLocation.coordinate,
+                                    waypointNames: waypointNames
                                 )
                             }
                             
@@ -3718,7 +3957,8 @@ struct LocalRoutePickerSheet: View {
                         let directions = await mapsService.getMapKitDirectionsForRoute(
                             origin: coordinate,
                             waypoints: result.places.map { $0.coordinate },
-                            destination: coordinate
+                            destination: coordinate,
+                            waypointNames: result.places.map { $0.name }
                         )
                         
                         let markers = await MainActor.run {
@@ -3836,7 +4076,37 @@ struct LocalRoutePickerSheet: View {
     }
     
     func createMarkersFromPlaces(_ places: [PlaceResult], origin: CLLocationCoordinate2D) -> [QRMarker] {
-        return places.enumerated().map { index, place in
+        // #region agent log
+        if places.count > 1 {
+            let distances = (0..<places.count-1).map { i in
+                let loc1 = CLLocation(latitude: places[i].coordinate.latitude, longitude: places[i].coordinate.longitude)
+                let loc2 = CLLocation(latitude: places[i+1].coordinate.latitude, longitude: places[i+1].coordinate.longitude)
+                return loc1.distance(from: loc2)
+            }
+            let logData: [String: Any] = [
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "D",
+                "location": "RouteSelectionView.swift:3849",
+                "message": "createMarkersFromPlaces: final waypoint distances",
+                "data": [
+                    "waypoints": places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                    "distances": distances,
+                    "minDistance": distances.min() ?? 0
+                ],
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+            ]
+            if let logJSON = try? JSONSerialization.data(withJSONObject: logData),
+               let logString = String(data: logJSON, encoding: .utf8) {
+                logString.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+            }
+        }
+        // #endregion
+        
+        // Filter out placeholder "Route Point" POIs - these are just topology markers, not real waypoints
+        let realPlaces = places.filter { $0.name != "Route Point" }
+        
+        return realPlaces.enumerated().map { index, place in
             // Always use a random breathing exercise (one of the 3 available)
             let content = WellbeingContent.breathingExercises.randomElement() ?? WellbeingContent.breathingExercises[0]
             
@@ -3853,12 +4123,14 @@ struct LocalRoutePickerSheet: View {
     }
     
     /// Extract walking directions from Google Directions API legs
-    func extractWalkingDirections(from legs: [DirectionsLeg]) -> [WalkingDirection] {
+    /// v2.1.6: Now accepts waypoints to generate waypoint-specific arrival instructions
+    func extractWalkingDirections(from legs: [DirectionsLeg], waypoints: [PlaceResult] = []) -> [WalkingDirection] {
         var directions: [WalkingDirection] = []
         
         for (legIndex, leg) in legs.enumerated() {
             guard let steps = leg.steps else { continue }
             let isLastLeg = legIndex == legs.count - 1
+            let isReturnLeg = legIndex == legs.count - 1 && waypoints.count > 0
             
             for (stepIndex, step) in steps.enumerated() {
                 guard let html = step.htmlInstructions else { continue }
@@ -3874,15 +4146,47 @@ struct LocalRoutePickerSheet: View {
                     maneuver: maneuver
                 )
                 
-                // Replace the last step of the last leg with "Return to starting point"
-                if isLastLeg && stepIndex == steps.count - 1 {
-                    direction = WalkingDirection(
-                        instruction: "Return to starting point",
-                        distance: step.distance.text,
-                        distanceMeters: step.distance.value,
-                        duration: step.duration.text,
-                        maneuver: "arrive"
-                    )
+                let isLastStepOfLeg = stepIndex == steps.count - 1
+                
+                // v2.1.6: Replace arrival instructions with waypoint-specific text
+                if isLastStepOfLeg {
+                    let instructionLower = direction.instruction.lowercased()
+                    let isArrivalInstruction = instructionLower.contains("destination is on your right") ||
+                                             instructionLower.contains("destination is on your left") ||
+                                             instructionLower.contains("the destination is on your right") ||
+                                             instructionLower.contains("the destination is on your left") ||
+                                             instructionLower.contains("arrive at") ||
+                                             (instructionLower.contains("destination") && (instructionLower.contains("on your right") || instructionLower.contains("on your left")))
+                    
+                    if isArrivalInstruction {
+                        if isReturnLeg {
+                            // Last leg is return to origin
+                            direction = WalkingDirection(
+                                instruction: "Return to starting point",
+                                distance: step.distance.text,
+                                distanceMeters: step.distance.value,
+                                duration: step.duration.text,
+                                maneuver: "arrive"
+                            )
+                        } else if legIndex < waypoints.count {
+                            // Intermediate waypoint - create waypoint-specific instruction
+                            let waypointIndex = legIndex + 1 // 1-indexed for display
+                            let waypoint = waypoints[legIndex]
+                            let waypointName = waypoint.name
+                            
+                            // Determine left/right from original instruction
+                            let side = instructionLower.contains("right") ? "right" : "left"
+                            
+                            direction = WalkingDirection(
+                                instruction: "Waypoint \(waypointIndex) (\(waypointName)) is on your \(side)",
+                                distance: step.distance.text,
+                                distanceMeters: step.distance.value,
+                                duration: step.duration.text,
+                                maneuver: "arrive"
+                            )
+                        }
+                        // If legIndex >= waypoints.count but not return leg, keep original instruction
+                    }
                 }
                 
                 directions.append(direction)
@@ -5336,6 +5640,77 @@ struct StatBadge: View {
 }
 
 // MARK: - Active Walk View
+// MARK: - v2.1.6: Walking Alert Overlay
+/// Custom overlay alert that doesn't dismiss the underlying map view
+struct WalkingAlertOverlay: View {
+    let title: String
+    let message: String
+    let onOK: () -> Void
+    let onStopAlerts: (() -> Void)?
+    var showStopButton: Bool = true
+    
+    var body: some View {
+        ZStack {
+            // Semi-transparent background
+            Color.black.opacity(0.4)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    // Allow tapping outside to dismiss (optional - can remove if you want explicit button press)
+                }
+            
+            // Alert card
+            VStack(spacing: 20) {
+                // Title with icon
+                HStack(spacing: 8) {
+                    Text(title)
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                }
+                
+                // Message
+                Text(message)
+                    .font(.body)
+                    .foregroundColor(.white.opacity(0.9))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                
+                // Buttons
+                HStack(spacing: 12) {
+                    if let onStopAlerts = onStopAlerts, showStopButton {
+                        Button(action: onStopAlerts) {
+                            Text("Stop Alerts")
+                                .font(.body)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.red)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Color.white.opacity(0.1))
+                                .cornerRadius(10)
+                        }
+                    }
+                    
+                    Button(action: onOK) {
+                        Text("OK")
+                            .font(.body)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color.green)
+                            .cornerRadius(10)
+                    }
+                }
+            }
+            .padding(24)
+            .background(Color.gray.opacity(0.95))
+            .cornerRadius(16)
+            .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
+            .padding(.horizontal, 40)
+        }
+    }
+}
+
 struct ActiveWalkView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @ObservedObject var locationService: LocationService  // v1.9.63: Observe directly for responsive direction updates
@@ -5524,6 +5899,54 @@ struct ActiveWalkView: View {
         )) {
             HomeArrivalSheet(viewModel: viewModel, isPresented: isPresented)
         }
+        // v2.1.6: Overlay-based alerts that don't dismiss the map
+        .overlay(alignment: .center) {
+            if viewModel.showHalfwayAlert {
+                WalkingAlertOverlay(
+                    title: "Halfway Point! 🚶",
+                    message: "You've completed half your walk. Check your clinic delay and consider heading back.",
+                    onOK: {
+                        viewModel.cancelAlertAutoDismissTimer()
+                        viewModel.showHalfwayAlert = false
+                    },
+                    onStopAlerts: {
+                        viewModel.disableWalkingAlerts()
+                        viewModel.showHalfwayAlert = false
+                    }
+                )
+            } else if viewModel.showReturnNowAlert {
+                WalkingAlertOverlay(
+                    title: "Time to Head Back 🏥",
+                    message: "You've completed 80% of your walk. Consider heading back to the clinic.",
+                    onOK: {
+                        viewModel.cancelAlertAutoDismissTimer()
+                        viewModel.showReturnNowAlert = false
+                    },
+                    onStopAlerts: {
+                        viewModel.disableWalkingAlerts()
+                        viewModel.showReturnNowAlert = false
+                    }
+                )
+            } else if viewModel.showWalkCompleteAlert {
+                WalkingAlertOverlay(
+                    title: "Walk Complete! 🎉",
+                    message: "Great job completing your walk! Head back to the waiting area when ready.",
+                    onOK: {
+                        viewModel.cancelAlertAutoDismissTimer()
+                        viewModel.endWalk(completed: true)
+                        viewModel.showWalkCompleteAlert = false
+                        // Dismiss fullscreen cover after ending walk
+                        if let isPresented = isPresented {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                isPresented.wrappedValue = false
+                            }
+                        }
+                    },
+                    onStopAlerts: nil,
+                    showStopButton: false
+                )
+            }
+        }
     }
     
     func formatElapsedTime(_ interval: TimeInterval) -> String {
@@ -5551,8 +5974,12 @@ struct WalkingDirectionsBanner: View {
     var halfwayAlert: Bool = false
     var estimatedSeenTime: String? = nil  // v1.9.56: Optional appointment-based estimated time
     
-    // Darker forest green color
-    private let bannerColor = Color(red: 0.13, green: 0.55, blue: 0.45)
+    @Environment(\.colorScheme) var colorScheme
+    
+    // v2.1.7: Dynamic banner color - black in dark mode, vibrant teal in light mode
+    private var bannerColor: Color {
+        colorScheme == .dark ? Color.black : Color.tealAccent
+    }
     
     // v1.9.15: Split instruction into main and destination parts
     private func splitInstruction(_ instruction: String) -> (main: String, destination: String?) {
@@ -5622,12 +6049,13 @@ struct WalkingDirectionsBanner: View {
                     
                     // Direction text - allow wrapping to show full instruction
                     VStack(alignment: .leading, spacing: 3) {
-                        // Main instruction (turn/continue/etc) - allow up to 2 lines
+                        // Main instruction (turn/continue/etc) - allow up to 2 lines with dynamic scaling
                         Text(instructionParts.main)
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .foregroundColor(.white)
                             .lineLimit(2)
+                            .minimumScaleFactor(0.7) // v2.1.7: Scale down to fit without truncation
                             .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
                         
@@ -5638,6 +6066,7 @@ struct WalkingDirectionsBanner: View {
                                 .fontWeight(.medium)
                                 .foregroundColor(.white.opacity(0.95))
                                 .lineLimit(2)
+                                .minimumScaleFactor(0.7) // v2.1.7: Scale down to fit without truncation
                                 .fixedSize(horizontal: false, vertical: true)
                                 .multilineTextAlignment(.leading)
                         }
@@ -5726,8 +6155,12 @@ struct ExpandedDirectionsList: View {
     @Binding var currentIndex: Int
     @Binding var showAllDirections: Bool
     
-    // Darker forest green color
-    private let accentColor = Color(red: 0.13, green: 0.55, blue: 0.45)
+    @Environment(\.colorScheme) var colorScheme
+    
+    // v2.1.7: Dynamic accent color - black in dark mode, vibrant teal in light mode
+    private var accentColor: Color {
+        colorScheme == .dark ? Color.black : Color.tealAccent
+    }
     
     // v1.9.15: Split instruction into main and destination parts
     private func splitInstruction(_ instruction: String) -> (main: String, destination: String?) {
@@ -5814,7 +6247,7 @@ struct ExpandedDirectionsList: View {
                                 ZStack {
                                     Circle()
                                         .fill(index < currentIndex ? accentColor : 
-                                              (index == currentIndex ? accentColor : Color.gray.opacity(0.2)))
+                                              (index == currentIndex ? accentColor : (colorScheme == .dark ? Color.white.opacity(0.2) : Color.gray.opacity(0.2))))
                                         .frame(width: 32, height: 32)
                                     
                                     if index < currentIndex {
@@ -5833,16 +6266,17 @@ struct ExpandedDirectionsList: View {
                                 // Direction icon
                                 Image(systemName: direction.icon)
                                     .font(.body)
-                                    .foregroundColor(index == currentIndex ? accentColor : .secondary)
+                                    .foregroundColor(index == currentIndex ? (colorScheme == .dark ? .white : accentColor) : .secondary)
                                     .frame(width: 24)
                                 
                                 // Instruction
                                 VStack(alignment: .leading, spacing: 3) {
-                                    // Main instruction
+                                    // Main instruction - allow 2 lines with dynamic scaling
                                     Text(instructionParts.main)
                                         .font(.subheadline)
                                         .foregroundColor(index == currentIndex ? .primary : .secondary)
-                                        .lineLimit(1)
+                                        .lineLimit(2) // v2.1.7: Allow 2 lines instead of 1
+                                        .minimumScaleFactor(0.7) // v2.1.7: Scale down to fit without truncation
                                         .multilineTextAlignment(.leading)
                                     
                                     // v1.9.15: Destination info on separate line if present
@@ -5851,7 +6285,8 @@ struct ExpandedDirectionsList: View {
                                             .font(.subheadline)
                                             .fontWeight(.medium)
                                             .foregroundColor(index == currentIndex ? .primary.opacity(0.9) : .secondary.opacity(0.9))
-                                            .lineLimit(1)
+                                            .lineLimit(2) // v2.1.7: Allow 2 lines instead of 1
+                                            .minimumScaleFactor(0.7) // v2.1.7: Scale down to fit without truncation
                                             .multilineTextAlignment(.leading)
                                     }
                                     
@@ -7442,45 +7877,12 @@ extension View {
             }
     }
     
+    // v2.1.6: Alerts are now handled by overlays in ActiveWalkView
+    // Removed system alerts here to prevent them from closing the map
     func addAlerts(viewModel: WaitingRoomViewModel) -> some View {
         self
-            .alert("Halfway Point! 🚶", isPresented: Binding(
-                get: { viewModel.showHalfwayAlert },
-                set: { viewModel.showHalfwayAlert = $0 }
-            )) {
-                Button("Stop Alerts", role: .destructive) {
-                    viewModel.disableWalkingAlerts()
-                }
-                Button("OK", role: .cancel) {
-                    viewModel.cancelAlertAutoDismissTimer()
-                }
-            } message: {
-                Text("You've completed half your walk. Check your clinic delay and consider heading back.")
-            }
-            .alert("Time to Head Back 🏥", isPresented: Binding(
-                get: { viewModel.showReturnNowAlert },
-                set: { viewModel.showReturnNowAlert = $0 }
-            )) {
-                Button("Stop Alerts", role: .destructive) {
-                    viewModel.disableWalkingAlerts()
-                }
-                Button("OK", role: .cancel) {
-                    viewModel.cancelAlertAutoDismissTimer()
-                }
-            } message: {
-                Text("You've completed 80% of your walk. Consider heading back to the clinic.")
-            }
-            .alert("Walk Complete! 🎉", isPresented: Binding(
-                get: { viewModel.showWalkCompleteAlert },
-                set: { viewModel.showWalkCompleteAlert = $0 }
-            )) {
-                Button("End & Save Progress", role: .cancel) {
-                    viewModel.cancelAlertAutoDismissTimer()
-                    viewModel.endWalk(completed: true)
-                }
-            } message: {
-                Text("Great job completing your walk! Head back to the waiting area when ready.")
-            }
+        // Alerts are now shown as overlays in ActiveWalkView, not system alerts
+        // This prevents the map from being dismissed when alerts appear
     }
 }
 
