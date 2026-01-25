@@ -4,13 +4,18 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.5 (Build 294)`
+**Current Version:** `2.1.5 (Build 295)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
 ---
 
 ## Version History
+
+### 2.1.5 (Build 295) - EXPERIMENTAL ⚠️
+- **Removed debug section from settings**: Removed all debug/test route functionality from the Settings view
+- **Fixed Privacy section header**: Changed incorrect "Debug" header to "Privacy" in Settings
+- **Not recommended for production use**
 
 ### 2.1.5 (Build 294) - EXPERIMENTAL ⚠️
 - **Comprehensive waypoint distance enforcement**: Standardized all `removeCloseWaypoints` calls to 100m minimum distance across all route durations (10-60 min)
@@ -83,4 +88,5 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **291**: Previous build (2.1.4) - Road snapping fix, MapKit fallback
 - **292**: Previous build (2.1.5) - Address-based road snapping
 - **293**: Previous build (2.1.5) - Waypoint distance fixes, dynamic text sizing, color improvements
-- **294**: Current build (2.1.5) - Comprehensive waypoint distance enforcement for all routes and cached routes
+- **294**: Previous build (2.1.5) - Comprehensive waypoint distance enforcement for all routes and cached routes
+- **295**: Current build (2.1.5) - Removed debug section from settings
