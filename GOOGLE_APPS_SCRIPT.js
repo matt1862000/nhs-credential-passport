@@ -1851,15 +1851,15 @@
         return;
       }
       
-      // Build OSRM route: origin → waypoints → origin
+      // Build OSRM route: origin → waypoints → origin (using walking profile)
       const coords = [`${center.lon},${center.lat}`];
       waypoints.forEach(([lat, lon]) => coords.push(`${lon},${lat}`));
       coords.push(`${center.lon},${center.lat}`);
       
       const coordsStr = coords.join(';');
-      const url = `http://router.project-osrm.org/route/v1/driving/${coordsStr}?overview=full&geometries=polyline`;
+      const url = `http://router.project-osrm.org/route/v1/walking/${coordsStr}?overview=full&geometries=polyline`;
       
-      Logger.log(`🗺️ Generating polyline for route: ${postcode}`);
+      Logger.log(`🗺️ Generating walking route polyline for: ${postcode}`);
       const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
       
       if (response.getResponseCode() === 200) {
@@ -1869,15 +1869,19 @@
           const route = data.routes[0];
           const polyline = route.geometry || '';
           const distanceM = route.distance || 0;
-          const durationSec = Math.round((distanceM / 80.0) * 60); // Convert to walking time
+          const durationSec = Math.round(route.duration || 0); // OSRM walking profile returns actual walking time in seconds
           
           // Update row with polyline, distance, and duration
           routesSheet.getRange(row, 12).setValue(polyline); // Polyline column
           routesSheet.getRange(row, 10).setValue(Math.round(distanceM)); // Distance column
           routesSheet.getRange(row, 11).setValue(durationSec); // Duration column
           
-          Logger.log(`✅ Generated polyline: ${polyline.substring(0, 50)}...`);
-          SpreadsheetApp.getUi().alert('Success', `✅ Polyline generated!\n\nDistance: ${Math.round(distanceM)}m\nDuration: ${Math.floor(durationSec / 60)}min`, SpreadsheetApp.getUi().ButtonSet.OK);
+          Logger.log(`✅ Generated walking route: ${Math.round(distanceM)}m, ${Math.floor(durationSec / 60)}min`);
+          SpreadsheetApp.getUi().alert(
+            'Success', 
+            `✅ Walking route generated!\n\nDistance: ${Math.round(distanceM)}m\nDuration: ${Math.floor(durationSec / 60)}min`,
+            SpreadsheetApp.getUi().ButtonSet.OK
+          );
         } else {
           throw new Error('OSRM returned no route');
         }

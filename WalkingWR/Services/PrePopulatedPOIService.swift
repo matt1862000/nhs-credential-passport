@@ -15,16 +15,34 @@ import FirebaseStorage
 class PrePopulatedPOIService {
     static let shared = PrePopulatedPOIService()
     
-    // Postcode areas to pre-populate (Sheffield/Wakefield NHS clinics)
+    // Prevent concurrent downloads
+    private var isDownloading = false
+    
+    // Postcode areas to pre-populate (All Sheffield districts + Wakefield)
+    // Organized by district: S1, S2, S3, etc.
     private let targetPostcodes = [
         "WF2 0GU",  // Wakefield area
-        "S5 7JT",   // Sheffield area
-        "S35 0JW",  // Sheffield area
-        "S1 4JP",   // Sheffield city centre
-        "S5 7AU",   // Sheffield area
-        "S8 8BG",   // Sheffield area
-        "S35 1RQ",  // Sheffield area
-        "S11 9BF"   // Sheffield area
+        "S1",       // Sheffield city centre
+        "S2",       // Sheffield S2
+        "S3",       // Sheffield S3
+        "S4",       // Sheffield S4
+        "S5",       // Sheffield S5 (Northern General Hospital area)
+        "S6",       // Sheffield S6
+        "S7",       // Sheffield S7
+        "S8",       // Sheffield S8
+        "S9",       // Sheffield S9
+        "S10",      // Sheffield S10 (Hillsborough area)
+        "S11",      // Sheffield S11 (Ecclesall area)
+        "S12",      // Sheffield S12
+        "S13",      // Sheffield S13
+        "S14",      // Sheffield S14
+        "S17",      // Sheffield S17
+        "S20",      // Sheffield S20
+        "S21",      // Sheffield S21
+        "S25",      // Sheffield S25
+        "S26",      // Sheffield S26
+        "S35",      // Sheffield S35
+        "S36"       // Sheffield S36
     ]
     
     // Firebase Storage reference for pre-populated POI database
@@ -32,14 +50,33 @@ class PrePopulatedPOIService {
     private let databaseFileName = "prepopulated_pois.json"
     
     // URL for downloading pre-populated POI database
-    // Uses Firebase Storage - no bundled database fallback
-    private func getDatabaseURL() async -> URL? {
+    // Tries postcode-specific file first (smaller ~500KB), falls back to full database (11MB)
+    private func getDatabaseURL(for postcodeDistrict: String? = nil) async -> URL? {
+        // If postcode district is provided, try postcode-specific file first
+        if let district = postcodeDistrict {
+            let postcodeFileName = "prepopulated_pois_\(district).json"
+            let postcodeRef = storage.reference().child(postcodeFileName)
+            
+            do {
+                let downloadURL = try await postcodeRef.downloadURL()
+                print("📦 Pre-populated DB: Found postcode-specific file: \(postcodeFileName) (~500KB)")
+                return downloadURL
+            } catch {
+                print("📦 Pre-populated DB: Postcode-specific file '\(postcodeFileName)' not found, trying full database")
+                print("📦 Pre-populated DB: Error details: \(error.localizedDescription)")
+                if let nsError = error as NSError? {
+                    print("📦 Pre-populated DB: Error code: \(nsError.code), domain: \(nsError.domain)")
+                }
+            }
+        }
+        
+        // Fallback to full database
         let storageRef = storage.reference().child(databaseFileName)
         
         do {
             // Get download URL from Firebase Storage
             let downloadURL = try await storageRef.downloadURL()
-            print("📦 Pre-populated DB: Got Firebase Storage URL: \(downloadURL.absoluteString)")
+            print("📦 Pre-populated DB: Using full database: \(databaseFileName)")
             return downloadURL
         } catch {
             print("📦 Pre-populated DB: Failed to get Firebase Storage URL: \(error.localizedDescription)")
@@ -237,12 +274,35 @@ class PrePopulatedPOIService {
                             )
                         }
                         
+                        // Calculate travel time from current location to postcode center
+                        // This is important for broad postcodes like S1 where the center may be far from user's actual location
+                        let distanceToCenter = distanceBetween(location, areaCenter)
+                        let walkingSpeedMperMin = Double(GoogleMapsService.shared.adaptiveWalkingSpeed)  // m/min
+                        let timeToCenterSeconds = Int((distanceToCenter / walkingSpeedMperMin) * 60)  // Convert to seconds
+                        
+                        // Total duration = route duration (from center → waypoints → center) + time to get to center
+                        let totalDurationSeconds = routeData.durationSeconds + timeToCenterSeconds
+                        let totalDurationMinutes = totalDurationSeconds / 60
+                        
+                        // Check if total duration exceeds requested duration (with tolerance)
+                        // Use same tolerance logic as RouteCacheService: 80-120% (or 75-125% for edge cases)
+                        let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
+                        let maxPercent = isEdgeCase ? 1.25 : 1.20
+                        let maxAcceptableMinutes = Int(Double(roundedDuration) * maxPercent)
+                        
+                        if totalDurationMinutes > maxAcceptableMinutes {
+                            print("📦 Route '\(routeData.name)': REJECTED - Total duration \(totalDurationMinutes)min (route: \(routeData.durationSeconds/60)min + travel: \(timeToCenterSeconds/60)min) exceeds max acceptable \(maxAcceptableMinutes)min for requested \(roundedDuration)min")
+                            continue  // Skip this route - user is too far from postcode center
+                        }
+                        
+                        print("📦 Route '\(routeData.name)': Added \(timeToCenterSeconds/60)min travel time from current location (\(Int(distanceToCenter))m) to postcode center. Route: \(routeData.durationSeconds/60)min → Total: \(totalDurationMinutes)min (max: \(maxAcceptableMinutes)min)")
+                        
                         // Create GeneratedRoute
                         let generatedRoute = GeneratedRoute(
                             places: places,
                             polyline: routeData.polyline,
                             distanceMeters: routeData.distanceMeters,
-                            durationSeconds: routeData.durationSeconds,
+                            durationSeconds: totalDurationSeconds,  // Now includes travel time to postcode center
                             legs: []  // Legs not stored in pre-populated database
                         )
                         
@@ -284,12 +344,97 @@ class PrePopulatedPOIService {
         return nil
     }
     
+    /// Determine which postcode district a location belongs to
+    /// Returns the postcode district (e.g., "S10") or nil if not in any target area
+    private func getPostcodeDistrict(for location: CLLocationCoordinate2D) -> String? {
+        var closestPostcode: String? = nil
+        var closestDistance: Double = Double.infinity
+        
+        // Postcode area centers (must match POSTCODE_CENTERS in generate_database.py and GOOGLE_APPS_SCRIPT.js)
+        let postcodeCenters: [(postcode: String, lat: Double, lon: Double)] = [
+            ("WF2 0GU", 53.7029, -1.5496),
+            ("S1", 53.3800, -1.4700),
+            ("S2", 53.3750, -1.4600),
+            ("S3", 53.3850, -1.4850),
+            ("S4", 53.3900, -1.4700),
+            ("S5", 53.4100, -1.4600),
+            ("S6", 53.4000, -1.5000),
+            ("S7", 53.3600, -1.4900),
+            ("S8", 53.3500, -1.4800),
+            ("S9", 53.3900, -1.4400),
+            ("S10", 53.3800, -1.5000),
+            ("S11", 53.3700, -1.5000),
+            ("S12", 53.3600, -1.4400),
+            ("S13", 53.3850, -1.4200),
+            ("S14", 53.4000, -1.4400),
+            ("S17", 53.3550, -1.5100),
+            ("S20", 53.3400, -1.4500),
+            ("S21", 53.3300, -1.4800),
+            ("S25", 53.4200, -1.4200),
+            ("S26", 53.3450, -1.4200),
+            ("S35", 53.4200, -1.4800),
+            ("S36", 53.4350, -1.5000)
+        ]
+        
+        // Find the closest postcode area center
+        for (postcode, centerLat, centerLon) in postcodeCenters {
+            let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
+            let distance = distanceBetween(location, center)
+            
+            // Check if within the area's radius (2500m)
+            if distance <= 2500.0 && distance < closestDistance {
+                closestPostcode = postcode
+                closestDistance = distance
+            }
+        }
+        
+        if let postcode = closestPostcode {
+            // Extract district (S10 -> S10, WF2 0GU -> WF2)
+            if postcode.hasPrefix("S") {
+                // Extract number part for S postcodes
+                let district = String(postcode.prefix(while: { $0.isLetter || $0.isNumber }))
+                return district
+            } else if postcode.hasPrefix("WF") {
+                return "WF2"  // Wakefield area
+            }
+            return postcode
+        }
+        
+        return nil
+    }
+    
+    /// Calculate distance between two coordinates
+    private func distanceBetween(_ coord1: CLLocationCoordinate2D, _ coord2: CLLocationCoordinate2D) -> Double {
+        let location1 = CLLocation(latitude: coord1.latitude, longitude: coord1.longitude)
+        let location2 = CLLocation(latitude: coord2.latitude, longitude: coord2.longitude)
+        return location1.distance(from: location2)
+    }
+    
     /// Download pre-populated database on app start
     /// ALWAYS downloads from Firebase Storage - never uses bundled database
     /// PRIORITY: This ensures database is always up-to-date from Firebase
-    func downloadDatabaseIfNeeded() async {
-        // ALWAYS try to get download URL from Firebase Storage
-        guard let url = await getDatabaseURL() else {
+    /// If location is provided, only downloads the relevant postcode area to save storage
+    func downloadDatabaseIfNeeded(userLocation: CLLocationCoordinate2D? = nil) async {
+        // Prevent concurrent downloads
+        if isDownloading {
+            print("📦 Pre-populated DB: Download already in progress, skipping duplicate request")
+            return
+        }
+        
+        isDownloading = true
+        defer { isDownloading = false }
+        
+        // Determine postcode district from location for smaller download
+        var postcodeDistrict: String? = nil
+        if let userLocation = userLocation {
+            postcodeDistrict = getPostcodeDistrict(for: userLocation)
+            if let district = postcodeDistrict {
+                print("📦 Pre-populated DB: User in postcode district '\(district)' - trying smaller file first")
+            }
+        }
+        
+        // Try to get download URL (postcode-specific first, then full database)
+        guard let url = await getDatabaseURL(for: postcodeDistrict) else {
             // No Firebase Storage URL available - use cached database if available, otherwise fail
             if hasDownloadedDatabase {
                 print("📦 Pre-populated DB: No Firebase Storage URL available, using cached database")
@@ -345,6 +490,10 @@ class PrePopulatedPOIService {
             let decoder = createJSONDecoder()
             let database = try decoder.decode(PrePopulatedPOIDatabase.self, from: data)
             
+            // Log download info
+            let downloadSize = Double(data.count) / 1024.0
+            print("📦 Pre-populated DB: Downloaded \(String(format: "%.1f", downloadSize))KB")
+            
             // Check if database actually exists (not just version key)
             let databaseExists = UserDefaults.standard.data(forKey: storageKey) != nil
             
@@ -365,7 +514,7 @@ class PrePopulatedPOIService {
                 }
             }
             
-            // Save to local storage
+            // Save filtered database to local storage
             saveDatabase(database)
             
             // Mark as downloaded
@@ -450,6 +599,33 @@ class PrePopulatedPOIService {
             return nil
         }
         return database.postcodeAreas
+    }
+    
+    /// Extract postcode district from full postcode (e.g., "S10 1FG" -> "S10", "WF2 0GU" -> "WF2")
+    private func extractPostcodeDistrict(_ postcode: String) -> String {
+        let cleaned = postcode.replacingOccurrences(of: " ", with: "").uppercased()
+        
+        // Find where the number starts
+        var district = ""
+        for char in cleaned {
+            if char.isLetter {
+                district.append(char)
+            } else if char.isNumber {
+                district.append(char)
+                // Continue adding numbers until we hit a letter (for S10, S11, etc.)
+                var remaining = String(cleaned.dropFirst(district.count))
+                for nextChar in remaining {
+                    if nextChar.isNumber {
+                        district.append(nextChar)
+                    } else {
+                        break
+                    }
+                }
+                break
+            }
+        }
+        
+        return district.isEmpty ? postcode : district
     }
     
     // MARK: - Private Methods
@@ -540,11 +716,6 @@ class PrePopulatedPOIService {
         }
     }
     
-    private func distanceBetween(_ coord1: CLLocationCoordinate2D, _ coord2: CLLocationCoordinate2D) -> Double {
-        let loc1 = CLLocation(latitude: coord1.latitude, longitude: coord1.longitude)
-        let loc2 = CLLocation(latitude: coord2.latitude, longitude: coord2.longitude)
-        return loc1.distance(from: loc2)
-    }
 }
 
 // MARK: - POISource Extension

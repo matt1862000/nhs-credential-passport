@@ -4,13 +4,25 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.6 (Build 296)`
+**Current Version:** `2.1.7 (Build 297)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
 ---
 
 ## Version History
+
+### 2.1.7 (Build 297) - EXPERIMENTAL ⚠️
+- **Google Apps Script: OSRM walking profile for accurate routes**:
+  - Updated `generatePolylineForRoute` to use OSRM walking profile instead of driving
+  - Now calculates actual walking distance and time (not driving distance converted to walking)
+  - Routes use pedestrian-appropriate paths where available
+- **iOS App: Accurate duration for pre-populated routes**:
+  - Added travel time calculation from user's current location to postcode center
+  - Pre-populated routes now show total duration: travel to center + route duration
+  - Filters out routes where total duration exceeds requested duration (with tolerance)
+  - Important for broad postcodes like S1 where center may be far from user's actual location
+- **Not recommended for production use**
 
 ### 2.1.6 (Build 296) - EXPERIMENTAL ⚠️
 - **Google Apps Script: Manual route editing and two-way sync**: 
@@ -100,4 +112,5 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **293**: Previous build (2.1.5) - Waypoint distance fixes, dynamic text sizing, color improvements
 - **294**: Previous build (2.1.5) - Comprehensive waypoint distance enforcement for all routes and cached routes
 - **295**: Previous build (2.1.5) - Removed debug section from settings
-- **296**: Current build (2.1.6) - Google Apps Script: Manual route editing and two-way sync
+- **296**: Previous build (2.1.6) - Google Apps Script: Manual route editing and two-way sync
+- **297**: Current build (2.1.7) - OSRM walking profile + accurate pre-populated route durations
