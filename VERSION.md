@@ -4,13 +4,23 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.5 (Build 295)`
+**Current Version:** `2.1.6 (Build 296)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
 ---
 
 ## Version History
+
+### 2.1.6 (Build 296) - EXPERIMENTAL ⚠️
+- **Google Apps Script: Manual route editing and two-way sync**: 
+  - "Convert to JSON" now prioritizes routes from Routes sheet over regeneration
+  - Added dropdown validation to waypoint columns (G, H, I) filtered by postcode from column A
+  - Waypoint dropdowns automatically show only POIs matching the route's postcode
+  - Fixed generatePolylineForRoute to automatically find POI sheet (prioritizes "poi_export")
+  - Fixed success message calculation to use database structure instead of poisByPostcode
+  - Fixed validation clearing in exportRoutesToSheet to prevent errors
+- **Not recommended for production use**
 
 ### 2.1.5 (Build 295) - EXPERIMENTAL ⚠️
 - **Removed debug section from settings**: Removed all debug/test route functionality from the Settings view
@@ -89,4 +99,5 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **292**: Previous build (2.1.5) - Address-based road snapping
 - **293**: Previous build (2.1.5) - Waypoint distance fixes, dynamic text sizing, color improvements
 - **294**: Previous build (2.1.5) - Comprehensive waypoint distance enforcement for all routes and cached routes
-- **295**: Current build (2.1.5) - Removed debug section from settings
+- **295**: Previous build (2.1.5) - Removed debug section from settings
+- **296**: Current build (2.1.6) - Google Apps Script: Manual route editing and two-way sync
