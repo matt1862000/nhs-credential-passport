@@ -429,6 +429,8 @@ struct RoutingToggles {
     
     // TASK 4: Waypoint preservation (nudge before prune)
     static let nudgeBeforeRemoveMeters = 15.0              // Nudge distance before pruning
+    /// Minimum distance (m) from start/end to first waypoint. Matches route_csv_generator MIN_WAYPOINT_DISTANCE_M.
+    static let minDistanceFromStartToFirstWaypoint: Double = 100.0
     static let samePlaceThresholdUrban = 30.0              // Same-place threshold for urban/village
     static let samePlaceThresholdSuburban = 20.0           // Same-place threshold for suburban
     static let requireCategoryMatch = true                 // Only prune if categories match
@@ -7012,6 +7014,148 @@ class GoogleMapsService: ObservableObject {
         return mapKitResult
     }
     
+    // MARK: - Pre-populated routes: GPS → first waypoint leg
+    /// Fetches walking directions from current GPS to first waypoint and merges into pre-populated route.
+    /// Start is always current GPS; the first direction is from this point to the first waypoint.
+    /// Returns merged (polyline, durationSeconds, distanceMeters, directionsForLeg) or nil if the leg request fails.
+    func prependGpsToFirstWaypointLeg(
+        userLocation: CLLocationCoordinate2D,
+        firstWaypoint: CLLocationCoordinate2D,
+        existingRoutePolyline: String,
+        existingDurationSeconds: Int,
+        existingDistanceMeters: Int
+    ) async -> (polyline: String, durationSeconds: Int, distanceMeters: Int, directionsFromGpsToFirst: [WalkingDirection])? {
+        guard hasAPIKey, canUseGoogleDirectionsRefresh else { return nil }
+        guard !existingRoutePolyline.isEmpty else { return nil }
+        var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
+        urlString += "origin=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
+        urlString += "&destination=\(String(format: "%.6f,%.6f", firstWaypoint.latitude, firstWaypoint.longitude))"
+        urlString += "&mode=walking"
+        urlString += "&key=\(apiKey)"
+        guard let url = URL(string: urlString) else { return nil }
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 5.0
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let status = json["status"] as? String, status == "OK",
+                  let routes = json["routes"] as? [[String: Any]], let first = routes.first,
+                  let overview = first["overview_polyline"] as? [String: Any],
+                  let points = overview["points"] as? String else { return nil }
+            recordGoogleDirectionsCall()
+            let legPoints = decodePolyline(points)
+            var totalDuration = 0
+            var totalDistance = 0
+            var legDirections: [WalkingDirection] = []
+            if let legs = first["legs"] as? [[String: Any]] {
+                for leg in legs {
+                    totalDuration += (leg["duration"] as? [String: Any])?["value"] as? Int ?? 0
+                    totalDistance += (leg["distance"] as? [String: Any])?["value"] as? Int ?? 0
+                    if let steps = leg["steps"] as? [[String: Any]] {
+                        for step in steps {
+                            let instruction = (step["html_instructions"] as? String)?
+                                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) ?? "Head to first waypoint"
+                            let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
+                            let stepDistValue = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
+                            let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
+                            let maneuver = step["maneuver"] as? String
+                            legDirections.append(WalkingDirection(
+                                instruction: instruction,
+                                distance: stepDistText,
+                                distanceMeters: stepDistValue,
+                                duration: stepDurText,
+                                maneuver: maneuver
+                            ))
+                        }
+                    }
+                }
+            }
+            let routePoints = decodePolyline(existingRoutePolyline)
+            var combined = legPoints
+            if let lastLeg = legPoints.last, let firstRoute = routePoints.first,
+               abs(lastLeg.latitude - firstRoute.latitude) < 1e-6 && abs(lastLeg.longitude - firstRoute.longitude) < 1e-6 {
+                combined = legPoints + routePoints.dropFirst()
+            } else {
+                combined = legPoints + routePoints
+            }
+            let mergedPolyline = encodePolyline(combined)
+            return (mergedPolyline, existingDurationSeconds + totalDuration, existingDistanceMeters + totalDistance, legDirections)
+        } catch {
+            return nil
+        }
+    }
+    
+    /// Appends the return leg (last waypoint → GPS) so the route returns to start/end.
+    /// Use after prependGpsToFirstWaypointLeg so the full route is GPS → first → … → last → GPS.
+    func appendLastWaypointToGpsLeg(
+        userLocation: CLLocationCoordinate2D,
+        lastWaypoint: CLLocationCoordinate2D,
+        existingRoutePolyline: String,
+        existingDurationSeconds: Int,
+        existingDistanceMeters: Int
+    ) async -> (polyline: String, durationSeconds: Int, distanceMeters: Int, directionsFromLastToGps: [WalkingDirection])? {
+        guard hasAPIKey, canUseGoogleDirectionsRefresh else { return nil }
+        guard !existingRoutePolyline.isEmpty else { return nil }
+        var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
+        urlString += "origin=\(String(format: "%.6f,%.6f", lastWaypoint.latitude, lastWaypoint.longitude))"
+        urlString += "&destination=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
+        urlString += "&mode=walking"
+        urlString += "&key=\(apiKey)"
+        guard let url = URL(string: urlString) else { return nil }
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 5.0
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let status = json["status"] as? String, status == "OK",
+                  let routes = json["routes"] as? [[String: Any]], let first = routes.first,
+                  let overview = first["overview_polyline"] as? [String: Any],
+                  let points = overview["points"] as? String else { return nil }
+            recordGoogleDirectionsCall()
+            let legPoints = decodePolyline(points)
+            var totalDuration = 0
+            var totalDistance = 0
+            var legDirections: [WalkingDirection] = []
+            if let legs = first["legs"] as? [[String: Any]] {
+                for leg in legs {
+                    totalDuration += (leg["duration"] as? [String: Any])?["value"] as? Int ?? 0
+                    totalDistance += (leg["distance"] as? [String: Any])?["value"] as? Int ?? 0
+                    if let steps = leg["steps"] as? [[String: Any]] {
+                        for step in steps {
+                            let instruction = (step["html_instructions"] as? String)?
+                                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) ?? "Return to start"
+                            let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
+                            let stepDistValue = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
+                            let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
+                            let maneuver = step["maneuver"] as? String
+                            legDirections.append(WalkingDirection(
+                                instruction: instruction,
+                                distance: stepDistText,
+                                distanceMeters: stepDistValue,
+                                duration: stepDurText,
+                                maneuver: maneuver
+                            ))
+                        }
+                    }
+                }
+            }
+            let routePoints = decodePolyline(existingRoutePolyline)
+            var combined: [CLLocationCoordinate2D]
+            if let lastRoute = routePoints.last, let firstLeg = legPoints.first,
+               abs(lastRoute.latitude - firstLeg.latitude) < 1e-6 && abs(lastRoute.longitude - firstLeg.longitude) < 1e-6 {
+                combined = routePoints + legPoints.dropFirst()
+            } else {
+                combined = routePoints + legPoints
+            }
+            let mergedPolyline = encodePolyline(combined)
+            return (mergedPolyline, existingDurationSeconds + totalDuration, existingDistanceMeters + totalDistance, legDirections)
+        } catch {
+            return nil
+        }
+    }
+    
     // MARK: - v1.9.39: Google-Only Refresh (no MapKit fallback)
     /// Tries Google Directions only. Returns nil if Google fails (caller uses original route).
     /// This avoids the 15-50s MapKit fallback wait - if Google fails, just use original route.
@@ -9230,6 +9374,7 @@ class GoogleMapsService: ObservableObject {
         print("║ Prefetched POIs: \(prefetchedPOIs?.count ?? 0)")
         print("╚══════════════════════════════════════════════════════════════╝")
         
+        var stage1FailedNoRoute = false  // When true, Stage 2 should try Google even if prefetched.count >= 25
         // Stage 1: Random selection (current behavior)
         print("\n📍 STAGE 1: Random Selection")
         let stage1StartTime = Date()
@@ -9265,6 +9410,7 @@ class GoogleMapsService: ObservableObject {
             // Don't retry all stages, just continue to stage 2
         } catch GoogleMapsError.noRouteFound {
             // v1.9.50: If route generation failed with free sources, try with Google
+            stage1FailedNoRoute = true
             print("🔄 Stage 1 (random) failed with free sources - trying with Google fallback...")
             // Will fall through to Stage 2 which will try with Google
         } catch {
@@ -9291,8 +9437,9 @@ class GoogleMapsService: ObservableObject {
             // If we had prefetched POIs, check if they were from free sources only
             if let prefetched = prefetchedPOIs {
                 let googlePOICount = prefetched.filter { $0.source == .google }.count
-                if googlePOICount == 0 && prefetched.count < 25 {
-                    // Had POIs from free sources only, and <25 - try with Google
+                // Try Google when: no Google POIs and (few POIs < 25, or Stage 1 failed with noRouteFound)
+                if googlePOICount == 0 && (prefetched.count < 25 || stage1FailedNoRoute) {
+                    // Had POIs from free sources only — try with Google (or Stage 1 failed, so try Google)
                     let googleFetchStart = Date()
                     print("🔄 Stage 2: Re-fetching POIs with Google included (had \(prefetched.count) from free sources, 0 from Google)")
                     print("⏱️ [TIMING] Stage 2 Google fetch STARTED")
@@ -15155,17 +15302,22 @@ class GoogleMapsService: ObservableObject {
         return backtrackRatio  // 0.0 = no overlap (good loop), 1.0 = full overlap (out-and-back)
     }
     
-    /// Remove waypoints that are too close together (keeps first one in each cluster)
-    /// v2.1.7: Synchronous version for cached routes (filters waypoints without regenerating polyline)
-    /// Use this for cached routes that need immediate filtering without async polyline regeneration
-    func filterCloseWaypointsSync(from route: GeneratedRoute, minDistance: Double) -> GeneratedRoute {
+    /// Remove waypoints that are too close together (keeps first one in each cluster).
+    /// v2.1.7: Synchronous version for cached routes (filters waypoints without regenerating polyline).
+    /// When origin is provided, waypoints under 100m from start/end are excluded (matches route_csv_generator).
+    func filterCloseWaypointsSync(from route: GeneratedRoute, minDistance: Double, origin: CLLocationCoordinate2D? = nil) -> GeneratedRoute {
         guard route.places.count > 1 else {
             return route
         }
         
+        let minFromStart = RoutingToggles.minDistanceFromStartToFirstWaypoint
         var filteredPlaces: [PlaceResult] = []
         
         for place in route.places {
+            if let start = origin, distanceBetween(start, place.coordinate) < minFromStart {
+                print("🗺️ [CACHE-FILTER] Removed '\(place.name)' - too close to start (< \(Int(minFromStart))m)")
+                continue
+            }
             let tooClose = filteredPlaces.contains { kept in
                 distanceBetween(kept.coordinate, place.coordinate) < minDistance
             }
@@ -15219,9 +15371,15 @@ class GoogleMapsService: ObservableObject {
             return finalizeRouteDedup(route)
         }
         
+        let minFromStart = RoutingToggles.minDistanceFromStartToFirstWaypoint
         var filteredPlaces: [PlaceResult] = []
         
         for place in route.places {
+            // Explicit rule: first waypoint must be >100m from start/end (matches route_csv_generator)
+            if distanceBetween(origin, place.coordinate) < minFromStart {
+                print("🗺️ Removed '\(place.name)' - too close to start (< \(Int(minFromStart))m)")
+                continue
+            }
             // Check if this place is too close to any already-kept place
             var closestDistance: Double = .greatestFiniteMagnitude
             var closestWaypointName: String = ""
