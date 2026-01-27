@@ -10,6 +10,17 @@ import CoreLocation
 import MapKit
 import Combine
 
+// #region agent log
+fileprivate func _agentLogGM(_ loc: String, _ msg: String, _ data: [String: Any] = [:], _ hid: String = "C") {
+    let path = "/Users/raihant/Documents/WalkingWR/.cursor/debug.log"
+    var d: [String: Any] = ["location": loc, "message": msg, "timestamp": Int(Date().timeIntervalSince1970 * 1000), "sessionId": "debug-session", "hypothesisId": hid]
+    if !data.isEmpty { d["data"] = data }
+    guard let j = try? JSONSerialization.data(withJSONObject: d), let s = String(data: j, encoding: .utf8) else { return }
+    if !FileManager.default.fileExists(atPath: path) { try? Data().write(to: URL(fileURLWithPath: path)) }
+    if let h = try? FileHandle(forUpdating: URL(fileURLWithPath: path)) { h.seekToEndOfFile(); h.write((s + "\n").data(using: .utf8)!); h.closeFile() }
+}
+// #endregion
+
 // MARK: - Debug Logging Helper
 extension String {
     func appendLine(toFile path: String) {
@@ -397,6 +408,11 @@ enum AreaDensity {
 }
 
 struct RoutingToggles {
+    // 🔧 DEBUG: Database-only mode - disable ALL fallbacks to test database integrity
+    // When enabled: ONLY uses pre-populated database for POIs and routes
+    // If database has no data, throws error instead of falling back to live APIs
+    static let databaseOnlyMode = false  // ⚠️ SET TO true FOR DB-ONLY TESTING
+    
     // Global
     static let enforceLowerBoundValidation = true          // Reject <50% unless fallback/sparse
     static let extensionTriggerMinPercent = 35.0           // Was 50%
@@ -431,6 +447,8 @@ struct RoutingToggles {
     static let nudgeBeforeRemoveMeters = 15.0              // Nudge distance before pruning
     /// Minimum distance (m) from start/end to first waypoint. Matches route_csv_generator MIN_WAYPOINT_DISTANCE_M.
     static let minDistanceFromStartToFirstWaypoint: Double = 100.0
+    /// Minimum distance (m) between waypoints. 200m for 25+ min routes to avoid clustered village waypoints.
+    static func minWaypointDistance(durationMinutes: Int) -> Double { durationMinutes >= 25 ? 200.0 : 100.0 }
     static let samePlaceThresholdUrban = 30.0              // Same-place threshold for urban/village
     static let samePlaceThresholdSuburban = 20.0           // Same-place threshold for suburban
     static let requireCategoryMatch = true                 // Only prune if categories match
@@ -6521,7 +6539,7 @@ class GoogleMapsService: ObservableObject {
             color: route.color,
             qrMarkers: route.qrMarkers,
             routeType: route.routeType,
-            encodedPolyline: freshEncodedPolyline.isEmpty ? route.encodedPolyline : freshEncodedPolyline,
+            trimmed: freshEncodedPolyline.isEmpty ? route.trimmed : freshEncodedPolyline,
             walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
         )
         
@@ -6647,7 +6665,7 @@ class GoogleMapsService: ObservableObject {
             color: route.color,
             qrMarkers: updatedMarkers,
             routeType: route.routeType,
-            encodedPolyline: freshEncodedPolyline.isEmpty ? route.encodedPolyline : freshEncodedPolyline,
+            trimmed: freshEncodedPolyline.isEmpty ? route.trimmed : freshEncodedPolyline,
             walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
         )
     }
@@ -6954,7 +6972,7 @@ class GoogleMapsService: ObservableObject {
                             color: route.color,
                             qrMarkers: updatedMarkers,
                             routeType: route.routeType,
-                            encodedPolyline: polylineToUse.isEmpty ? route.encodedPolyline : polylineToUse,
+                            trimmed: polylineToUse.isEmpty ? route.trimmed : polylineToUse,
                             walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
                         )
                         
@@ -7467,7 +7485,7 @@ class GoogleMapsService: ObservableObject {
                 color: route.color,
                 qrMarkers: updatedMarkers,  // Markers with snapped coordinates for activation
                 routeType: route.routeType,
-                encodedPolyline: finalPolyline.isEmpty ? route.encodedPolyline : finalPolyline,
+                trimmed: finalPolyline.isEmpty ? route.trimmed : finalPolyline,
                 walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
             )
             
@@ -7601,7 +7619,7 @@ class GoogleMapsService: ObservableObject {
             color: route.color,
             qrMarkers: updatedMarkers,
             routeType: route.routeType,
-            encodedPolyline: mapKitPolyline,
+            trimmed: mapKitPolyline,
             walkingDirections: mapKitDirections
         )
     }
@@ -9214,7 +9232,8 @@ class GoogleMapsService: ObservableObject {
         
         // v2.1.7: Final distance check before returning (catches any waypoints that got too close)
         if let enhanced = bestEnhanced {
-            return await removeCloseWaypoints(from: enhanced, minDistance: 100, origin: location)
+            let minDist = RoutingToggles.minWaypointDistance(durationMinutes: targetMinutes)
+            return await removeCloseWaypoints(from: enhanced, minDistance: minDist, origin: location)
         }
         
         return bestEnhanced
@@ -9232,8 +9251,8 @@ class GoogleMapsService: ObservableObject {
             return nil
         }
         
-        // v2.1.7: Check distance before inserting POI
-        let minInsertDistance: Double = 100
+        // v2.1.7: Check distance before inserting POI (100m short routes, 200m for 25+ min)
+        let minInsertDistance = RoutingToggles.minWaypointDistance(durationMinutes: targetMinutes)
         let poiToDestinationDistance = distanceBetween(poi.coordinate, destination)
         if poiToDestinationDistance < minInsertDistance {
             print("🗺️ [ENHANCE] Skipping '\(poi.name)' - too close to destination (\(String(format: "%.1f", poiToDestinationDistance))m < \(minInsertDistance)m)")
@@ -9272,7 +9291,8 @@ class GoogleMapsService: ObservableObject {
         )
         
         // v2.1.7: Final distance check (road snapping can bring waypoints closer)
-        return await removeCloseWaypoints(from: route, minDistance: 100, origin: location)
+        let minDist = RoutingToggles.minWaypointDistance(durationMinutes: targetMinutes)
+        return await removeCloseWaypoints(from: route, minDistance: minDist, origin: location)
     }
     
     /// Hard guarantee fallback: simple out-and-back to nearest reachable point
@@ -10538,9 +10558,9 @@ class GoogleMapsService: ObservableObject {
                 }
                 
                 // SPRINT-7: Insert 1-2 POIs per pass (not all at once)
-                // v2.1.7: Check distances when inserting micro-spurs
+                // v2.1.7: Same as waypoint distance (100m short routes, 200m for 25+ min)
                 let insertCount = min(2, min(needed, sortedPOIs.count))
-                let minMicroSpurDistance: Double = 100  // Same as waypoint distance
+                let minMicroSpurDistance = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
                 for i in 0..<insertCount {
                     let candidatePOI = sortedPOIs[i]
                     // Check if candidate is too close to any existing waypoint
@@ -10601,7 +10621,8 @@ class GoogleMapsService: ObservableObject {
                 
                 // v2.1.7: Remove close waypoints after micro-spur insertion
                 if deduplicatedRoute.places.count > 1, let originCoord = origin {
-                    deduplicatedRoute = await removeCloseWaypoints(from: deduplicatedRoute, minDistance: 100, origin: originCoord)
+                    let minDist = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
+                    deduplicatedRoute = await removeCloseWaypoints(from: deduplicatedRoute, minDistance: minDist, origin: originCoord)
                 }
             }
         }
@@ -10810,8 +10831,8 @@ class GoogleMapsService: ObservableObject {
                                 break
                             }
                             
-                            // v2.1.7: Check distance before inserting during post-trim extend
-                            let minExtendDistance: Double = 100
+                            // v2.1.7: Check distance before inserting during post-trim extend (100m short, 200m for 25+ min)
+                            let minExtendDistance = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
                             let tooClose = currentWaypoints.contains { existing in
                                 distanceBetween(nearestPOI.coordinate, existing.coordinate) < minExtendDistance
                             }
@@ -10932,7 +10953,8 @@ class GoogleMapsService: ObservableObject {
         
         // v2.1.7: Final distance check before returning (catches any waypoints that got too close)
         if finalRoute.places.count > 1, let originCoord = origin {
-            finalRoute = await removeCloseWaypoints(from: finalRoute, minDistance: 100, origin: originCoord)
+            let minDist = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
+            finalRoute = await removeCloseWaypoints(from: finalRoute, minDistance: minDist, origin: originCoord)
         }
         
         return (finalRoute, nudgesAdded, microSpursAdded)
@@ -11219,9 +11241,8 @@ class GoogleMapsService: ObservableObject {
         poisNearRoute.sort { $0.distanceFromRoute < $1.distanceFromRoute }
         
         // MINIMUM DISTANCE: Waypoints should be spaced ~3-4 min of walking apart
-        // At ~80m/min walking speed, 3 min = 240m minimum spacing
-        // Lowered from 350m to allow more POI options
-        let minWaypointDistance: Double = 100  // v1.8.9: Reduced from 200m to allow closer POIs
+        // v2.1.7: 200m for 25+ min routes to avoid clustered village waypoints (e.g. Kirkhamgate)
+        let minWaypointDistance = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
         
         // Start with the existing route and add waypoints ONE AT A TIME
         var currentRoute = existingRoute
@@ -11458,7 +11479,8 @@ class GoogleMapsService: ObservableObject {
         await MainActor.run { enhancementStatus = nil }
         
         // v2.1.7: Remove close waypoints before returning (waypoint sorting/reordering can bring them closer)
-        let spacedRoute = await removeCloseWaypoints(from: currentRoute, minDistance: 100, origin: origin)
+        let minDist = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
+        let spacedRoute = await removeCloseWaypoints(from: currentRoute, minDistance: minDist, origin: origin)
         
         // FINAL SAFETY WRAPPER: Ensure deduplication on return
         return finalizeRouteDedup(spacedRoute)
@@ -11883,7 +11905,13 @@ class GoogleMapsService: ObservableObject {
             // Fallback to Google if we have <15 POIs AND we didn't use the database
             // Database POIs are comprehensive and pre-curated, so no Google fallback needed
             // Optimal threshold: 15 POIs covers all standard routes (10-30 min) with buffer for filtering
-            if places.count < 15 && !usedDatabase {
+            // 🔧 DEBUG: Database-only mode - skip ALL fallbacks
+            if RoutingToggles.databaseOnlyMode && !usedDatabase {
+                print("🚫 [DATABASE-ONLY MODE] No database POIs found - NOT falling back to Google")
+                print("🚫 [DATABASE-ONLY MODE] places.count = \(places.count), usedDatabase = \(usedDatabase)")
+                throw GoogleMapsError.noRouteFound
+            }
+            if places.count < 15 && !usedDatabase && !RoutingToggles.databaseOnlyMode {
                 // SPRINT-5: Budget check before Google fallback - skip if already past soft-stop
                 if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "GOOGLE_FALLBACK_START") {
                     print("⛔ [HARD-STOP] Skipping Google fallback - budget exceeded")
@@ -14247,10 +14275,11 @@ class GoogleMapsService: ObservableObject {
                 }
             }
             
-            // Remove waypoints that are too close together (should be ~100m+ apart)
+            // Remove waypoints that are too close together (100m short routes, 200m for 25+ min)
             // v1.8.10: Now async - regenerates polyline when waypoints removed
-            // v2.1.7: Standardized to 100m for all durations (was 250m for longer routes)
-            selected = await removeCloseWaypoints(from: selected, minDistance: 100, origin: location)
+            // v2.1.7: 200m for 25+ min routes to avoid clustered village waypoints (e.g. Kirkhamgate)
+            let minDist = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
+            selected = await removeCloseWaypoints(from: selected, minDistance: minDist, origin: location)
             
             var finalMins = selected.durationSeconds / 60
             
@@ -14298,7 +14327,8 @@ class GoogleMapsService: ObservableObject {
                         // CRITICAL: Extended route is already deduplicated by tryExtendRoute's finalizeRouteDedup
                         // But ensure it's still deduplicated in case of any edge cases (intermediate, will be finalized at return)
                         // v2.1.7: Remove close waypoints again after extension (road snapping can bring waypoints closer)
-                        var extendedWithSpacing = await removeCloseWaypoints(from: extended, minDistance: 100, origin: location)
+                        let minDistExt = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
+                        var extendedWithSpacing = await removeCloseWaypoints(from: extended, minDistance: minDistExt, origin: location)
                         selected = finalizeRouteDedup(extendedWithSpacing, targetDurationMinutes: targetDurationMinutes)
                         finalMins = selected.durationSeconds / 60
                         
@@ -14417,7 +14447,8 @@ class GoogleMapsService: ObservableObject {
             selected = finalizeRouteDedup(selected, targetDurationMinutes: targetDurationMinutes)
             
             // v2.1.7: Final distance check before returning (road snapping and final deduplication can bring waypoints closer)
-            selected = await removeCloseWaypoints(from: selected, minDistance: 100, origin: location)
+            let minDistFinal = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
+            selected = await removeCloseWaypoints(from: selected, minDistance: minDistFinal, origin: location)
             
             // totalAttempts already tracks all routes attempted
             
@@ -14702,10 +14733,11 @@ class GoogleMapsService: ObservableObject {
                 print("🗺️ ❌ Fallback route exceeds 150% cap: \(mins)min > \(hardCap)min - REJECTING")
                 // Don't return this route, fall through to guaranteed fallback
             } else {
-                // Remove waypoints that are too close together (should be ~100m+ apart)
+                // Remove waypoints that are too close together (100m short routes, 200m for 25+ min)
                 // v1.8.10: Now async - regenerates polyline when waypoints removed
-                // v2.1.7: Standardized to 100m for all durations (was 250m for longer routes)
-                best = await removeCloseWaypoints(from: best, minDistance: 100, origin: location)
+                // v2.1.7: 200m for 25+ min routes to avoid clustered village waypoints
+                let minDistBest = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
+                best = await removeCloseWaypoints(from: best, minDistance: minDistBest, origin: location)
                 
                 // Check if route is within 80-100% tolerance
                 let toleranceMin = Int(Double(targetDurationMinutes) * 0.80)
@@ -15303,6 +15335,13 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// Remove waypoints that are too close together (keeps first one in each cluster).
+    /// v2.1.7: Overload using duration (100m under 25min, 200m for 25+ min) for cached/live routes in UI.
+    /// When isFromPrePopulatedDatabase is true, always uses 200m to match PrePopulatedPOIService and the POI trigger zone, so pairs like Outwood Primary / Kirkhamgate Village Hall (~98 ft) are collapsed.
+    func filterCloseWaypointsSync(from route: GeneratedRoute, durationMinutes: Int, origin: CLLocationCoordinate2D? = nil, isFromPrePopulatedDatabase: Bool = false) -> GeneratedRoute {
+        let minDist = isFromPrePopulatedDatabase ? 200.0 : RoutingToggles.minWaypointDistance(durationMinutes: durationMinutes)
+        return filterCloseWaypointsSync(from: route, minDistance: minDist, origin: origin)
+    }
+    
     /// v2.1.7: Synchronous version for cached routes (filters waypoints without regenerating polyline).
     /// When origin is provided, waypoints under 100m from start/end are excluded (matches route_csv_generator).
     func filterCloseWaypointsSync(from route: GeneratedRoute, minDistance: Double, origin: CLLocationCoordinate2D? = nil) -> GeneratedRoute {
@@ -16980,6 +17019,10 @@ class GoogleMapsService: ObservableObject {
     
     /// Decode a Google Maps encoded polyline string into coordinates
     func decodePolyline(_ encodedPath: String) -> [CLLocationCoordinate2D] {
+        // #region agent log
+        _agentLogGM("GoogleMapsService.decodePolyline", "entry", ["encodedLength": encodedPath.utf8.count, "prefix": String(encodedPath.prefix(64))], "H1")
+        print("[POLYLINE] GoogleMapsService.decodePolyline entry length=\(encodedPath.utf8.count)")
+        // #endregion
         var coordinates: [CLLocationCoordinate2D] = []
         var index = encodedPath.startIndex
         var lat: Int32 = 0
@@ -16993,8 +17036,26 @@ class GoogleMapsService: ObservableObject {
             
             repeat {
                 guard index < encodedPath.endIndex else { break }
-                byte = Int32(encodedPath[index].asciiValue! - 63)
+                guard shift < 27 else {
+                    // #region agent log
+                    _agentLogGM("GoogleMapsService.decodePolyline", "guard_fired_lat", ["shift": Int(shift), "coordinatesCount": coordinates.count], "C")
+                    // #endregion
+                    return coordinates
+                }  // 32-bit safe: avoid (byte&0x1F)<<shift overflow
+                // #region agent log
+                guard let asciiLat = encodedPath[index].asciiValue else {
+                    let off = encodedPath.distance(from: encodedPath.startIndex, to: index)
+                    _agentLogGM("GoogleMapsService.decodePolyline", "asciiValue_nil_lat", ["offset": off, "char": String(encodedPath[index]), "coordinatesSoFar": coordinates.count], "H1")
+                    return coordinates
+                }
+                // Convert to Int32 BEFORE subtracting to avoid UInt8 underflow when ascii < 63
+                byte = Int32(asciiLat) - 63
+                guard byte >= 0 else { return coordinates }
+                // #endregion
                 index = encodedPath.index(after: index)
+                // #region agent log
+                if shift >= 20 { _agentLogGM("GoogleMapsService.decodePolyline", "before_shift_lat", ["shift": Int(shift), "chunk": Int(byte & 0x1F)], "C") }
+                // #endregion
                 result |= (byte & 0x1F) << shift
                 shift += 5
             } while byte >= 0x20
@@ -17008,8 +17069,26 @@ class GoogleMapsService: ObservableObject {
             
             repeat {
                 guard index < encodedPath.endIndex else { break }
-                byte = Int32(encodedPath[index].asciiValue! - 63)
+                guard shift < 27 else {
+                    // #region agent log
+                    _agentLogGM("GoogleMapsService.decodePolyline", "guard_fired_lng", ["shift": Int(shift), "coordinatesCount": coordinates.count], "C")
+                    // #endregion
+                    return coordinates
+                }
+                // #region agent log
+                guard let asciiLng = encodedPath[index].asciiValue else {
+                    let off = encodedPath.distance(from: encodedPath.startIndex, to: index)
+                    _agentLogGM("GoogleMapsService.decodePolyline", "asciiValue_nil_lng", ["offset": off, "char": String(encodedPath[index]), "coordinatesSoFar": coordinates.count], "H1")
+                    return coordinates
+                }
+                // Convert to Int32 BEFORE subtracting to avoid UInt8 underflow when ascii < 63
+                byte = Int32(asciiLng) - 63
+                guard byte >= 0 else { return coordinates }
+                // #endregion
                 index = encodedPath.index(after: index)
+                // #region agent log
+                if shift >= 20 { _agentLogGM("GoogleMapsService.decodePolyline", "before_shift_lng", ["shift": Int(shift), "chunk": Int(byte & 0x1F)], "C") }
+                // #endregion
                 result |= (byte & 0x1F) << shift
                 shift += 5
             } while byte >= 0x20

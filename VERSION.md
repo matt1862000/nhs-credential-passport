@@ -4,13 +4,18 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.7 (Build 297)`
+**Current Version:** `2.1.7 (Build 298)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
 ---
 
 ## Version History
+
+### 2.1.7 (Build 298) - EXPERIMENTAL ⚠️
+- **Fallbacks re-enabled**: `databaseOnlyMode = false` — DB miss/empty falls back to cache and live generation
+- Pre-populated route telemetry: DB_CANDIDATES (hugeTravelCount), DB_RESULT, CACHE_RESULT
+- Polyline invalid-char trim; WalkingRoute uses `trimmed`; in-app Gemini naming when DB has no name
 
 ### 2.1.7 (Build 297) - EXPERIMENTAL ⚠️
 - **Google Apps Script: OSRM walking profile for accurate routes**:
@@ -113,4 +118,5 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **294**: Previous build (2.1.5) - Comprehensive waypoint distance enforcement for all routes and cached routes
 - **295**: Previous build (2.1.5) - Removed debug section from settings
 - **296**: Previous build (2.1.6) - Google Apps Script: Manual route editing and two-way sync
-- **297**: Current build (2.1.7) - OSRM walking profile + accurate pre-populated route durations
+- **297**: Previous build (2.1.7) - OSRM walking profile + accurate pre-populated route durations
+- **298**: Current build (2.1.7) - Fallbacks re-enabled, telemetry, polyline trim, DB-only toggle off
