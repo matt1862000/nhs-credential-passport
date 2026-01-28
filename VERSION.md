@@ -4,13 +4,17 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.7 (Build 298)`
+**Current Version:** `2.1.8 (Build 299)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
 ---
 
 ## Version History
+
+### 2.1.8 (Build 299) - Ready for TestFlight
+- Bump version/build for TestFlight submission
+- Previous: 2.1.7 (Build 298)
 
 ### 2.1.7 (Build 298) - EXPERIMENTAL ⚠️
 - **Fallbacks re-enabled**: `databaseOnlyMode = false` — DB miss/empty falls back to cache and live generation
