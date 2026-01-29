@@ -4,13 +4,18 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.8 (Build 299)`
+**Current Version:** `2.1.8 (Build 300)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
 ---
 
 ## Version History
+
+### 2.1.8 (Build 300) - Current
+- Pre-populated routes: prefer 2+ waypoints for >10 min, fallback to 1-waypoint if none; prefer more direct (closer first POI)
+- "xx mins left" pill updates when Google refresh completes (objectWillChange in updateCurrentRoute)
+- Previous: 2.1.8 (Build 299)
 
 ### 2.1.8 (Build 299) - Ready for TestFlight
 - Bump version/build for TestFlight submission

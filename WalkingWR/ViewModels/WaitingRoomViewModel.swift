@@ -606,8 +606,11 @@ class WaitingRoomViewModel: ObservableObject {
             if !route.walkingDirections.isEmpty {
                 locationService.updateDirections(route.walkingDirections, routePath: route.routePath)
             }
+            
+            // Force UI refresh so "xx mins left" and other views pick up Google's duration (they observe viewModel, not WalkSession directly)
+            objectWillChange.send()
         }
-        print("🔄 [ROUTE UPDATE] Route updated: '\(route.name)' with \(route.walkingDirections.count) directions, \(route.routePath.count) polyline points")
+        print("🔄 [ROUTE UPDATE] Route updated: '\(route.name)' with \(route.walkingDirections.count) directions, \(route.routePath.count) polyline points, \(route.durationMinutes)min")
     }
     
     // MARK: - Permission Requests (Just-in-Time)
