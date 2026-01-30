@@ -4,7 +4,7 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.8 (Build 301)`
+**Current Version:** `2.1.9 (Build 302)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
@@ -135,4 +135,5 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **298**: Previous build (2.1.7) - Fallbacks re-enabled, telemetry, polyline trim, DB-only toggle off
 - **299**: Previous build (2.1.8) - TestFlight
 - **300**: Previous build (2.1.8) - Pre-populated routes, pill updates
-- **301**: Current build (2.1.8) - New build for release
+- **301**: Previous build (2.1.8) - New build for release
+- **302**: Current build (2.1.9) - Pre-populated DB in-radius and center fix (WF2)

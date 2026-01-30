@@ -15,8 +15,9 @@ import FirebaseStorage
 class PrePopulatedPOIService {
     static let shared = PrePopulatedPOIService()
     
-    // Prevent concurrent downloads
+    // Prevent concurrent downloads; in-flight task so callers can await it
     private var isDownloading = false
+    private var downloadTask: Task<Void, Never>?
     
     // Postcode areas to pre-populate (All Sheffield districts + Wakefield)
     // Organized by district: S1, S2, S3, etc.
@@ -312,7 +313,7 @@ class PrePopulatedPOIService {
             let areaCenter = effectiveCenter(for: area)
             let distanceToArea = distanceBetween(location, areaCenter)
             let searchRadius = Double(area.radiusMeters)
-            let inRadius = distanceToArea <= searchRadius + radiusMeters
+            let inRadius = distanceToArea <= searchRadius
             let routeCountInArea = routes.flatMap { $0.routes }.count
             let durationBuckets = routes.map { "\($0.durationMinutes)" }.joined(separator: ",")
             print("\(Self.telem) DB_AREA postcode=\(area.postcode) distanceToCenter=\(Int(distanceToArea))m inRadius=\(inRadius) routeCount=\(routeCountInArea) durationBuckets=[\(durationBuckets)]")
@@ -340,18 +341,23 @@ class PrePopulatedPOIService {
                             if requireMinWaypoints >= 2 && routeData.places.count < 2 {
                                 continue
                             }
-                                // Travel time from current GPS to the route start.
-                            // Use first waypoint as start (stored route is first waypoint → … → first waypoint).
-                            let routeStart: CLLocationCoordinate2D
-                            if let first = routeData.places.first {
-                                routeStart = CLLocationCoordinate2D(latitude: first.latitude, longitude: first.longitude)
-                            } else {
-                                routeStart = areaCenter
-                            }
-                            let distanceToStart = self.distanceBetween(location, routeStart)
+                            // Travel time from current GPS to the route: use MIN over all waypoints so routes
+                            // with any waypoint near the user can be used (stored "first" waypoint may be far).
                             let walkingSpeedMperMin = Double(GoogleMapsService.shared.adaptiveWalkingSpeed)  // m/min
-                            let timeToStartSeconds = Int((distanceToStart / walkingSpeedMperMin) * 60)  // Convert to seconds
-                            // Total = route loop (first → … → first) + walk from GPS to first waypoint
+                            let (timeToStartSeconds, distanceToStart): (Int, Double) = {
+                                guard !routeData.places.isEmpty else {
+                                    let d = self.distanceBetween(location, areaCenter)
+                                    return (Int((d / walkingSpeedMperMin) * 60), d)
+                                }
+                                var minDist = Double.infinity
+                                for poi in routeData.places {
+                                    let coord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+                                    let d = self.distanceBetween(location, coord)
+                                    if d < minDist { minDist = d }
+                                }
+                                return (Int((minDist / walkingSpeedMperMin) * 60), minDist)
+                            }()
+                            // Total = route loop + walk from GPS to closest waypoint
                             let totalDurationSeconds = routeData.durationSeconds + timeToStartSeconds
                             let totalDurationMinutes = totalDurationSeconds / 60
                             
@@ -363,24 +369,36 @@ class PrePopulatedPOIService {
                             
                             if totalDurationMinutes < minAcceptableMinutes || totalDurationMinutes > maxAcceptableMinutes {
                                 let travelMin = timeToStartSeconds / 60
-                                print("📦 Route '\(routeData.name ?? "nil")': REJECTED - Total duration \(totalDurationMinutes)min (route: \(routeData.durationSeconds/60)min + travel to start: \(travelMin)min) outside 80–120% [\(minAcceptableMinutes)–\(maxAcceptableMinutes)]min for requested \(roundedDuration)min")
+                                print("📦 Route '\(routeData.name ?? "nil")': REJECTED - Total duration \(totalDurationMinutes)min (route: \(routeData.durationSeconds/60)min + travel to closest: \(travelMin)min) outside 80–120% [\(minAcceptableMinutes)–\(maxAcceptableMinutes)]min for requested \(roundedDuration)min")
                                 print("\(Self.telem) ROUTE_DISCARDED name=\"\(routeName)\" reason=duration totalMin=\(totalDurationMinutes) routeMin=\(routeData.durationSeconds/60) travelMin=\(travelMin) allowed=\(minAcceptableMinutes)-\(maxAcceptableMinutes) requested=\(roundedDuration)")
                                 continue
                             }
                             
                             if fromAdjacent {
-                                print("📦 Route '\(routeData.name ?? "nil")': ACCEPTED from \(checkDuration)min bucket - Total \(totalDurationMinutes)min within 80–120% of \(roundedDuration)min request (route: \(routeData.durationSeconds/60)min + \(timeToStartSeconds/60)min travel)")
+                                print("📦 Route '\(routeData.name ?? "nil")': ACCEPTED from \(checkDuration)min bucket - Total \(totalDurationMinutes)min within 80–120% of \(roundedDuration)min request (route: \(routeData.durationSeconds/60)min + \(timeToStartSeconds/60)min travel to closest)")
                             } else {
-                                print("📦 Route '\(routeData.name ?? "nil")': Added \(timeToStartSeconds/60)min travel from GPS (\(Int(distanceToStart))m) to first waypoint. Route: \(routeData.durationSeconds/60)min → Total: \(totalDurationMinutes)min (within \(minAcceptableMinutes)–\(maxAcceptableMinutes)min)")
+                                print("📦 Route '\(routeData.name ?? "nil")': Added \(timeToStartSeconds/60)min travel from GPS (\(Int(distanceToStart))m) to closest waypoint. Route: \(routeData.durationSeconds/60)min → Total: \(totalDurationMinutes)min (within \(minAcceptableMinutes)–\(maxAcceptableMinutes)min)")
                             }
                             
                             // Remove waypoints that are too close so POI trigger zones (~200m) don't overlap. Drops "middle" waypoints (e.g. Village Hall → Outwood → Star Inn becomes Village Hall → Star Inn when Outwood is <200m from Village Hall).
                             let minDist = self.minWaypointDistanceForTriggerZone
-                            guard let filteredPOIs = self.filterCloseWaypoints(places: routeData.places, minDistance: minDist) else {
+                            guard let filteredPOIsUnordered = self.filterCloseWaypoints(places: routeData.places, minDistance: minDist) else {
                                 print("📦 Route '\(routeData.name ?? "nil")': SKIPPED - after removing waypoints < \(Int(minDist))m apart (trigger zone), no waypoints remain")
                                 print("\(Self.telem) ROUTE_DISCARDED name=\"\(routeName)\" reason=waypoint_filter minDist=\(Int(minDist)) waypointsRemaining=0")
                                 continue
                             }
+                            // Rotate so the waypoint closest to the user is first (so "start at closest").
+                            let filteredPOIs: [PrePopulatedPOIDatabase.PrePopulatedPOI] = {
+                                guard filteredPOIsUnordered.count > 1 else { return filteredPOIsUnordered }
+                                var bestIdx = 0
+                                var bestD = Double.infinity
+                                for (i, poi) in filteredPOIsUnordered.enumerated() {
+                                    let d = self.distanceBetween(location, CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude))
+                                    if d < bestD { bestD = d; bestIdx = i }
+                                }
+                                if bestIdx == 0 { return filteredPOIsUnordered }
+                                return Array(filteredPOIsUnordered[bestIdx...]) + Array(filteredPOIsUnordered[..<bestIdx])
+                            }()
                             let filteredPlaces = filteredPOIs.map { poi -> PlaceResult in
                                 PlaceResult(
                                     placeId: poi.placeId,
@@ -536,20 +554,19 @@ class PrePopulatedPOIService {
         return nil
     }
     
-    /// Effective center for an area: use stored center if valid; else resolve from known postcode centers (fixes DB with 0,0 or wrong keys).
+    /// Effective center for an area: prefer known postcode center when we have one (avoids swapped/wrong stored lat/lon); else use stored if valid.
     private func effectiveCenter(for area: PrePopulatedPOIDatabase.PostcodeAreaPOIs) -> CLLocationCoordinate2D {
-        let stored = CLLocationCoordinate2D(latitude: area.centerLatitude, longitude: area.centerLongitude)
-        let isZeroOrInvalid = abs(area.centerLatitude) < 0.01 && abs(area.centerLongitude) < 0.01
-        if !isZeroOrInvalid { return stored }
         let district = extractPostcodeDistrict(area.postcode)
         for (postcode, lat, lon) in Self.postcodeCenters {
             let knownDistrict = extractPostcodeDistrict(postcode)
             if postcode == area.postcode || knownDistrict == district
                 || postcode.hasPrefix(area.postcode) || area.postcode.hasPrefix(postcode) {
-                print("📦 Pre-populated DB: Using known center for '\(area.postcode)' (stored center was 0,0)")
                 return CLLocationCoordinate2D(latitude: lat, longitude: lon)
             }
         }
+        let stored = CLLocationCoordinate2D(latitude: area.centerLatitude, longitude: area.centerLongitude)
+        let isZeroOrInvalid = abs(area.centerLatitude) < 0.01 && abs(area.centerLongitude) < 0.01
+        if !isZeroOrInvalid { return stored }
         return stored
     }
     
@@ -578,19 +595,33 @@ class PrePopulatedPOIService {
         return kept.isEmpty ? nil : kept
     }
     
+    /// Call this before using the database (e.g. in findNearbyPlaces) so the first use waits for Firebase download to complete.
+    func ensureDatabaseDownloaded(userLocation: CLLocationCoordinate2D? = nil) async {
+        await downloadDatabaseIfNeeded(userLocation: userLocation)
+    }
+
     /// Download pre-populated database on app start
     /// ALWAYS downloads from Firebase Storage - never uses bundled database
     /// PRIORITY: This ensures database is always up-to-date from Firebase
     /// If location is provided, only downloads the relevant postcode area to save storage
     func downloadDatabaseIfNeeded(userLocation: CLLocationCoordinate2D? = nil) async {
-        // Prevent concurrent downloads
-        if isDownloading {
-            print("📦 Pre-populated DB: Download already in progress, skipping duplicate request")
+        // If a download is already in progress, wait for it so caller gets the DB when ready
+        if let existing = downloadTask {
+            print("📦 Pre-populated DB: Download already in progress, waiting for it...")
+            await existing.value
             return
         }
-        
+
+        // Already have cache and no need to re-download
+        if UserDefaults.standard.data(forKey: storageKey) != nil, hasDownloadedDatabase {
+            return
+        }
+
         isDownloading = true
-        defer { isDownloading = false }
+        // Assign downloadTask immediately when creating the task so any other caller
+        // (e.g. findNearbyPlaces from EARLY PREFETCH) sees it and awaits instead of starting a second download.
+        downloadTask = Task {
+            defer { isDownloading = false; downloadTask = nil }
         
         // Determine postcode district from location for smaller download
         var postcodeDistrict: String? = nil
@@ -725,6 +756,8 @@ class PrePopulatedPOIService {
             }
             return
         }
+        }
+        await downloadTask!.value
     }
     
     /// Get the version of the currently cached database
