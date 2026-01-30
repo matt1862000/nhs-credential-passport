@@ -4,7 +4,7 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.9 (Build 302)`
+**Current Version:** `2.1.9 (Build 303)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
@@ -12,7 +12,12 @@ The current codebase contains experimental changes and should **NOT** be used fo
 
 ## Version History
 
-### 2.1.8 (Build 301) - Current
+### 2.1.9 (Build 303) - Current
+- Remove refresh button from route preview action bar
+- Location: only re-request when missing or stale (>30s); stop clearing lock on RouteSelectionView appear
+- Previous: 2.1.9 (Build 302)
+
+### 2.1.8 (Build 301)
 - New build for TestFlight/release
 - Previous: 2.1.8 (Build 300)
 
@@ -136,4 +141,5 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **299**: Previous build (2.1.8) - TestFlight
 - **300**: Previous build (2.1.8) - Pre-populated routes, pill updates
 - **301**: Previous build (2.1.8) - New build for release
-- **302**: Current build (2.1.9) - Pre-populated DB in-radius and center fix (WF2)
+- **302**: Previous build (2.1.9) - Pre-populated DB in-radius and center fix (WF2)
+- **303**: Current build (2.1.9) - Refresh button removed, location re-request only when stale
