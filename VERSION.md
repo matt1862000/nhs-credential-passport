@@ -4,7 +4,7 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.8 (Build 300)`
+**Current Version:** `2.1.8 (Build 301)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
@@ -12,7 +12,11 @@ The current codebase contains experimental changes and should **NOT** be used fo
 
 ## Version History
 
-### 2.1.8 (Build 300) - Current
+### 2.1.8 (Build 301) - Current
+- New build for TestFlight/release
+- Previous: 2.1.8 (Build 300)
+
+### 2.1.8 (Build 300)
 - Pre-populated routes: prefer 2+ waypoints for >10 min, fallback to 1-waypoint if none; prefer more direct (closer first POI)
 - "xx mins left" pill updates when Google refresh completes (objectWillChange in updateCurrentRoute)
 - Previous: 2.1.8 (Build 299)
@@ -128,4 +132,7 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **295**: Previous build (2.1.5) - Removed debug section from settings
 - **296**: Previous build (2.1.6) - Google Apps Script: Manual route editing and two-way sync
 - **297**: Previous build (2.1.7) - OSRM walking profile + accurate pre-populated route durations
-- **298**: Current build (2.1.7) - Fallbacks re-enabled, telemetry, polyline trim, DB-only toggle off
+- **298**: Previous build (2.1.7) - Fallbacks re-enabled, telemetry, polyline trim, DB-only toggle off
+- **299**: Previous build (2.1.8) - TestFlight
+- **300**: Previous build (2.1.8) - Pre-populated routes, pill updates
+- **301**: Current build (2.1.8) - New build for release
