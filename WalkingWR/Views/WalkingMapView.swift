@@ -829,6 +829,7 @@ struct EmbeddedWalkMapView: View {
         // Interaction detection handled via onMapCameraChange only
         // v1.9.0: Auto-zoom when approaching turn (within 30m)
         .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
+            guard !viewModel.mapStayCenteredOnRoute else { return }
             guard let location = newLocation,
                   let nextTurnCoord = viewModel.locationService.nextTurnCoordinate else {
                 isApproachingTurn = false
@@ -906,12 +907,67 @@ struct EmbeddedWalkMapView: View {
         // Note: Motion permission explainer is now presented by CompactStatusRing
     }
     
+    /// Region that fits route path + POIs with padding (no auto-follow).
+    private func regionForRouteWithPadding(_ route: WalkingRoute, paddingFactor: Double = 1.5) -> MKCoordinateRegion {
+        var lats = route.routePath.map { $0.latitude }
+        var lngs = route.routePath.map { $0.longitude }
+        for marker in route.qrMarkers {
+            lats.append(marker.coordinate.latitude)
+            lngs.append(marker.coordinate.longitude)
+        }
+        guard !lats.isEmpty, !lngs.isEmpty,
+              let minLat = lats.min(), let maxLat = lats.max(),
+              let minLng = lngs.min(), let maxLng = lngs.max() else {
+            return MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 53.38, longitude: -1.47),
+                span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+            )
+        }
+        let center = CLLocationCoordinate2D(
+            latitude: (minLat + maxLat) / 2,
+            longitude: (minLng + maxLng) / 2
+        )
+        let latSpan = (maxLat - minLat) * paddingFactor
+        let lngSpan = (maxLng - minLng) * paddingFactor
+        return MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(latitudeDelta: max(0.008, latSpan), longitudeDelta: max(0.008, lngSpan))
+        )
+    }
+    
     /// Play the intro camera animation sequence with very smooth, slow transitions
     private func playIntroAnimation() {
-        guard let currentRoute = viewModel.walkSession.currentRoute,
-              let firstWaypoint = currentRoute.qrMarkers.first?.coordinate,
+        let stayCentered = viewModel.mapStayCenteredOnRoute
+        
+        guard let currentRoute = viewModel.walkSession.currentRoute else {
+            hasPlayedIntro = true
+            cameraPosition = .userLocation(fallback: .automatic)
+            calculateRoute()
+            return
+        }
+        
+        // When staying centered on route (Let's Go): show route + POIs with padding once, no auto-follow
+        if stayCentered {
+            hasPlayedIntro = true
+            introPhase = .showingFullRoute
+            showingIntroOverlay = true
+            let region = regionForRouteWithPadding(currentRoute, paddingFactor: 1.5)
+            isProgrammaticCameraUpdate = true
+            lastProgrammaticUpdateTime = Date()
+            withAnimation(.easeInOut(duration: 0.8)) {
+                cameraPosition = .region(region)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                withAnimation(.easeOut(duration: 0.5)) {
+                    showingIntroOverlay = false
+                }
+                calculateRoute()
+            }
+            return
+        }
+        
+        guard let firstWaypoint = currentRoute.qrMarkers.first?.coordinate,
               viewModel.locationService.currentLocation != nil else {
-            // No waypoints or location, skip intro
             hasPlayedIntro = true
             cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
             calculateRoute()
@@ -1127,8 +1183,20 @@ struct EmbeddedWalkMapView: View {
         }
     }
     
-    /// v1.9.10: Show full route overview briefly, then return to camera-following mode
+    /// v1.9.10: Show full route overview briefly, then return to camera-following mode (unless staying centered on route)
     private func showFullRouteThenFollow() {
+        // When staying centered on route (Let's Go): location button only re-centers on route with padding, no follow
+        if viewModel.mapStayCenteredOnRoute {
+            guard let currentRoute = viewModel.walkSession.currentRoute else { return }
+            let region = regionForRouteWithPadding(currentRoute, paddingFactor: 1.5)
+            isProgrammaticCameraUpdate = true
+            lastProgrammaticUpdateTime = Date()
+            withAnimation(.easeInOut(duration: 0.8)) {
+                cameraPosition = .region(region)
+            }
+            return
+        }
+        
         // v1.9.16: Clear user interaction flag and reset timer state when compass button is pressed
         // This ensures we can zoom back to current position after showing full route
         // CRITICAL: Cancel auto-resume timer FIRST to prevent race conditions
@@ -1343,6 +1411,7 @@ struct EmbeddedWalkMapView: View {
     
     // MARK: - Camera Updates
     private func handleLocation(_ location: CLLocation) {
+        guard !viewModel.mapStayCenteredOnRoute else { return }
         guard introPhase == .followingUser else { return }
         guard !userInteracting, !inInteractionGrace, !justResumed else { return }
         
@@ -1362,6 +1431,7 @@ struct EmbeddedWalkMapView: View {
     
     private func handleHeading(_ newHeading: CLLocationDirection) {
         // --- Safety checks ---
+        guard !viewModel.mapStayCenteredOnRoute else { return }
         guard introPhase == .followingUser, !userInteracting, !justResumed else { return }
         guard let current = currentCamera else { return }
 

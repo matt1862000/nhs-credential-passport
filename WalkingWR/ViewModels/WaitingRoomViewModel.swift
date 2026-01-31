@@ -51,6 +51,13 @@ class WaitingRoomViewModel: ObservableObject {
     /// When lock is set, fallback so pill never reverts to currentRoute if displayDurationMinutesForPill is ever nil (e.g. binding glitch).
     private var lastKnownPillMinutes: Int? = nil
     
+    /// Pre-pop duration adjust: when we dropped waypoints (over target), offer user to switch to shorter route.
+    @Published var pendingAdjustedRoute: WalkingRoute? = nil
+    @Published var showAdjustRouteAlert: Bool = false
+    
+    /// When true, map stays centered on route with padding and does not auto-snap to user location (Let's Go flow).
+    @Published var mapStayCenteredOnRoute: Bool = false
+    
     private static let pillDisplayMinutesKey = "pillDisplayDurationMinutes"
     private static let pillLockKey = "pillHasReceivedGoogleRefresh"
     
@@ -656,6 +663,33 @@ class WaitingRoomViewModel: ObservableObject {
         print("🔄 [ROUTE UPDATE] Route updated: '\(route.name)' with \(route.walkingDirections.count) directions, \(route.routePath.count) polyline points, \(route.durationMinutes)min")
     }
     
+    /// Pre-pop duration adjust: offer user to switch to shorter route when we dropped waypoints (over target).
+    func offerAdjustedRoute(_ route: WalkingRoute) {
+        pendingAdjustedRoute = route
+        showAdjustRouteAlert = true
+    }
+    
+    /// Apply an adjusted route (shorter or longer) and update "mins left" pill to match. Use when user accepts shortened route or when we auto-apply a longer adjusted route.
+    func applyAdjustedRouteAndUpdatePill(_ route: WalkingRoute) {
+        displayDurationMinutesForPill = route.durationMinutes
+        lastKnownPillMinutes = route.durationMinutes
+        Self.persistPillState(minutes: route.durationMinutes, locked: true)
+        updateCurrentRoute(route)
+    }
+    
+    func acceptAdjustedRoute() {
+        if let r = pendingAdjustedRoute {
+            applyAdjustedRouteAndUpdatePill(r)
+        }
+        pendingAdjustedRoute = nil
+        showAdjustRouteAlert = false
+    }
+    
+    func declineAdjustedRoute() {
+        pendingAdjustedRoute = nil
+        showAdjustRouteAlert = false
+    }
+    
     // MARK: - Permission Requests (Just-in-Time)
     
     /// Request permissions needed for walking - called when user starts a walk
@@ -747,6 +781,9 @@ class WaitingRoomViewModel: ObservableObject {
         // v1.9.79: Log walk start
         DebugLogger.shared.log("🚶🚶🚶 WALK STARTED 🚶🚶🚶", category: "WALK_LIFECYCLE")
         DebugLogger.shared.log("Route: \(route.name), Duration: \(route.durationMinutes) min, Waypoints: \(route.qrMarkers.count)", category: "WALK_LIFECYCLE")
+        
+        // Map opens centered on route with padding; no auto-follow (Let's Go flow)
+        mapStayCenteredOnRoute = true
         
         // Start location tracking (requests permission if needed)
         locationService.startTracking()
@@ -939,6 +976,8 @@ class WaitingRoomViewModel: ObservableObject {
         // v1.9.16: Reset cached return route
         cachedReturnRoutePolyline = []
         hasCachedReturnRoute = false
+        
+        mapStayCenteredOnRoute = false
         
         // v1.6.28: Reset step tracking flag for next walk
         // (stepTrackingWasEnabled is used to determine if HealthKit offer should be shown)

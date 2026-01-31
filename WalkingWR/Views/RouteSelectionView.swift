@@ -3082,6 +3082,7 @@ struct LocalRoutePickerSheet: View {
                 let googleElapsed = Date().timeIntervalSince(googleStart)
                 print("DIRECTIONS | [\(formatter.string(from: Date()))] Google returned in \(String(format: "%.2f", googleElapsed))s")
                 var routeToShow = refreshedRoute
+                var pillShouldReflectAdjustedRoute = false
                 if refreshedRoute.isFromPrePopulatedDatabase {
                     let targetDuration = selectedDuration
                     let (adjusted, didDrop) = await mapsService.tryAdjustPrePopRouteDuration(
@@ -3096,12 +3097,17 @@ struct LocalRoutePickerSheet: View {
                             print("DIRECTIONS | Pre-pop: offered adjusted route (dropped waypoints)")
                         } else {
                             routeToShow = adj
+                            pillShouldReflectAdjustedRoute = true
                             print("DIRECTIONS | Pre-pop: applied adjusted route")
                         }
                     }
                 }
                 await MainActor.run {
-                    viewModel.updateCurrentRoute(routeToShow)
+                    if pillShouldReflectAdjustedRoute {
+                        viewModel.applyAdjustedRouteAndUpdatePill(routeToShow)
+                    } else {
+                        viewModel.updateCurrentRoute(routeToShow)
+                    }
                     print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ Google route applied (total: \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s)")
                 }
                 
