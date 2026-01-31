@@ -4,7 +4,7 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.9 (Build 303)`
+**Current Version:** `2.1.11 (Build 305)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
@@ -12,7 +12,16 @@ The current codebase contains experimental changes and should **NOT** be used fo
 
 ## Version History
 
-### 2.1.9 (Build 303) - Current
+### 2.1.11 (Build 305) - Current
+- Version/build bump
+- Previous: 2.1.10 (Build 304)
+
+### 2.1.10 (Build 304)
+- Google primacy for "mins left": pill never reverts to OSM/cache after Google refresh (displayDurationMinutesForPill, hasReceivedGoogleRefreshForPill)
+- startWalk() guard: if already walking, return immediately so duplicate calls don't overwrite Google route/pill
+- Previous: 2.1.9 (Build 303)
+
+### 2.1.9 (Build 303)
 - Remove refresh button from route preview action bar
 - Location: only re-request when missing or stale (>30s); stop clearing lock on RouteSelectionView appear
 - Previous: 2.1.9 (Build 302)
@@ -142,4 +151,6 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **300**: Previous build (2.1.8) - Pre-populated routes, pill updates
 - **301**: Previous build (2.1.8) - New build for release
 - **302**: Previous build (2.1.9) - Pre-populated DB in-radius and center fix (WF2)
-- **303**: Current build (2.1.9) - Refresh button removed, location re-request only when stale
+- **303**: Previous build (2.1.9) - Refresh button removed, location re-request only when stale
+- **304**: Previous build (2.1.10) - Google primacy for mins left, startWalk guard
+- **305**: Current build (2.1.11) - Version/build bump
