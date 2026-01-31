@@ -4,7 +4,7 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.13 (Build 307)`
+**Current Version:** `2.1.14 (Build 308)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
@@ -12,7 +12,11 @@ The current codebase contains experimental changes and should **NOT** be used fo
 
 ## Version History
 
-### 2.1.13 (Build 307) - Current
+### 2.1.14 (Build 308) - Current
+- Pill: persist/restore state; lastKnownPillMinutes + effectiveDisplayDurationMinutesForPill so 73→77 never reverts; .id(walkDurationMinutes) so pill UI syncs when Google returns new duration; PILL logging and [active_walk] context; Google refresh confirmed round-trip (GPS → waypoints → GPS)
+- Previous: 2.1.13 (Build 307)
+
+### 2.1.13 (Build 307)
 - Pill: Google lock never unlocked except in endWalk(); startWalk() never sets hasReceivedGoogleRefreshForPill = false
 - Previous: 2.1.12 (Build 306)
 
@@ -163,4 +167,5 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **304**: Previous build (2.1.10) - Google primacy for mins left, startWalk guard
 - **305**: Previous build (2.1.11) - Version/build bump
 - **306**: Previous build (2.1.12) - Pill lock, MapKit fallback when Google fails, PILL logs, alert overlay
-- **307**: Current build (2.1.13) - Google lock only cleared in endWalk
+- **307**: Previous build (2.1.13) - Google lock only cleared in endWalk
+- **308**: Current build (2.1.14) - Pill persist/sync, PILL logging, round-trip log

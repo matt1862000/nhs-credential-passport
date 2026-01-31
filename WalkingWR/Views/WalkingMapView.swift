@@ -605,11 +605,17 @@ struct EmbeddedWalkMapView: View {
         }
     }
     
+    /// Resolved pill value: effectiveDisplayDurationMinutesForPill ?? currentRoute?.durationMinutes ?? 15 (so we can log when it changes).
+    private var pillDisplayMinutes: Int {
+        viewModel.effectiveDisplayDurationMinutesForPill ?? viewModel.walkSession.currentRoute?.durationMinutes ?? 15
+    }
+    
     private var topOverlay: some View {
         VStack {
             HStack(alignment: .top) {
                 CompactStatusRing(
-                    walkDurationMinutes: viewModel.displayDurationMinutesForPill ?? viewModel.walkSession.currentRoute?.durationMinutes ?? 15,
+                    pillContext: "active_walk",
+                    walkDurationMinutes: pillDisplayMinutes,
                     walkStartTime: viewModel.walkSession.startTime,
                     healthKitService: viewModel.healthKitService,
                     isStepTrackingEnabled: $isStepTrackingEnabled,
@@ -627,6 +633,14 @@ struct EmbeddedWalkMapView: View {
                     }
                 )
                 .id("compactStatusRing") // Stable identity so Google refresh (objectWillChange) doesn't recreate pill and reset Track steps / mins left state
+                .onChange(of: pillDisplayMinutes) { _, newMin in
+                    let eff = viewModel.effectiveDisplayDurationMinutesForPill ?? -1
+                    let routeMin = viewModel.walkSession.currentRoute?.durationMinutes ?? -1
+                    print("PILL | [active_walk] DISPLAY value changed to \(newMin) min (effective=\(eff) routeDuration=\(routeMin) → passing to pill)")
+                }
+                .onAppear {
+                    print("PILL | [active_walk] EmbeddedWalkMapView.topOverlay onAppear — pillDisplayMinutes=\(pillDisplayMinutes) effective=\(viewModel.effectiveDisplayDurationMinutesForPill ?? -1) routeDuration=\(viewModel.walkSession.currentRoute?.durationMinutes ?? -1)")
+                }
                 
                 Spacer()
                 
@@ -3087,6 +3101,7 @@ private struct CombinedStatusBannerContent: View {
 /// Compact pill showing walk time remaining (delay shown in top banner)
 /// Alternates with steps prompt when steps not enabled
 struct CompactStatusRing: View {
+    var pillContext: String = "unknown"
     let walkDurationMinutes: Int
     let walkStartTime: Date?
 
@@ -3117,6 +3132,7 @@ struct CompactStatusRing: View {
 
     var body: some View {
         CompactStatusPillContent(
+            pillContext: pillContext,
             walkDurationMinutes: walkDurationMinutes,
             walkStartTime: walkStartTime,
             shouldAlternate: shouldAlternate,
@@ -3126,6 +3142,10 @@ struct CompactStatusRing: View {
             healthKitService: healthKitService,
             onEnableSteps: onEnableSteps
         )
+        .id(walkDurationMinutes) // Force pill to re-sync when duration changes (fixes stale "75" when Google returns 55)
+        .onChange(of: walkDurationMinutes) { oldMin, newMin in
+            print("PILL | [\(pillContext)] CompactStatusRing received walkDurationMinutes \(oldMin) → \(newMin)")
+        }
         .onAppear {
             // Cache motion status on appear to avoid accessing during rendering
             // These values are computed properties, so we cache them once on appear
@@ -3133,6 +3153,7 @@ struct CompactStatusRing: View {
             isMotionAuthorized = healthKitService.isMotionAuthorized
             isMotionDenied = healthKitService.isMotionDenied
             isPedometerAvailable = healthKitService.isPedometerAvailable
+            print("PILL | [\(pillContext)] CompactStatusRing onAppear — walkDurationMinutes=\(walkDurationMinutes)")
             print("🟢 CompactStatusRing: onAppear - shouldAlternate=\(shouldAlternate), isStepTrackingEnabled=\(isStepTrackingEnabled), showStepsOnly=\(showStepsOnly)")
         }
     }
@@ -3140,6 +3161,7 @@ struct CompactStatusRing: View {
 
 // MARK: - CompactStatusPillContent (Child pill view)
 private struct CompactStatusPillContent: View {
+    let pillContext: String
     let walkDurationMinutes: Int
     let walkStartTime: Date?
     let shouldAlternate: Bool
@@ -3156,6 +3178,7 @@ private struct CompactStatusPillContent: View {
     @State private var showingStepsPrompt: Bool = false
     @State private var walkRemaining: Int = 0
     @State private var timerTask: Task<Void, Never>?
+    @State private var instanceTag: String = ""
 
     var body: some View {
         Group {
@@ -3168,13 +3191,18 @@ private struct CompactStatusPillContent: View {
             }
         }
         .animation(.easeInOut(duration: 0.6), value: showingStepsPrompt)
-        .onChange(of: walkDurationMinutes) { _, _ in
-            // When route is refreshed (e.g. Google background refresh), update "mins left" immediately
+        .onChange(of: walkRemaining) { oldVal, newVal in
+            print("PILL | [\(pillContext)] VISIBLE 'mins left' changed to \(newVal) (was \(oldVal)) — user sees this number on screen")
+        }
+        .onChange(of: walkDurationMinutes) { oldMin, newMin in
+            print("PILL | [\(pillContext)] CompactStatusPillContent onChange walkDurationMinutes \(oldMin) → \(newMin) — calling updatePillState")
             updatePillState()
         }
         .onAppear {
-            print("🟢 CompactStatusPillContent: onAppear - shouldAlternate=\(shouldAlternate), isStepsEnabled=\(isStepsEnabled), showStepsOnly=\(showStepsOnly)")
+            if instanceTag.isEmpty { instanceTag = UUID().uuidString.prefix(8).description }
+            print("PILL | [\(pillContext)] CompactStatusPillContent onAppear instance=\(instanceTag) walkDurationMinutes=\(walkDurationMinutes) walkRemaining=\(walkRemaining) (before updatePillState)")
             updatePillState()
+            print("PILL | [\(pillContext)] CompactStatusPillContent onAppear after updatePillState — walkRemaining=\(walkRemaining) (this is what user sees as 'X mins left')")
             // Start 5-second timer
             timerTask = Task {
                 print("🟢 CompactStatusPillContent: Timer task started")
@@ -3323,13 +3351,19 @@ private struct CompactStatusPillContent: View {
 
     // MARK: - Update pill state (flip logic & remaining time)
     private func updatePillState() {
-        // Update walk remaining
+        // Update walk remaining (this is what the user actually sees as "X mins left")
+        let newRemaining: Int
         if let start = walkStartTime {
             let elapsedMinutes = Int(Date().timeIntervalSince(start) / 60)
-            walkRemaining = max(0, walkDurationMinutes - elapsedMinutes)
+            newRemaining = max(0, walkDurationMinutes - elapsedMinutes)
         } else {
-            walkRemaining = walkDurationMinutes
+            newRemaining = walkDurationMinutes
         }
+        if walkRemaining != newRemaining {
+            let elapsed = walkStartTime.map { Int(Date().timeIntervalSince($0) / 60) } ?? -1
+            print("PILL | [\(pillContext)] updatePillState: walkRemaining \(walkRemaining) → \(newRemaining) (walkDurationMinutes=\(walkDurationMinutes) elapsed=\(elapsed)) — user will see \(newRemaining) mins left")
+        }
+        walkRemaining = newRemaining
 
         // ✅ Do not flip while sheet is showing - prevents Timer conflicts
         guard !showMotionExplainer else {

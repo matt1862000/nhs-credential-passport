@@ -42,6 +42,8 @@ struct WalkingWRApp: App {
             NotificationService.shared.cancelStaleWalkNotifications()
             // Also reset the active walk flag since no walk survives a force-close
             UserDefaults.standard.set(false, forKey: "hasActiveWalk")
+            // Clear persisted pill state so next walk starts with fresh pill (no stale 77 from crashed session)
+            WaitingRoomViewModel.clearPersistedPillState()
         }
     }
     
@@ -61,6 +63,7 @@ struct WalkingWRApp: App {
                 // Also clear the active walk flag since the walk can't continue
                 // without the app running
                 UserDefaults.standard.set(false, forKey: "hasActiveWalk")
+                WaitingRoomViewModel.clearPersistedPillState()
             }
         }
     }

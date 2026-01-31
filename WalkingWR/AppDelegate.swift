@@ -207,6 +207,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
                 
                 // Also clear the active walk flag so no more are scheduled
                 UserDefaults.standard.set(false, forKey: "hasActiveWalk")
+                WaitingRoomViewModel.clearPersistedPillState()
                 
                 // Post notification so ViewModel knows to stop the walk
                 DispatchQueue.main.async {

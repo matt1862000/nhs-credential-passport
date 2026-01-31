@@ -7290,6 +7290,7 @@ class GoogleMapsService: ObservableObject {
         print("🌐 [GOOGLE-ONLY REFRESH]   🔗 URL: \(truncatedURL)")
         print("🌐 [GOOGLE-ONLY REFRESH]   📍 Origin: (\(String(format: "%.5f", userLocation.latitude)), \(String(format: "%.5f", userLocation.longitude)))")
         print("🌐 [GOOGLE-ONLY REFRESH]   🎯 Waypoints: \(waypoints.count)")
+        print("🌐 [GOOGLE-ONLY REFRESH]   ⏱️ ROUND TRIP: origin=destination=current GPS → waypoint1 → ... → waypointN → back to current GPS (returned duration is full loop)")
         
         do {
             var request = URLRequest(url: url)

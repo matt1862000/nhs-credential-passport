@@ -48,6 +48,30 @@ class WaitingRoomViewModel: ObservableObject {
     /// Google lock: once true (set in updateCurrentRoute when first refresh runs), must never be set back to false except in endWalk().
     /// startWalk() must never unlock; only endWalk() resets it so the next walk can start with a fresh pill.
     @Published var hasReceivedGoogleRefreshForPill: Bool = false
+    /// When lock is set, fallback so pill never reverts to currentRoute if displayDurationMinutesForPill is ever nil (e.g. binding glitch).
+    private var lastKnownPillMinutes: Int? = nil
+    
+    private static let pillDisplayMinutesKey = "pillDisplayDurationMinutes"
+    private static let pillLockKey = "pillHasReceivedGoogleRefresh"
+    
+    private static func persistPillState(minutes: Int, locked: Bool) {
+        UserDefaults.standard.set(minutes, forKey: pillDisplayMinutesKey)
+        UserDefaults.standard.set(locked, forKey: pillLockKey)
+    }
+    
+    /// Call when walk ends or when hasActiveWalk is cleared (crash/background) so next session starts fresh.
+    static func clearPersistedPillState() {
+        UserDefaults.standard.removeObject(forKey: pillDisplayMinutesKey)
+        UserDefaults.standard.removeObject(forKey: pillLockKey)
+        print("PILL | clearPersistedPillState: persisted pill cleared (walk ended or crash/background)")
+    }
+    
+    /// Value the pill should show: once locked, never fall back to currentRoute so 73→77 never reverts to 73.
+    var effectiveDisplayDurationMinutesForPill: Int? {
+        if let v = displayDurationMinutesForPill { return v }
+        if hasReceivedGoogleRefreshForPill, let v = lastKnownPillMinutes { return v }
+        return nil
+    }
 
     // v2.1.7: Track last waypoint activation time to prevent rapid multiple activations
     private var lastWaypointActivationTime: Date?
@@ -605,24 +629,29 @@ class WaitingRoomViewModel: ObservableObject {
     /// Updates both selectedRoute and walkSession.currentRoute so map refreshes automatically.
     /// Pill: once Google (or first refresh) has run, we never overwrite the pill — so 6 min stays 6 even if MapKit/OSRM later returns 24.
     func updateCurrentRoute(_ route: WalkingRoute) {
+        let incomingMin = route.durationMinutes
+        print("PILL | updateCurrentRoute ENTRY isActive=\(walkSession.isActive) incoming=\(incomingMin)min display=\(displayDurationMinutesForPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) lock=\(hasReceivedGoogleRefreshForPill) route.name=\(route.name)")
         selectedRoute = route
         if walkSession.isActive {
             walkSession.currentRoute = route
-            let incomingMin = route.durationMinutes
             let currentPill = displayDurationMinutesForPill
             let alreadyLocked = hasReceivedGoogleRefreshForPill
             if !alreadyLocked {
                 displayDurationMinutesForPill = incomingMin
                 hasReceivedGoogleRefreshForPill = true
-                print("PILL | updateCurrentRoute: pill SET to \(incomingMin) min (first refresh, was nil)")
+                lastKnownPillMinutes = incomingMin
+                Self.persistPillState(minutes: incomingMin, locked: true)
+                print("PILL | updateCurrentRoute: pill SET display=\(incomingMin) lastKnown=\(incomingMin) lock=true (first refresh)")
             } else {
-                print("PILL | updateCurrentRoute: pill LOCKED at \(currentPill ?? 0) min — ignoring incoming \(incomingMin) min (already had refresh)")
+                print("PILL | updateCurrentRoute: pill LOCKED display=\(currentPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) — IGNORING incoming \(incomingMin)min (already had refresh)")
             }
             // v2.1.1: Update direction monitoring with new directions
             if !route.walkingDirections.isEmpty {
                 locationService.updateDirections(route.walkingDirections, routePath: route.routePath)
             }
             objectWillChange.send()
+        } else {
+            print("PILL | updateCurrentRoute: walk not active — route/selectedRoute updated but pill NOT touched (display=\(displayDurationMinutesForPill ?? -1) lock=\(hasReceivedGoogleRefreshForPill))")
         }
         print("🔄 [ROUTE UPDATE] Route updated: '\(route.name)' with \(route.walkingDirections.count) directions, \(route.routePath.count) polyline points, \(route.durationMinutes)min")
     }
@@ -654,10 +683,12 @@ class WaitingRoomViewModel: ObservableObject {
     // MARK: - Walk Session Management
     func startWalk() {
         guard let route = selectedRoute else { return }
+        let routeMin = route.durationMinutes
+        print("PILL | startWalk ENTRY selectedRoute.duration=\(routeMin)min display=\(displayDurationMinutesForPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) lock=\(hasReceivedGoogleRefreshForPill) isActive=\(walkSession.isActive)")
         
         // If already on a walk, do nothing — prevents overwriting Google-refreshed route/pill when startWalk is triggered again (e.g. re-render)
         if walkSession.isActive {
-            print("PILL | startWalk: skipped (already active), pill stays at \(displayDurationMinutesForPill ?? 0) min, hasReceivedGoogleRefreshForPill=\(hasReceivedGoogleRefreshForPill)")
+            print("PILL | startWalk: SKIPPED (already active) — pill stays display=\(displayDurationMinutesForPill ?? -1) lock=\(hasReceivedGoogleRefreshForPill)")
             return
         }
         
@@ -672,9 +703,11 @@ class WaitingRoomViewModel: ObservableObject {
         // Only set pill when starting fresh (no refresh yet). Never unlock: hasReceivedGoogleRefreshForPill is only set to false in endWalk().
         if !hasReceivedGoogleRefreshForPill {
             displayDurationMinutesForPill = startMin
-            print("PILL | startWalk: pill set to \(startMin) min (OSM/cache); lock will be set when first refresh runs")
+            lastKnownPillMinutes = startMin
+            Self.persistPillState(minutes: startMin, locked: false)
+            print("PILL | startWalk: pill SET display=\(startMin) lastKnown=\(startMin) lock=false (OSM/cache; lock will be set when first refresh runs)")
         } else {
-            print("PILL | startWalk: pill LOCKED at \(displayDurationMinutesForPill ?? 0) min — not overwriting with \(startMin) (Google lock never cleared here)")
+            print("PILL | startWalk: pill LOCKED — NOT overwriting display=\(displayDurationMinutesForPill ?? -1) with route \(startMin)min (Google lock never cleared here)")
         }
         walkSession.startLocation = locationService.currentLocation?.coordinate  // v1.6.48: Snap Start/End to user's actual GPS position
         walkSession.halfwayAlertSent = false
@@ -885,9 +918,11 @@ class WaitingRoomViewModel: ObservableObject {
         // Reset session
         walkSession.startTime = nil
         walkSession.currentRoute = nil
-        print("PILL | endWalk: pill reset to nil, hasReceivedGoogleRefreshForPill=false")
+        print("PILL | endWalk: clearing pill (was display=\(displayDurationMinutesForPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) lock=\(hasReceivedGoogleRefreshForPill))")
         displayDurationMinutesForPill = nil
         hasReceivedGoogleRefreshForPill = false
+        lastKnownPillMinutes = nil
+        Self.clearPersistedPillState()
         selectedRoute = nil
         visitedMarkerIds = []
         currentMarker = nil

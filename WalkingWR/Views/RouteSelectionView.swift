@@ -3053,6 +3053,7 @@ struct LocalRoutePickerSheet: View {
                     let refreshTimeString = formatter.string(from: Date())
                     
                     // Update the route with Google directions - map will refresh
+                    print("PILL | caller: Google background refresh — route=\(refreshedRoute.durationMinutes)min before: display=\(viewModel.displayDurationMinutesForPill ?? -1) lock=\(viewModel.hasReceivedGoogleRefreshForPill)")
                     viewModel.updateCurrentRoute(refreshedRoute)
                     
                     let googleElapsed = Date().timeIntervalSince(startTime)
@@ -3074,6 +3075,7 @@ struct LocalRoutePickerSheet: View {
                             let mapKitTimeString = formatter.string(from: Date())
                             
                             // Update with better MapKit route
+                            print("PILL | caller: MapKit fallback (restricted roads) — route=\(mapKitRoute.durationMinutes)min before: display=\(viewModel.displayDurationMinutesForPill ?? -1) lock=\(viewModel.hasReceivedGoogleRefreshForPill)")
                             viewModel.updateCurrentRoute(mapKitRoute)
                             
                             let totalElapsed = Date().timeIntervalSince(startTime)
@@ -3088,8 +3090,14 @@ struct LocalRoutePickerSheet: View {
                     }
                 }
             } else {
-                print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] ⚠️ Google refresh failed - keeping original route")
-                print("TIME_SOURCE | BACKGROUND: Route and time NOT updated — still showing original \(route.durationMinutes) min (no Google refresh)")
+                print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] ⚠️ Google refresh failed - trying MapKit for route and mins left")
+                // When Google doesn't run (e.g. rate limit), MapKit can still update route and pill
+                let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: route, userLocation: userLocation)
+                await MainActor.run {
+                    print("PILL | caller: MapKit fallback (Google failed) — route=\(mapKitRoute.durationMinutes)min before: display=\(viewModel.displayDurationMinutesForPill ?? -1) lock=\(viewModel.hasReceivedGoogleRefreshForPill)")
+                    viewModel.updateCurrentRoute(mapKitRoute)
+                    print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] ✅ MapKit route applied (Google failed)")
+                }
             }
         }
     }
@@ -3344,10 +3352,10 @@ struct LocalRoutePickerSheet: View {
             print("⏱️ [BG REFRESH] [\(updateTimeString)]   Original: \(oldDirections) directions, \(oldDistance)m")
             print("⏱️ [BG REFRESH] [\(updateTimeString)]   Refreshed: \(newDirections) directions, \(newDistance)m")
             
-            // Only update if refreshed route has valid directions
+            // Only update if refreshed route has valid directions (use updateCurrentRoute so pill stays in sync and never reverts to longer duration)
             if newDirections > 0 {
-                viewModel.walkSession.currentRoute = refreshedRoute
-                viewModel.selectedRoute = refreshedRoute
+                print("PILL | caller: MapKit background refresh — route=\(refreshedRoute.durationMinutes)min before: display=\(viewModel.displayDurationMinutesForPill ?? -1) lock=\(viewModel.hasReceivedGoogleRefreshForPill)")
+                viewModel.updateCurrentRoute(refreshedRoute)
                 
                 print("⏱️ [BG REFRESH] [\(updateTimeString)] ✅ Route updated successfully!")
                 print("╔═══════════════════════════════════════════════════════════╗")
@@ -6208,6 +6216,7 @@ struct StatBadge: View {
 // MARK: - Active Walk View
 // MARK: - v2.1.6: Walking Alert Overlay
 /// Custom overlay alert that doesn't dismiss the underlying map view
+/// Dark mode: black card to match walk UI. Light mode: white card with subtle shadow.
 struct WalkingAlertOverlay: View {
     let title: String
     let message: String
@@ -6215,33 +6224,55 @@ struct WalkingAlertOverlay: View {
     let onStopAlerts: (() -> Void)?
     var showStopButton: Bool = true
     
+    @Environment(\.colorScheme) var colorScheme
+    
+    private var cardBackground: Color {
+        colorScheme == .dark ? Color.black : Color.white
+    }
+    
+    private var titleColor: Color {
+        colorScheme == .dark ? .white : .primary
+    }
+    
+    private var messageColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.9) : Color.primary.opacity(0.85)
+    }
+    
+    private var cardBorder: Color {
+        colorScheme == .dark ? Color.white.opacity(0.2) : Color.black.opacity(0.08)
+    }
+    
+    private var stopAlertsButtonBackground: Color {
+        colorScheme == .dark ? Color.white.opacity(0.12) : Color.red.opacity(0.08)
+    }
+    
+    private var dimmedBackdrop: Color {
+        colorScheme == .dark ? Color.black.opacity(0.5) : Color.black.opacity(0.35)
+    }
+    
+    private var shadowColor: Color {
+        colorScheme == .dark ? .black.opacity(0.5) : .black.opacity(0.15)
+    }
+    
     var body: some View {
         ZStack {
-            // Semi-transparent background
-            Color.black.opacity(0.4)
+            dimmedBackdrop
                 .ignoresSafeArea()
-                .onTapGesture {
-                    // Allow tapping outside to dismiss (optional - can remove if you want explicit button press)
-                }
             
-            // Alert card
             VStack(spacing: 20) {
-                // Title with icon
                 HStack(spacing: 8) {
                     Text(title)
                         .font(.title2)
                         .fontWeight(.bold)
-                        .foregroundColor(.white)
+                        .foregroundColor(titleColor)
                 }
                 
-                // Message
                 Text(message)
                     .font(.body)
-                    .foregroundColor(.white.opacity(0.9))
+                    .foregroundColor(messageColor)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 
-                // Buttons
                 HStack(spacing: 12) {
                     if let onStopAlerts = onStopAlerts, showStopButton {
                         Button(action: onStopAlerts) {
@@ -6251,7 +6282,7 @@ struct WalkingAlertOverlay: View {
                                 .foregroundColor(.red)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .background(Color.white.opacity(0.1))
+                                .background(stopAlertsButtonBackground)
                                 .cornerRadius(10)
                         }
                     }
@@ -6269,9 +6300,13 @@ struct WalkingAlertOverlay: View {
                 }
             }
             .padding(24)
-            .background(Color.gray.opacity(0.95))
+            .background(cardBackground)
             .cornerRadius(16)
-            .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(cardBorder, lineWidth: 1)
+            )
+            .shadow(color: shadowColor, radius: 20, x: 0, y: 10)
             .padding(.horizontal, 40)
         }
     }
