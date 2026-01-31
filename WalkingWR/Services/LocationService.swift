@@ -71,6 +71,8 @@ class LocationService: NSObject, ObservableObject {
     private let positionHistoryWindow: TimeInterval = 30.0 // Keep last 30 seconds of positions (3x longer)
     private let minConsistentReadings: Int = 3 // Require at least 3 consistent readings
     private let consistencyThreshold: Double = 0.6 // 60% of readings must show forward progress
+    private let minDistanceToCountAsWalked: Double = 5.0 // Ignore movements smaller than this (GPS jitter when stationary)
+    private let minDistancePastWaypointToSkipOnStart: Double = 25.0 // When skipping passed waypoints on start, user must be at least this far past the waypoint (prevents single noisy reading from jumping ahead)
     
     // v1.9.90: Track last marker to prevent advancing to return journey before destination is reached
     private var lastMarkerPolylineIndex: Int? = nil
@@ -156,6 +158,50 @@ class LocationService: NSObject, ObservableObject {
             return t1 > t2
         }
         return false
+    }
+    
+    /// Distance in meters along the polyline from (fromSegment, fromT) to (toSegment, toT). Assumes "to" is ahead of "from".
+    private func distanceAlongRoute(
+        fromSegment segA: Int, fromT tA: Double,
+        toSegment segB: Int, toT tB: Double,
+        polyline: [CLLocationCoordinate2D]
+    ) -> Double {
+        guard polyline.count >= 2, segA >= 0, segB >= 0 else { return 0 }
+        var totalDistance: Double = 0
+        if segA == segB {
+            let segmentStart = polyline[segA]
+            let segmentEnd = polyline[min(segA + 1, polyline.count - 1)]
+            let segmentLength = CLLocation(latitude: segmentStart.latitude, longitude: segmentStart.longitude)
+                .distance(from: CLLocation(latitude: segmentEnd.latitude, longitude: segmentEnd.longitude))
+            totalDistance = abs(tB - tA) * segmentLength
+        } else {
+            let minSeg = min(segA, segB)
+            let maxSeg = max(segA, segB)
+            if segA < polyline.count - 1 {
+                let segStart = polyline[segA]
+                let segEnd = polyline[segA + 1]
+                let segLength = CLLocation(latitude: segStart.latitude, longitude: segStart.longitude)
+                    .distance(from: CLLocation(latitude: segEnd.latitude, longitude: segEnd.longitude))
+                totalDistance += (1.0 - tA) * segLength
+            }
+            for i in (minSeg + 1)..<maxSeg {
+                if i < polyline.count - 1 {
+                    let segStart = polyline[i]
+                    let segEnd = polyline[i + 1]
+                    let segLength = CLLocation(latitude: segStart.latitude, longitude: segStart.longitude)
+                        .distance(from: CLLocation(latitude: segEnd.latitude, longitude: segEnd.longitude))
+                    totalDistance += segLength
+                }
+            }
+            if segB < polyline.count - 1 {
+                let segStart = polyline[segB]
+                let segEnd = polyline[segB + 1]
+                let segLength = CLLocation(latitude: segStart.latitude, longitude: segStart.longitude)
+                    .distance(from: CLLocation(latitude: segEnd.latitude, longitude: segEnd.longitude))
+                totalDistance += tB * segLength
+            }
+        }
+        return totalDistance
     }
     
     // Starting point for walk
@@ -443,18 +489,21 @@ class LocationService: NSObject, ObservableObject {
                 
                 for (index, waypoint) in directionWaypoints.enumerated() {
                     // Check if this waypoint is BEHIND the user on the polyline
-                    // Waypoint is behind if its polyline index is less than or equal to user's projected position
                     let waypointSegment = max(0, waypoint.polylineIndex - 1)  // Segment index (waypoint is at end of this segment)
                     
                     // User is past this waypoint if:
-                    // 1. User's segment index is greater than waypoint's segment, OR
-                    // 2. User is on the same segment but further along (t > 0.5)
-                    let isPast = isAhead(
+                    // 1. User's projected position is ahead on the polyline, AND
+                    // 2. User is at least minDistancePastWaypointToSkipOnStart (25m) past the waypoint (avoids single noisy GPS reading jumping ahead)
+                    let isAheadOnPolyline = isAhead(
                         segmentIndex1: userProjection.segmentIndex,
                         t1: userProjection.t,
                         segmentIndex2: waypointSegment,
                         t2: 0.5  // Consider waypoint at midpoint of its segment
                     )
+                    let distancePastWaypoint = isAheadOnPolyline
+                        ? distanceAlongRoute(fromSegment: waypointSegment, fromT: 0.5, toSegment: userProjection.segmentIndex, toT: userProjection.t, polyline: routePath)
+                        : 0
+                    let isPast = isAheadOnPolyline && distancePastWaypoint >= minDistancePastWaypointToSkipOnStart
                     
                     if isPast {
                         skippedCount = index + 1
@@ -1164,10 +1213,12 @@ extension LocationService: CLLocationManagerDelegate {
                 print("⏱️ [LOCATION] [\(timeString)] 🎯 Start location set")
             }
             
-            // Calculate distance walked
+            // Calculate distance walked (ignore small movements to avoid GPS jitter when stationary)
             if let lastLocation = self.routeLocations.last {
                 let distance = newLocation.distance(from: lastLocation)
-                self.distanceWalked += distance
+                if distance >= self.minDistanceToCountAsWalked {
+                    self.distanceWalked += distance
+                }
             }
             
             self.routeLocations.append(newLocation)

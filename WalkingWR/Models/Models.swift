@@ -52,16 +52,21 @@ struct PolylineDecoder {
         
         /// Reasonable delta range (1e5 degrees ≈ 1000+ km per step) to avoid runaway accumulation.
         let maxDelta: Int64 = 10_000_000
+        /// Valid microdegrees so accumulated lat/lng never overflow Int64 and stay within geo range.
+        let latMin: Int64 = -90 * 100_000
+        let latMax: Int64 =  90 * 100_000
+        let lngMin: Int64 = -180 * 100_000
+        let lngMax: Int64 =  180 * 100_000
         
         while pos >= 0 && pos < count {
             guard let deltaLat = decodeValue() else { break }
             if pos >= count { break }
             if abs(deltaLat) > maxDelta { break }
-            lat += deltaLat
+            lat = min(max(lat &+ deltaLat, latMin), latMax)
             
             guard let deltaLng = decodeValue() else { break }
             if abs(deltaLng) > maxDelta { break }
-            lng += deltaLng
+            lng = min(max(lng &+ deltaLng, lngMin), lngMax)
             
             let latDeg = Double(lat) / 1e5
             let lngDeg = Double(lng) / 1e5
@@ -421,6 +426,8 @@ struct WalkingRoute: Identifiable, Hashable {
     let encodedPolyline: String?  // Google Maps encoded polyline for accurate route display
     let walkingDirections: [WalkingDirection]  // Turn-by-turn directions
     let usedOSRMRouting: Bool  // v1.6.46: Track if polyline came from OSRM (driving profile)
+    /// True when route came from pre-populated database; used for duration-adjust (add/drop waypoints) after Let's Go.
+    let isFromPrePopulatedDatabase: Bool
     
     /// Alias for encodedPolyline (used by route creation and map display)
     var trimmed: String? { encodedPolyline }
@@ -431,7 +438,8 @@ struct WalkingRoute: Identifiable, Hashable {
          landmarks: [String], icon: String, color: Color, qrMarkers: [QRMarker],
          routeType: RouteType = .curated, encodedPolyline: String? = nil, trimmed trimVal: String? = nil,
          walkingDirections: [WalkingDirection] = [],
-         usedOSRMRouting: Bool = false) {
+         usedOSRMRouting: Bool = false,
+         isFromPrePopulatedDatabase: Bool = false) {
         self.name = name
         self.description = description
         self.durationMinutes = durationMinutes
@@ -447,6 +455,7 @@ struct WalkingRoute: Identifiable, Hashable {
         self.encodedPolyline = encodedPolyline ?? trimVal
         self.walkingDirections = walkingDirections
         self.usedOSRMRouting = usedOSRMRouting
+        self.isFromPrePopulatedDatabase = isFromPrePopulatedDatabase
     }
     
     /// Decoded route path coordinates for map display
@@ -1246,123 +1255,6 @@ extension WalkingRoute {
                     contentType: .gratitudePrompt,
                     content: WellbeingContent.gratitudePrompts[0],
                     pointsValue: 10
-                )
-            ],
-            routeType: .indoor,
-            encodedPolyline: nil
-        ),
-        
-        // Indoor Route 2: NGH Link Corridor Walk (10 min)
-        WalkingRoute(
-            name: "NGH Corridor Explorer",
-            description: "A 10-minute walk through the Northern General Hospital link corridors. Follow the coloured floor lines and signage. Great for a longer indoor stretch.",
-            durationMinutes: 10,
-            distanceMeters: 500,
-            difficulty: .easy,
-            isIndoor: true,
-            isAccessible: true,
-            landmarks: ["Longley Centre", "Link Corridor", "Main Hospital", "Atrium Area", "Return via Link"],
-            icon: "arrow.triangle.swap",
-            color: .tealAccent,
-            qrMarkers: [
-                QRMarker(
-                    code: "NGH_IN1",
-                    name: "Link Corridor Start",
-                    location: "Leaving Longley Centre",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4108, longitude: -1.4598),
-                    contentType: .breathingExercise,
-                    content: WellbeingContent(title: "Walking Meditation", description: "As you walk through the corridor, focus on each step.", icon: "figure.walk", duration: 60, steps: ["Walk at a comfortable pace", "Feel each footstep on the floor", "Notice the rhythm of your walking", "Let your thoughts come and go"]),
-                    pointsValue: 15
-                ),
-                QRMarker(
-                    code: "NGH_IN2",
-                    name: "Hospital Art",
-                    location: "Main Corridor",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4105, longitude: -1.4585),
-                    contentType: .gratitudePrompt,
-                    content: WellbeingContent(title: "Art Appreciation", description: "NHS hospitals often display local artwork. Take a moment to notice any art, photos, or displays on the walls.", icon: "photo.artframe", duration: nil, steps: nil),
-                    pointsValue: 15
-                ),
-                QRMarker(
-                    code: "NGH_IN3",
-                    name: "Atrium Rest",
-                    location: "Near Seating Area",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4102, longitude: -1.4575),
-                    contentType: .breathingExercise,
-                    content: WellbeingContent.breathingExercises[1],
-                    pointsValue: 15
-                ),
-                QRMarker(
-                    code: "NGH_IN4",
-                    name: "Return Journey",
-                    location: "Heading Back",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4106, longitude: -1.4590),
-                    contentType: .miniChallenge,
-                    content: WellbeingContent(title: "Posture Check", description: "Good posture while walking helps reduce tension and improves mood.", icon: "figure.stand", duration: 30, steps: ["Stand tall, shoulders back", "Relax your jaw and face", "Take a deep breath", "Continue walking with awareness"]),
-                    pointsValue: 15
-                )
-            ],
-            routeType: .indoor,
-            encodedPolyline: nil
-        ),
-        
-        // Indoor Route 3: NGH Discovery Walk (15 min)
-        WalkingRoute(
-            name: "NGH Discovery Walk",
-            description: "A 15-minute exploration of Northern General Hospital's main buildings via the link corridors. Look for the café, shop, and chapel along the way. Follow floor signage.",
-            durationMinutes: 15,
-            distanceMeters: 800,
-            difficulty: .moderate,
-            isIndoor: true,
-            isAccessible: true,
-            landmarks: ["Longley Centre", "Main Link Corridor", "Hospital Shop", "Café Area", "Chapel", "Return via Ground Floor"],
-            icon: "map.fill",
-            color: .mintGreen,
-            qrMarkers: [
-                QRMarker(
-                    code: "NGH_D1",
-                    name: "Journey Start",
-                    location: "Longley Centre Exit",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4108, longitude: -1.4598),
-                    contentType: .breathingExercise,
-                    content: WellbeingContent.breathingExercises[2],
-                    pointsValue: 20
-                ),
-                QRMarker(
-                    code: "NGH_D2",
-                    name: "Shop Stop",
-                    location: "Near Hospital Shop",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4100, longitude: -1.4580),
-                    contentType: .digitalTip,
-                    content: WellbeingContent(title: "Hydration Reminder", description: "Staying hydrated helps with concentration and reduces anxiety. Consider grabbing a drink if you pass the shop or café.", icon: "drop.fill", duration: nil, steps: nil),
-                    pointsValue: 20
-                ),
-                QRMarker(
-                    code: "NGH_D3",
-                    name: "Café Corner",
-                    location: "Near Café Seating",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4098, longitude: -1.4570),
-                    contentType: .gratitudePrompt,
-                    content: WellbeingContent.gratitudePrompts[1],
-                    pointsValue: 20
-                ),
-                QRMarker(
-                    code: "NGH_D4",
-                    name: "Quiet Reflection",
-                    location: "Near Chapel",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4095, longitude: -1.4565),
-                    contentType: .breathingExercise,
-                    content: WellbeingContent(title: "Moment of Peace", description: "Hospital chapels and quiet rooms are open to everyone, regardless of faith. They offer a peaceful space for reflection.", icon: "hands.sparkles.fill", duration: 60, steps: ["Find a quiet spot", "Sit comfortably if possible", "Close your eyes briefly", "Take 5 slow, deep breaths", "Set an intention for your day"]),
-                    pointsValue: 25
-                ),
-                QRMarker(
-                    code: "NGH_D5",
-                    name: "Homeward Bound",
-                    location: "Return Corridor",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4105, longitude: -1.4592),
-                    contentType: .miniChallenge,
-                    content: WellbeingContent(title: "Counting Steps", description: "Can you count your steps back to The Longley Centre? It's a simple mindfulness exercise.", icon: "number", duration: nil, steps: ["Start counting from 1", "If you lose count, start again", "Notice how this focuses your mind", "Celebrate when you arrive back!"]),
-                    pointsValue: 25
                 )
             ],
             routeType: .indoor,

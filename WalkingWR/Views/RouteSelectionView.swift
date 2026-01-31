@@ -840,19 +840,16 @@ struct CompactRouteCard: View {
                         }
                     }
                     
-                    // Start button
-                    Button(action: onSelect) {
-                        HStack {
-                            Image(systemName: "figure.walk")
-                            Text("Start This Walk")
-                                .fontWeight(.semibold)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(route.color)
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
+                    // Coming Soon banner (replaces Start button)
+                    HStack {
+                        Text("Coming Soon")
+                            .fontWeight(.semibold)
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.secondary.opacity(0.2))
+                    .foregroundColor(.secondary)
+                    .cornerRadius(10)
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
@@ -1683,7 +1680,8 @@ struct LocalRoutePickerSheet: View {
             qrMarkers: reversedMarkers,
             routeType: route.routeType,
             trimmed: nil,  // Will need new directions
-            walkingDirections: []  // Will need new directions
+            walkingDirections: [],  // Will need new directions
+            isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase
         )
         
         // Create permuted data with reversed places
@@ -2020,7 +2018,8 @@ struct LocalRoutePickerSheet: View {
                         routeType: .local,
                         trimmed: polylineToUse,
                         walkingDirections: firstDirections,
-                        usedOSRMRouting: filteredCachedRoute.usedOSRM
+                        usedOSRMRouting: filteredCachedRoute.usedOSRM,
+                        isFromPrePopulatedDatabase: firstCached.isFromPrePopulatedDatabase
                     )
                     
                     loadedRoutes.append((route: firstRoute, data: filteredCachedRoute, isDeadZoneFallback: firstCached.isDeadZoneFallback))
@@ -2119,7 +2118,8 @@ struct LocalRoutePickerSheet: View {
                                     routeType: existing.routeType,
                                     trimmed: existing.trimmed,
                                     walkingDirections: existing.walkingDirections,
-                                    usedOSRMRouting: existing.usedOSRMRouting
+                                    usedOSRMRouting: existing.usedOSRMRouting,
+                                    isFromPrePopulatedDatabase: existing.isFromPrePopulatedDatabase
                                 )
                                 allRoutes[0] = (route: updated, data: allRoutes[0].data, isDeadZoneFallback: allRoutes[0].isDeadZoneFallback)
                                 if currentRouteIndex == 0 {
@@ -2254,7 +2254,8 @@ struct LocalRoutePickerSheet: View {
                                         routeType: existingRoute.routeType,
                                         trimmed: existingRoute.trimmed,
                                         walkingDirections: enhancedDirections,
-                                        usedOSRMRouting: existingRoute.usedOSRMRouting
+                                        usedOSRMRouting: existingRoute.usedOSRMRouting,
+                                        isFromPrePopulatedDatabase: existingRoute.isFromPrePopulatedDatabase
                                     )
                                     allRoutes[index] = (route: updatedRoute, data: allRoutes[index].data, isDeadZoneFallback: allRoutes[index].isDeadZoneFallback)
                                     
@@ -2395,7 +2396,8 @@ struct LocalRoutePickerSheet: View {
                                         routeType: .local,
                                         trimmed: polylineToUse,
                                         walkingDirections: directions,
-                                        usedOSRMRouting: filteredCachedRoute.usedOSRM
+                                        usedOSRMRouting: filteredCachedRoute.usedOSRM,
+                                        isFromPrePopulatedDatabase: cached.isFromPrePopulatedDatabase
                                     )
                                     
                                     let placeIds = Set(filteredCachedRoute.places.map { $0.placeId })
@@ -2993,6 +2995,8 @@ struct LocalRoutePickerSheet: View {
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: startTime)
         
+        print("DIRECTIONS | Filter Xcode console by: DIRECTIONS")
+        print("DIRECTIONS | [\(timeString)] 🚶 Let's Go tapped — route: '\(route.name)' dirs: \(route.walkingDirections.count)")
         print("⏱️ [LET'S GO] [\(timeString)] 🚶 handleStartWalk() STARTED")
         print("⏱️ [LET'S GO] [\(timeString)]   Route: '\(route.name)'")
         print("⏱️ [LET'S GO] [\(timeString)]   Duration: \(route.durationMinutes)min, Waypoints: \(route.qrMarkers.count)")
@@ -3030,75 +3034,90 @@ struct LocalRoutePickerSheet: View {
         print("⏱️ [LET'S GO] [\(timeString)] ✅ Instant start: \(String(format: "%.3f", instantElapsed))s")
         
         // v2.1.1: Refresh directions in BACKGROUND (map already visible)
-        // When Google returns, update the route - map will refresh automatically
-        // If Google has restricted roads, trigger MapKit fallback
+        // Use MapKit FIRST so directions appear quickly; then Google in background when complete
+        // CONSOLE: Filter by "DIRECTIONS" to see this flow
         Task {
             let taskTimeString = formatter.string(from: Date())
+            print("DIRECTIONS | ========== direction refresh started ==========")
+            print("DIRECTIONS | [\(taskTimeString)] Route: '\(route.name)' waypoints: \(route.qrMarkers.count) hasDirections: \(!route.walkingDirections.isEmpty)")
             
-            // Get user location for refresh
-            guard let userLocation = locationService.currentLocation?.coordinate,
-                  mapsService.hasAPIKey else {
-                print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] ⚡ No location/API key - keeping original route")
+            // Wait briefly for location (often nil the instant user taps Let's Go)
+            var userLocation: CLLocationCoordinate2D?
+            for attempt in 0..<10 {
+                userLocation = locationService.currentLocation?.coordinate
+                if userLocation != nil {
+                    print("DIRECTIONS | [\(taskTimeString)] Location ready after \(attempt) wait(s) (0.5s each)")
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+            }
+            guard let userLocation = userLocation else {
+                print("DIRECTIONS | [\(taskTimeString)] ❌ No location after 5s - cannot refresh route (banner will stay 'loading directions')")
                 return
             }
             
-            print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] 🌐 Fetching live Google Directions in background...")
+            // 1. MapKit first — directions show as soon as this returns
+            let mapKitStart = Date()
+            print("DIRECTIONS | [\(taskTimeString)] 🍎 MapKit refresh starting...")
+            let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: route, userLocation: userLocation)
+            let mapKitElapsed = Date().timeIntervalSince(mapKitStart)
+            print("DIRECTIONS | [\(formatter.string(from: Date()))] MapKit returned in \(String(format: "%.2f", mapKitElapsed))s dirs: \(mapKitRoute.walkingDirections.count)")
+            await MainActor.run {
+                viewModel.updateCurrentRoute(mapKitRoute)
+                print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ MapKit route applied — banner should show directions now (total: \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s)")
+            }
             
-            // Try Google refresh in background
-                if let refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
-                    route: route,
-                    userLocation: userLocation
-                ) {
+            // 2. Google in background — when complete, upgrade route (better polyline/directions)
+            guard mapsService.hasAPIKey else {
+                print("DIRECTIONS | [\(formatter.string(from: Date()))] No API key - stopping (MapKit route only)")
+                return
+            }
+            
+            let googleStart = Date()
+            print("DIRECTIONS | [\(formatter.string(from: Date()))] 🌐 Google refresh starting (background upgrade)...")
+            if let refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
+                route: route,
+                userLocation: userLocation
+            ) {
+                let googleElapsed = Date().timeIntervalSince(googleStart)
+                print("DIRECTIONS | [\(formatter.string(from: Date()))] Google returned in \(String(format: "%.2f", googleElapsed))s")
+                var routeToShow = refreshedRoute
+                if refreshedRoute.isFromPrePopulatedDatabase {
+                    let targetDuration = selectedDuration
+                    let (adjusted, didDrop) = await mapsService.tryAdjustPrePopRouteDuration(
+                        refreshedRoute: refreshedRoute,
+                        userLocation: userLocation,
+                        targetMinutes: targetDuration
+                    )
+                    if let adj = adjusted {
+                        if didDrop {
+                            routeToShow = refreshedRoute
+                            await MainActor.run { viewModel.offerAdjustedRoute(adj) }
+                            print("DIRECTIONS | Pre-pop: offered adjusted route (dropped waypoints)")
+                        } else {
+                            routeToShow = adj
+                            print("DIRECTIONS | Pre-pop: applied adjusted route")
+                        }
+                    }
+                }
                 await MainActor.run {
-                    let refreshTimeString = formatter.string(from: Date())
-                    
-                    // Update the route with Google directions - map will refresh
-                    print("PILL | caller: Google background refresh — route=\(refreshedRoute.durationMinutes)min before: display=\(viewModel.displayDurationMinutesForPill ?? -1) lock=\(viewModel.hasReceivedGoogleRefreshForPill)")
-                    viewModel.updateCurrentRoute(refreshedRoute)
-                    
-                    let googleElapsed = Date().timeIntervalSince(startTime)
-                    print("⏱️ [BACKGROUND REFRESH] [\(refreshTimeString)] ✅ Google route shown (total: \(String(format: "%.2f", googleElapsed))s)")
-                    print("TIME_SOURCE | BACKGROUND: Route and time NOW from Google — \(refreshedRoute.durationMinutes) min, \(refreshedRoute.distanceMeters)m (map updated)")
-                    
-                    // Debug polyline quality
-                    let polylinePoints = refreshedRoute.routePath.count
-                    let hasPolyline = refreshedRoute.trimmed != nil && !refreshedRoute.trimmed!.isEmpty
-                    print("🗺️ [POLYLINE DEBUG] Google route: hasPolyline=\(hasPolyline), points=\(polylinePoints)")
+                    viewModel.updateCurrentRoute(routeToShow)
+                    print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ Google route applied (total: \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s)")
                 }
                 
-                // v2.1.1: Check if Google had restricted roads - trigger MapKit fallback
                 if mapsService.lastRouteHadRestrictedRoads {
-                    print("🗺️ [MAPKIT FALLBACK] Google route has restricted roads - fetching MapKit alternative...")
-                    
-                    if let mapKitRoute = await mapsService.getMapKitFallbackRoute(for: refreshedRoute) {
+                    print("DIRECTIONS | Google had restricted roads - fetching MapKit fallback...")
+                    if let mapKitFallback = await mapsService.getMapKitFallbackRoute(for: refreshedRoute) {
                         await MainActor.run {
-                            let mapKitTimeString = formatter.string(from: Date())
-                            
-                            // Update with better MapKit route
-                            print("PILL | caller: MapKit fallback (restricted roads) — route=\(mapKitRoute.durationMinutes)min before: display=\(viewModel.displayDurationMinutesForPill ?? -1) lock=\(viewModel.hasReceivedGoogleRefreshForPill)")
-                            viewModel.updateCurrentRoute(mapKitRoute)
-                            
-                            let totalElapsed = Date().timeIntervalSince(startTime)
-                            print("⏱️ [MAPKIT FALLBACK] [\(mapKitTimeString)] ✅ MapKit route applied (total: \(String(format: "%.2f", totalElapsed))s)")
-                            
-                            // Debug polyline quality
-                            let polylinePoints = mapKitRoute.routePath.count
-                            print("🗺️ [POLYLINE DEBUG] MapKit route: \(polylinePoints) points")
+                            viewModel.updateCurrentRoute(mapKitFallback)
+                            print("DIRECTIONS | ✅ MapKit fallback applied (restricted roads)")
                         }
-                    } else {
-                        print("⏱️ [MAPKIT FALLBACK] MapKit failed - keeping Google route (with restricted roads warning)")
                     }
                 }
             } else {
-                print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] ⚠️ Google refresh failed - trying MapKit for route and mins left")
-                // When Google doesn't run (e.g. rate limit), MapKit can still update route and pill
-                let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: route, userLocation: userLocation)
-                await MainActor.run {
-                    print("PILL | caller: MapKit fallback (Google failed) — route=\(mapKitRoute.durationMinutes)min before: display=\(viewModel.displayDurationMinutesForPill ?? -1) lock=\(viewModel.hasReceivedGoogleRefreshForPill)")
-                    viewModel.updateCurrentRoute(mapKitRoute)
-                    print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] ✅ MapKit route applied (Google failed)")
-                }
+                print("DIRECTIONS | [\(formatter.string(from: Date()))] ⚠️ Google refresh failed - keeping MapKit route")
             }
+            print("DIRECTIONS | ========== direction refresh finished ==========")
         }
     }
     
@@ -3260,7 +3279,8 @@ struct LocalRoutePickerSheet: View {
                     routeType: .local,
                     trimmed: polylineToUse,
                     walkingDirections: directions,
-                    usedOSRMRouting: filteredCachedRoute.usedOSRM
+                    usedOSRMRouting: filteredCachedRoute.usedOSRM,
+                    isFromPrePopulatedDatabase: cached.isFromPrePopulatedDatabase
                 )
                 loadedRoutes.append((route: localRoute, data: filteredCachedRoute, isDeadZoneFallback: cached.isDeadZoneFallback))
                 loadedPlaceIdSets.append(Set(filteredCachedRoute.places.map { $0.placeId }))
@@ -6223,6 +6243,8 @@ struct WalkingAlertOverlay: View {
     let onOK: () -> Void
     let onStopAlerts: (() -> Void)?
     var showStopButton: Bool = true
+    var primaryLabel: String = "OK"
+    var secondaryLabel: String = "Stop Alerts"
     
     @Environment(\.colorScheme) var colorScheme
     
@@ -6276,7 +6298,7 @@ struct WalkingAlertOverlay: View {
                 HStack(spacing: 12) {
                     if let onStopAlerts = onStopAlerts, showStopButton {
                         Button(action: onStopAlerts) {
-                            Text("Stop Alerts")
+                            Text(secondaryLabel)
                                 .font(.body)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.red)
@@ -6288,7 +6310,7 @@ struct WalkingAlertOverlay: View {
                     }
                     
                     Button(action: onOK) {
-                        Text("OK")
+                        Text(primaryLabel)
                             .font(.body)
                             .fontWeight(.semibold)
                             .foregroundColor(.white)
@@ -6328,7 +6350,7 @@ struct ActiveWalkView: View {
                 if route.walkingDirections.isEmpty || route.isIndoor {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(route.name)
+                            Text(route.isIndoor ? route.name : "\(route.name): loading directions")
                                 .font(.titleMedium)
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
@@ -6545,6 +6567,19 @@ struct ActiveWalkView: View {
                     },
                     onStopAlerts: nil,
                     showStopButton: false
+                )
+            } else if viewModel.showAdjustRouteAlert {
+                WalkingAlertOverlay(
+                    title: "Route over your selected time",
+                    message: "We've noticed we are past your selected time – want me to adjust your route?",
+                    onOK: {
+                        viewModel.acceptAdjustedRoute()
+                    },
+                    onStopAlerts: {
+                        viewModel.declineAdjustedRoute()
+                    },
+                    primaryLabel: "Adjust",
+                    secondaryLabel: "Keep current"
                 )
             }
         }
