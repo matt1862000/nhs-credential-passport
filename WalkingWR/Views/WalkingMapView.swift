@@ -609,7 +609,7 @@ struct EmbeddedWalkMapView: View {
         VStack {
             HStack(alignment: .top) {
                 CompactStatusRing(
-                    walkDurationMinutes: viewModel.walkSession.currentRoute?.durationMinutes ?? 15,
+                    walkDurationMinutes: viewModel.displayDurationMinutesForPill ?? viewModel.walkSession.currentRoute?.durationMinutes ?? 15,
                     walkStartTime: viewModel.walkSession.startTime,
                     healthKitService: viewModel.healthKitService,
                     isStepTrackingEnabled: $isStepTrackingEnabled,
@@ -626,6 +626,7 @@ struct EmbeddedWalkMapView: View {
                         }
                     }
                 )
+                .id("compactStatusRing") // Stable identity so Google refresh (objectWillChange) doesn't recreate pill and reset Track steps / mins left state
                 
                 Spacer()
                 
@@ -3167,6 +3168,10 @@ private struct CompactStatusPillContent: View {
             }
         }
         .animation(.easeInOut(duration: 0.6), value: showingStepsPrompt)
+        .onChange(of: walkDurationMinutes) { _, _ in
+            // When route is refreshed (e.g. Google background refresh), update "mins left" immediately
+            updatePillState()
+        }
         .onAppear {
             print("🟢 CompactStatusPillContent: onAppear - shouldAlternate=\(shouldAlternate), isStepsEnabled=\(isStepsEnabled), showStepsOnly=\(showStepsOnly)")
             updatePillState()

@@ -43,6 +43,9 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var currentMarker: QRMarker? = nil
     @Published var visitedMarkerIds: Set<UUID> = []
     
+    /// v2.1.x: Explicit duration for "mins left" pill so it doesn't revert after Google refresh (avoids stale currentRoute reads on re-render).
+    @Published var displayDurationMinutesForPill: Int? = nil
+
     // v2.1.7: Track last waypoint activation time to prevent rapid multiple activations
     private var lastWaypointActivationTime: Date?
     
@@ -601,12 +604,11 @@ class WaitingRoomViewModel: ObservableObject {
         selectedRoute = route
         if walkSession.isActive {
             walkSession.currentRoute = route
-            
+            displayDurationMinutesForPill = route.durationMinutes  // Keep "mins left" from reverting to stale value on re-render
             // v2.1.1: Update direction monitoring with new directions
             if !route.walkingDirections.isEmpty {
                 locationService.updateDirections(route.walkingDirections, routePath: route.routePath)
             }
-            
             // Force UI refresh so "xx mins left" and other views pick up Google's duration (they observe viewModel, not WalkSession directly)
             objectWillChange.send()
         }
@@ -648,6 +650,7 @@ class WaitingRoomViewModel: ObservableObject {
         walkSession.isActive = true
         walkSession.startTime = Date()
         walkSession.currentRoute = route
+        displayDurationMinutesForPill = route.durationMinutes  // So "mins left" pill uses this until refreshed
         walkSession.startLocation = locationService.currentLocation?.coordinate  // v1.6.48: Snap Start/End to user's actual GPS position
         walkSession.halfwayAlertSent = false
         walkSession.returnNowAlertSent = false
@@ -857,6 +860,7 @@ class WaitingRoomViewModel: ObservableObject {
         // Reset session
         walkSession.startTime = nil
         walkSession.currentRoute = nil
+        displayDurationMinutesForPill = nil
         selectedRoute = nil
         visitedMarkerIds = []
         currentMarker = nil

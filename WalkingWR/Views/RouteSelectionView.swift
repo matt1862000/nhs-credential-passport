@@ -2074,6 +2074,7 @@ struct LocalRoutePickerSheet: View {
                             lastValidRoute = firstRoute
                             lastValidRouteData = firstCached.route
                             viewedRouteIndices = [0]
+                            print("TIME_SOURCE | PREVIEW: First route shown: \(firstRoute.durationMinutes) min, \(firstRoute.distanceMeters)m — FROM CACHE/PRE-POP (Google refresh pending)")
                         }
                         
                         isRecycledRoute = false
@@ -2457,6 +2458,7 @@ struct LocalRoutePickerSheet: View {
                                     lastValidRoute = secondRoute.route
                                     lastValidRouteData = secondRoute.data
                                     viewedRouteIndices = [1]
+                                    print("TIME_SOURCE | PREVIEW: Second route shown: \(secondRoute.route.durationMinutes) min — FROM CACHE (no Google refresh until Let's Go)")
                                 }
                                 
                                 mapsService.retryStatus = nil  // Clear status
@@ -2487,6 +2489,9 @@ struct LocalRoutePickerSheet: View {
                                 allRoutes[index].route = refreshedRoute
                                 if currentRouteIndex == index {
                                     generatedRoute = refreshedRoute
+                                    print("TIME_SOURCE | PREVIEW: Google refresh done — preview NOW shows \(refreshedRoute.durationMinutes) min, \(refreshedRoute.distanceMeters)m FROM GOOGLE")
+                                } else {
+                                    print("TIME_SOURCE | PREVIEW: Google refresh done — first route updated to \(refreshedRoute.durationMinutes) min FROM GOOGLE (user currently viewing route \(currentRouteIndex + 1))")
                                 }
                             }
                             isRouteRefreshed = true  // Mark as refreshed
@@ -2738,6 +2743,7 @@ struct LocalRoutePickerSheet: View {
                         routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
                         generatedRoute = localRoute
                         generatedRouteData = deduplicatedResult
+                        print("TIME_SOURCE | Fresh route shown: \(localRoute.durationMinutes) min — FROM MAPKIT/OSRM (Google refresh will run after Let's Go)")
                         // Save as last valid for recycling on shuffle
                         lastValidRoute = localRoute
                         lastValidRouteData = deduplicatedResult
@@ -2990,6 +2996,10 @@ struct LocalRoutePickerSheet: View {
         print("⏱️ [LET'S GO] [\(timeString)] 🚶 handleStartWalk() STARTED")
         print("⏱️ [LET'S GO] [\(timeString)]   Route: '\(route.name)'")
         print("⏱️ [LET'S GO] [\(timeString)]   Duration: \(route.durationMinutes)min, Waypoints: \(route.qrMarkers.count)")
+        let timeSourceNote = (currentRouteIndex == 0 && isRouteRefreshed)
+            ? "FROM GOOGLE (refreshed on preview)"
+            : "FROM CACHE (background Google refresh will run — map/time will update when done)"
+        print("TIME_SOURCE | LET'S GO: Time on preview was \(route.durationMinutes) min — \(timeSourceNote)")
         
         // v2.1.0: Cancel background generation immediately
         shouldCancelBackgroundWork = true
@@ -3035,10 +3045,10 @@ struct LocalRoutePickerSheet: View {
             print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] 🌐 Fetching live Google Directions in background...")
             
             // Try Google refresh in background
-            if let refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
-                route: route,
-                userLocation: userLocation
-            ) {
+                if let refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
+                    route: route,
+                    userLocation: userLocation
+                ) {
                 await MainActor.run {
                     let refreshTimeString = formatter.string(from: Date())
                     
@@ -3047,6 +3057,7 @@ struct LocalRoutePickerSheet: View {
                     
                     let googleElapsed = Date().timeIntervalSince(startTime)
                     print("⏱️ [BACKGROUND REFRESH] [\(refreshTimeString)] ✅ Google route shown (total: \(String(format: "%.2f", googleElapsed))s)")
+                    print("TIME_SOURCE | BACKGROUND: Route and time NOW from Google — \(refreshedRoute.durationMinutes) min, \(refreshedRoute.distanceMeters)m (map updated)")
                     
                     // Debug polyline quality
                     let polylinePoints = refreshedRoute.routePath.count
@@ -3078,6 +3089,7 @@ struct LocalRoutePickerSheet: View {
                 }
             } else {
                 print("⏱️ [BACKGROUND REFRESH] [\(taskTimeString)] ⚠️ Google refresh failed - keeping original route")
+                print("TIME_SOURCE | BACKGROUND: Route and time NOT updated — still showing original \(route.durationMinutes) min (no Google refresh)")
             }
         }
     }
@@ -3145,7 +3157,7 @@ struct LocalRoutePickerSheet: View {
         }
     }
     
-    /// Refresh route list from cache/database. Shows loading, calls RouteCacheService.refreshRoute(), then updates allRoutes.
+    /// Refresh route list from cache/database. Shows loading, calls RouteCacheService.getCachedRoutes(), then updates allRoutes.
     private func handleRefreshRoutes() {
         guard let userCoord = locationService.currentLocation?.coordinate else {
             return
@@ -3153,7 +3165,7 @@ struct LocalRoutePickerSheet: View {
         Task {
             await MainActor.run { isRefreshingRoutes = true }
             defer { Task { @MainActor in isRefreshingRoutes = false } }
-            guard let cachedRoutes = RouteCacheService.shared.refreshRoute(near: userCoord, durationMinutes: selectedDuration),
+            guard let cachedRoutes = RouteCacheService.shared.getCachedRoutes(near: userCoord, durationMinutes: selectedDuration),
                   !cachedRoutes.isEmpty else {
                 return
             }
@@ -4437,6 +4449,7 @@ struct LocalRoutePickerSheet: View {
             routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
             generatedRoute = localRoute
             generatedRouteData = nil
+            print("TIME_SOURCE | Route shown (fallback path): \(localRoute.durationMinutes) min — FROM MAPKIT/OSRM (Google refresh will run after Let's Go)")
             // v1.8.13: Don't show map preview immediately - let stage animations complete first
             // showMapPreview = true  // REMOVED - this was causing stages to be skipped
         }

@@ -15,48 +15,58 @@ import CoreLocation
 struct PolylineDecoder {
     /// Decodes an encoded polyline string into an array of coordinates
     /// Based on Google's Polyline Algorithm: https://developers.google.com/maps/documentation/utilities/polylinealgorithm
+    /// Uses Int64 throughout to avoid overflow traps on malformed or extreme input; returns [] on error.
     static func decode(_ encodedPolyline: String) -> [CLLocationCoordinate2D] {
         var coordinates: [CLLocationCoordinate2D] = []
-        var index = encodedPolyline.startIndex
-        var lat = 0
-        var lng = 0
+        let bytes = Array(encodedPolyline.utf8)
+        let count = bytes.count
+        if count == 0 { return [] }
+        var pos = 0
+        var lat: Int64 = 0
+        var lng: Int64 = 0
         
-        while index < encodedPolyline.endIndex {
-            // Decode latitude
-            var result = 0
+        /// Read one byte; returns nil if out of bounds or outside Google's encoding range (63–126).
+        func readByte() -> Int? {
+            if pos < 0 || pos >= count { return nil }
+            let b = Int(bytes[pos])
+            pos += 1
+            if b < 63 || b > 126 { return nil } // Invalid for Google polyline
+            return b - 63
+        }
+        
+        /// Decode one signed value (lat or lng). Uses Int64 to avoid overflow; returns nil if malformed.
+        func decodeValue() -> Int64? {
+            var result: Int64 = 0
             var shift = 0
-            var byte: Int
-            
+            var byte = 0
             repeat {
-                byte = Int(encodedPolyline[index].asciiValue! - 63)
-                index = encodedPolyline.index(after: index)
-                result |= (byte & 0x1F) << shift
+                guard shift < 35 else { return nil }
+                guard let b = readByte() else { return nil }
+                byte = b
+                result |= Int64(byte & 0x1F) << shift
                 shift += 5
-            } while byte >= 0x20 && index < encodedPolyline.endIndex
-            
-            let deltaLat = ((result & 1) != 0) ? ~(result >> 1) : (result >> 1)
+            } while byte >= 0x20
+            let signed = ((result & 1) != 0) ? ~(result >> 1) : (result >> 1)
+            return signed
+        }
+        
+        /// Reasonable delta range (1e5 degrees ≈ 1000+ km per step) to avoid runaway accumulation.
+        let maxDelta: Int64 = 10_000_000
+        
+        while pos >= 0 && pos < count {
+            guard let deltaLat = decodeValue() else { break }
+            if pos >= count { break }
+            if abs(deltaLat) > maxDelta { break }
             lat += deltaLat
             
-            // Decode longitude
-            result = 0
-            shift = 0
-            
-            repeat {
-                guard index < encodedPolyline.endIndex else { break }
-                byte = Int(encodedPolyline[index].asciiValue! - 63)
-                index = encodedPolyline.index(after: index)
-                result |= (byte & 0x1F) << shift
-                shift += 5
-            } while byte >= 0x20 && index < encodedPolyline.endIndex
-            
-            let deltaLng = ((result & 1) != 0) ? ~(result >> 1) : (result >> 1)
+            guard let deltaLng = decodeValue() else { break }
+            if abs(deltaLng) > maxDelta { break }
             lng += deltaLng
             
-            let coordinate = CLLocationCoordinate2D(
-                latitude: Double(lat) / 1e5,
-                longitude: Double(lng) / 1e5
-            )
-            coordinates.append(coordinate)
+            let latDeg = Double(lat) / 1e5
+            let lngDeg = Double(lng) / 1e5
+            guard latDeg >= -90, latDeg <= 90, lngDeg >= -180, lngDeg <= 180 else { break }
+            coordinates.append(CLLocationCoordinate2D(latitude: latDeg, longitude: lngDeg))
         }
         
         return coordinates
@@ -412,11 +422,14 @@ struct WalkingRoute: Identifiable, Hashable {
     let walkingDirections: [WalkingDirection]  // Turn-by-turn directions
     let usedOSRMRouting: Bool  // v1.6.46: Track if polyline came from OSRM (driving profile)
     
-    // Default initializer with backwards compatibility
+    /// Alias for encodedPolyline (used by route creation and map display)
+    var trimmed: String? { encodedPolyline }
+    
+    // Default initializer with backwards compatibility (trimmed is alias for encodedPolyline)
     init(name: String, description: String, durationMinutes: Int, distanceMeters: Int,
          difficulty: RouteDifficulty, isIndoor: Bool, isAccessible: Bool,
          landmarks: [String], icon: String, color: Color, qrMarkers: [QRMarker],
-         routeType: RouteType = .curated, encodedPolyline: String? = nil,
+         routeType: RouteType = .curated, encodedPolyline: String? = nil, trimmed trimVal: String? = nil,
          walkingDirections: [WalkingDirection] = [],
          usedOSRMRouting: Bool = false) {
         self.name = name
@@ -431,7 +444,7 @@ struct WalkingRoute: Identifiable, Hashable {
         self.color = color
         self.qrMarkers = qrMarkers
         self.routeType = routeType
-        self.encodedPolyline = encodedPolyline
+        self.encodedPolyline = encodedPolyline ?? trimVal
         self.walkingDirections = walkingDirections
         self.usedOSRMRouting = usedOSRMRouting
     }
@@ -1458,3 +1471,4 @@ extension Badge {
         Badge(name: "Digital Pioneer", description: "Complete all 5 digital skills", icon: "iphone", color: .tealAccent, requirement: .digitalSkills(5))
     ]
 }
+
