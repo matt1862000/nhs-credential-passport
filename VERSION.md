@@ -4,7 +4,7 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.12 (Build 306)`
+**Current Version:** `2.1.13 (Build 307)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
@@ -12,7 +12,11 @@ The current codebase contains experimental changes and should **NOT** be used fo
 
 ## Version History
 
-### 2.1.12 (Build 306) - Current
+### 2.1.13 (Build 307) - Current
+- Pill: Google lock never unlocked except in endWalk(); startWalk() never sets hasReceivedGoogleRefreshForPill = false
+- Previous: 2.1.12 (Build 306)
+
+### 2.1.12 (Build 306)
 - Pill: first refresh locks mins left; MapKit fallback when Google fails (rate limit); PILL logging; walking alert overlay dark/light
 - Previous: 2.1.11 (Build 305)
 
@@ -158,4 +162,5 @@ git checkout 062eb41  # v1.9.16 commit (check if 1.9.15 tag exists)
 - **303**: Previous build (2.1.9) - Refresh button removed, location re-request only when stale
 - **304**: Previous build (2.1.10) - Google primacy for mins left, startWalk guard
 - **305**: Previous build (2.1.11) - Version/build bump
-- **306**: Current build (2.1.12) - Pill lock, MapKit fallback when Google fails, PILL logs, alert overlay
+- **306**: Previous build (2.1.12) - Pill lock, MapKit fallback when Google fails, PILL logs, alert overlay
+- **307**: Current build (2.1.13) - Google lock only cleared in endWalk
