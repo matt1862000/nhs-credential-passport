@@ -198,6 +198,7 @@ class RouteCacheService {
         let description: String?
         let directions: [WalkingDirection]?  // v1.6.45: Cached directions for instant load
         var isDeadZoneFallback: Bool = false  // v1.6.39: True if route is 70-74% (closest available)
+        var isFromPrePopulatedDatabase: Bool = false  // True when from PrePopulatedPOIService; route is first waypoint → … → first, we prepend GPS→first when displaying
     }
     
     /// Check if we have cached routes for this location and duration
@@ -229,9 +230,11 @@ class RouteCacheService {
             if restrictedFilteredCount > 0 {
                 print("📦 🏫 Filtered \(restrictedFilteredCount) pre-populated route(s) containing restricted POIs")
             }
+            print("📦 🏫 PREPOP_RESTRICTED_SUMMARY before=\(prePopulatedRoutes.count) after_restricted_filter=\(filteredRoutes.count) filtered_out=\(restrictedFilteredCount) (restricted = playcare/daycare/nursery/playground etc)")
             
             // Only return if we still have valid routes after filtering
             if !filteredRoutes.isEmpty {
+                print("ROUTES_SOURCE | source=prepop_database count=\(filteredRoutes.count) duration=\(durationMinutes) (pre-populated DB)")
                 return filteredRoutes
             } else {
                 print("📦 ⚠️ All pre-populated routes contained restricted POIs - falling back to regular cache")
@@ -332,6 +335,7 @@ class RouteCacheService {
                             let actualDurations = validRoutes.map { "\($0.route.durationMinutes)min" }.joined(separator: ", ")
                             print("📦 Route Cache FALLBACK! Using \(checkDuration)min slot for \(roundedDuration)min request → [\(actualDurations)] (within \(isEdgeCase ? "75-125%" : "80-120%") tolerance)")
                         }
+                        print("ROUTES_SOURCE | source=memory_cache count=\(validRoutes.count) duration=\(durationMinutes) (in-memory/disk cache)")
                         return validRoutes
                     }
                     
@@ -364,9 +368,11 @@ class RouteCacheService {
             let bestFallback = sorted.first!
             let accuracy = Double(bestFallback.route.durationMinutes) / Double(roundedDuration) * 100
             print("📦 🆘 DEAD ZONE ESCAPE! No routes ≥75%, returning closest available: \(bestFallback.route.durationMinutes)min (\(Int(accuracy))% of \(roundedDuration)min target)")
+            print("ROUTES_SOURCE | source=memory_cache count=1 dead_zone_fallback duration=\(durationMinutes)")
             return [sorted.first!]  // Return best single route
         }
         
+        print("ROUTES_SOURCE | source=none cache_miss duration=\(durationMinutes)")
         return nil
     }
     

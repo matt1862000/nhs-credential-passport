@@ -1876,6 +1876,8 @@ struct LocalRoutePickerSheet: View {
                 let cacheCheckStartTime = Date()
                 if shouldUseCache, let cachedRoutes = RouteCacheService.shared.getCachedRoutes(near: userLocation.coordinate, durationMinutes: selectedDuration), !cachedRoutes.isEmpty {
                     let cacheCheckElapsed = Date().timeIntervalSince(cacheCheckStartTime)
+                    let sourceLabel = cachedRoutes.first?.isFromPrePopulatedDatabase == true ? "prepop_database" : "memory_cache"
+                    print("ROUTES_SOURCE | using_routes source=\(sourceLabel) count=\(cachedRoutes.count) duration=\(selectedDuration) (confirm: app is using \(sourceLabel == "prepop_database" ? "pre-populated database" : "in-memory cache") for routes)")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE HIT! Found \(cachedRoutes.count) cached routes")
                     print("⏱️ [TIMING] Cache check: \(String(format: "%.3f", cacheCheckElapsed))s")
                     print("📦 Using \(cachedRoutes.count) cached routes for \(selectedDuration)min")
@@ -1913,14 +1915,90 @@ struct LocalRoutePickerSheet: View {
                     // v2.1.7: Filter close waypoints from cached routes (100m under 25min, 200m for 25+ min). Pre-populated routes always use 200m to match DB/trigger zone (e.g. Outwood Primary / Kirkhamgate Village Hall ~98 ft → collapse).
                     let filteredCachedRoute = mapsService.filterCloseWaypointsSync(from: firstCached.route, durationMinutes: selectedDuration, origin: userLocation.coordinate, isFromPrePopulatedDatabase: firstCached.isFromPrePopulatedDatabase)
                     
-                    // Pre-populated routes: start = GPS; prepend GPS→first, append last→GPS so route returns to start/end
+                    // Create markers early so we can use them for MapKit full-loop (prepop) or display
+                    let firstMarkersForPrepop: [QRMarker] = {
+                        let realPlaces = filteredCachedRoute.places.filter { $0.name != "Route Point" }
+                        return realPlaces.enumerated().map { index, place in
+                            let content = WellbeingContent.breathingExercises.randomElement() ?? WellbeingContent.breathingExercises[0]
+                            return QRMarker(
+                                code: "POI\(index + 1)",
+                                name: place.displayName,
+                                location: place.vicinity ?? "Local POI",
+                                coordinate: place.coordinate,
+                                contentType: .breathingExercise,
+                                content: content,
+                                pointsValue: 20 + (index * 5)
+                            )
+                        }
+                    }()
+                    
+                    // Pre-populated routes: use full loop from user (MapKit) for accurate preview duration; fallback to prepend+append if MapKit fails
                     var polylineToUse = filteredCachedRoute.polyline
                     var durationToUse = filteredCachedRoute.durationSeconds
                     var distanceToUse = filteredCachedRoute.distanceMeters
                     var directionsFromGpsToFirst: [WalkingDirection] = []
                     var directionsFromLastToGps: [WalkingDirection] = []
-                    if firstCached.isFromPrePopulatedDatabase,
-                       let firstPlace = filteredCachedRoute.places.first {
+                    var firstDirections: [WalkingDirection] = []
+                    if firstCached.isFromPrePopulatedDatabase, !firstMarkersForPrepop.isEmpty {
+                        let minimalRoute = WalkingRoute(
+                            name: firstCached.name ?? "Local Discovery",
+                            description: "Preview",
+                            durationMinutes: max(1, filteredCachedRoute.durationSeconds / 60),
+                            distanceMeters: filteredCachedRoute.distanceMeters,
+                            difficulty: .moderate,
+                            isIndoor: false,
+                            isAccessible: true,
+                            landmarks: filteredCachedRoute.places.map { $0.name },
+                            icon: "location.fill",
+                            color: .tealAccent,
+                            qrMarkers: firstMarkersForPrepop,
+                            routeType: .local,
+                            trimmed: filteredCachedRoute.polyline.isEmpty ? nil : filteredCachedRoute.polyline,
+                            walkingDirections: [],
+                            usedOSRMRouting: false,
+                            isFromPrePopulatedDatabase: true
+                        )
+                        let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: minimalRoute, userLocation: userLocation.coordinate)
+                        if mapKitRoute.durationMinutes > 0, let poly = mapKitRoute.trimmed, !poly.isEmpty {
+                            polylineToUse = poly
+                            durationToUse = mapKitRoute.durationMinutes * 60
+                            distanceToUse = mapKitRoute.distanceMeters
+                            firstDirections = mapKitRoute.walkingDirections
+                            print("📦 PREVIEW: Using MapKit full-loop from user — \(mapKitRoute.durationMinutes) min, \(mapKitRoute.distanceMeters)m (accurate for current location)")
+                        } else {
+                            // Fallback: prepend GPS→first, append last→GPS (original logic)
+                            if let firstPlace = filteredCachedRoute.places.first,
+                               let merged = await mapsService.prependGpsToFirstWaypointLeg(
+                                userLocation: userLocation.coordinate,
+                                firstWaypoint: firstPlace.coordinate,
+                                existingRoutePolyline: filteredCachedRoute.polyline,
+                                existingDurationSeconds: filteredCachedRoute.durationSeconds,
+                                existingDistanceMeters: filteredCachedRoute.distanceMeters
+                               ) {
+                                polylineToUse = merged.polyline
+                                durationToUse = merged.durationSeconds
+                                distanceToUse = merged.distanceMeters
+                                directionsFromGpsToFirst = merged.directionsFromGpsToFirst
+                                if let lastPlace = filteredCachedRoute.places.last,
+                                   let withReturn = await mapsService.appendLastWaypointToGpsLeg(
+                                    userLocation: userLocation.coordinate,
+                                    lastWaypoint: lastPlace.coordinate,
+                                    existingRoutePolyline: polylineToUse,
+                                    existingDurationSeconds: durationToUse,
+                                    existingDistanceMeters: distanceToUse
+                                   ) {
+                                    polylineToUse = withReturn.polyline
+                                    durationToUse = withReturn.durationSeconds
+                                    distanceToUse = withReturn.distanceMeters
+                                    directionsFromLastToGps = withReturn.directionsFromLastToGps
+                                }
+                                print("📦 Pre-populated route: fallback GPS→first→…→last→GPS (MapKit full-loop unavailable)")
+                            }
+                            firstDirections = directionsFromGpsToFirst + (firstCached.directions ?? []) + directionsFromLastToGps
+                        }
+                    } else if firstCached.isFromPrePopulatedDatabase,
+                              let firstPlace = filteredCachedRoute.places.first {
+                        // Prepop but no markers (shouldn't happen) or fallback path
                         if let merged = await mapsService.prependGpsToFirstWaypointLeg(
                             userLocation: userLocation.coordinate,
                             firstWaypoint: firstPlace.coordinate,
@@ -1932,7 +2010,6 @@ struct LocalRoutePickerSheet: View {
                             durationToUse = merged.durationSeconds
                             distanceToUse = merged.distanceMeters
                             directionsFromGpsToFirst = merged.directionsFromGpsToFirst
-                            // Append return leg (last waypoint → GPS) so route returns to start/end
                             if let lastPlace = filteredCachedRoute.places.last,
                                let withReturn = await mapsService.appendLastWaypointToGpsLeg(
                                 userLocation: userLocation.coordinate,
@@ -1946,16 +2023,16 @@ struct LocalRoutePickerSheet: View {
                                 distanceToUse = withReturn.distanceMeters
                                 directionsFromLastToGps = withReturn.directionsFromLastToGps
                             }
-                            print("📦 Pre-populated route: GPS→first→…→last→GPS (returns to start/end), +\((durationToUse - filteredCachedRoute.durationSeconds) / 60)min total")
+                            print("📦 Pre-populated route: GPS→first→…→last→GPS (returns to start/end)")
                         }
+                        firstDirections = directionsFromGpsToFirst + (firstCached.directions ?? []) + directionsFromLastToGps
+                    } else {
+                        firstDirections = directionsFromGpsToFirst + (firstCached.directions ?? []) + directionsFromLastToGps
                     }
-                    
-                    // Pre-populated: first directions = GPS→first, then route, then last→GPS. Non–pre-populated: cached or empty.
-                    var firstDirections: [WalkingDirection] = directionsFromGpsToFirst + (firstCached.directions ?? []) + directionsFromLastToGps
                     // v2.1.7: Filter contradictory directions from cached directions too
                     if !firstDirections.isEmpty {
                         firstDirections = filterContradictoryDirections(firstDirections)
-                        print("⚡ Using cached directions - instant load!")
+                        print("⚡ Using directions for preview (MapKit full-loop or cached)")
                         
                         // #region agent log
                         let logData4: [String: Any] = [
@@ -1979,25 +2056,7 @@ struct LocalRoutePickerSheet: View {
                         // #endregion
                     }
                     
-                    // Create minimal markers (quick creation, will enhance in background)
-                    let firstMarkers = await MainActor.run {
-                        // Quick marker creation - minimal processing for instant display
-                        // Filter out placeholder "Route Point" POIs - these are just topology markers, not real waypoints
-                        let realPlaces = filteredCachedRoute.places.filter { $0.name != "Route Point" }
-                        return realPlaces.enumerated().map { index, place in
-                            let content = WellbeingContent.breathingExercises.randomElement() ?? WellbeingContent.breathingExercises[0]
-                            return QRMarker(
-                                code: "POI\(index + 1)",
-                                name: place.displayName,  // Use cleaned display name
-                                location: place.vicinity ?? "Local POI",
-                                coordinate: place.coordinate,
-                                contentType: .breathingExercise,
-                                content: content,
-                                pointsValue: 20 + (index * 5)
-                            )
-                        }
-                    }
-                    
+                    let firstMarkers = firstMarkersForPrepop
                     let firstRouteDifficulty: RouteDifficulty = (durationToUse / 60) <= 10 ? .easy : ((durationToUse / 60) <= 20 ? .moderate : .challenging)
                     
                     let firstRouteName = firstCached.name ?? "Local Discovery"
@@ -2523,6 +2582,7 @@ struct LocalRoutePickerSheet: View {
                 }
                 
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE MISS - generating fresh route...")
+                print("ROUTES_SOURCE | source=live_generation duration=\(selectedDuration) (no database/cache hit, generating routes now)")
                 
                 // 🔧 DEBUG: Database-only mode - don't generate routes if database doesn't have them
                 if RoutingToggles.databaseOnlyMode {
@@ -3035,10 +3095,19 @@ struct LocalRoutePickerSheet: View {
         
         // v2.1.1: Refresh directions in BACKGROUND (map already visible)
         // Use MapKit FIRST so directions appear quickly; then Google in background when complete
-        // CONSOLE: Filter by "DIRECTIONS" to see this flow
+        // CONSOLE: Filter by "DIRECTIONS" or "REFRESH_SOURCE" to see this flow
         Task {
             let taskTimeString = formatter.string(from: Date())
+            let routeSource: String
+            if route.usedOSRMRouting {
+                routeSource = "cached_OSM"  // OSRM/OSM route — will be refreshed by MapKit (Apple) then Google
+            } else if route.isFromPrePopulatedDatabase {
+                routeSource = "prepop"
+            } else {
+                routeSource = "mapkit_or_google"  // Already from MapKit or Google
+            }
             print("DIRECTIONS | ========== direction refresh started ==========")
+            print("REFRESH_SOURCE | [\(taskTimeString)] route_source=\(routeSource) name='\(route.name)' waypoints=\(route.qrMarkers.count) usedOSRM=\(route.usedOSRMRouting) isPrePop=\(route.isFromPrePopulatedDatabase)")
             print("DIRECTIONS | [\(taskTimeString)] Route: '\(route.name)' waypoints: \(route.qrMarkers.count) hasDirections: \(!route.walkingDirections.isEmpty)")
             
             // Wait briefly for location (often nil the instant user taps Let's Go)
@@ -3056,11 +3125,13 @@ struct LocalRoutePickerSheet: View {
                 return
             }
             
-            // 1. MapKit first — directions show as soon as this returns
+            // 1. MapKit (Apple) first — directions show as soon as this returns
             let mapKitStart = Date()
+            print("REFRESH_SOURCE | [\(taskTimeString)] step=mapkit_apple_start (refreshing \(routeSource) route with MapKit / Apple)")
             print("DIRECTIONS | [\(taskTimeString)] 🍎 MapKit refresh starting...")
             let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: route, userLocation: userLocation)
             let mapKitElapsed = Date().timeIntervalSince(mapKitStart)
+            print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=mapkit_apple_done elapsed=\(String(format: "%.2f", mapKitElapsed))s dirs=\(mapKitRoute.walkingDirections.count)")
             print("DIRECTIONS | [\(formatter.string(from: Date()))] MapKit returned in \(String(format: "%.2f", mapKitElapsed))s dirs: \(mapKitRoute.walkingDirections.count)")
             await MainActor.run {
                 viewModel.updateCurrentRoute(mapKitRoute)
@@ -3069,46 +3140,25 @@ struct LocalRoutePickerSheet: View {
             
             // 2. Google in background — when complete, upgrade route (better polyline/directions)
             guard mapsService.hasAPIKey else {
+                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_skipped reason=no_api_key")
                 print("DIRECTIONS | [\(formatter.string(from: Date()))] No API key - stopping (MapKit route only)")
                 return
             }
             
             let googleStart = Date()
+            print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_start (refreshing MapKit route with Google)")
             print("DIRECTIONS | [\(formatter.string(from: Date()))] 🌐 Google refresh starting (background upgrade)...")
             if let refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
-                route: route,
+                route: mapKitRoute,
                 userLocation: userLocation
             ) {
                 let googleElapsed = Date().timeIntervalSince(googleStart)
+                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_done elapsed=\(String(format: "%.2f", googleElapsed))s (MapKit route was upgraded by Google)")
                 print("DIRECTIONS | [\(formatter.string(from: Date()))] Google returned in \(String(format: "%.2f", googleElapsed))s")
-                var routeToShow = refreshedRoute
-                var pillShouldReflectAdjustedRoute = false
-                if refreshedRoute.isFromPrePopulatedDatabase {
-                    let targetDuration = selectedDuration
-                    let (adjusted, didDrop) = await mapsService.tryAdjustPrePopRouteDuration(
-                        refreshedRoute: refreshedRoute,
-                        userLocation: userLocation,
-                        targetMinutes: targetDuration
-                    )
-                    if let adj = adjusted {
-                        if didDrop {
-                            routeToShow = refreshedRoute
-                            await MainActor.run { viewModel.offerAdjustedRoute(adj) }
-                            print("DIRECTIONS | Pre-pop: offered adjusted route (dropped waypoints)")
-                        } else {
-                            routeToShow = adj
-                            pillShouldReflectAdjustedRoute = true
-                            print("DIRECTIONS | Pre-pop: applied adjusted route")
-                        }
-                    }
-                }
+                let routeToShow = refreshedRoute
                 await MainActor.run {
-                    if pillShouldReflectAdjustedRoute {
-                        viewModel.applyAdjustedRouteAndUpdatePill(routeToShow)
-                    } else {
-                        viewModel.updateCurrentRoute(routeToShow)
-                    }
-                    print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ Google route applied (total: \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s)")
+                    viewModel.updateCurrentRoute(routeToShow, sourceIsGoogle: true)
+                        print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ Google route applied (total: \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s)")
                 }
                 
                 if mapsService.lastRouteHadRestrictedRoads {
@@ -3121,8 +3171,10 @@ struct LocalRoutePickerSheet: View {
                     }
                 }
             } else {
+                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_failed (keeping MapKit/Apple route)")
                 print("DIRECTIONS | [\(formatter.string(from: Date()))] ⚠️ Google refresh failed - keeping MapKit route")
             }
+            print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] sequence_done (order: \(routeSource) → MapKit (Apple) → Google)")
             print("DIRECTIONS | ========== direction refresh finished ==========")
         }
     }
@@ -4749,7 +4801,7 @@ struct LocalRoutePickerSheet: View {
                 if index + 1 < directions.count {
                     let nextDirection = directions[index + 1]
                     let nextInstructionLower = nextDirection.instruction.lowercased()
-                    let nextIsTurnOnto = nextInstructionLower.contains("turn") && nextInstructionLower.contains("onto")
+                    _ = nextInstructionLower.contains("turn") && nextInstructionLower.contains("onto")
                     
                     // Extract road names from both instructions
                     let extractRoadName = { (text: String) -> String? in

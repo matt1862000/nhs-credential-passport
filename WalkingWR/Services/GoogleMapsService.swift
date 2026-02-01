@@ -838,6 +838,8 @@ class GoogleMapsService: ObservableObject {
     private let rateLimiter = MapKitRateLimiter()
     private let mapKitRateLimit = 45  // Stay under 50 to be safe
     private let mapKitRateLimitWindow: TimeInterval = 60
+    /// Cap rate-limit wait so post-Let's-Go refresh never blocks 50+ seconds (was causing ~53s delay).
+    private let mapKitRateLimitMaxWait: TimeInterval = 10
     
     // MARK: - OSM Mirror Health Tracking
     // Track OSM mirror health and rate limits for intelligent rotation
@@ -847,10 +849,11 @@ class GoogleMapsService: ObservableObject {
     private func checkMapKitRateLimit() async {
         let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
         
-        // If approaching limit, wait for oldest request to expire
+        // If approaching limit, wait for oldest request to expire (capped so Let's Go refresh doesn't block 50+ s)
         if status.shouldWait, let waitTime = status.waitTime, waitTime > 0 {
-            print("⏳ Approaching MapKit rate limit (\(status.currentCount)/50), waiting \(Int(waitTime))s...")
-            try? await Task.sleep(nanoseconds: UInt64(waitTime * 1_000_000_000))
+            let capped = min(waitTime, mapKitRateLimitMaxWait)
+            print("⏳ Approaching MapKit rate limit (\(status.currentCount)/50), waiting \(Int(capped))s (capped from \(Int(waitTime))s)...")
+            try? await Task.sleep(nanoseconds: UInt64(capped * 1_000_000_000))
         }
     }
     
@@ -6362,6 +6365,8 @@ class GoogleMapsService: ObservableObject {
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: startTime)
         
+        let routeSourceLabel = route.usedOSRMRouting ? "cached_OSM" : (route.isFromPrePopulatedDatabase ? "prepop" : "mapkit_or_google")
+        print("REFRESH_SOURCE | [\(timeString)] refreshRouteWithMapKit STARTED incoming=\(routeSourceLabel) usedOSRM=\(route.usedOSRMRouting) isPrePop=\(route.isFromPrePopulatedDatabase)")
         print("⏱️ [ROUTE REFRESH] [\(timeString)] 🍎 refreshRouteWithMapKit() STARTED")
         print("🍎 REFRESH: Getting fresh MapKit directions for navigation...")
         
@@ -6546,6 +6551,7 @@ class GoogleMapsService: ObservableObject {
         let endTime = Date()
         let endTimeString = formatter.string(from: endTime)
         let totalElapsed = endTime.timeIntervalSince(startTime)
+        print("REFRESH_SOURCE | [\(endTimeString)] refreshRouteWithMapKit COMPLETED elapsed=\(String(format: "%.2f", totalElapsed))s (Apple/MapKit route ready)")
         print("⏱️ [ROUTE REFRESH] [\(endTimeString)] ✅ refreshRouteWithMapKit() COMPLETED in \(String(format: "%.2f", totalElapsed))s")
         
         return refreshedRoute
@@ -7186,6 +7192,8 @@ class GoogleMapsService: ObservableObject {
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: startTime)
         
+        let incomingSourceLabel = route.usedOSRMRouting ? "cached_OSM" : (route.isFromPrePopulatedDatabase ? "prepop" : "mapkit_or_google")
+        print("REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly STARTED incoming=\(incomingSourceLabel) (typically MapKit/Apple route from previous step)")
         print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] 🚀 refreshRouteWithGoogleOnly() STARTED")
         print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)]   Route: '\(route.name)'")
         print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)]   Waypoints: \(route.qrMarkers.count)")
@@ -7447,6 +7455,8 @@ class GoogleMapsService: ObservableObject {
                 self.lastRouteHadRestrictedRoads = false
             }
             
+            let endTimeString = formatter.string(from: Date())
+            print("REFRESH_SOURCE | [\(endTimeString)] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready)")
             print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ✅ SUCCESS: \(durationMinutes)min, \(totalDistance)m, \(freshDirections.count) steps (elapsed: \(String(format: "%.2f", elapsed))s)")
             
             // v2.1.2: Keep original marker positions for display, but use snapped coordinates for:

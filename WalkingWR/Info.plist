@@ -33,8 +33,8 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>CFBundleShortVersionString</key>
-	<string>2.1.18</string>
+	<string>2.1.19</string>
 	<key>CFBundleVersion</key>
-	<string>312</string>
+	<string>313</string>
 </dict>
 </plist>

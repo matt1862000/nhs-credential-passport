@@ -617,6 +617,7 @@ struct EmbeddedWalkMapView: View {
                     pillContext: "active_walk",
                     walkDurationMinutes: pillDisplayMinutes,
                     walkStartTime: viewModel.walkSession.startTime,
+                    showMinsLeft: viewModel.hasReceivedGoogleRefreshForPill,
                     healthKitService: viewModel.healthKitService,
                     isStepTrackingEnabled: $isStepTrackingEnabled,
                     showMotionExplainer: $showMotionExplainer,
@@ -946,22 +947,50 @@ struct EmbeddedWalkMapView: View {
             return
         }
         
-        // When staying centered on route (Let's Go): show route + POIs with padding once, no auto-follow
+        // When staying centered on route (Let's Go): same smooth three-phase as non-stayCentered (verySlowAnimation, 4s/8s/11s)
         if stayCentered {
             hasPlayedIntro = true
-            introPhase = .showingFullRoute
             showingIntroOverlay = true
-            let region = regionForRouteWithPadding(currentRoute, paddingFactor: 1.5)
             isProgrammaticCameraUpdate = true
             lastProgrammaticUpdateTime = Date()
-            withAnimation(.easeInOut(duration: 0.8)) {
-                cameraPosition = .region(region)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                withAnimation(.easeOut(duration: 0.5)) {
-                    showingIntroOverlay = false
+            let region = regionForRouteWithPadding(currentRoute, paddingFactor: 1.5)
+            let verySlowAnimation = Animation.easeInOut(duration: 2.5)
+            guard let firstWaypoint = currentRoute.qrMarkers.first?.coordinate else {
+                introPhase = .showingFullRoute
+                withAnimation(verySlowAnimation) { cameraPosition = .region(region) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    withAnimation(.easeOut(duration: 0.5)) { showingIntroOverlay = false }
+                    calculateRoute()
                 }
-                calculateRoute()
+                return
+            }
+            // Phase 1: Your first destination (same timing as non-stayCentered)
+            introPhase = .showingFirstWaypoint
+            withAnimation(verySlowAnimation) {
+                cameraPosition = .region(MKCoordinateRegion(center: firstWaypoint, latitudinalMeters: 100, longitudinalMeters: 100))
+            }
+            // Phase 2: Your route (after 4 seconds)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+                guard !userInteractedWithMap else { return }
+                introPhase = .showingFullRoute
+                withAnimation(verySlowAnimation) { cameraPosition = .region(region) }
+            }
+            // Phase 3: Your location (after 8 seconds)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
+                guard !userInteractedWithMap else { return }
+                introPhase = .followingUser
+                if let loc = viewModel.locationService.currentLocation {
+                    let heading: CLLocationDirection = viewModel.locationService.heading?.trueHeading ?? 0
+                    let cam = MapCamera(centerCoordinate: loc.coordinate, distance: 150.0, heading: heading, pitch: 0)
+                    currentZoomLevel = 150.0
+                    currentCameraState = cam
+                    withAnimation(verySlowAnimation) { cameraPosition = .camera(cam) }
+                }
+            }
+            // Hide overlay (after 11 seconds)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 11.0) {
+                withAnimation(.easeOut(duration: 1.0)) { showingIntroOverlay = false }
+                if !userInteractedWithMap { calculateRoute() }
             }
             return
         }
@@ -1183,16 +1212,31 @@ struct EmbeddedWalkMapView: View {
         }
     }
     
-    /// v1.9.10: Show full route overview briefly, then return to camera-following mode (unless staying centered on route)
+    /// v1.9.10: Show full route overview briefly, then return to current location (compass/location button)
     private func showFullRouteThenFollow() {
-        // When staying centered on route (Let's Go): location button only re-centers on route with padding, no follow
+        // When staying centered on route (Let's Go): show full route, then after 2s zoom back to current location
         if viewModel.mapStayCenteredOnRoute {
-            guard let currentRoute = viewModel.walkSession.currentRoute else { return }
-            let region = regionForRouteWithPadding(currentRoute, paddingFactor: 1.5)
-            isProgrammaticCameraUpdate = true
-            lastProgrammaticUpdateTime = Date()
-            withAnimation(.easeInOut(duration: 0.8)) {
-                cameraPosition = .region(region)
+            if let currentRoute = viewModel.walkSession.currentRoute {
+                let region = regionForRouteWithPadding(currentRoute, paddingFactor: 1.5)
+                isProgrammaticCameraUpdate = true
+                lastProgrammaticUpdateTime = Date()
+                withAnimation(.easeInOut(duration: 1.0)) {
+                    cameraPosition = .region(region)
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                guard let location = viewModel.locationService.currentLocation else { return }
+                let heading = viewModel.locationService.heading?.trueHeading ?? currentCamera?.heading ?? 0
+                let zoom: Double = 150.0
+                let camera = MapCamera(centerCoordinate: location.coordinate, distance: zoom, heading: heading, pitch: currentCamera?.pitch ?? 0)
+                currentZoomLevel = zoom
+                currentCamera = camera
+                currentCameraState = camera
+                isProgrammaticCameraUpdate = true
+                lastProgrammaticUpdateTime = Date()
+                withAnimation(.easeInOut(duration: 1.0)) {
+                    cameraPosition = .camera(camera)
+                }
             }
             return
         }
@@ -3174,6 +3218,8 @@ struct CompactStatusRing: View {
     var pillContext: String = "unknown"
     let walkDurationMinutes: Int
     let walkStartTime: Date?
+    /// When false, pill never shows "X mins left" until Google has refreshed; can still show "Track steps?" when step permission not granted.
+    var showMinsLeft: Bool = true
 
     @ObservedObject var healthKitService: HealthKitService
     @Binding var isStepTrackingEnabled: Bool
@@ -3205,6 +3251,7 @@ struct CompactStatusRing: View {
             pillContext: pillContext,
             walkDurationMinutes: walkDurationMinutes,
             walkStartTime: walkStartTime,
+            showMinsLeft: showMinsLeft,
             shouldAlternate: shouldAlternate,
             showStepsOnly: showStepsOnly,
             isStepsEnabled: isStepTrackingEnabled,
@@ -3234,6 +3281,8 @@ private struct CompactStatusPillContent: View {
     let pillContext: String
     let walkDurationMinutes: Int
     let walkStartTime: Date?
+    /// When false, never show "X mins left"; show placeholder until Google has refreshed. "Track steps?" can still show.
+    var showMinsLeft: Bool = true
     let shouldAlternate: Bool
     var showStepsOnly: Bool = false
     var isStepsEnabled: Bool = false
@@ -3255,8 +3304,11 @@ private struct CompactStatusPillContent: View {
             if showingStepsPrompt && shouldAlternate {
                 stepsPillView
                     .transition(.opacity.combined(with: .scale))
-            } else {
+            } else if showMinsLeft {
                 infoPillView
+                    .transition(.opacity.combined(with: .scale))
+            } else {
+                waitingForRefreshPillView
                     .transition(.opacity.combined(with: .scale))
             }
         }
@@ -3396,6 +3448,37 @@ private struct CompactStatusPillContent: View {
         .buttonStyle(.plain)
         .contentShape(Capsule())
         .disabled(isStepsEnabled) // non-tappable if steps enabled
+    }
+
+    // MARK: - Waiting for Google refresh (no mins left until refreshed)
+    private var waitingForRefreshPillView: some View {
+        Button(action: {
+            if !isStepsEnabled {
+                if healthKitService.isMotionAuthorized {
+                    DispatchQueue.main.async { onEnableSteps() }
+                } else {
+                    DispatchQueue.main.async { showMotionExplainer = true }
+                }
+            }
+        }) {
+            HStack(spacing: 6) {
+                Image(systemName: "figure.walk")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(colorScheme == .dark ? .tealAccent : Color(red: 0.0, green: 0.45, blue: 0.45))
+                Text("Calculating time left")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(colorScheme == .dark ? .tealAccent.opacity(0.9) : Color(red: 0.0, green: 0.45, blue: 0.45).opacity(0.9))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                Capsule()
+                    .fill(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.95))
+                    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 4, y: 2)
+            )
+        }
+        .buttonStyle(.plain)
+        .contentShape(Capsule())
     }
 
     // MARK: - Urgency color based on remaining minutes

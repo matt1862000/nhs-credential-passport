@@ -104,6 +104,13 @@ class PrePopulatedPOIService {
     /// Telemetry prefix for database/route logs (filter logs by this)
     private static let telem = "📊 [TELEM]"
     
+    /// Identifier for logging: route name if set, otherwise first POIs e.g. "POI1 → POI2"
+    private func routeIdentifier(name: String?, places: [PrePopulatedPOIDatabase.PrePopulatedPOI]) -> String {
+        if let n = name, !n.isEmpty { return n }
+        let names = places.prefix(3).map { $0.name }
+        return names.isEmpty ? "nil" : names.joined(separator: " → ")
+    }
+    
     /// Known postcode area centers (must match generate_database.py / Apps Script). Used for fallback when DB center is (0,0).
     private static let postcodeCenters: [(postcode: String, lat: Double, lon: Double)] = [
         ("WF2 0GU", 53.7029, -1.5496),
@@ -336,9 +343,11 @@ class PrePopulatedPOIService {
                         if fromAdjacent {
                             print("📦 Pre-populated DB: Checking adjacent duration bucket \(checkDuration)min for \(roundedDuration)min request")
                         }
+                        print("\(Self.telem) DB_PREPOP_BUCKET duration=\(checkDuration) routes_in_bucket=\(routeGroup.routes.count) requested=\(roundedDuration)")
                         for routeData in routeGroup.routes {
-                            let routeName = routeData.name ?? "nil"
+                            let routeName = self.routeIdentifier(name: routeData.name, places: routeData.places)
                             if requireMinWaypoints >= 2 && routeData.places.count < 2 {
+                                print("\(Self.telem) ROUTE_DISCARDED name=\"\(routeName)\" reason=single_waypoint placesCount=\(routeData.places.count) requireMinWaypoints=\(requireMinWaypoints)")
                                 continue
                             }
                             // Travel time from current GPS to the route: use MIN over all waypoints so routes
@@ -369,21 +378,76 @@ class PrePopulatedPOIService {
                             
                             if totalDurationMinutes < minAcceptableMinutes || totalDurationMinutes > maxAcceptableMinutes {
                                 let travelMin = timeToStartSeconds / 60
-                                print("📦 Route '\(routeData.name ?? "nil")': REJECTED - Total duration \(totalDurationMinutes)min (route: \(routeData.durationSeconds/60)min + travel to closest: \(travelMin)min) outside 80–120% [\(minAcceptableMinutes)–\(maxAcceptableMinutes)]min for requested \(roundedDuration)min")
-                                print("\(Self.telem) ROUTE_DISCARDED name=\"\(routeName)\" reason=duration totalMin=\(totalDurationMinutes) routeMin=\(routeData.durationSeconds/60) travelMin=\(travelMin) allowed=\(minAcceptableMinutes)-\(maxAcceptableMinutes) requested=\(roundedDuration)")
+                                let tooLong = totalDurationMinutes > maxAcceptableMinutes
+                                // If route is too long and has 3+ waypoints: try drop 1 (first, middle or last), then if none fit try drop 2
+                                if tooLong && routeData.places.count >= 3 {
+                                    let places = routeData.places
+                                    var addedDrop1 = false
+                                    // Phase 1 – Drop 1: try removing first, then each middle, then last
+                                    for dropIndex in 0..<places.count {
+                                        let sub = places.enumerated().filter { $0.offset != dropIndex }.map(\.element)
+                                        guard sub.count >= 2 else { continue }
+                                        var totalM = 0.0
+                                        var prev = location
+                                        for poi in sub {
+                                            let coord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+                                            totalM += self.distanceBetween(prev, coord)
+                                            prev = coord
+                                        }
+                                        totalM += self.distanceBetween(prev, location)
+                                        let sec = Int((totalM / walkingSpeedMperMin) * 60)
+                                        let min = sec / 60
+                                        guard min >= minAcceptableMinutes && min <= maxAcceptableMinutes else { continue }
+                                        let coords = [location] + sub.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) } + [location]
+                                        let placeResults = sub.map { poi -> PlaceResult in
+                                            PlaceResult(placeId: poi.placeId, name: poi.name, vicinity: poi.vicinity, geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)), types: poi.types, source: POISource.fromString(poi.source))
+                                        }
+                                        let polyline = self.encodeSimplePolyline(coords)
+                                        let generatedRoute = GeneratedRoute(places: placeResults, polyline: polyline, distanceMeters: Int(totalM), durationSeconds: sec, legs: [])
+                                        let cached = RouteCacheService.CachedRouteWithMetadata(route: generatedRoute, name: nil, description: nil, directions: nil, isFromPrePopulatedDatabase: true)
+                                        result.append(cached)
+                                        addedDrop1 = true
+                                        let names = sub.map(\.name).joined(separator: "–")
+                                        print("📦 Drop 1 (idx \(dropIndex)): '\(routeName)' → \(names) (\(min)min) for \(roundedDuration)min request")
+                                        print("\(Self.telem) ROUTE_ADDED name=\"\(names)\" reason=drop_1 totalMin=\(min) requested=\(roundedDuration)")
+                                    }
+                                    // Phase 2 – Drop 2: if no drop-1 fit, try each single waypoint (we only have up to 3-waypoint routes)
+                                    // Use same distance-dependent path factor as single-waypoint synthesis
+                                    if !addedDrop1 {
+                                        for poi in places {
+                                            let coord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+                                            let dStraight = self.distanceBetween(location, coord)
+                                            let factor = dStraight <= 400 ? 1.5 : (dStraight <= 800 ? 1.35 : 1.25)
+                                            let roundTripM = 2 * dStraight * factor
+                                            let sec = Int((roundTripM / walkingSpeedMperMin) * 60)
+                                            let min = sec / 60
+                                            guard min >= minAcceptableMinutes && min <= maxAcceptableMinutes else { continue }
+                                            let placeResult = PlaceResult(placeId: poi.placeId, name: poi.name, vicinity: poi.vicinity, geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)), types: poi.types, source: POISource.fromString(poi.source))
+                                            if GoogleMapsService.shared.isRestrictedPOI(placeResult) { continue }
+                                            let polyline = self.encodeSimplePolyline([location, coord, location])
+                                            let generatedRoute = GeneratedRoute(places: [placeResult], polyline: polyline, distanceMeters: Int(roundTripM), durationSeconds: sec, legs: [])
+                                            let cached = RouteCacheService.CachedRouteWithMetadata(route: generatedRoute, name: nil, description: nil, directions: nil, isFromPrePopulatedDatabase: true)
+                                            result.append(cached)
+                                            print("📦 Drop 2: '\(routeName)' → \(poi.name) only (\(min)min) for \(roundedDuration)min request")
+                                            print("\(Self.telem) ROUTE_ADDED name=\"\(poi.name)\" reason=drop_2_single totalMin=\(min) requested=\(roundedDuration)")
+                                        }
+                                    }
+                                }
+                                print("📦 Route '\(routeName)': REJECTED - Total duration \(totalDurationMinutes)min (route: \(routeData.durationSeconds/60)min + travel to closest: \(travelMin)min, \(Int(distanceToStart))m) outside 80–120% [\(minAcceptableMinutes)–\(maxAcceptableMinutes)]min for requested \(roundedDuration)min")
+                                print("\(Self.telem) ROUTE_DISCARDED name=\"\(routeName)\" reason=duration totalMin=\(totalDurationMinutes) routeMin=\(routeData.durationSeconds/60) travelMin=\(travelMin) distToClosestM=\(Int(distanceToStart)) allowed=\(minAcceptableMinutes)-\(maxAcceptableMinutes) requested=\(roundedDuration)")
                                 continue
                             }
                             
                             if fromAdjacent {
-                                print("📦 Route '\(routeData.name ?? "nil")': ACCEPTED from \(checkDuration)min bucket - Total \(totalDurationMinutes)min within 80–120% of \(roundedDuration)min request (route: \(routeData.durationSeconds/60)min + \(timeToStartSeconds/60)min travel to closest)")
+                                print("📦 Route '\(routeName)': ACCEPTED from \(checkDuration)min bucket - Total \(totalDurationMinutes)min within 80–120% of \(roundedDuration)min request (route: \(routeData.durationSeconds/60)min + \(timeToStartSeconds/60)min travel to closest)")
                             } else {
-                                print("📦 Route '\(routeData.name ?? "nil")': Added \(timeToStartSeconds/60)min travel from GPS (\(Int(distanceToStart))m) to closest waypoint. Route: \(routeData.durationSeconds/60)min → Total: \(totalDurationMinutes)min (within \(minAcceptableMinutes)–\(maxAcceptableMinutes)min)")
+                                print("📦 Route '\(routeName)': Added \(timeToStartSeconds/60)min travel from GPS (\(Int(distanceToStart))m) to closest waypoint. Route: \(routeData.durationSeconds/60)min → Total: \(totalDurationMinutes)min (within \(minAcceptableMinutes)–\(maxAcceptableMinutes)min)")
                             }
                             
                             // Remove waypoints that are too close so POI trigger zones (~200m) don't overlap. Drops "middle" waypoints (e.g. Village Hall → Outwood → Star Inn becomes Village Hall → Star Inn when Outwood is <200m from Village Hall).
                             let minDist = self.minWaypointDistanceForTriggerZone
                             guard let filteredPOIsUnordered = self.filterCloseWaypoints(places: routeData.places, minDistance: minDist) else {
-                                print("📦 Route '\(routeData.name ?? "nil")': SKIPPED - after removing waypoints < \(Int(minDist))m apart (trigger zone), no waypoints remain")
+                                print("📦 Route '\(routeName)': SKIPPED - after removing waypoints < \(Int(minDist))m apart (trigger zone), no waypoints remain")
                                 print("\(Self.telem) ROUTE_DISCARDED name=\"\(routeName)\" reason=waypoint_filter minDist=\(Int(minDist)) waypointsRemaining=0")
                                 continue
                             }
@@ -453,6 +517,13 @@ class PrePopulatedPOIService {
                     print("\(Self.telem) DB_FALLBACK postcode=\(area.postcode) reason=no_2plus_waypoints requested=\(roundedDuration)")
                     cachedRoutes = collectRoutes(0)
                 }
+                // Single-waypoint options: synthesize from POIs in duration buckets and from area's full POI list (so e.g. Oriental Chef in WF2 can appear even if not a route waypoint).
+                let syntheticSingleWP = buildSyntheticSingleWaypointRoutes(routes: routes, durationsToCheck: durationsToCheck, location: location, roundedDuration: roundedDuration, areaPOIs: area.pois)
+                if !syntheticSingleWP.isEmpty {
+                    print("📦 Pre-populated DB: Added \(syntheticSingleWP.count) single-waypoint options (from POIs in duration buckets)")
+                    print("\(Self.telem) DB_SINGLE_WP added=\(syntheticSingleWP.count) requested=\(roundedDuration)")
+                    cachedRoutes.append(contentsOf: syntheticSingleWP)
+                }
                 
                 print("\(Self.telem) DB_CANDIDATES postcode=\(area.postcode) beforeDedupe=\(cachedRoutes.count) requested=\(roundedDuration)")
                 
@@ -499,7 +570,9 @@ class PrePopulatedPOIService {
                     print("\(Self.telem) DB_RESULT returned=\(capped.count) postcode=\(area.postcode) requested=\(roundedDuration)")
                     return capped
                 } else {
-                    print("📦 Pre-populated DB: Postcode area '\(area.postcode)' has routes but none passed filters for \(roundedDuration)min (checked \(roundedDuration)±5,±10 min buckets)")
+                    let totalInBuckets = durationsToCheck.reduce(0) { sum, d in sum + (routes.first(where: { $0.durationMinutes == d })?.routes.count ?? 0) }
+                    print("📦 Pre-populated DB: Postcode area '\(area.postcode)' has routes but none passed filters for \(roundedDuration)min (checked \(roundedDuration)±5,±10 min buckets; total routes in those buckets=\(totalInBuckets))")
+                    print("\(Self.telem) DB_RESULT returned=0 reason=all_filtered postcode=\(area.postcode) total_in_buckets=\(totalInBuckets) requested=\(roundedDuration) (filter by ROUTE_DISCARDED to see reason=duration|waypoint_filter|single_waypoint)")
                 }
             }
         }
@@ -593,6 +666,134 @@ class PrePopulatedPOIService {
             if !tooClose { kept.append(poi) }
         }
         return kept.isEmpty ? nil : kept
+    }
+    
+    // MARK: - Synthetic single-waypoint routes (from POIs already in duration buckets)
+    /// Encode coordinates to Google polyline format (for synthetic user→POI→user line).
+    private func encodeSimplePolyline(_ coordinates: [CLLocationCoordinate2D]) -> String {
+        var encoded = ""
+        var prevLat = 0, prevLng = 0
+        for coord in coordinates {
+            let lat = Int(round(coord.latitude * 1e5))
+            let lng = Int(round(coord.longitude * 1e5))
+            encoded += encodePolylineSignedNumber(lat - prevLat)
+            encoded += encodePolylineSignedNumber(lng - prevLng)
+            prevLat = lat
+            prevLng = lng
+        }
+        return encoded
+    }
+    private func encodePolylineSignedNumber(_ num: Int) -> String {
+        var sgn = num << 1
+        if num < 0 { sgn = ~sgn }
+        return encodePolylineNumber(sgn)
+    }
+    private func encodePolylineNumber(_ num: Int) -> String {
+        var encoded = ""
+        var n = num
+        while n >= 0x20 {
+            encoded += String(UnicodeScalar((0x20 | (n & 0x1f)) + 63)!)
+            n >>= 5
+        }
+        encoded += String(UnicodeScalar(n + 63)!)
+        return encoded
+    }
+    
+    /// Build single-waypoint routes from POIs in duration buckets and optionally from the area's full POI list.
+    /// For each unique POI, if round-trip from user is 80–120% of requested duration, add a synthetic route.
+    /// areaPOIs: when provided, POIs that are in the area but not used as route waypoints (e.g. Oriental Chef in WF2) are also considered.
+    private func buildSyntheticSingleWaypointRoutes(
+        routes: [PrePopulatedPOIDatabase.PrePopulatedRoute],
+        durationsToCheck: [Int],
+        location: CLLocationCoordinate2D,
+        roundedDuration: Int,
+        areaPOIs: [PrePopulatedPOIDatabase.PrePopulatedPOI]? = nil
+    ) -> [RouteCacheService.CachedRouteWithMetadata] {
+        var result: [RouteCacheService.CachedRouteWithMetadata] = []
+        var seenPlaceIds = Set<String>()
+        let walkingSpeedMperMin = Double(GoogleMapsService.shared.adaptiveWalkingSpeed)
+        let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
+        let (minPercent, maxPercent) = isEdgeCase ? (0.75, 1.25) : (0.80, 1.20)
+        let minAcceptableMinutes = Int(Double(roundedDuration) * minPercent)
+        let maxAcceptableMinutes = Int(Double(roundedDuration) * maxPercent)
+        
+        // Straight-line underestimates walking path. Use distance-dependent factor: 1.5 for short hops (aligns with Google), taper to 1.25 for longer (main roads more direct).
+        func pathFactor(straightLineM: Double) -> Double {
+            if straightLineM <= 400 { return 1.5 }
+            if straightLineM <= 800 { return 1.35 }
+            return 1.25
+        }
+        func addSingleWaypointIfValid(poi: PrePopulatedPOIDatabase.PrePopulatedPOI) {
+            guard !seenPlaceIds.contains(poi.placeId) else { return }
+            seenPlaceIds.insert(poi.placeId)
+            let placeResult = PlaceResult(
+                placeId: poi.placeId,
+                name: poi.name,
+                vicinity: poi.vicinity,
+                geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)),
+                types: poi.types,
+                source: POISource.fromString(poi.source)
+            )
+            if GoogleMapsService.shared.isRestrictedPOI(placeResult) {
+                if poi.name.lowercased().contains("oriental") { print("📦 Single-waypoint skip '\(poi.name)': restricted POI type") }
+                return
+            }
+            let poiCoord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+            let dStraight = distanceBetween(location, poiCoord)
+            let factor = pathFactor(straightLineM: dStraight)
+            let dPath = dStraight * factor
+            let roundTripSeconds = Int(2 * (dPath / walkingSpeedMperMin) * 60)
+            let totalDurationMinutes = roundTripSeconds / 60
+            if totalDurationMinutes < minAcceptableMinutes || totalDurationMinutes > maxAcceptableMinutes {
+                if poi.name.lowercased().contains("oriental") { print("📦 Single-waypoint skip '\(poi.name)': round-trip \(totalDurationMinutes)min outside [\(minAcceptableMinutes)–\(maxAcceptableMinutes)]min (dist \(Int(dStraight))m)") }
+                return
+            }
+            let polyline = encodeSimplePolyline([location, poiCoord, location])
+            let distanceMeters = Int(2 * dPath)
+            let generatedRoute = GeneratedRoute(
+                places: [placeResult],
+                polyline: polyline,
+                distanceMeters: distanceMeters,
+                durationSeconds: roundTripSeconds,
+                legs: []
+            )
+            let cached = RouteCacheService.CachedRouteWithMetadata(
+                route: generatedRoute,
+                name: nil,
+                description: nil,
+                directions: nil,
+                isFromPrePopulatedDatabase: true
+            )
+            result.append(cached)
+            print("📦 Single-waypoint option '\(poi.name)': \(totalDurationMinutes)min round-trip (\(Int(dPath))m each way) within [\(minAcceptableMinutes)–\(maxAcceptableMinutes)]min for \(roundedDuration)min request")
+            print("\(Self.telem) ROUTE_ADDED name=\"\(poi.name)\" reason=single_waypoint_synthetic totalMin=\(totalDurationMinutes) distM=\(Int(dPath)) requested=\(roundedDuration)")
+        }
+        
+        // 1) POIs that appear as waypoints in routes in the duration buckets
+        for checkDuration in durationsToCheck {
+            guard let routeGroup = routes.first(where: { $0.durationMinutes == checkDuration }) else { continue }
+            for routeData in routeGroup.routes {
+                for poi in routeData.places {
+                    addSingleWaypointIfValid(poi: poi)
+                }
+            }
+        }
+        // 2) Area's full POI list (so POIs like Oriental Chef in WF2 appear even if not used in any route)
+        // Pre-filter by max one-way distance (use 1.5x so POIs slightly farther still get duration check).
+        // Sort by distance so closest POIs are evaluated first and more likely to pass.
+        if let areaPOIs = areaPOIs {
+            let maxOneWayM = (Double(maxAcceptableMinutes) * walkingSpeedMperMin) / 2.0 * 1.5
+            let byDistance = areaPOIs.sorted { a, b in
+                distanceBetween(location, CLLocationCoordinate2D(latitude: a.latitude, longitude: a.longitude))
+                < distanceBetween(location, CLLocationCoordinate2D(latitude: b.latitude, longitude: b.longitude))
+            }
+            for poi in byDistance {
+                let poiCoord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+                if distanceBetween(location, poiCoord) > maxOneWayM { continue }
+                addSingleWaypointIfValid(poi: poi)
+            }
+        }
+        return result
     }
     
     /// Call this before using the database (e.g. in findNearbyPlaces) so the first use waits for Firebase download to complete.

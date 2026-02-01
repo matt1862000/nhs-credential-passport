@@ -634,23 +634,25 @@ class WaitingRoomViewModel: ObservableObject {
     
     /// v2.1.1: Update current route with refreshed data (e.g., after background Google/MapKit fetch)
     /// Updates both selectedRoute and walkSession.currentRoute so map refreshes automatically.
-    /// Pill: once Google (or first refresh) has run, we never overwrite the pill — so 6 min stays 6 even if MapKit/OSRM later returns 24.
-    func updateCurrentRoute(_ route: WalkingRoute) {
+    /// Pill: Google's duration is the only source of truth — when sourceIsGoogle is true we always set the pill.
+    /// When sourceIsGoogle is false (MapKit), we only set the pill if we haven't had a Google refresh yet.
+    func updateCurrentRoute(_ route: WalkingRoute, sourceIsGoogle: Bool = false) {
         let incomingMin = route.durationMinutes
-        print("PILL | updateCurrentRoute ENTRY isActive=\(walkSession.isActive) incoming=\(incomingMin)min display=\(displayDurationMinutesForPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) lock=\(hasReceivedGoogleRefreshForPill) route.name=\(route.name)")
+        print("PILL | updateCurrentRoute ENTRY isActive=\(walkSession.isActive) incoming=\(incomingMin)min display=\(displayDurationMinutesForPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) lock=\(hasReceivedGoogleRefreshForPill) sourceIsGoogle=\(sourceIsGoogle) route.name=\(route.name)")
         selectedRoute = route
         if walkSession.isActive {
             walkSession.currentRoute = route
             let currentPill = displayDurationMinutesForPill
             let alreadyLocked = hasReceivedGoogleRefreshForPill
-            if !alreadyLocked {
+            let shouldUpdatePill = sourceIsGoogle || !alreadyLocked
+            if shouldUpdatePill {
                 displayDurationMinutesForPill = incomingMin
                 hasReceivedGoogleRefreshForPill = true
                 lastKnownPillMinutes = incomingMin
                 Self.persistPillState(minutes: incomingMin, locked: true)
-                print("PILL | updateCurrentRoute: pill SET display=\(incomingMin) lastKnown=\(incomingMin) lock=true (first refresh)")
+                print("PILL | updateCurrentRoute: pill SET display=\(incomingMin) lastKnown=\(incomingMin) lock=true (\(sourceIsGoogle ? "Google source of truth" : "first refresh"))")
             } else {
-                print("PILL | updateCurrentRoute: pill LOCKED display=\(currentPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) — IGNORING incoming \(incomingMin)min (already had refresh)")
+                print("PILL | updateCurrentRoute: pill LOCKED display=\(currentPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) — IGNORING incoming \(incomingMin)min (MapKit, waiting for Google)")
             }
             // v2.1.1: Update direction monitoring with new directions
             if !route.walkingDirections.isEmpty {

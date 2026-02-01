@@ -944,7 +944,7 @@ struct AnxietyCheckSheet: View {
     }
     
     var subtitle: String {
-        isPostWalk ? "How do you feel now?" : "How anxious do you feel right now?"
+        isPostWalk ? "How do you feel now?" : "How do you feel?"
     }
     
     var body: some View {
