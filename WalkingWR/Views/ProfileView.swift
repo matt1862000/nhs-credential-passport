@@ -2265,6 +2265,7 @@ struct SettingsView: View {
             List {
                 listContent
             }
+            .id("settingsList") // Stable identity to avoid invalid reuse after initialization failure
             .navigationTitle("Settings")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

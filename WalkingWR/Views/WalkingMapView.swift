@@ -28,7 +28,7 @@ struct WalkingMapView: View {
                     // User location
                     UserAnnotation()
                     
-                    // Clinic marker
+                    // Clinic marker (stable id avoids "invalid reuse after initialization failure")
                     Annotation("Clinic", coordinate: clinicCoordinate) {
                         ZStack {
                             Circle()
@@ -38,9 +38,10 @@ struct WalkingMapView: View {
                                 .font(.title2)
                                 .foregroundColor(.white)
                         }
+                        .id("clinic")
                     }
                     
-                    // Next waypoint marker (if on a route)
+                    // Next waypoint marker (if on a route) — stable id for conditional annotation
                     if let nextWaypoint = nextWaypointCoordinate() {
                         Annotation("Next Stop", coordinate: nextWaypoint) {
                             ZStack {
@@ -51,6 +52,7 @@ struct WalkingMapView: View {
                                     .font(.title2)
                                     .foregroundColor(.white)
                             }
+                            .id("nextStop")
                         }
                     }
                     
@@ -65,6 +67,7 @@ struct WalkingMapView: View {
                                     .font(.caption)
                                     .foregroundColor(.white)
                             }
+                            .id(marker.id)
                         }
                     }
                     
@@ -523,22 +526,24 @@ struct EmbeddedWalkMapView: View {
     // MARK: - Body Components (extracted to reduce complexity)
     private var mapView: some View {
         Map(position: $cameraPosition) {
-            // User Location
+            // User Location (stable id for reuse)
             if let location = viewModel.locationService.currentLocation {
                 Annotation("You", coordinate: location.coordinate) {
                     PulsatingLocationDot()
+                        .id("you")
                 }
             } else {
                 UserAnnotation()
             }
             
-            // Start/End Marker
+            // Start/End Marker (stable id for reuse)
             if let startPoint = viewModel.walkSession.startLocation ?? viewModel.walkSession.currentRoute?.routePath.first {
                 Annotation("Start/End", coordinate: startPoint) {
                     ZStack {
                         Circle().fill(Color.blue).frame(width: 28, height: 28)
                         Circle().fill(Color.white).frame(width: 12, height: 12)
                     }
+                    .id("startEnd")
                 }
             }
             
@@ -550,7 +555,7 @@ struct EmbeddedWalkMapView: View {
                     .stroke(currentRoute.color, lineWidth: 4)
             }
             
-            // Waypoints
+            // Waypoints (stable id per marker avoids invalid reuse)
             if !markers.isEmpty {
                 ForEach(Array(markers.enumerated()), id: \.element.id) { index, marker in
                     let isVisited = visitedIds.contains(marker.id)
@@ -562,6 +567,7 @@ struct EmbeddedWalkMapView: View {
                             isNext: isNext,
                             isVisited: isVisited
                         )
+                        .id(marker.id)
                     }
                 }
             }
@@ -580,7 +586,7 @@ struct EmbeddedWalkMapView: View {
                     .stroke(previewRoute.color, lineWidth: 4)
             }
             
-            // Cached POIs (passive)
+            // Cached POIs (passive) — stable id per marker
             if let cachedMarkers = cachedPOIs,
                viewModel.walkSession.currentRoute == nil {
                 ForEach(cachedMarkers, id: \.id) { marker in
@@ -591,6 +597,7 @@ struct EmbeddedWalkMapView: View {
                             isNext: false,
                             isVisited: false
                         )
+                        .id(marker.id)
                     }
                 }
             }
@@ -2683,7 +2690,7 @@ struct WaypointCarousel: View {
                 }
             }
             
-            // Swipeable cards
+            // Swipeable cards (stable id per page to avoid invalid reuse)
             TabView(selection: $selectedIndex) {
                 // Waypoint cards
                 ForEach(Array(unvisitedMarkers.enumerated()), id: \.element.marker.id) { cardIndex, item in
@@ -2700,6 +2707,7 @@ struct WaypointCarousel: View {
                         colorScheme: colorScheme
                     )
                     .tag(cardIndex)
+                    .id(item.marker.id)
                 }
                 
                 // Return to Start card (final)
@@ -2715,6 +2723,7 @@ struct WaypointCarousel: View {
                     colorScheme: colorScheme
                 )
                 .tag(unvisitedMarkers.count)
+                .id("returnToStart")
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .frame(height: 90)

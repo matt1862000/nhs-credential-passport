@@ -53,24 +53,28 @@ struct MainTabView: View {
                             Label("Delay", systemImage: "clock.fill")
                         }
                         .tag(0)
+                        .id(0) // Stable identity to avoid "invalid reuse after initialization failure" when switching tabs
                     
                     RouteSelectionView(viewModel: viewModel, showLocalRoutePicker: $showLocalRoutePicker)
                         .tabItem {
                             Label("Walk", systemImage: "figure.walk")
                         }
                         .tag(1)
+                        .id(1)
                     
                     WellbeingView(viewModel: viewModel, selectedCategory: $wellbeingCategory, selectedExercise: $wellbeingExercise)
                         .tabItem {
                             Label("Wellbeing", systemImage: "heart.fill")
                         }
                         .tag(2)
+                        .id(2)
                     
                     ProfileView(viewModel: viewModel, healthKitService: viewModel.healthKitService)
                         .tabItem {
                             Label("Progress", systemImage: "trophy.fill")
                         }
                         .tag(3)
+                        .id(3)
                 }
                 .tint(.tealAccent)
                 .transition(.opacity)

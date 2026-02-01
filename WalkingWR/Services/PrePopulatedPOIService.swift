@@ -49,6 +49,20 @@ class PrePopulatedPOIService {
     /// Max pre-populated routes to return per (postcode, duration). "Best" = least total time from user (route start + loop). Script emits all; app filters here because user location varies.
     private let maxPrePopulatedRoutesPerBucket = 10
 
+    /// Canonical name for single-waypoint dedupe: same physical place with different labels (e.g. "War Memorial", "War memorial in Kirkhamgate.") maps to one key.
+    private static func canonicalNameForSingleWaypoint(placeName: String) -> String {
+        let cleaned = GoogleMapsService.cleanPOIDisplayName(placeName).lowercased()
+        let noPunctuation = cleaned.unicodeScalars
+            .filter { !CharacterSet.punctuationCharacters.contains($0) }
+            .map { Character($0) }
+        let words = String(noPunctuation).split(separator: " ").map(String.init)
+        let stopwords: Set<String> = ["the", "in", "on", "a", "of", "at", "to"]
+        let significant = words.filter { !stopwords.contains($0) && !$0.isEmpty }
+        let firstTwo = Array(significant.prefix(2)).sorted()
+        let joined = firstTwo.joined(separator: " ")
+        return joined.isEmpty ? "poi" : joined
+    }
+
     // Firebase Storage reference for pre-populated POI database
     private let storage = Storage.storage()
     private let databaseFileName = "prepopulated_pois.json"
@@ -346,6 +360,14 @@ class PrePopulatedPOIService {
                         print("\(Self.telem) DB_PREPOP_BUCKET duration=\(checkDuration) routes_in_bucket=\(routeGroup.routes.count) requested=\(roundedDuration)")
                         for routeData in routeGroup.routes {
                             let routeName = self.routeIdentifier(name: routeData.name, places: routeData.places)
+                            // Precedence: if this is a multi-waypoint route and the first POI's single-waypoint duration fits the request, add only that and skip the multi-waypoint (so e.g. Village Store 8min appears for 10min, not as part of an 18min route for 15min).
+                            if routeData.places.count >= 2, let firstPOI = routeData.places.first,
+                               let single = self.createSingleWaypointRoute(poi: firstPOI, location: location, roundedDuration: roundedDuration) {
+                                result.append(single)
+                                print("📦 First-POI precedence: '\(routeName)' → \(firstPOI.name) only (\(single.route.durationSeconds / 60)min) for \(roundedDuration)min request; multi-waypoint route skipped")
+                                print("\(Self.telem) ROUTE_ADDED name=\"\(firstPOI.name)\" reason=first_poi_precedence totalMin=\(single.route.durationSeconds / 60) requested=\(roundedDuration)")
+                                continue
+                            }
                             if requireMinWaypoints >= 2 && routeData.places.count < 2 {
                                 print("\(Self.telem) ROUTE_DISCARDED name=\"\(routeName)\" reason=single_waypoint placesCount=\(routeData.places.count) requireMinWaypoints=\(requireMinWaypoints)")
                                 continue
@@ -398,6 +420,11 @@ class PrePopulatedPOIService {
                                         let sec = Int((totalM / walkingSpeedMperMin) * 60)
                                         let min = sec / 60
                                         guard min >= minAcceptableMinutes && min <= maxAcceptableMinutes else { continue }
+                                        // Exclusion: do not add a drop-1 variant whose first waypoint has real single-waypoint time outside the band.
+                                        if let subFirst = sub.first, let subFirstSingleMin = self.singleWaypointDurationMinutes(poi: subFirst, location: location),
+                                           subFirstSingleMin < minAcceptableMinutes || subFirstSingleMin > maxAcceptableMinutes {
+                                            continue
+                                        }
                                         let coords = [location] + sub.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) } + [location]
                                         let placeResults = sub.map { poi -> PlaceResult in
                                             PlaceResult(placeId: poi.placeId, name: poi.name, vicinity: poi.vicinity, geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)), types: poi.types, source: POISource.fromString(poi.source))
@@ -412,22 +439,11 @@ class PrePopulatedPOIService {
                                         print("\(Self.telem) ROUTE_ADDED name=\"\(names)\" reason=drop_1 totalMin=\(min) requested=\(roundedDuration)")
                                     }
                                     // Phase 2 – Drop 2: if no drop-1 fit, try each single waypoint (we only have up to 3-waypoint routes)
-                                    // Use same distance-dependent path factor as single-waypoint synthesis
                                     if !addedDrop1 {
                                         for poi in places {
-                                            let coord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
-                                            let dStraight = self.distanceBetween(location, coord)
-                                            let factor = dStraight <= 400 ? 1.5 : (dStraight <= 800 ? 1.35 : 1.25)
-                                            let roundTripM = 2 * dStraight * factor
-                                            let sec = Int((roundTripM / walkingSpeedMperMin) * 60)
-                                            let min = sec / 60
-                                            guard min >= minAcceptableMinutes && min <= maxAcceptableMinutes else { continue }
-                                            let placeResult = PlaceResult(placeId: poi.placeId, name: poi.name, vicinity: poi.vicinity, geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)), types: poi.types, source: POISource.fromString(poi.source))
-                                            if GoogleMapsService.shared.isRestrictedPOI(placeResult) { continue }
-                                            let polyline = self.encodeSimplePolyline([location, coord, location])
-                                            let generatedRoute = GeneratedRoute(places: [placeResult], polyline: polyline, distanceMeters: Int(roundTripM), durationSeconds: sec, legs: [])
-                                            let cached = RouteCacheService.CachedRouteWithMetadata(route: generatedRoute, name: nil, description: nil, directions: nil, isFromPrePopulatedDatabase: true)
+                                            guard let cached = self.createSingleWaypointRoute(poi: poi, location: location, roundedDuration: roundedDuration) else { continue }
                                             result.append(cached)
+                                            let min = cached.route.durationSeconds / 60
                                             print("📦 Drop 2: '\(routeName)' → \(poi.name) only (\(min)min) for \(roundedDuration)min request")
                                             print("\(Self.telem) ROUTE_ADDED name=\"\(poi.name)\" reason=drop_2_single totalMin=\(min) requested=\(roundedDuration)")
                                         }
@@ -463,6 +479,13 @@ class PrePopulatedPOIService {
                                 if bestIdx == 0 { return filteredPOIsUnordered }
                                 return Array(filteredPOIsUnordered[bestIdx...]) + Array(filteredPOIsUnordered[..<bestIdx])
                             }()
+                            // Exclusion: do not offer a multi-waypoint route whose first stop has a real single-waypoint time outside the band (e.g. Village Hall 6min shown as 18min for 15min request).
+                            if let firstPOI = filteredPOIs.first, let firstSingleMin = self.singleWaypointDurationMinutes(poi: firstPOI, location: location),
+                               firstSingleMin < minAcceptableMinutes || firstSingleMin > maxAcceptableMinutes {
+                                print("📦 Route '\(routeName)': SKIPPED - first waypoint '\(firstPOI.name)' has real single-waypoint time \(firstSingleMin)min outside [\(minAcceptableMinutes)–\(maxAcceptableMinutes)]min for \(roundedDuration)min request")
+                                print("\(Self.telem) ROUTE_DISCARDED name=\"\(routeName)\" reason=first_poi_duration_mismatch firstPOI=\(firstPOI.name) firstSingleMin=\(firstSingleMin) allowed=\(minAcceptableMinutes)-\(maxAcceptableMinutes) requested=\(roundedDuration)")
+                                continue
+                            }
                             let filteredPlaces = filteredPOIs.map { poi -> PlaceResult in
                                 PlaceResult(
                                     placeId: poi.placeId,
@@ -528,24 +551,43 @@ class PrePopulatedPOIService {
                 print("\(Self.telem) DB_CANDIDATES postcode=\(area.postcode) beforeDedupe=\(cachedRoutes.count) requested=\(roundedDuration)")
                 
                 if !cachedRoutes.isEmpty {
-                    // Dedupe routes by same ordered sequence of POIs. Waypoints are the same POI if coords round to the same location (~100m),
-                    // so "War Memorial" / "War Memorial, Kirkhamgate" / "War memorial in Kirkhamgate." (one POI, multiple aliases) → one waypoint.
-                    func routeKey(_ r: RouteCacheService.CachedRouteWithMetadata) -> String {
-                        r.route.places.map { p in
+                    // Dedupe routes by same set of waypoints (order-independent).
+                    // Single-waypoint: coordinate + canonical name so same location and name variants (e.g. War Memorial / War memorial in Kirkhamgate.) dedupe to one route.
+                    // Multi-waypoint: use place IDs when available; fall back to coordinates for routes without stable place IDs.
+                    func routeKeyNormalized(_ r: RouteCacheService.CachedRouteWithMetadata) -> String {
+                        let places = r.route.places
+                        if places.count == 1, let p = places.first {
+                            let c = p.coordinate
+                            let canonical = Self.canonicalNameForSingleWaypoint(placeName: p.name)
+                            return String(format: "1@%.3f,%.3f@%@", c.latitude, c.longitude, canonical)
+                        }
+                        let allHavePlaceIds = !places.isEmpty && places.allSatisfy { !$0.placeId.isEmpty }
+                        if allHavePlaceIds {
+                            return "n|" + places.map(\.placeId).sorted().joined(separator: "|")
+                        }
+                        let coords = places.map { p in
                             let c = p.coordinate
                             return String(format: "%.3f,%.3f", c.latitude, c.longitude)
-                        }.joined(separator: "|")
+                        }
+                        return "n|" + coords.sorted().joined(separator: "|")
                     }
-                    var seen = Set<String>()
-                    var unique = [RouteCacheService.CachedRouteWithMetadata]()
+                    let targetMinutes = roundedDuration
+                    var bestByKey: [String: RouteCacheService.CachedRouteWithMetadata] = [:]
                     for r in cachedRoutes {
-                        let k = routeKey(r)
-                        if seen.contains(k) { continue }
-                        seen.insert(k)
-                        unique.append(r)
+                        let k = routeKeyNormalized(r)
+                        let durationMin = r.route.durationSeconds / 60
+                        if let existing = bestByKey[k] {
+                            let existingMin = existing.route.durationSeconds / 60
+                            if abs(durationMin - targetMinutes) < abs(existingMin - targetMinutes) {
+                                bestByKey[k] = r
+                            }
+                        } else {
+                            bestByKey[k] = r
+                        }
                     }
+                    let unique = Array(bestByKey.values)
                     if unique.count < cachedRoutes.count {
-                        print("📦 Deduped pre-populated routes: \(cachedRoutes.count) → \(unique.count) unique (by ordered POI sequence)")
+                        print("📦 Deduped pre-populated routes: \(cachedRoutes.count) → \(unique.count) unique (same waypoints → kept duration closest to \(roundedDuration)min)")
                     }
                     print("\(Self.telem) DB_DEDUPE postcode=\(area.postcode) before=\(cachedRoutes.count) after=\(unique.count) requested=\(roundedDuration)")
                     // Sort by total time from user (route.durationSeconds = travel to start + loop), then prefer more direct to POI (shorter distance to first waypoint), then waypoint count and route distance
@@ -561,14 +603,48 @@ class PrePopulatedPOIService {
                         }
                         return (a.route.places.count, -a.route.distanceMeters) > (b.route.places.count, -b.route.distanceMeters)
                     }
-                    let capped = Array(sorted.prefix(maxPrePopulatedRoutesPerBucket))
-                    if capped.count < sorted.count {
-                        print("📦 Best-per-bucket: \(sorted.count) routes → \(capped.count) (max \(maxPrePopulatedRoutesPerBucket) by user location)")
+                    // One route per primary POI (first waypoint): avoid same POI appearing as e.g. "2 of 7" and "4 of 7" (Village Stores twice).
+                    var primaryPOIKeys: Set<String> = []
+                    let primaryDeduped = sorted.filter { r in
+                        guard let first = r.route.places.first else { return true }
+                        let c = first.coordinate
+                        let canonical = Self.canonicalNameForSingleWaypoint(placeName: first.name)
+                        let key = String(format: "1@%.3f,%.3f@%@", c.latitude, c.longitude, canonical)
+                        if primaryPOIKeys.contains(key) { return false }
+                        primaryPOIKeys.insert(key)
+                        return true
                     }
-                    print("\(Self.telem) DB_CAP postcode=\(area.postcode) before=\(sorted.count) after=\(capped.count) maxPerBucket=\(maxPrePopulatedRoutesPerBucket) requested=\(roundedDuration)")
-                    print("📦 ✅ PRE-POPULATED ROUTES HIT! Found \(capped.count) routes for \(roundedDuration)min from postcode area '\(area.postcode)' - using database (no route generation needed)")
-                    print("\(Self.telem) DB_RESULT returned=\(capped.count) postcode=\(area.postcode) requested=\(roundedDuration)")
-                    return capped
+                    if primaryDeduped.count < sorted.count {
+                        print("📦 Primary-POI dedupe: \(sorted.count) → \(primaryDeduped.count) (same first waypoint shown once)")
+                    }
+                    let capped = Array(primaryDeduped.prefix(maxPrePopulatedRoutesPerBucket))
+                    if capped.count < primaryDeduped.count {
+                        print("📦 Best-per-bucket: \(primaryDeduped.count) routes → \(capped.count) (max \(maxPrePopulatedRoutesPerBucket) by user location)")
+                    }
+                    print("\(Self.telem) DB_CAP postcode=\(area.postcode) before=\(primaryDeduped.count) after=\(capped.count) maxPerBucket=\(maxPrePopulatedRoutesPerBucket) requested=\(roundedDuration)")
+                    // Enforce 80–120% band on final list: never return routes below min or above max (e.g. 15min request → 12–18min only)
+                    let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
+                    let (minPercent, maxPercent) = isEdgeCase ? (0.75, 1.25) : (0.80, 1.20)
+                    let minAcceptableMinutes = Int(Double(roundedDuration) * minPercent)
+                    let maxAcceptableMinutes = Int(Double(roundedDuration) * maxPercent)
+                    let bandFiltered = capped.filter { r in
+                        let min = r.route.durationSeconds / 60
+                        return min >= minAcceptableMinutes && min <= maxAcceptableMinutes
+                    }
+                    if bandFiltered.count < capped.count {
+                        let dropped = capped.filter { r in
+                            let min = r.route.durationSeconds / 60
+                            return min < minAcceptableMinutes || min > maxAcceptableMinutes
+                        }
+                        for r in dropped {
+                            print("📦 Band filter: dropped \(r.route.durationSeconds / 60)min route (outside [\(minAcceptableMinutes)–\(maxAcceptableMinutes)]min for \(roundedDuration)min request)")
+                        }
+                        print("📦 Band filter: \(capped.count) → \(bandFiltered.count) (removed \(capped.count - bandFiltered.count) routes outside 80–120%)")
+                        print("\(Self.telem) DB_BAND_FILTER before=\(capped.count) after=\(bandFiltered.count) allowed=\(minAcceptableMinutes)-\(maxAcceptableMinutes) requested=\(roundedDuration)")
+                    }
+                    print("📦 ✅ PRE-POPULATED ROUTES HIT! Found \(bandFiltered.count) routes for \(roundedDuration)min from postcode area '\(area.postcode)' - using database (no route generation needed)")
+                    print("\(Self.telem) DB_RESULT returned=\(bandFiltered.count) postcode=\(area.postcode) requested=\(roundedDuration)")
+                    return bandFiltered
                 } else {
                     let totalInBuckets = durationsToCheck.reduce(0) { sum, d in sum + (routes.first(where: { $0.durationMinutes == d })?.routes.count ?? 0) }
                     print("📦 Pre-populated DB: Postcode area '\(area.postcode)' has routes but none passed filters for \(roundedDuration)min (checked \(roundedDuration)±5,±10 min buckets; total routes in those buckets=\(totalInBuckets))")
@@ -699,6 +775,74 @@ class PrePopulatedPOIService {
         return encoded
     }
     
+    /// Straight-line underestimates walking path. Distance-dependent factor: 1.5 for short hops, taper to 1.25 for longer.
+    private func pathFactor(straightLineM: Double) -> Double {
+        if straightLineM <= 400 { return 1.5 }
+        if straightLineM <= 800 { return 1.35 }
+        return 1.25
+    }
+    
+    /// Returns the single-waypoint round-trip duration in minutes for the given POI (pathFactor applied). Nil if POI is restricted.
+    private func singleWaypointDurationMinutes(poi: PrePopulatedPOIDatabase.PrePopulatedPOI, location: CLLocationCoordinate2D) -> Int? {
+        let placeResult = PlaceResult(
+            placeId: poi.placeId,
+            name: poi.name,
+            vicinity: poi.vicinity,
+            geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)),
+            types: poi.types,
+            source: POISource.fromString(poi.source)
+        )
+        if GoogleMapsService.shared.isRestrictedPOI(placeResult) { return nil }
+        let walkingSpeedMperMin = Double(GoogleMapsService.shared.adaptiveWalkingSpeed)
+        let poiCoord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+        let dStraight = distanceBetween(location, poiCoord)
+        let factor = pathFactor(straightLineM: dStraight)
+        let roundTripM = 2 * dStraight * factor
+        return Int((roundTripM / walkingSpeedMperMin))
+    }
+    
+    /// Build a single-waypoint route for the given POI if round-trip duration is within 80–120% of requested.
+    /// Returns nil if duration is outside band or POI is restricted.
+    private func createSingleWaypointRoute(poi: PrePopulatedPOIDatabase.PrePopulatedPOI, location: CLLocationCoordinate2D, roundedDuration: Int) -> RouteCacheService.CachedRouteWithMetadata? {
+        let walkingSpeedMperMin = Double(GoogleMapsService.shared.adaptiveWalkingSpeed)
+        let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
+        let (minPercent, maxPercent) = isEdgeCase ? (0.75, 1.25) : (0.80, 1.20)
+        let minAcceptableMinutes = Int(Double(roundedDuration) * minPercent)
+        let maxAcceptableMinutes = Int(Double(roundedDuration) * maxPercent)
+        let placeResult = PlaceResult(
+            placeId: poi.placeId,
+            name: poi.name,
+            vicinity: poi.vicinity,
+            geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)),
+            types: poi.types,
+            source: POISource.fromString(poi.source)
+        )
+        if GoogleMapsService.shared.isRestrictedPOI(placeResult) { return nil }
+        let poiCoord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+        let dStraight = distanceBetween(location, poiCoord)
+        let factor = pathFactor(straightLineM: dStraight)
+        let dPath = dStraight * factor
+        let roundTripM = 2 * dPath
+        let sec = Int((roundTripM / walkingSpeedMperMin) * 60)
+        let min = sec / 60
+        guard min >= minAcceptableMinutes && min <= maxAcceptableMinutes else { return nil }
+        let polyline = encodeSimplePolyline([location, poiCoord, location])
+        let generatedRoute = GeneratedRoute(
+            places: [placeResult],
+            polyline: polyline,
+            distanceMeters: Int(roundTripM),
+            durationSeconds: sec,
+            legs: []
+        )
+        return RouteCacheService.CachedRouteWithMetadata(
+            route: generatedRoute,
+            name: nil,
+            description: nil,
+            directions: nil,
+            isFromPrePopulatedDatabase: true
+        )
+    }
+    
     /// Build single-waypoint routes from POIs in duration buckets and optionally from the area's full POI list.
     /// For each unique POI, if round-trip from user is 80–120% of requested duration, add a synthetic route.
     /// areaPOIs: when provided, POIs that are in the area but not used as route waypoints (e.g. Oriental Chef in WF2) are also considered.
@@ -717,12 +861,6 @@ class PrePopulatedPOIService {
         let minAcceptableMinutes = Int(Double(roundedDuration) * minPercent)
         let maxAcceptableMinutes = Int(Double(roundedDuration) * maxPercent)
         
-        // Straight-line underestimates walking path. Use distance-dependent factor: 1.5 for short hops (aligns with Google), taper to 1.25 for longer (main roads more direct).
-        func pathFactor(straightLineM: Double) -> Double {
-            if straightLineM <= 400 { return 1.5 }
-            if straightLineM <= 800 { return 1.35 }
-            return 1.25
-        }
         func addSingleWaypointIfValid(poi: PrePopulatedPOIDatabase.PrePopulatedPOI) {
             guard !seenPlaceIds.contains(poi.placeId) else { return }
             seenPlaceIds.insert(poi.placeId)
@@ -740,7 +878,7 @@ class PrePopulatedPOIService {
             }
             let poiCoord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
             let dStraight = distanceBetween(location, poiCoord)
-            let factor = pathFactor(straightLineM: dStraight)
+            let factor = self.pathFactor(straightLineM: dStraight)
             let dPath = dStraight * factor
             let roundTripSeconds = Int(2 * (dPath / walkingSpeedMperMin) * 60)
             let totalDurationMinutes = roundTripSeconds / 60
