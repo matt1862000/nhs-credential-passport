@@ -259,24 +259,28 @@ class GeminiService {
         durationMinutes: Int,
         waypointCount: Int
     ) -> String {
-        // If we have a good POI, use it
+        // If we have a good POI, use it (clean Geograph prefix first so we get "Lindale Methodist" not "SE2922 :")
         if let poi = featurePOI {
-            let shortName = shortenPOIName(poi.name)
-            
-            // Different templates based on POI type
-            let poiType = poi.types.first ?? ""
-            
-            switch poiType {
-            case "bar", "pub", "restaurant":
-                return "Loop via \(shortName)"
-            case "church", "place_of_worship":
-                return "\(shortName) Walk"
-            case "park", "natural_feature":
-                return "\(shortName) Stroll"
-            case "school", "university":
-                return "Walk past \(shortName)"
-            default:
-                return "Via \(shortName)"
+            let cleaned = GoogleMapsService.cleanPOIDisplayName(poi.name)
+            let shortName = shortenPOIName(cleaned)
+            let trimmed = shortName.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Don't use template if empty or still looks like a grid reference (e.g. "SE2922")
+            let looksLikeGridRef = trimmed.range(of: "^[A-Za-z]{1,2}\\d{2,}\\s*:?\\s*$", options: .regularExpression) != nil
+            if !trimmed.isEmpty && !looksLikeGridRef {
+                // Different templates based on POI type
+                let poiType = poi.types.first ?? ""
+                switch poiType {
+                case "bar", "pub", "restaurant":
+                    return "Loop via \(trimmed)"
+                case "church", "place_of_worship":
+                    return "\(trimmed) Walk"
+                case "park", "natural_feature":
+                    return "\(trimmed) Stroll"
+                case "school", "university":
+                    return "Walk past \(trimmed)"
+                default:
+                    return "Via \(trimmed)"
+                }
             }
         }
         
@@ -333,14 +337,14 @@ class GeminiService {
         
         if let poi = featurePOI {
             let poiType = formatPlaceTypes(poi.types)
-            
+            let cleanedPoiName = GoogleMapsService.cleanPOIDisplayName(poi.name)
             // Get a second POI if available
             let secondPOI = safeWaypoints.first(where: { $0.name != poi.name })
-            
             if let second = secondPOI {
-                return "A \(durationMinutes) minute circular walk passing \(poi.name) and \(second.name). Distance: \(distanceKm)km."
+                let cleanedSecondName = GoogleMapsService.cleanPOIDisplayName(second.name)
+                return "A \(durationMinutes) minute circular walk passing \(cleanedPoiName) and \(cleanedSecondName). Distance: \(distanceKm)km."
             } else {
-                return "A \(durationMinutes) minute loop featuring \(poi.name) (\(poiType)). Approximately \(distanceKm)km with \(totalWaypoints) points of interest."
+                return "A \(durationMinutes) minute loop featuring \(cleanedPoiName) (\(poiType)). Approximately \(distanceKm)km with \(totalWaypoints) points of interest."
             }
         }
         
