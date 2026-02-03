@@ -38,6 +38,7 @@ struct WaitTimeView: View {
     @State private var pulseAnimation = false
     @State private var activeSheet: WaitTimeSheetType?
     @State private var showIntroduction = false
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         NavigationStack {
@@ -82,7 +83,7 @@ struct WaitTimeView: View {
             .navigationTitle("Clinic Delay")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(colorScheme == .dark ? .dark : .light, for: .navigationBar)
             #endif
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

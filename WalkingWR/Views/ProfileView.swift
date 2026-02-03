@@ -68,7 +68,7 @@ struct ProfileView: View {
             .navigationTitle("Your Progress")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(colorScheme == .dark ? .dark : .light, for: .navigationBar)
             #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

@@ -144,7 +144,7 @@ struct RouteSelectionView: View {
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(viewModel.walkSession.isActive ? .inline : .large)
                 .navigationBarHidden(viewModel.walkSession.isActive)
-                .toolbarColorScheme(.dark, for: .navigationBar)
+                .toolbarColorScheme(colorScheme == .dark ? .dark : .light, for: .navigationBar)
                 #endif
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {

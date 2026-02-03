@@ -45,6 +45,7 @@ struct WellbeingView: View {
     @State private var exerciseCompleted = false // Track if exercise was completed
     @State private var localSelectedExercise: WellbeingContent? // Internal state for exercise sheet
     @State private var hasHandledDeepLink = false // Track if we've already handled the initial deep link
+    @Environment(\.colorScheme) private var colorScheme
     
     init(viewModel: WaitingRoomViewModel, selectedCategory: Binding<WellbeingCategory> = .constant(.breathing), selectedExercise: Binding<WellbeingContent?> = .constant(nil)) {
         self.viewModel = viewModel
@@ -89,7 +90,7 @@ struct WellbeingView: View {
             .navigationTitle("Wellbeing")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(colorScheme == .dark ? .dark : .light, for: .navigationBar)
             #endif
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
