@@ -76,6 +76,7 @@ class PrePopulatedPOIService {
             let downloadURL = try await postcodeRef.downloadURL()
             print("📦 Pre-populated DB: Found postcode-specific file: \(postcodeFileName) (~500KB)")
             print("\(Self.telem) FIREBASE_URL source=postcode_\(district) file=\(postcodeFileName)")
+            print("\(Self.telem) \(Self.prepopTimingTag) stage=json_found at=\(Self.prepopTimingStamp())")
             return downloadURL
         } catch {
             let nsError = error as NSError?
@@ -99,7 +100,14 @@ class PrePopulatedPOIService {
     
     /// Telemetry prefix for database/route logs (filter logs by this)
     private static let telem = "📊 [TELEM]"
-    
+    /// Single tag for prepop timing telemetry (search console for "PREPOP_TIMING")
+    private static let prepopTimingTag = "PREPOP_TIMING"
+    private static func prepopTimingStamp() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date())
+    }
+
     /// Identifier for logging: route name if set, otherwise first POIs e.g. "POI1 → POI2"
     private func routeIdentifier(name: String?, places: [PrePopulatedPOIDatabase.PrePopulatedPOI]) -> String {
         if let n = name, !n.isEmpty { return n }
@@ -626,6 +634,7 @@ class PrePopulatedPOIService {
                     }
                     print("📦 ✅ PRE-POPULATED ROUTES HIT! Found \(bandFiltered.count) routes for \(roundedDuration)min from postcode area '\(area.postcode)' - using database (no route generation needed)")
                     print("\(Self.telem) DB_RESULT returned=\(bandFiltered.count) postcode=\(area.postcode) requested=\(roundedDuration)")
+                    print("\(Self.telem) \(Self.prepopTimingTag) stage=routes_used at=\(Self.prepopTimingStamp()) count=\(bandFiltered.count) requested=\(roundedDuration)")
                     return bandFiltered
                 } else {
                     let totalInBuckets = durationsToCheck.reduce(0) { sum, d in sum + (routes.first(where: { $0.durationMinutes == d })?.routes.count ?? 0) }
@@ -921,6 +930,25 @@ class PrePopulatedPOIService {
         await downloadDatabaseIfNeeded(userLocation: userLocation)
     }
 
+    /// If we have location and the DB is not ready: start a download in the background, wait at most `waitUpToSeconds` (wall-clock), then return.
+    /// Does not cancel an in-flight download on timeout; the download continues in the background.
+    /// Uses GCD asyncAfter so the wait is strictly bounded by wall-clock time (Task.sleep can be delayed by executor contention).
+    func ensureDatabaseReadyWithTimeout(userLocation: CLLocationCoordinate2D?, waitUpToSeconds: TimeInterval) async {
+        guard let userLocation = userLocation else { return }
+        Task { await downloadDatabaseIfNeeded(userLocation: userLocation) }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + waitUpToSeconds) {
+                cont.resume()
+            }
+        }
+    }
+
+    /// Returns true if the coordinate is in a target postcode area (we have prepop data for it).
+    /// Use this to decide whether to wait on "Finding places" for the prepop download.
+    func isInTargetPostcodeArea(_ coordinate: CLLocationCoordinate2D) -> Bool {
+        getPostcodeDistrict(for: coordinate) != nil
+    }
+
     /// Download pre-populated database when we have a user location.
     /// Only downloads the relevant postcode JSON; full database is never used.
     func downloadDatabaseIfNeeded(userLocation: CLLocationCoordinate2D? = nil) async {
@@ -930,6 +958,7 @@ class PrePopulatedPOIService {
             print("\(Self.telem) DOWNLOAD_SKIP reason=no_location")
             return
         }
+        print("\(Self.telem) \(Self.prepopTimingTag) stage=location_given at=\(Self.prepopTimingStamp())")
 
         // If a download is already in progress, wait for it so caller gets the DB when ready
         if let existing = downloadTask {
@@ -1048,7 +1077,8 @@ class PrePopulatedPOIService {
             
             // Save filtered database to local storage
             saveDatabase(database)
-            
+            print("\(Self.telem) \(Self.prepopTimingTag) stage=downloaded at=\(Self.prepopTimingStamp())")
+
             // Mark as downloaded
             UserDefaults.standard.set(true, forKey: downloadCompleteKey)
             UserDefaults.standard.set(database.version, forKey: "prepopulatedPOIs_version")

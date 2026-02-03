@@ -1405,7 +1405,7 @@ struct LocalRoutePickerSheet: View {
                                             if isGenerating {
                                                 ProgressView()
                                                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                                Text("Finding places...")
+                                                Text("Loading…")
                                             } else if !locationReady {
                                                 ProgressView()
                                                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
@@ -1842,20 +1842,22 @@ struct LocalRoutePickerSheet: View {
                 
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting generation...")
                 
-                // v1.8.7: Start loading screen Task IMMEDIATELY (before cache check)
-                // This ensures loading screen shows even if cache check hangs
-                _ = Task {
-                    try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
-                    await MainActor.run {
-                        print("⏳ 300ms delay complete - checking if should show loading screen...")
-                        print("   isGenerating: \(isGenerating), showMapPreview: \(showMapPreview)")
-                        if isGenerating && !showMapPreview {  // Only show if still generating and not already showing preview
-                            print("📺 SHOWING LOADING SCREEN")
-                            showLoadingScreen = true
-                        } else {
-                            print("📺 NOT showing loading screen (already done or preview visible)")
-                        }
+                // Show loading screen immediately so user sees "Finding places nearby" (and stages) right away
+                await MainActor.run {
+                    if isGenerating && !showMapPreview {
+                        print("📺 SHOWING LOADING SCREEN (Finding places → Calculating routes → …)")
+                        showLoadingScreen = true
                     }
+                }
+                
+                // If postcode hit and prepop DB not ready: stay on "Finding places" for up to 5s waiting for download, then proceed (fallback to live generation if needed)
+                let inPostcodeArea = PrePopulatedPOIService.shared.isInTargetPostcodeArea(userLocation.coordinate)
+                if inPostcodeArea && !PrePopulatedPOIService.shared.hasDownloadedDatabase {
+                    let prepopWaitStart = Date()
+                    await PrePopulatedPOIService.shared.ensureDatabaseReadyWithTimeout(userLocation: userLocation.coordinate, waitUpToSeconds: 5.0)
+                    let prepopWaitElapsed = Date().timeIntervalSince(prepopWaitStart)
+                    print("📊 [TELEM] PREPOP_WAIT_ELAPSED seconds=\(String(format: "%.2f", prepopWaitElapsed)) (postcode hit, max 5s)")
+                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Prepop wait done → advancing to Calculating routes")
                 }
                 
                 // CHECK CACHE FIRST (with movement detection)
