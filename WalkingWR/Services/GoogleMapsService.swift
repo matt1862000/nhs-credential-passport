@@ -871,6 +871,9 @@ class GoogleMapsService: ObservableObject {
     private var pendingMapKitFallbackWaypoints: [CLLocationCoordinate2D]?
     private var pendingMapKitFallbackOrigin: CLLocationCoordinate2D?
     
+    /// Set by fetchGoogleDirections when API returns non-OK (e.g. OVER_QUERY_LIMIT) so caller can try MapKit fallback
+    private(set) var lastGoogleDirectionsErrorStatus: String?
+    
     // MARK: - v1.9.48: Google Places Quota Protection
     // Temporarily disable Google Places on 429/quota errors
     private var googlePlacesDisabledUntil: Date?
@@ -7190,6 +7193,190 @@ class GoogleMapsService: ObservableObject {
         }
     }
     
+    // MARK: - Optimistic hybrid: OSM snap only + refinement check
+    /// Runs OSM road snapping only (no Google call). Returns snapped waypoints in same order as route.qrMarkers.
+    /// Existing 10m "already on road" logic is unchanged. Returns empty array if route has no waypoints.
+    func snapWaypointsToRoads(route: WalkingRoute) async -> [CLLocationCoordinate2D] {
+        let rawWaypoints = route.qrMarkers.map { $0.coordinate }
+        guard !rawWaypoints.isEmpty else { return [] }
+        let snapped = await withTaskGroup(of: (Int, CLLocationCoordinate2D).self) { group in
+            for (index, waypoint) in rawWaypoints.enumerated() {
+                group.addTask {
+                    let marker = route.qrMarkers[index]
+                    let roadName = self.extractRoadName(from: marker.location)
+                    if let roadName = roadName {
+                        print("🛤️ [ROAD SNAP] Waypoint \(index+1) '\(marker.name)' - preferred road: '\(roadName)'")
+                    }
+                    if let nearestRoad = await self.findNearestRoadPointWithFallback(near: waypoint, radiusMeters: 100, preferredRoadName: roadName) {
+                        let distance = CLLocation(latitude: waypoint.latitude, longitude: waypoint.longitude)
+                            .distance(from: CLLocation(latitude: nearestRoad.latitude, longitude: nearestRoad.longitude))
+                        if distance > 10 {
+                            print("🛤️ [ROAD SNAP] Waypoint \(index+1) snapped to road (\(Int(distance))m)")
+                            return (index, nearestRoad)
+                        }
+                    }
+                    return (index, waypoint)
+                }
+            }
+            var results = [(Int, CLLocationCoordinate2D)]()
+            for await result in group { results.append(result) }
+            return results.sorted { $0.0 < $1.0 }.map { $0.1 }
+        }
+        print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(snapped.count) waypoints)")
+        return snapped
+    }
+    
+    /// Per-waypoint refinement check: true if any snapped waypoint is > 20m from its raw coordinate.
+    /// Returns false if counts differ (no refinement).
+    func shouldRefineWithSnappedWaypoints(rawWaypoints: [CLLocationCoordinate2D], snappedWaypoints: [CLLocationCoordinate2D]) -> Bool {
+        guard rawWaypoints.count == snappedWaypoints.count, !rawWaypoints.isEmpty else { return false }
+        let thresholdMeters = 20.0
+        for (raw, snapped) in zip(rawWaypoints, snappedWaypoints) {
+            let d = CLLocation(latitude: raw.latitude, longitude: raw.longitude)
+                .distance(from: CLLocation(latitude: snapped.latitude, longitude: snapped.longitude))
+            if d > thresholdMeters {
+                print("🛤️ [REFINEMENT] Waypoint moved \(Int(d))m > \(Int(thresholdMeters))m — will refine with snapped waypoints")
+                return true
+            }
+        }
+        return false
+    }
+    
+    /// Google Directions with given waypoints (raw or snapped). Used for raw-first flow and refinement.
+    /// Sets lastGoogleDirectionsErrorStatus when API returns non-OK so caller can try MapKit fallback.
+    private func fetchGoogleDirections(route: WalkingRoute, userLocation: CLLocationCoordinate2D, waypointsInDisplayOrder: [CLLocationCoordinate2D]) async -> WalkingRoute? {
+        lastGoogleDirectionsErrorStatus = nil
+        guard !waypointsInDisplayOrder.isEmpty else { return nil }
+        let waypoints = performLocalOptimization(origin: userLocation, waypoints: waypointsInDisplayOrder)
+        let waypointsParam = waypoints.map { String(format: "%.6f,%.6f", $0.latitude, $0.longitude) }.joined(separator: "|")
+        var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
+        urlString += "origin=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
+        urlString += "&destination=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
+        urlString += "&waypoints=\(waypointsParam)"
+        urlString += "&mode=walking"
+        urlString += "&key=\(apiKey)"
+        guard let url = URL(string: urlString) else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5.0
+        if let bundleId = Bundle.main.bundleIdentifier {
+            request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+        }
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 5.0
+        config.timeoutIntervalForResource = 10.0
+        let session = URLSession(configuration: config)
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            recordGoogleDirectionsCall()
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let status = json["status"] as? String,
+                  status == "OK",
+                  let routes = json["routes"] as? [[String: Any]],
+                  let firstRoute = routes.first else {
+                let errorStatus = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["status"] as? String ?? "unknown"
+                lastGoogleDirectionsErrorStatus = errorStatus
+                return nil
+            }
+            var polyline = ""
+            var polylinePointCount = 0
+            if let overviewPolyline = firstRoute["overview_polyline"] as? [String: Any],
+               let points = overviewPolyline["points"] as? String {
+                polyline = points
+                polylinePointCount = decodePolyline(points).count
+            }
+            var stepPolylinePointCount = 0
+            var combinedStepPolyline: [CLLocationCoordinate2D] = []
+            var freshDirections: [WalkingDirection] = []
+            var totalDistance = 0
+            var totalDuration = 0
+            if let legs = firstRoute["legs"] as? [[String: Any]] {
+                for leg in legs {
+                    if let distance = leg["distance"] as? [String: Any], let distValue = distance["value"] as? Int { totalDistance += distValue }
+                    if let duration = leg["duration"] as? [String: Any], let durValue = duration["value"] as? Int { totalDuration += durValue }
+                    if let steps = leg["steps"] as? [[String: Any]] {
+                        for step in steps {
+                            let instruction = (step["html_instructions"] as? String)?.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) ?? "Continue"
+                            let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
+                            let stepDistValue = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
+                            let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
+                            let maneuver = step["maneuver"] as? String ?? "straight"
+                            if let stepPolyline = step["polyline"] as? [String: Any], let stepPoints = stepPolyline["points"] as? String {
+                                let decodedStepPoints = decodePolyline(stepPoints)
+                                stepPolylinePointCount += decodedStepPoints.count
+                                combinedStepPolyline.append(contentsOf: decodedStepPoints)
+                            }
+                            freshDirections.append(WalkingDirection(instruction: instruction, distance: stepDistText, distanceMeters: stepDistValue, duration: stepDurText, maneuver: maneuver))
+                        }
+                    }
+                }
+            }
+            var finalPolyline = polyline
+            if stepPolylinePointCount > polylinePointCount && !combinedStepPolyline.isEmpty {
+                finalPolyline = encodePolyline(combinedStepPolyline)
+            }
+            let durationMinutes = max(1, totalDuration / 60)
+            let restrictedKeywords = ["restricted", "private road", "no access", "private access", "restricted-usage"]
+            var hasRestrictedRoads = false
+            for direction in freshDirections {
+                let instructionLower = direction.instruction.lowercased()
+                for keyword in restrictedKeywords {
+                    if instructionLower.contains(keyword) { hasRestrictedRoads = true; break }
+                }
+            }
+            if hasRestrictedRoads {
+                lastRouteHadRestrictedRoads = true
+                pendingMapKitFallbackWaypoints = waypoints
+                pendingMapKitFallbackOrigin = userLocation
+            } else {
+                lastRouteHadRestrictedRoads = false
+            }
+            var updatedMarkers: [QRMarker] = []
+            for (index, marker) in route.qrMarkers.enumerated() {
+                if index < waypointsInDisplayOrder.count {
+                    let coord = waypointsInDisplayOrder[index]
+                    updatedMarkers.append(QRMarker(code: marker.code, name: marker.name, location: marker.location, coordinate: coord, contentType: marker.contentType, content: marker.content, pointsValue: marker.pointsValue))
+                } else {
+                    updatedMarkers.append(marker)
+                }
+            }
+            return WalkingRoute(
+                name: route.name,
+                description: route.description,
+                durationMinutes: durationMinutes,
+                distanceMeters: totalDistance > 0 ? totalDistance : route.distanceMeters,
+                difficulty: route.difficulty,
+                isIndoor: route.isIndoor,
+                isAccessible: route.isAccessible,
+                landmarks: route.landmarks,
+                icon: route.icon,
+                color: route.color,
+                qrMarkers: updatedMarkers,
+                routeType: route.routeType,
+                trimmed: finalPolyline.isEmpty ? route.trimmed : finalPolyline,
+                walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
+            )
+        } catch {
+            return nil
+        }
+    }
+    
+    /// Optimistic hybrid: Google Directions with raw waypoints only (no OSM snap). Use for fast first render.
+    func refreshRouteWithGoogleOnlyRaw(route: WalkingRoute, userLocation: CLLocationCoordinate2D) async -> WalkingRoute? {
+        guard canUseGoogleDirectionsRefresh, hasAPIKey else { return nil }
+        let rawWaypoints = route.qrMarkers.map { $0.coordinate }
+        guard !rawWaypoints.isEmpty else { return nil }
+        print("🌐 [GOOGLE-ONLY REFRESH] 📡 Calling Google Directions API (raw waypoints, no OSM snap)...")
+        return await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: rawWaypoints)
+    }
+    
+    /// Optimistic hybrid: refinement step — Google Directions with snapped waypoints. Call when OSM snap moved any waypoint > 20m.
+    func refreshRouteWithGoogleOnlyWithWaypoints(route: WalkingRoute, userLocation: CLLocationCoordinate2D, waypoints: [CLLocationCoordinate2D]) async -> WalkingRoute? {
+        guard canUseGoogleDirectionsRefresh, hasAPIKey, !waypoints.isEmpty else { return nil }
+        print("🌐 [GOOGLE-ONLY REFRESH] 📡 Refinement: Calling Google Directions API with snapped waypoints...")
+        return await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: waypoints)
+    }
+    
     // MARK: - v1.9.39: Google-Only Refresh (no MapKit fallback)
     /// Tries Google Directions only. Returns nil if Google fails (caller uses original route).
     /// This avoids the 15-50s MapKit fallback wait - if Google fails, just use original route.
@@ -7221,302 +7408,30 @@ class GoogleMapsService: ObservableObject {
         
         // Extract waypoint coordinates from QR markers
         let rawWaypoints = route.qrMarkers.map { $0.coordinate }
-        
         guard !rawWaypoints.isEmpty else {
             print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ No waypoints - returning nil")
             return nil
         }
         
-        // v2.1.5: Snap waypoints to nearest public road before sending to Google
-        // Prioritizes the road from the marker's address if available
-        // This ensures routes stay on public roads and don't go into schools/private areas
-        // Run queries in parallel for speed, with fallback mirrors for reliability
+        // v2.1.5: Snap waypoints to nearest public road (existing 10m logic unchanged), then call Google
         print("🛤️ [ROAD SNAP] Starting waypoint snapping for \(rawWaypoints.count) waypoints...")
-        let snappedWaypoints = await withTaskGroup(of: (Int, CLLocationCoordinate2D).self) { group in
-            for (index, waypoint) in rawWaypoints.enumerated() {
-                group.addTask {
-                    // v2.1.5: Extract road name from marker's location field if available
-                    let marker = route.qrMarkers[index]
-                    let roadName = self.extractRoadName(from: marker.location)
-                    if let roadName = roadName {
-                        print("🛤️ [ROAD SNAP] Waypoint \(index+1) '\(marker.name)' - preferred road: '\(roadName)'")
-                    }
-                    
-                    // Use fallback function for reliability
-                    if let nearestRoad = await self.findNearestRoadPointWithFallback(near: waypoint, radiusMeters: 100, preferredRoadName: roadName) {
-                        let distance = CLLocation(latitude: waypoint.latitude, longitude: waypoint.longitude)
-                            .distance(from: CLLocation(latitude: nearestRoad.latitude, longitude: nearestRoad.longitude))
-                        if distance > 10 { // Only snap if more than 10m from road
-                            print("🛤️ [ROAD SNAP] Waypoint \(index+1) snapped to road (\(Int(distance))m)")
-                            return (index, nearestRoad)
-                        } else {
-                            print("🛤️ [ROAD SNAP] Waypoint \(index+1) already on road (within 10m)")
-                        }
-                    } else {
-                        print("🛤️ [ROAD SNAP] ⚠️ Waypoint \(index+1) could not be snapped - using original")
-                    }
-                    return (index, waypoint) // Keep original if already on road or no road found
-                }
-            }
-            
-            var results = [(Int, CLLocationCoordinate2D)]()
-            for await result in group {
-                results.append(result)
-            }
-            return results.sorted { $0.0 < $1.0 }.map { $0.1 }
-        }
-        print("🛤️ [ROAD SNAP] Waypoint snapping complete")
-        
-        // v2.1.2: Log comparison of original vs snapped coordinates
-        for (index, (original, snapped)) in zip(rawWaypoints, snappedWaypoints).enumerated() {
+        let snappedWaypoints = await snapWaypointsToRoads(route: route)
+        for (index, (original, snapped)) in zip(rawWaypoints, snappedWaypoints).enumerated() where index < snappedWaypoints.count {
             let distance = CLLocation(latitude: original.latitude, longitude: original.longitude)
                 .distance(from: CLLocation(latitude: snapped.latitude, longitude: snapped.longitude))
             if distance > 1 {
                 print("🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m")
-                print("   Original: (\(String(format: "%.6f", original.latitude)), \(String(format: "%.6f", original.longitude)))")
-                print("   Snapped:  (\(String(format: "%.6f", snapped.latitude)), \(String(format: "%.6f", snapped.longitude)))")
-            } else {
-                print("🛤️ [ROAD SNAP] Waypoint \(index+1): unchanged (already on road)")
             }
         }
         
-        // Optimize waypoint order locally (Nearest Neighbor) to stay in Essentials SKU
-        let waypoints = performLocalOptimization(origin: userLocation, waypoints: snappedWaypoints)
-        
-        // Build waypoints string
-        let waypointsParam = waypoints.map { 
-            String(format: "%.6f,%.6f", $0.latitude, $0.longitude)
-        }.joined(separator: "|")
-        print("🛤️ [ROAD SNAP] Final waypoints for Google: \(waypointsParam)")
-        
-        // Google Directions API URL
-        var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
-        urlString += "origin=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
-        urlString += "&destination=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
-        urlString += "&waypoints=\(waypointsParam)"
-        urlString += "&mode=walking"
-        urlString += "&key=\(apiKey)"
-        
-        guard let url = URL(string: urlString) else {
-            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Invalid URL - returning nil")
-            return nil
+        if let result = await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snappedWaypoints) {
+            let elapsed = Date().timeIntervalSince(startTime)
+            print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready)")
+            return result
         }
-        
-        // Log the API call (truncate URL for security)
-        let truncatedURL = urlString.prefix(100) + (urlString.count > 100 ? "..." : "")
-        print("🌐 [GOOGLE-ONLY REFRESH] 📡 Calling Google Directions API...")
-        print("🌐 [GOOGLE-ONLY REFRESH]   🔗 URL: \(truncatedURL)")
-        print("🌐 [GOOGLE-ONLY REFRESH]   📍 Origin: (\(String(format: "%.5f", userLocation.latitude)), \(String(format: "%.5f", userLocation.longitude)))")
-        print("🌐 [GOOGLE-ONLY REFRESH]   🎯 Waypoints: \(waypoints.count)")
-        print("🌐 [GOOGLE-ONLY REFRESH]   ⏱️ ROUND TRIP: origin=destination=current GPS → waypoint1 → ... → waypointN → back to current GPS (returned duration is full loop)")
-        
-        do {
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 5.0 // Short 5 second timeout
-            if let bundleId = Bundle.main.bundleIdentifier {
-                request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
-                print("🌐 [GOOGLE-ONLY REFRESH]   📱 Bundle ID: \(bundleId)")
-            }
-            
-            let config = URLSessionConfiguration.default
-            config.timeoutIntervalForRequest = 5.0
-            config.timeoutIntervalForResource = 10.0
-            let session = URLSession(configuration: config)
-            let (data, response) = try await session.data(for: request)
-            let elapsed = Date().timeIntervalSince(startTime)
-            
-            print("🌐 [GOOGLE-ONLY REFRESH]   ⏱️  Response received in \(String(format: "%.2f", elapsed))s")
-            
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ HTTP error - status: \(statusCode) - returning nil (elapsed: \(String(format: "%.2f", elapsed))s)")
-                return nil
-            }
-            
-            print("🌐 [GOOGLE-ONLY REFRESH]   ✅ HTTP 200 OK")
-            
-            recordGoogleDirectionsCall()
-            print("🌐 [GOOGLE-ONLY REFRESH]   📊 Google Directions quota: \(googleDirectionsCallsToday)/\(googleDirectionsDailyCap) calls today")
-            
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let status = json["status"] as? String,
-                  status == "OK",
-                  let routes = json["routes"] as? [[String: Any]],
-                  let firstRoute = routes.first else {
-                let errorStatus = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["status"] as? String ?? "unknown"
-                print("🌐 [GOOGLE-ONLY REFRESH]   ❌ API status: \(errorStatus)")
-                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ API status: \(errorStatus) (elapsed: \(String(format: "%.2f", elapsed))s)")
-                
-                // v2.1.3: Fall back to MapKit when Google quota exceeded or request denied
-                // This way we still use the snapped waypoints even if Google fails
-                if errorStatus == "OVER_QUERY_LIMIT" || errorStatus == "REQUEST_DENIED" {
-                    print("🍎 [MAPKIT FALLBACK] Google quota/access issue - falling back to MapKit with snapped waypoints")
-                    let mapKitRoute = await refreshRouteWithMapKitUsingSnappedWaypoints(
-                        route: route,
-                        userLocation: userLocation,
-                        snappedWaypoints: snappedWaypoints
-                    )
-                    if let result = mapKitRoute {
-                        let totalElapsed = Date().timeIntervalSince(startTime)
-                        print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ✅ MapKit fallback succeeded (total elapsed: \(String(format: "%.2f", totalElapsed))s)")
-                        return result
-                    }
-                }
-                
-                print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Returning nil - no fallback available")
-                return nil
-            }
-            
-            print("🌐 [GOOGLE-ONLY REFRESH]   ✅ API status: OK - \(routes.count) route(s) found")
-            
-            // Parse the response (same logic as refreshRouteWithGoogleThenMapKit)
-            var polyline = ""
-            var polylinePointCount = 0
-            if let overviewPolyline = firstRoute["overview_polyline"] as? [String: Any],
-               let points = overviewPolyline["points"] as? String {
-                polyline = points
-                polylinePointCount = decodePolyline(points).count
-            }
-            
-            var stepPolylinePointCount = 0
-            var combinedStepPolyline: [CLLocationCoordinate2D] = []
-            var freshDirections: [WalkingDirection] = []
-            var totalDistance = 0
-            var totalDuration = 0
-            
-            if let legs = firstRoute["legs"] as? [[String: Any]] {
-                for leg in legs {
-                    if let distance = leg["distance"] as? [String: Any],
-                       let distValue = distance["value"] as? Int {
-                        totalDistance += distValue
-                    }
-                    if let duration = leg["duration"] as? [String: Any],
-                       let durValue = duration["value"] as? Int {
-                        totalDuration += durValue
-                    }
-                    
-                    if let steps = leg["steps"] as? [[String: Any]] {
-                        for step in steps {
-                            let instruction = (step["html_instructions"] as? String)?
-                                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) ?? "Continue"
-                            let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
-                            let stepDistValue = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
-                            let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
-                            let maneuver = step["maneuver"] as? String ?? "straight"
-                            
-                            if let stepPolyline = step["polyline"] as? [String: Any],
-                               let stepPoints = stepPolyline["points"] as? String {
-                                let decodedStepPoints = decodePolyline(stepPoints)
-                                stepPolylinePointCount += decodedStepPoints.count
-                                combinedStepPolyline.append(contentsOf: decodedStepPoints)
-                            }
-                            
-                            freshDirections.append(WalkingDirection(
-                                instruction: instruction,
-                                distance: stepDistText,
-                                distanceMeters: stepDistValue,
-                                duration: stepDurText,
-                                maneuver: maneuver
-                            ))
-                        }
-                    }
-                }
-            }
-            
-            // Use detailed step polyline if available
-            var finalPolyline = polyline
-            if stepPolylinePointCount > polylinePointCount && !combinedStepPolyline.isEmpty {
-                finalPolyline = encodePolyline(combinedStepPolyline)
-            }
-            
-            let durationMinutes = max(1, totalDuration / 60)
-            
-            // v2.1.0: Debug logging for polyline quality
-            let finalPointCount = stepPolylinePointCount > polylinePointCount ? stepPolylinePointCount : polylinePointCount
-            print("🗺️ [POLYLINE DEBUG] Google refresh polyline: \(finalPointCount) points (overview: \(polylinePointCount), steps: \(stepPolylinePointCount))")
-            if finalPolyline.isEmpty {
-                print("🚨 [POLYLINE DEBUG] WARNING: No polyline from Google - route will show straight lines!")
-            } else if finalPointCount < 10 {
-                print("⚠️ [POLYLINE DEBUG] WARNING: Low-quality polyline (\(finalPointCount) points) - may not follow roads accurately")
-            }
-            
-            // v2.1.0: Check for restricted roads in directions (but DON'T block on MapKit fallback)
-            let restrictedKeywords = ["restricted", "private road", "no access", "private access", "restricted-usage"]
-            var hasRestrictedRoads = false
-            for direction in freshDirections {
-                let instructionLower = direction.instruction.lowercased()
-                for keyword in restrictedKeywords {
-                    if instructionLower.contains(keyword) {
-                        print("⚠️ [RESTRICTED ROAD] Direction contains '\(keyword)': \(direction.instruction)")
-                        hasRestrictedRoads = true
-                    }
-                }
-            }
-            
-            // v2.1.1: If restricted roads detected, log warning but return Google route immediately
-            // MapKit fallback will be triggered asynchronously by the caller
-            if hasRestrictedRoads {
-                print("⚠️ [RESTRICTED ROAD] Google route uses restricted roads - returning immediately, caller can trigger MapKit fallback")
-                // Set flag for caller to know MapKit fallback is needed
-                self.lastRouteHadRestrictedRoads = true
-                self.pendingMapKitFallbackWaypoints = waypoints
-                self.pendingMapKitFallbackOrigin = userLocation
-            } else {
-                self.lastRouteHadRestrictedRoads = false
-            }
-            
-            let endTimeString = formatter.string(from: Date())
-            print("REFRESH_SOURCE | [\(endTimeString)] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready)")
-            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ✅ SUCCESS: \(durationMinutes)min, \(totalDistance)m, \(freshDirections.count) steps (elapsed: \(String(format: "%.2f", elapsed))s)")
-            
-            // v2.1.2: Keep original marker positions for display, but use snapped coordinates for:
-            // 1. Route polyline (already done - Google got snapped waypoints)
-            // 2. Marker ACTIVATION (update coordinates so user triggers at road, not inside restricted area)
-            // The marker LABEL stays at original position, but activation zone is on the road
-            var updatedMarkers: [QRMarker] = []
-            for (index, marker) in route.qrMarkers.enumerated() {
-                if index < snappedWaypoints.count {
-                    let snappedCoord = snappedWaypoints[index]
-                    // Update marker coordinate to snapped position for activation detection
-                    let updatedMarker = QRMarker(
-                        code: marker.code,
-                        name: marker.name,
-                        location: marker.location,
-                        coordinate: snappedCoord,  // Snapped to road for activation
-                        contentType: marker.contentType,
-                        content: marker.content,
-                        pointsValue: marker.pointsValue
-                    )
-                    updatedMarkers.append(updatedMarker)
-                } else {
-                    updatedMarkers.append(marker)
-                }
-            }
-            
-            return WalkingRoute(
-                name: route.name,
-                description: route.description,
-                durationMinutes: durationMinutes,
-                distanceMeters: totalDistance > 0 ? totalDistance : route.distanceMeters,
-                difficulty: route.difficulty,
-                isIndoor: route.isIndoor,
-                isAccessible: route.isAccessible,
-                landmarks: route.landmarks,
-                icon: route.icon,
-                color: route.color,
-                qrMarkers: updatedMarkers,  // Markers with snapped coordinates for activation
-                routeType: route.routeType,
-                trimmed: finalPolyline.isEmpty ? route.trimmed : finalPolyline,
-                walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
-            )
-            
-        } catch {
-            let elapsed = Date().timeIntervalSince(startTime)
-            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Error: \(error.localizedDescription) (elapsed: \(String(format: "%.2f", elapsed))s)")
-            
-            // v2.1.3: Fall back to MapKit on network errors (timeout, connection issues)
-            // This ensures user gets a corrected route even if Google is unreachable
-            print("🍎 [MAPKIT FALLBACK] Google network error - falling back to MapKit with snapped waypoints")
+        // v2.1.3: Fall back to MapKit when Google quota exceeded or request denied
+        if lastGoogleDirectionsErrorStatus == "OVER_QUERY_LIMIT" || lastGoogleDirectionsErrorStatus == "REQUEST_DENIED" {
+            print("🍎 [MAPKIT FALLBACK] Google quota/access issue - falling back to MapKit with snapped waypoints")
             if let mapKitRoute = await refreshRouteWithMapKitUsingSnappedWaypoints(
                 route: route,
                 userLocation: userLocation,
@@ -7526,10 +7441,9 @@ class GoogleMapsService: ObservableObject {
                 print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ✅ MapKit fallback succeeded (total elapsed: \(String(format: "%.2f", totalElapsed))s)")
                 return mapKitRoute
             }
-            
-            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ MapKit fallback also failed - returning nil")
-            return nil
         }
+        print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Returning nil - no fallback available")
+        return nil
     }
     
     /// v2.1.1: Async MapKit fallback for when Google returned restricted roads
