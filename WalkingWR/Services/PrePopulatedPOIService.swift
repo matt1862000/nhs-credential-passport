@@ -65,44 +65,26 @@ class PrePopulatedPOIService {
 
     // Firebase Storage reference for pre-populated POI database
     private let storage = Storage.storage()
-    private let databaseFileName = "prepopulated_pois.json"
     
     // URL for downloading pre-populated POI database
-    // Tries postcode-specific file first (smaller ~500KB), falls back to full database (11MB)
-    private func getDatabaseURL(for postcodeDistrict: String? = nil) async -> URL? {
-        // If postcode district is provided, try postcode-specific file first
-        if let district = postcodeDistrict {
-            let postcodeFileName = "prepopulated_pois_\(district).json"
-            let postcodeRef = storage.reference().child(postcodeFileName)
-            do {
-                let downloadURL = try await postcodeRef.downloadURL()
-                print("📦 Pre-populated DB: Found postcode-specific file: \(postcodeFileName) (~500KB)")
-                print("\(Self.telem) FIREBASE_URL source=postcode_\(district) file=\(postcodeFileName)")
-                return downloadURL
-            } catch {
-                let nsError = error as NSError?
-                print("📦 Pre-populated DB: Postcode-specific file '\(postcodeFileName)' not found, trying full database")
-                print("\(Self.telem) FIREBASE_URL postcode_file_missing district=\(district) error=\(error.localizedDescription)")
-                print("📦 Pre-populated DB: Error details: \(error.localizedDescription)")
-                if let nsError = nsError {
-                    print("📦 Pre-populated DB: Error code: \(nsError.code), domain: \(nsError.domain)")
-                }
-            }
-        }
-        
-        // Fallback to full database
-        let storageRef = storage.reference().child(databaseFileName)
+    // Only tries postcode-specific file (no full database fallback)
+    private func getDatabaseURL(for postcodeDistrict: String?) async -> URL? {
+        guard let district = postcodeDistrict else { return nil }
+        let postcodeFileName = "prepopulated_pois_\(district).json"
+        let postcodeRef = storage.reference().child(postcodeFileName)
         do {
-            // Get download URL from Firebase Storage
-            let downloadURL = try await storageRef.downloadURL()
-            print("📦 Pre-populated DB: Using full database: \(databaseFileName)")
-            print("\(Self.telem) FIREBASE_URL source=full file=\(databaseFileName)")
+            let downloadURL = try await postcodeRef.downloadURL()
+            print("📦 Pre-populated DB: Found postcode-specific file: \(postcodeFileName) (~500KB)")
+            print("\(Self.telem) FIREBASE_URL source=postcode_\(district) file=\(postcodeFileName)")
             return downloadURL
         } catch {
             let nsError = error as NSError?
-            print("📦 Pre-populated DB: Failed to get Firebase Storage URL: \(error.localizedDescription)")
-            print("\(Self.telem) FIREBASE_URL source=none error=\(error.localizedDescription)")
-            print("📦 Pre-populated DB: No bundled database - will use cached database if available, otherwise API calls")
+            print("📦 Pre-populated DB: Postcode-specific file '\(postcodeFileName)' not found (no full DB fallback)")
+            print("\(Self.telem) FIREBASE_URL postcode_file_missing district=\(district) error=\(error.localizedDescription)")
+            print("📦 Pre-populated DB: Error details: \(error.localizedDescription)")
+            if let nsError = nsError {
+                print("📦 Pre-populated DB: Error code: \(nsError.code), domain: \(nsError.domain)")
+            }
             return nil
         }
     }
@@ -939,11 +921,16 @@ class PrePopulatedPOIService {
         await downloadDatabaseIfNeeded(userLocation: userLocation)
     }
 
-    /// Download pre-populated database on app start
-    /// ALWAYS downloads from Firebase Storage - never uses bundled database
-    /// PRIORITY: This ensures database is always up-to-date from Firebase
-    /// If location is provided, only downloads the relevant postcode area to save storage
+    /// Download pre-populated database when we have a user location.
+    /// Only downloads the relevant postcode JSON; full database is never used.
     func downloadDatabaseIfNeeded(userLocation: CLLocationCoordinate2D? = nil) async {
+        // Require location: only download postcode-specific file, never full DB
+        guard let userLocation = userLocation else {
+            print("📦 Pre-populated DB: No user location yet - skipping download until first location")
+            print("\(Self.telem) DOWNLOAD_SKIP reason=no_location")
+            return
+        }
+
         // If a download is already in progress, wait for it so caller gets the DB when ready
         if let existing = downloadTask {
             print("📦 Pre-populated DB: Download already in progress, waiting for it...")
@@ -962,35 +949,33 @@ class PrePopulatedPOIService {
         downloadTask = Task {
             defer { isDownloading = false; downloadTask = nil }
         
-        // Determine postcode district from location for smaller download
-        var postcodeDistrict: String? = nil
-        if let userLocation = userLocation {
-            postcodeDistrict = getPostcodeDistrict(for: userLocation)
-            if let district = postcodeDistrict {
-                print("📦 Pre-populated DB: User in postcode district '\(district)' - trying smaller file first (GPS-based)")
-                print("\(Self.telem) DOWNLOAD_START attemptedPostcode=\(district) location=(\(String(format: "%.5f", userLocation.latitude)),\(String(format: "%.5f", userLocation.longitude)))")
-            } else {
-                print("\(Self.telem) DOWNLOAD_START attemptedPostcode=none location=(\(String(format: "%.5f", userLocation.latitude)),\(String(format: "%.5f", userLocation.longitude)))")
-            }
+        // Determine postcode district from location (postcode-only download)
+        let postcodeDistrict = getPostcodeDistrict(for: userLocation)
+        if let district = postcodeDistrict {
+            print("📦 Pre-populated DB: User in postcode district '\(district)' - downloading postcode file only")
+            print("\(Self.telem) DOWNLOAD_START attemptedPostcode=\(district) location=(\(String(format: "%.5f", userLocation.latitude)),\(String(format: "%.5f", userLocation.longitude)))")
         } else {
-            print("📦 Pre-populated DB: No user location provided - downloading full database (postcode-specific not used)")
-            print("\(Self.telem) DOWNLOAD_START attemptedPostcode=none location=nil (will use full DB)")
+            print("📦 Pre-populated DB: User location not in any target postcode area - no download")
+            print("\(Self.telem) DOWNLOAD_START attemptedPostcode=none location=(\(String(format: "%.5f", userLocation.latitude)),\(String(format: "%.5f", userLocation.longitude)))")
         }
         
-        // Try to get download URL (postcode-specific first, then full database)
+        // Try to get download URL (postcode-specific only)
+        guard let postcodeDistrict = postcodeDistrict else {
+            print("📦 Pre-populated DB: User not in any target postcode area - no download")
+            print("\(Self.telem) DOWNLOAD_SKIP reason=no_matching_postcode")
+            return
+        }
         guard let url = await getDatabaseURL(for: postcodeDistrict) else {
-            // No Firebase Storage URL available - use cached database if available, otherwise fail
+            // Postcode file not found in Firebase - use cached database if available, otherwise API only
             if hasDownloadedDatabase {
-                print("📦 Pre-populated DB: No Firebase Storage URL available, using cached database")
-                print("📦 Pre-populated DB: ⚠️  Will retry Firebase download on next app launch")
+                print("📦 Pre-populated DB: Postcode file not in Firebase, using cached database")
             } else {
-                print("📦 Pre-populated DB: ❌ No Firebase Storage URL available and no cached database")
-                print("📦 Pre-populated DB: ⚠️  App will use API calls until Firebase is available")
+                print("📦 Pre-populated DB: ❌ Postcode file not in Firebase and no cache - app will use API calls")
             }
             return
         }
-        let firebaseJsonFile = postcodeDistrict.map { "prepopulated_pois_\($0).json" } ?? databaseFileName
-        print("\(Self.telem) FIREBASE_JSON_FILE file=\(firebaseJsonFile) postcode=\(postcodeDistrict ?? "full")")
+        let firebaseJsonFile = "prepopulated_pois_\(postcodeDistrict).json"
+        print("\(Self.telem) FIREBASE_JSON_FILE file=\(firebaseJsonFile) postcode=\(postcodeDistrict)")
         
         // Check if we need to download (first time or version update)
         // First verify the database actually exists (not just the version key)
@@ -1067,7 +1052,7 @@ class PrePopulatedPOIService {
             // Mark as downloaded
             UserDefaults.standard.set(true, forKey: downloadCompleteKey)
             UserDefaults.standard.set(database.version, forKey: "prepopulatedPOIs_version")
-            let sourceValue = postcodeDistrict ?? "full"
+            let sourceValue = postcodeDistrict
             UserDefaults.standard.set(sourceValue, forKey: databaseSourceKey)
             
             let totalPOIs = database.postcodeAreas.reduce(0) { $0 + $1.pois.count }
@@ -1076,9 +1061,7 @@ class PrePopulatedPOIService {
             print("\(Self.telem) FIREBASE_DOWNLOAD_COMPLETE file=\(firebaseJsonFile)")
             print("\(Self.telem) DOWNLOAD_SUCCESS source=\(sourceValue) areaCount=\(database.postcodeAreas.count) totalPOIs=\(totalPOIs) totalRoutes=\(totalRoutes) areas=[\(areaList)]")
             print("📦 ✅ Pre-populated DB: Downloaded successfully from Firebase Storage!")
-            if postcodeDistrict != nil {
-                print("📦   Used GPS-based postcode slice (\(postcodeDistrict!)) - appropriate POIs/routes loaded quickly")
-            }
+            print("📦   Used GPS-based postcode slice (\(postcodeDistrict)) - appropriate POIs/routes loaded quickly")
             print("📦   Version: \(database.version)")
             print("📦   Postcode areas: \(database.postcodeAreas.count)")
             print("📦   Total POIs: \(totalPOIs)")

@@ -66,10 +66,7 @@ struct SplashScreenView: View {
                     improvingLivesOpacity = 1.0
                 }
                 
-                // Download pre-populated POI database in background (non-blocking)
-                Task {
-                    await PrePopulatedPOIService.shared.downloadDatabaseIfNeeded()
-                }
+                // Pre-populated POI DB is downloaded when we get first location (MainTabView), not here
                 
                 // Set minimum time elapsed after 2.5 seconds
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {

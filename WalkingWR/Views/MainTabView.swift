@@ -21,6 +21,8 @@ struct MainTabView: View {
     @State private var showLocalRoutePicker = false
     @State private var wellbeingCategory: WellbeingCategory = .breathing
     @State private var wellbeingExercise: WellbeingContent? = nil
+    /// Trigger prepop POI download once when we get first location (postcode-specific only, no full DB)
+    @State private var hasTriggeredPrepopDownload = false
     
     init(viewModel: WaitingRoomViewModel) {
         self.viewModel = viewModel
@@ -137,6 +139,13 @@ struct MainTabView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     checkForPendingPushNotification()
                 }
+            }
+        }
+        .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
+            guard let loc = newLocation, !hasTriggeredPrepopDownload else { return }
+            hasTriggeredPrepopDownload = true
+            Task {
+                await PrePopulatedPOIService.shared.downloadDatabaseIfNeeded(userLocation: loc.coordinate)
             }
         }
         // Global delay alerts - use the reusable modifier

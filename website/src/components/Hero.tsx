@@ -5,9 +5,10 @@ import { motion } from 'framer-motion'
 import PhoneMockup from './PhoneMockup'
 import VideoModal from './VideoModal'
 
+const PROMO_VIDEO_ID = 'sALctWCQQic' // YouTube Shorts promo
+
 export default function Hero() {
   const [isVideoOpen, setIsVideoOpen] = useState(false)
-  const videoId = 'o04u_ZTuhCc' // Extracted from YouTube URL
 
   return (
     <section className="relative min-h-screen overflow-hidden animated-gradient">
@@ -71,7 +72,7 @@ export default function Hero() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                Watch Demo
+                Watch Promo
               </motion.button>
             </div>
 
@@ -131,11 +132,11 @@ export default function Hero() {
         </div>
       </motion.div>
 
-      {/* Video Modal */}
-      <VideoModal 
-        isOpen={isVideoOpen} 
-        onClose={() => setIsVideoOpen(false)} 
-        videoId={videoId}
+      {/* Video Modal - in-website promo */}
+      <VideoModal
+        isOpen={isVideoOpen}
+        onClose={() => setIsVideoOpen(false)}
+        videoId={PROMO_VIDEO_ID}
       />
     </section>
   )

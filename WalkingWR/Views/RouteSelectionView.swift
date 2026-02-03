@@ -2060,184 +2060,10 @@ struct LocalRoutePickerSheet: View {
                         shownPlaceIdSets = loadedPlaceIdSets
                     }
                     
-                    // PREPOP ONLY: Refresh route with MapKit in background; update displayed route when done (user already sees map with cached polyline)
-                    if firstCached.isFromPrePopulatedDatabase, !firstMarkersForPrepop.isEmpty {
-                        let coord = userLocation.coordinate
-                        let minimalRoute = WalkingRoute(
-                            name: firstCached.name ?? "Local Discovery",
-                            description: "Preview",
-                            durationMinutes: max(1, filteredCachedRoute.durationSeconds / 60),
-                            distanceMeters: filteredCachedRoute.distanceMeters,
-                            difficulty: .moderate,
-                            isIndoor: false,
-                            isAccessible: true,
-                            landmarks: filteredCachedRoute.places.map { $0.name },
-                            icon: "location.fill",
-                            color: .tealAccent,
-                            qrMarkers: firstMarkersForPrepop,
-                            routeType: .local,
-                            trimmed: filteredCachedRoute.polyline.isEmpty ? nil : filteredCachedRoute.polyline,
-                            walkingDirections: [],
-                            usedOSRMRouting: false,
-                            isFromPrePopulatedDatabase: true
-                        )
+                    // PREPOP ONLY: MapKit validate-and-reorder (all routes: update preview time from MapKit, then reorder valid first when user on route 1)
+                    if firstCached.isFromPrePopulatedDatabase, !allRoutes.isEmpty, cachedRoutes.count == 1 {
                         Task {
-                            let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
-                            if shouldCancel { return }
-                            var polylineToUse = filteredCachedRoute.polyline
-                            var durationToUse = filteredCachedRoute.durationSeconds
-                            var distanceToUse = filteredCachedRoute.distanceMeters
-                            var dirs: [WalkingDirection] = firstCached.directions ?? []
-                            let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: minimalRoute, userLocation: coord)
-                            if mapKitRoute.durationMinutes > 0, let poly = mapKitRoute.trimmed, !poly.isEmpty {
-                                polylineToUse = poly
-                                durationToUse = mapKitRoute.durationMinutes * 60
-                                distanceToUse = mapKitRoute.distanceMeters
-                                dirs = mapKitRoute.walkingDirections
-                                print("📦 PREPOP BACKGROUND: MapKit refresh done — \(mapKitRoute.durationMinutes) min (updating route)")
-                            } else if let firstPlace = filteredCachedRoute.places.first,
-                                      let merged = await mapsService.prependGpsToFirstWaypointLeg(
-                                        userLocation: coord,
-                                        firstWaypoint: firstPlace.coordinate,
-                                        existingRoutePolyline: filteredCachedRoute.polyline,
-                                        existingDurationSeconds: filteredCachedRoute.durationSeconds,
-                                        existingDistanceMeters: filteredCachedRoute.distanceMeters
-                                      ) {
-                                polylineToUse = merged.polyline
-                                durationToUse = merged.durationSeconds
-                                distanceToUse = merged.distanceMeters
-                                var fromLast: [WalkingDirection] = []
-                                if let lastPlace = filteredCachedRoute.places.last,
-                                   let withReturn = await mapsService.appendLastWaypointToGpsLeg(
-                                    userLocation: coord,
-                                    lastWaypoint: lastPlace.coordinate,
-                                    existingRoutePolyline: polylineToUse,
-                                    existingDurationSeconds: durationToUse,
-                                    existingDistanceMeters: distanceToUse
-                                   ) {
-                                    polylineToUse = withReturn.polyline
-                                    durationToUse = withReturn.durationSeconds
-                                    distanceToUse = withReturn.distanceMeters
-                                    fromLast = withReturn.directionsFromLastToGps
-                                }
-                                dirs = merged.directionsFromGpsToFirst + (firstCached.directions ?? []) + fromLast
-                                print("📦 PREPOP BACKGROUND: Fallback GPS→first→…→last→GPS done (updating route)")
-                            }
-                            if !dirs.isEmpty {
-                                dirs = await MainActor.run { filterContradictoryDirections(dirs) }
-                            }
-                            let routeDifficulty: RouteDifficulty = (durationToUse / 60) <= 10 ? .easy : ((durationToUse / 60) <= 20 ? .moderate : .challenging)
-                            let updatedRoute = WalkingRoute(
-                                name: firstCached.name ?? "Local Discovery",
-                                description: firstCached.description ?? "A \(filteredCachedRoute.formattedDuration) walk passing \(filteredCachedRoute.places.count) local points of interest.",
-                                durationMinutes: max(1, durationToUse / 60),
-                                distanceMeters: distanceToUse,
-                                difficulty: routeDifficulty,
-                                isIndoor: false,
-                                isAccessible: true,
-                                landmarks: ["Start"] + filteredCachedRoute.places.map { $0.name } + ["Return"],
-                                icon: "location.fill",
-                                color: .tealAccent,
-                                qrMarkers: firstMarkersForPrepop,
-                                routeType: .local,
-                                trimmed: polylineToUse,
-                                walkingDirections: dirs,
-                                usedOSRMRouting: filteredCachedRoute.usedOSRM,
-                                isFromPrePopulatedDatabase: true
-                            )
-                            let updatedData = GeneratedRoute(
-                                places: filteredCachedRoute.places,
-                                polyline: polylineToUse,
-                                distanceMeters: distanceToUse,
-                                durationSeconds: durationToUse,
-                                legs: filteredCachedRoute.legs
-                            )
-                            await MainActor.run {
-                                guard allRoutes.indices.contains(0), allRoutes[0].route.name == firstRoute.name else { return }
-                                allRoutes[0] = (route: updatedRoute, data: updatedData, isDeadZoneFallback: firstCached.isDeadZoneFallback)
-                                if currentRouteIndex == 0 {
-                                    generatedRoute = updatedRoute
-                                    generatedRouteData = updatedData
-                                    lastValidRoute = updatedRoute
-                                    lastValidRouteData = updatedData
-                                }
-                                print("📦 PREPOP BACKGROUND: Route updated with MapKit polyline/directions")
-                            }
-                        }
-                    } else if firstCached.isFromPrePopulatedDatabase, let firstPlace = filteredCachedRoute.places.first {
-                        // Prepop but no markers: background refresh with prepend+append only
-                        let coord = userLocation.coordinate
-                        Task {
-                            let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
-                            if shouldCancel { return }
-                            var polylineToUse = filteredCachedRoute.polyline
-                            var durationToUse = filteredCachedRoute.durationSeconds
-                            var distanceToUse = filteredCachedRoute.distanceMeters
-                            var dirs: [WalkingDirection] = firstCached.directions ?? []
-                            if let merged = await mapsService.prependGpsToFirstWaypointLeg(
-                                userLocation: coord,
-                                firstWaypoint: firstPlace.coordinate,
-                                existingRoutePolyline: filteredCachedRoute.polyline,
-                                existingDurationSeconds: filteredCachedRoute.durationSeconds,
-                                existingDistanceMeters: filteredCachedRoute.distanceMeters
-                            ) {
-                                polylineToUse = merged.polyline
-                                durationToUse = merged.durationSeconds
-                                distanceToUse = merged.distanceMeters
-                                dirs = merged.directionsFromGpsToFirst + (firstCached.directions ?? [])
-                                if let lastPlace = filteredCachedRoute.places.last,
-                                   let withReturn = await mapsService.appendLastWaypointToGpsLeg(
-                                    userLocation: coord,
-                                    lastWaypoint: lastPlace.coordinate,
-                                    existingRoutePolyline: polylineToUse,
-                                    existingDurationSeconds: durationToUse,
-                                    existingDistanceMeters: distanceToUse
-                                   ) {
-                                    polylineToUse = withReturn.polyline
-                                    durationToUse = withReturn.durationSeconds
-                                    distanceToUse = withReturn.distanceMeters
-                                    dirs = dirs + withReturn.directionsFromLastToGps
-                                }
-                            }
-                            if !dirs.isEmpty {
-                                dirs = await MainActor.run { filterContradictoryDirections(dirs) }
-                            }
-                            let routeDifficulty: RouteDifficulty = (durationToUse / 60) <= 10 ? .easy : ((durationToUse / 60) <= 20 ? .moderate : .challenging)
-                            let updatedRoute = WalkingRoute(
-                                name: firstCached.name ?? "Local Discovery",
-                                description: firstCached.description ?? "A \(filteredCachedRoute.formattedDuration) walk passing \(filteredCachedRoute.places.count) local points of interest.",
-                                durationMinutes: max(1, durationToUse / 60),
-                                distanceMeters: distanceToUse,
-                                difficulty: routeDifficulty,
-                                isIndoor: false,
-                                isAccessible: true,
-                                landmarks: ["Start"] + filteredCachedRoute.places.map { $0.name } + ["Return"],
-                                icon: "location.fill",
-                                color: .tealAccent,
-                                qrMarkers: firstMarkersForPrepop,
-                                routeType: .local,
-                                trimmed: polylineToUse,
-                                walkingDirections: dirs,
-                                usedOSRMRouting: filteredCachedRoute.usedOSRM,
-                                isFromPrePopulatedDatabase: true
-                            )
-                            let updatedData = GeneratedRoute(
-                                places: filteredCachedRoute.places,
-                                polyline: polylineToUse,
-                                distanceMeters: distanceToUse,
-                                durationSeconds: durationToUse,
-                                legs: filteredCachedRoute.legs
-                            )
-                            await MainActor.run {
-                                guard allRoutes.indices.contains(0), allRoutes[0].route.name == firstRoute.name else { return }
-                                allRoutes[0] = (route: updatedRoute, data: updatedData, isDeadZoneFallback: firstCached.isDeadZoneFallback)
-                                if currentRouteIndex == 0 {
-                                    generatedRoute = updatedRoute
-                                    generatedRouteData = updatedData
-                                    lastValidRoute = updatedRoute
-                                    lastValidRouteData = updatedData
-                                }
-                            }
+                            await prepopMapKitValidateAndReorder(userLocation: userLocation.coordinate, selectedDuration: selectedDuration)
                         }
                     }
                     
@@ -2625,6 +2451,12 @@ struct LocalRoutePickerSheet: View {
                                 
                                 mapsService.retryStatus = nil  // Clear status
                                 print("⏱️ [CACHE] Background loading complete - \(allRoutes.count) total routes")
+                            }
+                        }
+                        // PREPOP ONLY: MapKit validate-and-reorder now that all routes are in allRoutes
+                        if firstCached.isFromPrePopulatedDatabase, !allRoutes.isEmpty {
+                            Task {
+                                await prepopMapKitValidateAndReorder(userLocation: userLocation.coordinate, selectedDuration: selectedDuration)
                             }
                         }
                     }
@@ -3457,6 +3289,111 @@ struct LocalRoutePickerSheet: View {
                 }
                 viewedRouteIndices = [0]
             }
+        }
+    }
+    
+    // MARK: - Prepop MapKit validate and reorder
+    
+    /// Validity band for requested duration (same as RouteCacheService: 80–120%, edge 75–125%).
+    private static func minMaxAcceptableMinutes(for selectedDuration: Int) -> (min: Int, max: Int) {
+        let rounded = RouteCacheService.roundToNearest5Minutes(selectedDuration)
+        let isEdge = rounded <= 5 || rounded >= 55
+        let minPercent = isEdge ? 0.75 : 0.80
+        let maxPercent = isEdge ? 1.25 : 1.20
+        let minAcceptable = Int(Double(rounded) * minPercent)
+        let maxAcceptable = Int(Double(rounded) * maxPercent)
+        return (minAcceptable, maxAcceptable)
+    }
+    
+    /// For prepop: run MapKit for every route in allRoutes, update each route's preview time (and polyline/directions) to MapKit's result; then if user has only looked at route 1, reorder so MapKit-valid routes come first. Never removes routes.
+    private func prepopMapKitValidateAndReorder(userLocation: CLLocationCoordinate2D, selectedDuration: Int) async {
+        let (minAcceptable, maxAcceptable) = Self.minMaxAcceptableMinutes(for: selectedDuration)
+        var isValidByRouteName: [String: Bool] = [:]
+        
+        let countAndNames: (count: Int, names: [String]) = await MainActor.run {
+            guard !allRoutes.isEmpty else { return (0, []) }
+            let names = allRoutes.map { $0.route.name }
+            return (allRoutes.count, names)
+        }
+        guard countAndNames.count > 0 else { return }
+        let count = countAndNames.count
+        let names = countAndNames.names
+        
+        for i in 0..<count {
+            if await MainActor.run(body: { shouldCancelBackgroundWork }) {
+                print("📦 PREPOP MAPKIT: Cancelled - user initiated action")
+                return
+            }
+            
+            let routeName = names[i]
+            let entry: (route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool)? = await MainActor.run {
+                guard let idx = allRoutes.firstIndex(where: { $0.route.name == routeName }) else { return nil }
+                let e = allRoutes[idx]
+                return (e.route, e.data, e.isDeadZoneFallback)
+            }
+            guard let (route, data, isDeadZoneFallback) = entry else { continue }
+            
+            let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: route, userLocation: userLocation)
+            if mapKitRoute.durationMinutes > 0, let poly = mapKitRoute.trimmed, !poly.isEmpty {
+                let durationMin = mapKitRoute.durationMinutes
+                let isValid = durationMin >= minAcceptable && durationMin <= maxAcceptable
+                let updatedRoute = WalkingRoute(
+                    name: route.name,
+                    description: route.description,
+                    durationMinutes: durationMin,
+                    distanceMeters: mapKitRoute.distanceMeters,
+                    difficulty: route.difficulty,
+                    isIndoor: route.isIndoor,
+                    isAccessible: route.isAccessible,
+                    landmarks: route.landmarks,
+                    icon: route.icon,
+                    color: route.color,
+                    qrMarkers: route.qrMarkers,
+                    routeType: route.routeType,
+                    trimmed: poly,
+                    walkingDirections: mapKitRoute.walkingDirections,
+                    usedOSRMRouting: route.usedOSRMRouting,
+                    isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase
+                )
+                let updatedData = GeneratedRoute(
+                    places: data.places,
+                    polyline: poly,
+                    distanceMeters: mapKitRoute.distanceMeters,
+                    durationSeconds: durationMin * 60,
+                    legs: data.legs
+                )
+                isValidByRouteName[route.name] = isValid
+                await MainActor.run {
+                    if let idx = allRoutes.firstIndex(where: { $0.route.name == routeName }) {
+                        allRoutes[idx] = (route: updatedRoute, data: updatedData, isDeadZoneFallback: isDeadZoneFallback)
+                        if currentRouteIndex == idx {
+                            generatedRoute = updatedRoute
+                            generatedRouteData = updatedData
+                            lastValidRoute = updatedRoute
+                            lastValidRouteData = updatedData
+                        }
+                        print("📦 PREPOP MAPKIT: Route \(i + 1)/\(count) updated — \(durationMin) min (valid: \(isValid))")
+                    }
+                }
+            } else {
+                isValidByRouteName[route.name] = false
+            }
+        }
+        
+        let shouldReorder: Bool = await MainActor.run {
+            currentRouteIndex == 0 && isValidByRouteName.values.contains(true)
+        }
+        guard shouldReorder else { return }
+        
+        await MainActor.run {
+            let ordered = allRoutes.enumerated().sorted { a, b in
+                let validA = isValidByRouteName[a.element.route.name] ?? false
+                let validB = isValidByRouteName[b.element.route.name] ?? false
+                if validA != validB { return validA }
+                return a.offset < b.offset
+            }
+            allRoutes = ordered.map(\.element)
+            print("📦 PREPOP MAPKIT: Reordered — valid routes first (\(allRoutes.count) total)")
         }
     }
     

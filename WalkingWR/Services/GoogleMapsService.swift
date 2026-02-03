@@ -4902,7 +4902,19 @@ class GoogleMapsService: ObservableObject {
         // EXCLUDE service roads (often school driveways) and paths within private property
         let searchRadius = max(radiusMeters, 100) // Minimum 100m search radius
         
-        // First query: Main public roads only (highest priority)
+        // v2.1.8: Prefer nearest NAMED road (e.g. Brandy Carr Road) over unnamed footways/paths
+        let namedMainRoadQuery = """
+        [out:json][timeout:10];
+        (
+          way["highway"~"residential|primary|secondary|tertiary|unclassified|living_street|trunk|road"]["name"]["access"!="private"]["access"!="no"](around:\(searchRadius),\(coordinate.latitude),\(coordinate.longitude));
+        );
+        out body geom;
+        """
+        if let namedRoadResult = await executeRoadSnapQuery(namedMainRoadQuery, coordinate: coordinate, description: "named main road") {
+            return namedRoadResult
+        }
+        
+        // Main public roads (any, named or not)
         let mainRoadQuery = """
         [out:json][timeout:10];
         (
@@ -4910,8 +4922,6 @@ class GoogleMapsService: ObservableObject {
         );
         out body geom;
         """
-        
-        // Try main roads first
         if let mainRoadResult = await executeRoadSnapQuery(mainRoadQuery, coordinate: coordinate, description: "main road") {
             return mainRoadResult
         }
