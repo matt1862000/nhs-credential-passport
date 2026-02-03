@@ -1,0 +1,41 @@
+postcode	placeId	name	latitude	longitude	types	vicinity	source
+S20	osm_360945028	Barclays	53.3276271	-1.4745106	bank		osm
+S20	osm_141008574	Batemoor Convenience Store	53.3203968	-1.4654618	convenience	White Thorns View	osm
+S20	osm_137746281	Batemoor & Jordanthorpe Community Centre	53.3230892	-1.4668586	community_centre	Dyche Lane	osm
+S20	osm_131702492	Bay Of Bengal	53.3414352	-1.4124573	restaurant	White Lane	osm
+S20	osm_1054424972	Big Daddy's	53.3224	-1.4644875	fast_food	Dyche Lane	osm
+S20	osm_1278882052	Brow'd Up	53.3395427	-1.4200652	beauty	Charnock Dale Road	osm
+S20	osm_70387079	DoubleTree by Hilton Hotel Sheffield Park	53.3238391	-1.4714536	hotel	Chesterfield Road South	osm
+S20	osm_1278882049	Eden	53.339461	-1.420288	beauty	Charnock Dale Road	osm
+S20	osm_1278882048	Evolve	53.339433	-1.4203645	hairdresser	Charnock Dale Road	osm
+S20	osm_1258321911	Hair by Barons	53.3417349	-1.4135184	hairdresser	White Lane	osm
+S20	osm_5984048548	HomeSense	53.3268266	-1.4678289	interior_decoration	Sheffield	osm
+S20	osm_70387440	JCT600	53.3263272	-1.4711252	car		osm
+S20	osm_1337182706	JCT600 Audi	53.3261766	-1.4716059	car		osm
+S20	osm_1054424962	Jordanthorpe Food & Wine	53.3229431	-1.4649642	convenience	Sheffield	osm
+S20	osm_137761393	Jordanthorpe Health Centre	53.3232003	-1.4639009	doctors		osm
+S20	osm_1054424973	Jordanthorpe Library	53.3222937	-1.4647629	library		osm
+S20	osm_1054424966	Jordanthorpe Post Office	53.3227049	-1.4645065	post_office	Sheffield	osm
+S20	geograph_2582197	Lees Hall Golf Club, Sheffield	53.339975	-1.458987	geograph		geograph
+S20	osm_633760697	Leisure United Sheffield Graves	53.3261325	-1.4662519	sports_centre		osm
+S20	osm_6005428049	Meadow Head Post Office	53.3277452	-1.4737975	post_office	Meadow Head	osm
+S20	osm_1054424961	Meadowhead Christian Fellowship	53.3229636	-1.4651359	place_of_worship		osm
+S20	osm_5982190116	Meadowhead Funeral Home	53.3275297	-1.4744764	funeral_directors		osm
+S20	osm_360946527	Meadowhead Meats	53.3276763	-1.4745285	butcher	Meadow Head	osm
+S20	osm_123867794	Meadowhead School Academy Trust	53.3243155	-1.4695191	school	Dyche Lane	osm
+S20	osm_1040200348	Mountain Warehouse	53.3273243	-1.4667312	outdoor		osm
+S20	osm_1054424971	No. 14	53.322471	-1.4644968	hairdresser		osm
+S20	geograph_4449460	Norton Water Tower, Sheffield	53.33797	-1.453006	geograph		geograph
+S20	geograph_2262638	Norton Water Tower - A Sheffield Landmark	53.338244	-1.453903	geograph		geograph
+S20	geograph_4736581	Norton Water Tower viewed from Lenny Hill	53.338423	-1.453751	geograph		geograph
+S20	osm_367066423	Orpen House	53.3379304	-1.4473716	social_facility	Mawfa Road	osm
+S20	osm_1258321910	Rainbow	53.3417211	-1.4134054	fast_food	White Lane	osm
+S20	osm_123867819	Sheffield Transport Sports Club	53.3253963	-1.4760143	sports_centre		osm
+S20	osm_1278882051	Soft Point	53.3395156	-1.4201388	curtain	Charnock Dale Road	osm
+S20	osm_1258321909	#tastee	53.3417024	-1.4133466	cafe	White Lane	osm
+S20	osm_123412477	The Norton	53.3274139	-1.4734665	pub	Meadowhead	osm
+S20	geograph_7616183	The Water Tower Inn	53.33915	-1.455393	geograph		geograph
+S20	osm_123412489	Wash 'N Drive	53.3274059	-1.4746618	car_wash		osm
+S20	geograph_3960946	Water tower on Norton Lane, Backmoor	53.338423	-1.453751	geograph		geograph
+S20	osm_1054424968	Win Fat	53.3226104	-1.4645017	restaurant	Sheffield	osm
+S20	osm_1054424963	Woodthorpe Bakery	53.3229237	-1.4648419	bakery	Jordanthorpe Centre	osm

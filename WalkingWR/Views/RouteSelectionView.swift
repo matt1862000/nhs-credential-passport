@@ -1850,13 +1850,13 @@ struct LocalRoutePickerSheet: View {
                     }
                 }
                 
-                // If postcode hit and prepop DB not ready: stay on "Finding places" for up to 5s waiting for download, then proceed (fallback to live generation if needed)
+                // If postcode hit and prepop DB not ready: stay on "Finding places nearby" until download finishes OR 10s, then proceed
                 let inPostcodeArea = PrePopulatedPOIService.shared.isInTargetPostcodeArea(userLocation.coordinate)
                 if inPostcodeArea && !PrePopulatedPOIService.shared.hasDownloadedDatabase {
                     let prepopWaitStart = Date()
-                    await PrePopulatedPOIService.shared.ensureDatabaseReadyWithTimeout(userLocation: userLocation.coordinate, waitUpToSeconds: 5.0)
+                    await PrePopulatedPOIService.shared.ensureDatabaseReadyWithTimeout(userLocation: userLocation.coordinate, waitUpToSeconds: 10.0)
                     let prepopWaitElapsed = Date().timeIntervalSince(prepopWaitStart)
-                    print("📊 [TELEM] PREPOP_WAIT_ELAPSED seconds=\(String(format: "%.2f", prepopWaitElapsed)) (postcode hit, max 5s)")
+                    print("📊 [TELEM] PREPOP_WAIT_ELAPSED seconds=\(String(format: "%.2f", prepopWaitElapsed)) (postcode hit, max 10s)")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Prepop wait done → advancing to Calculating routes")
                 }
                 

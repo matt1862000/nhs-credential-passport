@@ -1,0 +1,87 @@
+Loading from /tmp/toiletmap_toilets.json...
+Loaded 15751 toilets.
+Filtered to 82 toilets.
+postcode	placeId	name	latitude	longitude	types	vicinity	source	rating
+S5 7AU	toiletmap_01b5ee4a06fde61b9c2022c4	Next (Costa coffee)	53.327303957	-1.466732514	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_0302cc7df663eb974d3b5676	Meadowhall	53.416902269	-1.41361886	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_03d672d5e50e04777f415e33	Stocksbridge	53.481714172	-1.590067148	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_074d876a5485694604f6f9bc	Bolsterstone Public Toilets	53.468101814	-1.593677402	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_0a2e348f967648e099674b87	Botanical Gardens Main Toilet Block	53.3712305	-1.4953213	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_0aa87a3e8fe4faf412be69cd	SOAR Works Enterprise Centre	53.432162408	-1.479490399	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_0b15450a36645f161dfcca02	Bradfield Public Toilet	53.4246862	-1.6055408	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_0cc2f2fd0b446c2d7189df1d	Abbeydale Industrial Hamlet Cafe	53.33409544	-1.51200464	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_1150ff18cbbcacfde370aa9b	The Rawson Spring	53.401906295	-1.500357985	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_12e4984d37d48b01c7ad6eb8	Longley 4 Greens Community Centre	53.417087427	-1.472119689	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_170a7788f561c1e1ebffa147	Marks & Spencer, Fargate, Sheffield	53.381805306	-1.468477249	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_1be072696a1bce9f0221937f	Norfolk Park Toilets	53.368135385	-1.447971761	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_1d59ab6df008dac2a1b36c59	Morrisons, Hillsborough	53.401901497	-1.495964527	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_2261390310d2c4ce8909caca	Loxley Nurseries	53.406607471	-1.544501781	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_25eb63e5f97ab0c21dd251c1	Atkinsons, The Moor	53.375870405	-1.47446394	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_269f05ec5013c3f5a8252166	Burton Street Cafe	53.400348804	-1.49305433	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_28a8f8d4f855c9313e423f74	Kelham Island Tavern	53.388103581	-1.472173333	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_2b7db52f17fb8e28b898a605	Banker's Draft	53.383264374	-1.466513872	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_2e9ef043b0986a7a71caf200	Toilets between restaurant upstairs	53.414387258	-1.412837505	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_32ff63d88c02b8c41fe4ef85	Public toilet	53.414943587	-1.41104579	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_3f7c9d402fecc603130699cf	Crystal Peaks (Ground Floor)	53.341616254	-1.351983547	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_40deb77f672b8fba814811a8	School House Farm Shop & Café, Low Bradfield	53.422974386	-1.606900692	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_48f7b5af1ddc848f50d86ac6	Station platform level 2-5	53.3775982	-1.462232	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_493b14e9723c66036a884c62	The Learning Zone	53.4269161	-1.484981906	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_49b6492ee97dd02b7f4c1bcf	McDonalds, Meadowhall Retail Park	53.405708851	-1.414634585	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_5339469c2876bb64c8f47447	Endcliffe Park Toilets	53.3685818	-1.5078763	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_553d4b81848636b4d9ad1c4d	Millhouses Park Toilets	53.341650149	-1.501562297	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_55b1fd18187ed8f7496a62d4	Sheffield Station platform level 6-8	53.378235376	-1.462104529	public_toilet, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_57ca582dd1ba08c493363996	Royal Hallamshire Hospital	53.378290217	-1.492922902	public_toilet, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_5ff365bb25bc33b79861fe17	University of Sheffield, The Edge	53.372667248	-1.507516428	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_61446911562be0cdc2beb729	Virgin Money	53.381133349	-1.470317245	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_63cc34079c1f74cd5dc358cf	Surestart	53.41755728	-1.447856426	public_toilet, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_69c15bf5f8762ffce1b39f5f	The Moor Market	53.375309283	-1.473439336	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_7aed84ce8c113ff64af45901	Tinsley Park Cemetery	53.39314217	-1.408427954	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_806682d3d11abfed29f7360b	Western Park Museum	53.381683014	-1.492211113	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_807ede84db3323203dab1149	Northern General Hospital (A&E)	53.409378285	-1.456375122	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_837b74a03038aec9b61f7b8c	Chapel town Park Toilets	53.4609435	-1.4642393	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_896e341732ee9aeee92adfde	cafe near gatehouse of Botanical Gardens	53.373435844	-1.497580978	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_90021409ab993a9859157ff7	Hillsborough Interchange (Enquiries Office)	53.401886427	-1.49936676	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_90f674cc27b8ba983fbec332	Ground Floor Toilets	53.381830768	-1.481901741	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_921e521ba8fc3c772fb33714	Pound's Park, Rockingham Street	53.378745145	-1.474699616	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_92ee43a7dc44de79346fea38	Heeley Farm	53.36301834	-1.467726255	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_93517b272900aaca9ce3b927	Public toilet	53.3592223	-1.3783803	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_94069de2ab48beeac6fa37cd	Sheffield Station concourse	53.377977437	-1.462847563	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_958f403b4ffbd278efedd2f6	Rivelin Valley Park Toilets	53.3910499	-1.5180469	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_96cf0faaada52ebf769ede8b	Shiregreen Cemetery	53.4212512	-1.4356468	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_979222da20b90218620c0aa3	Public toilet	53.4402166	-1.5011482	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_97a0d95b7cc2c0e77aa335e0	Hillsborough Leisure Centre	53.408271947	-1.495921612	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_97a994f56f0c04a8e6381f6b	Sheffield Bus Interchange	53.380930284	-1.463850439	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_9a2bc7c24c4e20878777a7e3	Ecclesall Woods Discovery Centre Toilets	53.338021215	-1.518143713	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_a0759546067fa165136ad3af	Whirlow Brook Park	53.341081975	-1.538240609	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_a0a888785eb62efbe3a552fb	Fox Valley	53.483310269	-1.589380503	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_a5a71d83c93e1128abe8ae5e	Asda, Chapeltown	53.462519596	-1.4658916	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_a99d2caa1f6cd496d42b94c2	Sainsbury's Archer Road	53.345677421	-1.492820978	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_addb7d7c7a33ebe1fb3898d4	St Marie's Roman Catholic Cathedral	53.381328538	-1.468176842	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_b136bfcfb2885962edff980c	Lidl	53.357947291	-1.476812687	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_b34938add82a5536275aecba	Eight Foot Way PH	53.427402582	-1.491247183	public_toilet, accessible	Sheffield	toiletmap	
+Wrote 82 rows.
+S5 7AU	toiletmap_b965ef456b70ed2299992321	Sheffield Students' Union	53.380817107	-1.487434067	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_ba1a24739eac4ce9560168ff	Asda Store	53.428217963	-1.487134231	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_bebbbaa96a8a730dfb424b00	Waitrose, Sheffield	53.373078647	-1.47870183	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_c173c0fcc61168330899dc53	Costa coffee	53.356608666	-1.478590057	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_c214b059092ac0ae2d7e636e	Birley Moor Road Automatic Toilet	53.3489239	-1.4011409	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_c5315853d3c719cf1d81cf16	Morrisons, Ecclesfield	53.444212566	-1.459186077	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_c6da8914e122982be5e3350d	Millennium Gallery	53.379515811	-1.466943026	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_c998effd1f1bd625a4ea2cdd	Arts Tower	53.382725261	-1.487353402	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_ccf38bf70ce92bd809073af1	Morrisons, Meadowhead	53.335582005	-1.48257494	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_ceaac03f0286da54a3cd13be	Arundel Building,Sheffield Hallam University	53.377738208	-1.467833519	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_d116e16e91cb6612162653dc	McDonalds, Greenland Road	53.392169689	-1.409495473	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_d15223e67941c22c2169ea61	The Green Estate CIC	53.376832578	-1.434938908	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_d2f29f280552de15a1b8a3ad	Fat Cat	53.388554679	-1.471792459	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_d461aed5971f69b7181841d4	Tesco Abbeydale Road	53.347044858	-1.493201852	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_d5e6e3394de73c05d5af7544	Tesco, Infirmary Road	53.389362484	-1.48266077	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_dd63901379364880490bd57c	Next (upstairs)	53.412284715	-1.414232254	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_df73fd5b939eced830191187	Forge Dam Park	53.36073066	-1.54582606	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_df78b11516e1e7c5025c718a	Glen Howe Park Toilets	53.444576803	-1.558320522	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_ec4c15926c028d8cea0ca6c4	Arundel Gate Mini Interchange	53.381445693	-1.466350257	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_ec64e02b58649fb2bd102e92	Soowe's café	53.423051107	-1.454969645	public_toilet	Sheffield	toiletmap	
+S5 7AU	toiletmap_ee7445e9af76cc2b16ba1af3	Meadowhall Shopping Centre	53.41283653	-1.412816048	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_f392f39afcb69f7da855ef4f	Hillsborough Park Pavilion	53.408170389	-1.503133556	public_toilet, accessible	Sheffield	toiletmap	
+S5 7AU	toiletmap_f514cc9a064a4ba512c5ab45	Morrisons (Halfway, Sheffield)	53.325090098	-1.343502402	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_f53e529c4b394849aae96078	Graves Park Toilets	53.338042022	-1.467382908	public_toilet, accessible, baby_change	Sheffield	toiletmap	
+S5 7AU	toiletmap_fd0c4fe1b563527e3b817b65	Aldi	53.326916637	-1.468853764	public_toilet, accessible	Sheffield	toiletmap	

@@ -1,0 +1,46 @@
+postcode	placeId	name	latitude	longitude	types	vicinity	source
+S17	osm_2097172928	142nd Fulwood Scout Group	53.3650032	-1.5391903	townhall	Fulwood Road	osm
+S17	osm_262077485	Abbeydale Industrial Hamlet	53.3337651	-1.5121778	museum		osm
+S17	osm_11081083022	Adrian Lane	53.3529504	-1.5362339	memorial		osm
+S17	geograph_2184179	Banner Cross Hall	53.35763	-1.509098	geograph		geograph
+S17	osm_1244696784	Beauty at Parkhead	53.348144	-1.5226465	beauty	Ecclesall Road South	osm
+S17	osm_2104233132	Bents Green Nurseries,  0114 3211162	53.3561931	-1.5349696	garden_centre		osm
+S17	osm_1286649028	Bents Green School	53.353909	-1.532891	school	Ringinglow Road	osm
+S17	osm_695992635	Bird Sanctuary	53.3351932	-1.5222578	nature_reserve		osm
+S17	osm_5611740930	Boulsover Monument	53.3616178	-1.5357236	memorial		osm
+S17	osm_119375749	Christ Church Fulwood	53.3652081	-1.5424292	place_of_worship	Canterbury Avenue	osm
+S17	osm_112360736	Common Lane Open Space	53.3561567	-1.5407528	park		osm
+S17	osm_695992848	Ecclesall Logs	53.3383063	-1.5176894	wood		osm
+S17	geograph_2184186	Ecclesall Parish Church - tower and obelisk	53.356655	-1.512565	geograph		geograph
+S17	osm_135633962	Ecclesall Woods Sawmill	53.3382984	-1.5173225	attraction		osm
+S17	osm_114424803	Forge Dam Cafe	53.3606139	-1.545972	cafe	Brookhouse Hill	osm
+S17	osm_29296044	Fulwood Sports Club	53.366777	-1.5419561	sports_centre		osm
+S17	geograph_6730702	Gateway to Banner Cross Hall	53.356013	-1.509417	geograph		geograph
+S17	osm_202804958	Goole Green	53.3643136	-1.5393594	park		osm
+S17	osm_105874473	HSBC Sports Ground	53.3369817	-1.5380806	sports_centre		osm
+S17	geograph_7921315	Memorial poppies	53.356203	-1.511969	geograph		geograph
+S17	osm_131944463	Old boiler house	53.3337262	-1.5123024	ruins		osm
+S17	osm_3715321058	Parkhead Post Office	53.3484833	-1.5226177	post_office	Ecclesall Road South	osm
+S17	osm_1875927559	Ranmoor Motor Company	53.3649953	-1.5377444	car_repair		osm
+S17	osm_121601504	Rising Sun	53.3440642	-1.5198124	pub	Abbey Lane	osm
+S17	osm_31064248	Silverdale School	53.3512439	-1.5303985	school	Bents Crescent	osm
+S17	geograph_2731905	Snicket Near Banner Cross Hall	53.355918	-1.508216	geograph		geograph
+S17	osm_1067941324	St Luke's Hospice	53.3433791	-1.5220708	hospital		osm
+S17	osm_5611739323	The Forge Marker Post	53.3604942	-1.5461734	memorial		osm
+S17	geograph_2184160	The grounds of Banner Cross Hall, Sheffield	53.356191	-1.508964	geograph		geograph
+S17	osm_112353424	The Hammer & Pincers	53.3540359	-1.5282673	pub	Ringinglow Road	osm
+S17	osm_4336025990	The Hidden Gem	53.3542617	-1.5340001	cafe	Ringinglow Road	osm
+S17	osm_322140780	The Men of Fulwood	53.3652706	-1.5411901	memorial		osm
+S17	osm_750069118	The Shelter	53.3410732	-1.5382947	cafe		osm
+S17	geograph_5711320	The war memorial at All Saints Church	53.356204	-1.512119	geograph		geograph
+S17	osm_309444088	Westfield Barn (Whirlow Hall Farm Trust)	53.3512253	-1.5334083	hostel		osm
+S17	osm_105761454	Whirlow Brook Hall	53.3427229	-1.5401038	events_venue	Ecclesall Road South	osm
+S17	osm_1067855021	Whirlow Brook Park	53.3416923	-1.5376751	park		osm
+S17	osm_127540985	Whirlow Grange	53.3413579	-1.5320856	hotel		osm
+S17	osm_6025650550	Whirlow Hall Farm	53.3441466	-1.5330756	cafe	Broad Elms Lane	osm
+S17	osm_6535461104	Whirlow Hall Farm Shop	53.3439438	-1.532918	deli	Broad Elms Lane	osm
+S17	osm_309444584	Whirlow Hall Farm Trust	53.3439726	-1.5338949	attraction		osm
+S17	osm_127540984	Whirlow Spirituality Centre at the Chapel of the Holy Spirit	53.3416491	-1.5321811	place_of_worship		osm
+S17	osm_105894415	Whirlow Wheel	53.3393092	-1.5332462	ruins		osm
+S17	osm_5611739324	Wire Mill Marker Post	53.3617836	-1.5356773	memorial		osm
+S17	osm_6535083495	Woodland Coffee Stop	53.3379494	-1.5173246	cafe		osm

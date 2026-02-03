@@ -930,15 +930,24 @@ class PrePopulatedPOIService {
         await downloadDatabaseIfNeeded(userLocation: userLocation)
     }
 
-    /// If we have location and the DB is not ready: start a download in the background, wait at most `waitUpToSeconds` (wall-clock), then return.
-    /// Does not cancel an in-flight download on timeout; the download continues in the background.
-    /// Uses GCD asyncAfter so the wait is strictly bounded by wall-clock time (Task.sleep can be delayed by executor contention).
+    /// Wait until the prepop download finishes OR `waitUpToSeconds` (wall-clock) has passed, whichever comes first.
+    /// Caller stays on "Finding places nearby" until this returns. Does not cancel an in-flight download on timeout.
     func ensureDatabaseReadyWithTimeout(userLocation: CLLocationCoordinate2D?, waitUpToSeconds: TimeInterval) async {
         guard let userLocation = userLocation else { return }
-        Task { await downloadDatabaseIfNeeded(userLocation: userLocation) }
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + waitUpToSeconds) {
+            let lock = NSLock()
+            var resumed = false
+            func resumeOnce() {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !resumed else { return }
+                resumed = true
                 cont.resume()
+            }
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + waitUpToSeconds) { resumeOnce() }
+            Task {
+                await downloadDatabaseIfNeeded(userLocation: userLocation)
+                resumeOnce()
             }
         }
     }
