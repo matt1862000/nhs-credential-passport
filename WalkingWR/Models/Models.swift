@@ -463,6 +463,11 @@ struct WalkingRoute: Identifiable, Hashable {
     var routePath: [CLLocationCoordinate2D] {
         if let polyline = encodedPolyline, !polyline.isEmpty {
             let decoded = PolylineDecoder.decode(polyline)
+            // #region agent log
+            let encLen = polyline.count
+            let logLine = "{\"location\":\"Models.routePath\",\"message\":\"decoded\",\"data\":{\"name\":\"\(name)\",\"decodedCount\":\(decoded.count),\"encodedLen\":\(encLen)},\"hypothesisId\":\"E\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
+            logLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+            // #endregion
             // v2.1.0: Debug logging for polyline quality
             if decoded.count < 5 {
                 print("⚠️ [POLYLINE DEBUG] '\(name)': Low point count (\(decoded.count) points) - may show incorrect path")

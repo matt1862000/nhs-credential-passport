@@ -36,6 +36,14 @@ private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async
 import MapKit
 import CoreLocation
 
+// MARK: - Refresh race state (MapKit started before Let's Go; Google on Let's Go; last route always Google)
+/// Shared state so MapKit task (started on preview) and Google task (started on Let's Go) can coordinate:
+/// If MapKit finishes first → show MapKit. If Google finishes first → show Google and never show MapKit.
+/// When Google finishes → always show Google (final route is always Google).
+private final class RefreshRaceState {
+    var googleApplied = false
+    var walkStarted = false
+}
 
 struct RouteSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
@@ -1026,6 +1034,7 @@ struct LocalRoutePickerSheet: View {
     @State private var shouldCancelBackgroundWork = false  // v1.9.22: Flag to cancel background generation
     @State private var isRouteRefreshed = false  // v1.9.22: Track if route has been refreshed
     @State private var isRefreshingRoutes = false  // Loading state when user taps Refresh to reload route list
+    @State private var refreshRaceState = RefreshRaceState()  // MapKit vs Google race: last route always Google
     @State private var generatedRoute: WalkingRoute?
     @State private var generatedRouteData: GeneratedRoute?
     @State private var showMapPreview = false
@@ -2468,31 +2477,33 @@ struct LocalRoutePickerSheet: View {
                         registerRouteSignature(places: cachedRoute.route.places, distanceMeters: cachedRoute.route.distanceMeters)
                     }
                     
-                    // v1.9.22: Front-load route refresh for first route before showing "Complete"
-                    // This ensures navigation is ready when user taps "Let's Go"
+                    // MapKit started before Let's Go — when it completes, show MapKit only if Google hasn't yet
+                    // On Let's Go we start Google; last route shown is always Google
+                    refreshRaceState.walkStarted = false
+                    refreshRaceState.googleApplied = false
                     let userLoc = userLocation.coordinate
-                    print("⏱️ [FRONT-LOAD] Starting route refresh for first route before showing Complete...")
-                    // Start route refresh in background, but don't wait for it
+                    let raceState = refreshRaceState
+                    print("⏱️ [MAPKIT-PREVIEW] Starting MapKit refresh for first route (in flight before Let's Go)...")
                     Task {
-                        let refreshedRoute = await mapsService.refreshRouteWithGoogleThenMapKit(
-                            route: firstRoute,
-                            userLocation: userLoc
-                        )
-                        // Update the route with refreshed data
+                        let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: firstRoute, userLocation: userLoc)
                         await MainActor.run {
-                            if let index = allRoutes.firstIndex(where: { $0.route.name == firstRoute.name }) {
-                                // Update the route in allRoutes with refreshed data
-                                allRoutes[index].route = refreshedRoute
-                                if currentRouteIndex == index {
-                                    generatedRoute = refreshedRoute
-                                    print("TIME_SOURCE | PREVIEW: Google refresh done — preview NOW shows \(refreshedRoute.durationMinutes) min, \(refreshedRoute.distanceMeters)m FROM GOOGLE")
+                            if raceState.walkStarted {
+                                if !raceState.googleApplied {
+                                    viewModel.updateCurrentRoute(mapKitRoute)
+                                    print("DIRECTIONS | MapKit (preview) finished after Let's Go — applied (Google not yet)")
                                 } else {
-                                    print("TIME_SOURCE | PREVIEW: Google refresh done — first route updated to \(refreshedRoute.durationMinutes) min FROM GOOGLE (user currently viewing route \(currentRouteIndex + 1))")
+                                    print("DIRECTIONS | MapKit (preview) finished after Let's Go — ignored (Google already applied)")
+                                }
+                            } else {
+                                if let index = allRoutes.firstIndex(where: { $0.route.name == firstRoute.name }) {
+                                    allRoutes[index].route = mapKitRoute
+                                    if currentRouteIndex == index {
+                                        generatedRoute = mapKitRoute
+                                    }
+                                    print("TIME_SOURCE | PREVIEW: MapKit refresh done — preview shows \(mapKitRoute.durationMinutes) min (Google will run on Let's Go)")
                                 }
                             }
-                            isRouteRefreshed = true  // Mark as refreshed
-                            routeRefreshStatus = nil  // v1.9.28: Clear status - route is ready
-                            print("⏱️ [FRONT-LOAD] Route refresh complete")
+                            routeRefreshStatus = nil
                         }
                     }
                     
@@ -2799,6 +2810,30 @@ struct LocalRoutePickerSheet: View {
                         // Start pre-generating more routes in background
                         preGenerateRemainingRoutes()
                     }
+                    
+                    // MapKit started before Let's Go (live path) — same race: last route always Google
+                    refreshRaceState.walkStarted = false
+                    refreshRaceState.googleApplied = false
+                    let liveRaceState = refreshRaceState
+                    let liveFirstRoute = localRoute
+                    let liveUserLoc = userLocation.coordinate
+                    Task {
+                        let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: liveFirstRoute, userLocation: liveUserLoc)
+                        await MainActor.run {
+                            if liveRaceState.walkStarted {
+                                if !liveRaceState.googleApplied {
+                                    viewModel.updateCurrentRoute(mapKitRoute)
+                                    print("DIRECTIONS | MapKit (live) finished after Let's Go — applied (Google not yet)")
+                                }
+                            } else {
+                                if allRoutes.indices.contains(0), allRoutes[0].route.name == liveFirstRoute.name {
+                                    allRoutes[0].route = mapKitRoute
+                                    if currentRouteIndex == 0 { generatedRoute = mapKitRoute }
+                                    print("TIME_SOURCE | PREVIEW: MapKit (live) done — preview shows \(mapKitRoute.durationMinutes) min (Google on Let's Go)")
+                                }
+                            }
+                        }
+                    }
                 } catch {
                     await MainActor.run {
                         isGenerating = false
@@ -3000,6 +3035,9 @@ struct LocalRoutePickerSheet: View {
             : "FROM CACHE (background Google refresh will run — map/time will update when done)"
         print("TIME_SOURCE | LET'S GO: Time on preview was \(route.durationMinutes) min — \(timeSourceNote)")
         
+        // Mark walk started so MapKit task (if still in flight) only updates if Google hasn't yet
+        refreshRaceState.walkStarted = true
+        
         // v2.1.0: Cancel background generation immediately
         shouldCancelBackgroundWork = true
         print("⏱️ [LET'S GO] [\(timeString)] 🛑 Cancelling background generation to prioritize user action")
@@ -3028,22 +3066,21 @@ struct LocalRoutePickerSheet: View {
         let instantElapsed = Date().timeIntervalSince(startTime)
         print("⏱️ [LET'S GO] [\(timeString)] ✅ Instant start: \(String(format: "%.3f", instantElapsed))s")
         
-        // v2.1.1: Refresh directions in BACKGROUND (map already visible)
-        // Use MapKit FIRST so directions appear quickly; then Google in background when complete
-        // CONSOLE: Filter by "DIRECTIONS" or "REFRESH_SOURCE" to see this flow
+        // v2.1.1: Google refresh on Let's Go — location found then Google (MapKit already in flight from preview)
+        // If MapKit finishes first → already shown by MapKit task. If Google finishes first → show Google, never show MapKit.
+        // When Google finishes → always show Google (last route is always Google).
         Task {
             let taskTimeString = formatter.string(from: Date())
             let routeSource: String
             if route.usedOSRMRouting {
-                routeSource = "cached_OSM"  // OSRM/OSM route — will be refreshed by MapKit (Apple) then Google
+                routeSource = "cached_OSM"
             } else if route.isFromPrePopulatedDatabase {
                 routeSource = "prepop"
             } else {
-                routeSource = "mapkit_or_google"  // Already from MapKit or Google
+                routeSource = "mapkit_or_google"
             }
-            print("DIRECTIONS | ========== direction refresh started ==========")
-            print("REFRESH_SOURCE | [\(taskTimeString)] route_source=\(routeSource) name='\(route.name)' waypoints=\(route.qrMarkers.count) usedOSRM=\(route.usedOSRMRouting) isPrePop=\(route.isFromPrePopulatedDatabase)")
-            print("DIRECTIONS | [\(taskTimeString)] Route: '\(route.name)' waypoints: \(route.qrMarkers.count) hasDirections: \(!route.walkingDirections.isEmpty)")
+            print("DIRECTIONS | ========== direction refresh (Google on Let's Go) ==========")
+            print("REFRESH_SOURCE | [\(taskTimeString)] route_source=\(routeSource) name='\(route.name)' waypoints=\(route.qrMarkers.count)")
             
             // Wait briefly for location (often nil the instant user taps Let's Go)
             var userLocation: CLLocationCoordinate2D?
@@ -3060,40 +3097,26 @@ struct LocalRoutePickerSheet: View {
                 return
             }
             
-            // 1. MapKit (Apple) first — directions show as soon as this returns
-            let mapKitStart = Date()
-            print("REFRESH_SOURCE | [\(taskTimeString)] step=mapkit_apple_start (refreshing \(routeSource) route with MapKit / Apple)")
-            print("DIRECTIONS | [\(taskTimeString)] 🍎 MapKit refresh starting...")
-            let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: route, userLocation: userLocation)
-            let mapKitElapsed = Date().timeIntervalSince(mapKitStart)
-            print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=mapkit_apple_done elapsed=\(String(format: "%.2f", mapKitElapsed))s dirs=\(mapKitRoute.walkingDirections.count)")
-            print("DIRECTIONS | [\(formatter.string(from: Date()))] MapKit returned in \(String(format: "%.2f", mapKitElapsed))s dirs: \(mapKitRoute.walkingDirections.count)")
-            await MainActor.run {
-                viewModel.updateCurrentRoute(mapKitRoute)
-                print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ MapKit route applied — banner should show directions now (total: \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s)")
-            }
-            
-            // 2. Google in background — when complete, upgrade route (better polyline/directions)
+            // Google only — MapKit was already started on preview; race: show MapKit if it finishes first, else show Google; last is always Google
             guard mapsService.hasAPIKey else {
                 print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_skipped reason=no_api_key")
-                print("DIRECTIONS | [\(formatter.string(from: Date()))] No API key - stopping (MapKit route only)")
                 return
             }
             
             let googleStart = Date()
-            print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_start (refreshing MapKit route with Google)")
-            print("DIRECTIONS | [\(formatter.string(from: Date()))] 🌐 Google refresh starting (background upgrade)...")
+            print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_start (Google refresh on Let's Go)")
+            print("DIRECTIONS | [\(taskTimeString)] 🌐 Google refresh starting...")
             if let refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
-                route: mapKitRoute,
+                route: route,
                 userLocation: userLocation
             ) {
                 let googleElapsed = Date().timeIntervalSince(googleStart)
-                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_done elapsed=\(String(format: "%.2f", googleElapsed))s (MapKit route was upgraded by Google)")
-                print("DIRECTIONS | [\(formatter.string(from: Date()))] Google returned in \(String(format: "%.2f", googleElapsed))s")
-                let routeToShow = refreshedRoute
+                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_done elapsed=\(String(format: "%.2f", googleElapsed))s")
                 await MainActor.run {
-                    viewModel.updateCurrentRoute(routeToShow, sourceIsGoogle: true)
-                        print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ Google route applied (total: \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s)")
+                    refreshRaceState.googleApplied = true
+                    viewModel.updateCurrentRoute(refreshedRoute, sourceIsGoogle: true)
+                    isRouteRefreshed = true
+                    print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ Google route applied (last route is always Google)")
                 }
                 
                 if mapsService.lastRouteHadRestrictedRoads {
@@ -3106,10 +3129,9 @@ struct LocalRoutePickerSheet: View {
                     }
                 }
             } else {
-                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_failed (keeping MapKit/Apple route)")
-                print("DIRECTIONS | [\(formatter.string(from: Date()))] ⚠️ Google refresh failed - keeping MapKit route")
+                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_failed (keeping current route; MapKit may apply if it finishes)")
+                print("DIRECTIONS | [\(formatter.string(from: Date()))] ⚠️ Google refresh failed")
             }
-            print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] sequence_done (order: \(routeSource) → MapKit (Apple) → Google)")
             print("DIRECTIONS | ========== direction refresh finished ==========")
         }
     }
@@ -3128,6 +3150,10 @@ struct LocalRoutePickerSheet: View {
         generatedRouteData = nil
         lastValidRoute = nil
         lastValidRouteData = nil
+        
+        // Reset MapKit vs Google race state for next walk
+        refreshRaceState.walkStarted = false
+        refreshRaceState.googleApplied = false
         
         // Reset pre-generation state
         allRoutes = []

@@ -418,15 +418,31 @@ struct EmbeddedWalkMapView: View {
     // Automatically handles both MapKit routes and Google Directions API polylines
     // Google polylines are decoded via WalkingRoute.routePath (uses PolylineDecoder)
     private var polylineToShow: [CLLocationCoordinate2D] {
-        guard let currentRoute = viewModel.walkSession.currentRoute,
+        // #region agent log
+        let cur = viewModel.walkSession.currentRoute
+        let pathCount = cur?.routePath.count ?? 0
+        let guardFail = cur == nil || pathCount < 2 || isShowingReturnRoute
+        let logLine = "{\"location\":\"WalkingMapView.polylineToShow\",\"message\":\"entry\",\"data\":{\"currentRouteSet\":\(cur != nil),\"pathCount\":\(pathCount),\"guardFail\":\(guardFail),\"isShowingReturnRoute\":\(isShowingReturnRoute)},\"hypothesisId\":\"A\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
+        logLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+        // #endregion
+        guard let currentRoute = cur,
               currentRoute.routePath.count >= 2,
               !isShowingReturnRoute else { return [] }
+        
+        // Once MapKit/Google refresh has run, never draw straight-line fallback (avoids stale or empty-polyline route)
+        if viewModel.hasReceivedGoogleRefreshForPill && (currentRoute.encodedPolyline ?? "").isEmpty {
+            return []
+        }
         
         // If viewing a waypoint in carousel, show route segment
         if let viewingId = viewingWaypointId,
            viewingId != Self.returnToStartWaypointId,
            let waypointPolyline = waypointRoutePolyline,
            !waypointPolyline.isEmpty {
+            // #region agent log
+            let l2 = "{\"location\":\"WalkingMapView.polylineToShow\",\"message\":\"branch_waypoint\",\"data\":{\"count\":\(waypointPolyline.count)},\"hypothesisId\":\"A\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
+            l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+            // #endregion
             return waypointPolyline
         }
         
@@ -437,22 +453,36 @@ struct EmbeddedWalkMapView: View {
             let nextWaypointId = getNextWaypointId(markers: currentRoute.qrMarkers, visitedIds: viewModel.visitedMarkerIds)
             if let cached = cachedCurrentLegPolyline,
                cachedLegPolylineForWaypoint == nextWaypointId {
+                // #region agent log
+                let l2 = "{\"location\":\"WalkingMapView.polylineToShow\",\"message\":\"branch_cached_leg\",\"data\":{\"count\":\(cached.count),\"fullPathCount\":\(currentRoute.routePath.count)},\"hypothesisId\":\"A\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
+                l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                // #endregion
                 return cached
             } else {
                 if viewModel.visitedMarkerIds.count == currentRoute.qrMarkers.count && currentRoute.qrMarkers.count > 0 {
                     return []
                 } else {
-                    return calculateStaticLegPolyline(
+                    let calculated = calculateStaticLegPolyline(
                         fullPath: currentRoute.routePath,  // Works with Google polylines (already decoded)
                         markers: currentRoute.qrMarkers,
                         visitedIds: viewModel.visitedMarkerIds,
                         startLocation: viewModel.walkSession.startLocation
                     )
+                    // #region agent log
+                    let l2 = "{\"location\":\"WalkingMapView.polylineToShow\",\"message\":\"branch_calculated_leg\",\"data\":{\"count\":\(calculated.count),\"fullPathCount\":\(currentRoute.routePath.count)},\"hypothesisId\":\"A\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
+                    l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                    // #endregion
+                    return calculated
                 }
             }
         } else {
             // Full route display - routePath handles Google polyline decoding automatically
-            return currentRoute.routePath
+            let fullPath = currentRoute.routePath
+            // #region agent log
+            let l2 = "{\"location\":\"WalkingMapView.polylineToShow\",\"message\":\"branch_full_route\",\"data\":{\"count\":\(fullPath.count)},\"hypothesisId\":\"E\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
+            l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+            // #endregion
+            return fullPath
         }
     }
     
@@ -469,7 +499,12 @@ struct EmbeddedWalkMapView: View {
     // Works with both MapKit routes and Google Directions polylines
     // Google polylines are decoded via currentRoute.routePath
     private var returnSegment: [CLLocationCoordinate2D] {
-        guard isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId,
+        // #region agent log
+        let cond = isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId
+        let line = "{\"location\":\"WalkingMapView.returnSegment\",\"message\":\"entry\",\"data\":{\"condition\":\(cond)},\"hypothesisId\":\"B\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
+        line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+        // #endregion
+        guard cond,
               let currentRoute = viewModel.walkSession.currentRoute,
               let lastWaypoint = currentRoute.qrMarkers.last,
               let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first else {
@@ -485,6 +520,10 @@ struct EmbeddedWalkMapView: View {
         )
         
         if !segment.isEmpty && segment.count >= 2 {
+            // #region agent log
+            let l2 = "{\"location\":\"WalkingMapView.returnSegment\",\"message\":\"return_extracted\",\"data\":{\"count\":\(segment.count)},\"hypothesisId\":\"B\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
+            l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+            // #endregion
             return segment
         } else if let returnRoute = returnRoute {
             // Fallback: Extract from MapKit MKRoute polyline
@@ -492,10 +531,17 @@ struct EmbeddedWalkMapView: View {
             let pointCount = polyline.pointCount
             var coords = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
             polyline.getCoordinates(&coords, range: NSRange(location: 0, length: pointCount))
+            // #region agent log
+            let l2 = "{\"location\":\"WalkingMapView.returnSegment\",\"message\":\"return_mkroute\",\"data\":{\"count\":\(coords.count)},\"hypothesisId\":\"B\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
+            l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+            // #endregion
             return coords
         } else if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
             // Fallback: Use cached return route polyline
-            return viewModel.cachedReturnRoutePolyline
+            let cached = viewModel.cachedReturnRoutePolyline
+            let l2 = "{\"location\":\"WalkingMapView.returnSegment\",\"message\":\"return_cached\",\"data\":{\"count\":\(cached.count)},\"hypothesisId\":\"B\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
+            l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+            return cached
         }
         
         return []
@@ -911,6 +957,12 @@ struct EmbeddedWalkMapView: View {
                     }
                 }
             }
+        }
+        // Invalidate leg and waypoint polyline caches when route is replaced (e.g. MapKit/Google refresh) so we don't draw stale straight lines
+        .onChange(of: viewModel.walkSession.currentRoute?.id) { _, _ in
+            cachedCurrentLegPolyline = nil
+            cachedLegPolylineForWaypoint = nil
+            waypointRoutePolyline = nil
         }
         // Note: Motion permission explainer is now presented by CompactStatusRing
     }
