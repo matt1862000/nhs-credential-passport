@@ -747,6 +747,7 @@ class WaitingRoomViewModel: ObservableObject {
         }
         walkSession.startLocation = locationService.currentLocation?.coordinate  // v1.6.48: Snap Start/End to user's actual GPS position
         walkSession.halfwayAlertSent = false
+        print("[HALFWAY] startWalk cameFromWalkNotification=\(AppDelegate.cameFromWalkNotification)")
         walkSession.returnNowAlertSent = false
         walkSession.walkCompleteAlertSent = false
         walkSession.stepsThisSession = 0
@@ -1127,19 +1128,21 @@ class WaitingRoomViewModel: ObservableObject {
         if !walkSession.halfwayAlertSent,
            let returnTime = walkSession.estimatedReturnTime,
            Date() >= returnTime {
+            let cameFrom = AppDelegate.cameFromWalkNotification
+            print("[HALFWAY] entered returnTime=\(returnTime) walkingAlertsEnabled=\(walkingAlertsEnabled) cameFromWalkNotification=\(cameFrom)")
             if walkingAlertsEnabled {
                 walkSession.halfwayAlertSent = true
                 
                 // Only show in-app alert if NOT coming from a push notification tap
-                if !AppDelegate.cameFromWalkNotification {
-                    print("🚶 Showing halfway alert (50%)")
+                if !cameFrom {
+                    print("[HALFWAY] showing in-app overlay (showHalfwayAlert=true)")
                     showHalfwayAlert = true
                     startAlertAutoDismissTimer(for: \.showHalfwayAlert)
                 } else {
-                    print("📱 Skipping halfway in-app alert - user came from push notification")
+                    print("[HALFWAY] skipping in-app overlay (cameFromWalkNotification=true)")
                 }
             } else {
-                print("🔕 Halfway alert blocked - walkingAlertsEnabled = false")
+                print("[HALFWAY] blocked walkingAlertsEnabled=false")
             }
         }
         

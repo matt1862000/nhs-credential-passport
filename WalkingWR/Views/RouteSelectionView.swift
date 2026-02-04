@@ -6654,6 +6654,7 @@ struct ActiveWalkView: View {
         // v2.1.6: Overlay-based alerts that don't dismiss the map
         .overlay(alignment: .center) {
             if viewModel.showHalfwayAlert {
+                let _ = print("[HALFWAY] overlay rendering")
                 WalkingAlertOverlay(
                     title: "Halfway Point! 🚶",
                     message: "You've completed half your walk. Check your clinic delay and consider heading back.",
