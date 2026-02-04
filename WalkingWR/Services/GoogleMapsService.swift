@@ -7958,9 +7958,9 @@ class GoogleMapsService: ObservableObject {
     // MARK: - Formatting Helpers
     private func formatDistance(_ meters: Int) -> String {
         if meters < 1000 {
-            return "\(meters) m"
+            return "\(meters)m"
         } else {
-            return String(format: "%.1f km", Double(meters) / 1000.0)
+            return String(format: "%.1fkm", Double(meters) / 1000.0)
         }
     }
     

@@ -6812,10 +6812,10 @@ struct WalkingDirectionsBanner: View {
                             .foregroundColor(.white)
                     }
                     
-                    // Direction text - allow wrapping to show full instruction
+                    // Direction text - instruction with "(current) in Xm" so distance-to-turn is clear
                     VStack(alignment: .leading, spacing: 3) {
-                        // Main instruction (turn/continue/etc) - allow up to 2 lines with dynamic scaling
-                        Text(instructionParts.main)
+                        // Main instruction + (current) in Xm - e.g. "Turn left onto Hawthorne Close (current) in 32m"
+                        Text("\(instructionParts.main) (current) in \(direction.distance.replacingOccurrences(of: " m", with: "m").replacingOccurrences(of: " km", with: "km"))")
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .foregroundColor(.white)
@@ -6836,16 +6836,8 @@ struct WalkingDirectionsBanner: View {
                                 .multilineTextAlignment(.leading)
                         }
                         
-                        // Compact info row
+                        // Compact info row: total walked (distance-to-turn now in instruction line)
                         HStack(spacing: 6) {
-                            Text(direction.distance)
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.8))
-                            
-                            Text("•")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.5))
-                            
                             Text("\(distanceWalked)m walked")
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.8))
@@ -7055,7 +7047,7 @@ struct ExpandedDirectionsList: View {
                                             .multilineTextAlignment(.leading)
                                     }
                                     
-                                    Text(direction.distance)
+                                    Text(direction.distance.replacingOccurrences(of: " m", with: "m").replacingOccurrences(of: " km", with: "km"))
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }

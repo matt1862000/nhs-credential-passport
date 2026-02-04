@@ -45,7 +45,8 @@ class LocationService: NSObject, ObservableObject {
                 let logMsg = "🔄 Direction index changed: \(oldValue) → \(currentDirectionIndex) (total: \(directionWaypoints.count))"
                 print("📍 [DIRECTION INDEX] \(logMsg)")
                 debugLogger.log(logMsg, category: "DIRECTION_INDEX")
-                
+                let stepInstruction = currentDirectionIndex < directionWaypoints.count ? directionWaypoints[currentDirectionIndex].instruction : "arrival"
+                walkDebug("STEP \(currentDirectionIndex + 1)/\(directionWaypoints.count) → '\(stepInstruction)' (was \(oldValue + 1))")
                 // Log what instruction is now being shown
                 if currentDirectionIndex < directionWaypoints.count {
                     let currentWaypoint = directionWaypoints[currentDirectionIndex]
@@ -72,7 +73,22 @@ class LocationService: NSObject, ObservableObject {
     private let minConsistentReadings: Int = 3 // Require at least 3 consistent readings
     private let consistencyThreshold: Double = 0.6 // 60% of readings must show forward progress
     private let minDistanceToCountAsWalked: Double = 5.0 // Ignore movements smaller than this (GPS jitter when stationary)
+    private let minSpeedToCountAsWalked: Double = 0.3 // Count distance when speed indicates walking; 0.3 m/s allows slow walk and noisy GPS, still filters stationary drift
+    private let maxDistanceAddedPerUpdate: Double = 30.0 // Cap per-update contribution so one GPS glitch or shake-induced spike can't add more than ~30m
+    private let maxPlausibleWalkingSpeed: Double = 1.5 // m/s; if segment distance/time > this, reject (GPS jumps; real walking ~0.5–1.2 m/s)
     private let minDistancePastWaypointToSkipOnStart: Double = 25.0 // When skipping passed waypoints on start, user must be at least this far past the waypoint (prevents single noisy reading from jumping ahead)
+    
+    // v2.1.27: Require multiple GPS readings to agree before skipping steps on walk start (prevents single noisy reading jumping to step 4)
+    private var isCollectingSkipReadings: Bool = false
+    private var pendingSkipSuggestedIndices: [Int] = []
+    private let requiredSkipReadingsCount: Int = 3
+    
+    /// Single tag for console filter: search "WALK_DEBUG" to see position, distance calc, updates, and step changes
+    private func walkDebug(_ message: String) {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        print("[WALK_DEBUG] [\(f.string(from: Date()))] \(message)")
+    }
     
     // v1.9.90: Track last marker to prevent advancing to return journey before destination is reached
     private var lastMarkerPolylineIndex: Int? = nil
@@ -202,6 +218,32 @@ class LocationService: NSObject, ObservableObject {
             }
         }
         return totalDistance
+    }
+    
+    /// v2.1.27: Compute suggested direction index from a polyline projection (for multi-reading skip).
+    /// Returns the 0-based index to start at (number of waypoints to skip).
+    private func suggestedDirectionIndexFromProjection(segmentIndex: Int, t: Double) -> Int {
+        guard !directionWaypoints.isEmpty, !cachedRoutePath.isEmpty else { return 0 }
+        var skippedCount = 0
+        for (index, waypoint) in directionWaypoints.enumerated() {
+            let waypointSegment = max(0, waypoint.polylineIndex - 1)
+            let isAheadOnPolyline = isAhead(
+                segmentIndex1: segmentIndex,
+                t1: t,
+                segmentIndex2: waypointSegment,
+                t2: 0.5
+            )
+            let distancePastWaypoint = isAheadOnPolyline
+                ? distanceAlongRoute(fromSegment: waypointSegment, fromT: 0.5, toSegment: segmentIndex, toT: t, polyline: cachedRoutePath)
+                : 0
+            let isPast = isAheadOnPolyline && distancePastWaypoint >= minDistancePastWaypointToSkipOnStart
+            if isPast {
+                skippedCount = index + 1
+            } else {
+                break
+            }
+        }
+        return min(skippedCount, directionWaypoints.count - 1)
     }
     
     // Starting point for walk
@@ -480,47 +522,21 @@ class LocationService: NSObject, ObservableObject {
             cumulativeDistance += Double(direction.distanceMeters)
         }
         
-        // v1.9.70: Use polyline projection to determine which waypoints are ahead/behind
-        // This handles cached routes where start position may differ from user's actual position
-        if skipPassedWaypoints, let currentLoc = currentLocation, !directionWaypoints.isEmpty, !routePath.isEmpty {
-            // Project user's current position onto the polyline
-            if let userProjection = projectOntoPolyline(coordinate: currentLoc.coordinate, polyline: routePath) {
-                var skippedCount = 0
-                
-                for (index, waypoint) in directionWaypoints.enumerated() {
-                    // Check if this waypoint is BEHIND the user on the polyline
-                    let waypointSegment = max(0, waypoint.polylineIndex - 1)  // Segment index (waypoint is at end of this segment)
-                    
-                    // User is past this waypoint if:
-                    // 1. User's projected position is ahead on the polyline, AND
-                    // 2. User is at least minDistancePastWaypointToSkipOnStart (25m) past the waypoint (avoids single noisy GPS reading jumping ahead)
-                    let isAheadOnPolyline = isAhead(
-                        segmentIndex1: userProjection.segmentIndex,
-                        t1: userProjection.t,
-                        segmentIndex2: waypointSegment,
-                        t2: 0.5  // Consider waypoint at midpoint of its segment
-                    )
-                    let distancePastWaypoint = isAheadOnPolyline
-                        ? distanceAlongRoute(fromSegment: waypointSegment, fromT: 0.5, toSegment: userProjection.segmentIndex, toT: userProjection.t, polyline: routePath)
-                        : 0
-                    let isPast = isAheadOnPolyline && distancePastWaypoint >= minDistancePastWaypointToSkipOnStart
-                    
-                    if isPast {
-                        skippedCount = index + 1
-                        notifiedDirectionIndices.insert(index)
-                    } else {
-                        break  // Stop at first waypoint that's still ahead
-                    }
-                }
-                
-                if skippedCount > 0 {
-                    currentDirectionIndex = min(skippedCount, directionWaypoints.count - 1)
-                    print("📍 [Polyline] Skipped \(skippedCount) waypoint(s) - user already past (segment \(userProjection.segmentIndex), t=\(String(format: "%.2f", userProjection.t))). Starting at index \(currentDirectionIndex)")
-                } else {
-                    print("📍 [Polyline] User at segment \(userProjection.segmentIndex) - no waypoints to skip")
-                }
+        // v1.9.70 / v2.1.27: Use polyline projection to determine which waypoints are ahead/behind.
+        // v2.1.27: Require multiple GPS readings to agree before skipping (prevents single noisy reading jumping to step 4).
+        if skipPassedWaypoints, !directionWaypoints.isEmpty, !routePath.isEmpty {
+            isCollectingSkipReadings = true
+            pendingSkipSuggestedIndices = []
+            currentDirectionIndex = 0
+            // Add first reading if we have location (further readings collected in checkDirectionWaypoints)
+            if let currentLoc = currentLocation,
+               currentLoc.horizontalAccuracy > 0 && currentLoc.horizontalAccuracy <= maxGPSAccuracy,
+               let userProjection = projectOntoPolyline(coordinate: currentLoc.coordinate, polyline: routePath) {
+                let suggested = suggestedDirectionIndexFromProjection(segmentIndex: userProjection.segmentIndex, t: userProjection.t)
+                pendingSkipSuggestedIndices.append(suggested)
+                print("📍 [Polyline] Collecting skip readings: need \(requiredSkipReadingsCount) agreeing, first reading suggests index \(suggested)")
             } else {
-                print("📍 [Polyline] Could not project user position - starting at index 0")
+                print("📍 [Polyline] Skip-passed enabled but no good initial reading - will collect from next location updates")
             }
         }
         
@@ -547,6 +563,8 @@ class LocationService: NSObject, ObservableObject {
         notifiedDirectionIndices = []
         currentDirectionIndex = 0
         recentProjectedPositions = []  // v1.9.71: Clear position history
+        isCollectingSkipReadings = false  // v2.1.27: Clear multi-reading skip state
+        pendingSkipSuggestedIndices = []
         lastMarkerPolylineIndex = nil  // v1.9.90: Clear last marker tracking
         returnJourneyStartIndex = nil  // v1.9.93: Clear return journey start index
         isLastMarkerVisited = nil
@@ -674,6 +692,7 @@ class LocationService: NSObject, ObservableObject {
         
         let projectionLog = "Projected position: segment=\(userProjection.segmentIndex), t=\(String(format: "%.3f", userProjection.t)), distanceToPolyline=\(String(format: "%.1f", userProjection.distanceToPolyline))m | \(segmentInfo)"
         debugLogger.log(projectionLog, category: "WAYPOINT")
+        walkDebug("PROJECTED on route segment=\(userProjection.segmentIndex) t=\(String(format: "%.3f", userProjection.t)) distToRoute=\(String(format: "%.1f", userProjection.distanceToPolyline))m")
         
         // v1.9.71: Add to position history for movement tracking
         let now = Date()
@@ -683,6 +702,40 @@ class LocationService: NSObject, ObservableObject {
         recentProjectedPositions = recentProjectedPositions.filter { now.timeIntervalSince($0.timestamp) <= positionHistoryWindow }
         
         debugLogger.log("Position history: \(recentProjectedPositions.count) positions in last \(positionHistoryWindow)s", category: "WAYPOINT")
+        
+        // v2.1.27: Collect multiple GPS readings before applying skip-passed waypoints on start
+        if isCollectingSkipReadings {
+            let suggested = suggestedDirectionIndexFromProjection(segmentIndex: userProjection.segmentIndex, t: userProjection.t)
+            pendingSkipSuggestedIndices.append(suggested)
+            if pendingSkipSuggestedIndices.count > requiredSkipReadingsCount {
+                pendingSkipSuggestedIndices.removeFirst()
+            }
+            if pendingSkipSuggestedIndices.count >= requiredSkipReadingsCount {
+                let first = pendingSkipSuggestedIndices[0]
+                let allSame = pendingSkipSuggestedIndices.allSatisfy { $0 == first }
+                if allSame {
+                    currentDirectionIndex = first
+                    if first > 0 {
+                        for i in 0..<first where i < directionWaypoints.count {
+                            notifiedDirectionIndices.insert(i)
+                        }
+                        print("📍 [Polyline] Applied skip after \(requiredSkipReadingsCount) agreeing readings: starting at index \(currentDirectionIndex)")
+                        debugLogger.log("Skip applied: \(requiredSkipReadingsCount) readings agreed on index \(currentDirectionIndex)", category: "DIRECTION_ADVANCE")
+                    }
+                    isCollectingSkipReadings = false
+                    pendingSkipSuggestedIndices = []
+                } else {
+                    // Slide window: drop oldest so next reading can try again
+                    pendingSkipSuggestedIndices.removeFirst()
+                }
+            }
+            if isCollectingSkipReadings {
+                let logMsg = "Collecting skip readings: \(pendingSkipSuggestedIndices.count)/\(requiredSkipReadingsCount), last suggested=\(suggested)"
+                print("📍 [Polyline] [\(timeString)] \(logMsg)")
+                debugLogger.log(logMsg, category: "WAYPOINT")
+                return
+            }
+        }
         
         // v1.9.71: Calculate distance moved along route (not straight-line, but along the polyline)
         let distanceMovedAlongRoute = calculateDistanceMovedAlongRoute(
@@ -813,6 +866,7 @@ class LocationService: NSObject, ObservableObject {
                 let triggerLog = "✅ TRIGGERED waypoint \(index + 1): '\(waypoint.instruction)' - Advancing from index \(currentDirectionIndex) to \(min(index + 1, directionWaypoints.count - 1))"
                 print("📍 [WAYPOINT TRIGGER] [\(timeString)] \(triggerLog)")
                 debugLogger.log(triggerLog, category: "DIRECTION_ADVANCE")
+                walkDebug("WAYPOINT advanced to step \(index + 1)/\(directionWaypoints.count): '\(waypoint.instruction)'")
                 NotificationService.shared.sendDirectionNotification(
                     instruction: waypoint.instruction,
                     distance: waypoint.distance,
@@ -1196,6 +1250,9 @@ extension LocationService: CLLocationManagerDelegate {
         print("⏱️ [LOCATION] [\(timeString)] 📍 didUpdateLocations: lat=\(String(format: "%.5f", newLocation.coordinate.latitude)), lon=\(String(format: "%.5f", newLocation.coordinate.longitude)), accuracy=\(String(format: "%.1f", newLocation.horizontalAccuracy))m\(isFirstLocation ? " (FIRST LOCATION)" : "")")
         
         DispatchQueue.main.async {
+            // [WALK_DEBUG] UPDATE: where app thinks user is
+            self.walkDebug("UPDATE position lat=\(String(format: "%.6f", newLocation.coordinate.latitude)) lon=\(String(format: "%.6f", newLocation.coordinate.longitude)) accuracy=\(String(format: "%.1f", newLocation.horizontalAccuracy))m speed=\(String(format: "%.2f", newLocation.speed >= 0 ? newLocation.speed : 0))m/s step=\(self.currentDirectionIndex + 1)/\(self.directionWaypoints.count)")
+            
             // Mark fetching complete and cancel retry timer
             let wasFetching = self.isFetchingLocation
             let requestStartTime = self.locationRequestStartTime
@@ -1213,12 +1270,24 @@ extension LocationService: CLLocationManagerDelegate {
                 print("⏱️ [LOCATION] [\(timeString)] 🎯 Start location set")
             }
             
-            // Calculate distance walked (ignore small movements to avoid GPS jitter when stationary)
+            // Calculate distance walked: movement ≥ 5m, both current and previous speed indicate walking (≥ 0.3 m/s), and implied speed (distance/time) ≤ 1.5 m/s to reject delayed/drift fixes and GPS jumps when phone is still.
             if let lastLocation = self.routeLocations.last {
                 let distance = newLocation.distance(from: lastLocation)
-                if distance >= self.minDistanceToCountAsWalked {
-                    self.distanceWalked += distance
+                let speed = newLocation.speed >= 0 ? newLocation.speed : 0
+                let lastSpeed = lastLocation.speed >= 0 ? lastLocation.speed : 0
+                let timeSinceLast = newLocation.timestamp.timeIntervalSince(lastLocation.timestamp)
+                let impliedSpeed = timeSinceLast > 0 ? distance / timeSinceLast : 0
+                let plausibleSpeed = impliedSpeed <= self.maxPlausibleWalkingSpeed
+                let sustainedSpeed = lastSpeed >= self.minSpeedToCountAsWalked && speed >= self.minSpeedToCountAsWalked
+                let isMoving = distance >= self.minDistanceToCountAsWalked && sustainedSpeed && plausibleSpeed
+                let added = isMoving ? min(distance, self.maxDistanceAddedPerUpdate) : 0.0
+                self.walkDebug("DISTANCE segment=\(String(format: "%.1f", distance))m dt=\(String(format: "%.1f", timeSinceLast))s implied=\(String(format: "%.2f", impliedSpeed))m/s lastSpeed=\(String(format: "%.2f", lastSpeed)) currSpeed=\(String(format: "%.2f", speed)) sustained=\(sustainedSpeed) plausible=\(plausibleSpeed) isMoving=\(isMoving) added=\(String(format: "%.1f", added))m total=\(Int(self.distanceWalked + added))m")
+                if isMoving {
+                    let capped = min(distance, self.maxDistanceAddedPerUpdate)
+                    self.distanceWalked += capped
                 }
+            } else {
+                self.walkDebug("DISTANCE first fix (no segment) total=\(Int(self.distanceWalked))m")
             }
             
             self.routeLocations.append(newLocation)

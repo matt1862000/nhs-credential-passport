@@ -1026,7 +1026,7 @@ class WaitingRoomViewModel: ObservableObject {
             
             let distanceText: String
             if stepDistance < 1000 {
-                distanceText = "\(stepDistance) m"
+                distanceText = "\(stepDistance)m"
             } else {
                 distanceText = String(format: "%.1f km", Double(stepDistance) / 1000.0)
             }
@@ -1097,9 +1097,12 @@ class WaitingRoomViewModel: ObservableObject {
         // Update steps from pedometer/HealthKit (real-time)
         walkSession.stepsThisSession = healthKitService.stepCount
         
-        // Use pedometer distance if available, otherwise use GPS
+        // Use pedometer distance if available
         if healthKitService.distance > 0 {
             locationService.distanceWalked = healthKitService.distance
+        } else if healthKitService.isMotionAuthorized && healthKitService.stepCount == 0 {
+            // Motion authorized and 0 steps: user hasn't moved, zero GPS drift. Skip when not authorized so we don't zero real walking.
+            locationService.distanceWalked = 0
         }
         
         #if targetEnvironment(simulator)

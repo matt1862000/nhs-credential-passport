@@ -2379,7 +2379,7 @@ struct EmbeddedWalkMapView: View {
             // Format distance
             let distanceText: String
             if stepDistance < 1000 {
-                distanceText = "\(stepDistance) m"
+                distanceText = "\(stepDistance)m"
             } else {
                 distanceText = String(format: "%.1f km", Double(stepDistance) / 1000.0)
             }
