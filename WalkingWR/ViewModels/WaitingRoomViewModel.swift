@@ -800,6 +800,7 @@ class WaitingRoomViewModel: ObservableObject {
             let dist = Int(self.locationService.distanceWalked)
             let name = self.walkSession.currentRoute?.name ?? "?"
             DebugLogger.shared.log("walk_heartbeat route=\(name) distanceWalked=\(dist)m", category: "FREEZE_DIAG")
+            print("[WALKED_DIST] heartbeat route=\(name) distanceWalked=\(dist)m")
         }
         if let t = walkHeartbeatTimer { RunLoop.main.add(t, forMode: .common) }
         
@@ -928,6 +929,7 @@ class WaitingRoomViewModel: ObservableObject {
         DebugLogger.shared.log("🏁🏁🏁 WALK ENDED 🏁🏁🏁 - Completed: \(completed)", category: "WALK_LIFECYCLE")
         if let route = walkSession.currentRoute {
             DebugLogger.shared.log("Final stats - Distance: \(Int(locationService.distanceWalked))m, Duration: \(walkSession.elapsedTime) seconds", category: "WALK_LIFECYCLE")
+            print("[WALKED_DIST] endWalk completed=\(completed) finalDistance=\(Int(locationService.distanceWalked))m duration=\(walkSession.elapsedTime)s")
         }
         let timestamp = Date()
         let formatter = DateFormatter()
@@ -1289,12 +1291,11 @@ class WaitingRoomViewModel: ObservableObject {
         // Update steps from pedometer/HealthKit (real-time)
         walkSession.stepsThisSession = healthKitService.stepCount
         
-        // Use pedometer distance if available
+        // Use pedometer distance if available; otherwise keep GPS-derived distance (do not overwrite with 0 when stepCount is 0 — pedometer can lag or be zero while user is walking).
         if healthKitService.distance > 0 {
+            let prev = locationService.distanceWalked
             locationService.distanceWalked = healthKitService.distance
-        } else if healthKitService.isMotionAuthorized && healthKitService.stepCount == 0 {
-            // Motion authorized and 0 steps: user hasn't moved, zero GPS drift. Skip when not authorized so we don't zero real walking.
-            locationService.distanceWalked = 0
+            print("[WALKED_DIST] set from HealthKit: \(Int(healthKitService.distance))m (was GPS \(Int(prev))m)")
         }
         
         #if targetEnvironment(simulator)
@@ -1303,6 +1304,7 @@ class WaitingRoomViewModel: ObservableObject {
             let elapsedMinutes = Double(walkSession.elapsedSeconds) / 60.0
             walkSession.stepsThisSession = Int(elapsedMinutes * 100)
             locationService.distanceWalked = elapsedMinutes * 80
+            print("[WALKED_DIST] simulator: set to \(Int(elapsedMinutes * 80))m (elapsed \(walkSession.elapsedSeconds)s)")
         }
         #endif
         

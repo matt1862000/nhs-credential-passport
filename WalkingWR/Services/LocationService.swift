@@ -72,10 +72,10 @@ class LocationService: NSObject, ObservableObject {
     private let positionHistoryWindow: TimeInterval = 30.0 // Keep last 30 seconds of positions (3x longer)
     private let minConsistentReadings: Int = 3 // Require at least 3 consistent readings
     private let consistencyThreshold: Double = 0.6 // 60% of readings must show forward progress
-    private let minDistanceToCountAsWalked: Double = 5.0 // Ignore movements smaller than this (GPS jitter when stationary)
+    private let minDistanceToCountAsWalked: Double = 0.5 // Ignore movements smaller than this (GPS jitter). 0.5m + speed check (0.3–2.2 m/s) lets ~1s walking segments count.
     private let minSpeedToCountAsWalked: Double = 0.3 // Count distance when speed indicates walking; 0.3 m/s allows slow walk and noisy GPS, still filters stationary drift
     private let maxDistanceAddedPerUpdate: Double = 30.0 // Cap per-update contribution so one GPS glitch or shake-induced spike can't add more than ~30m
-    private let maxPlausibleWalkingSpeed: Double = 1.5 // m/s; if segment distance/time > this, reject (GPS jumps; real walking ~0.5–1.2 m/s)
+    private let maxPlausibleWalkingSpeed: Double = 2.2 // m/s; if segment distance/time > this, reject (GPS jumps). 2.2 allows ~10–12m in 5s; real walking ~0.5–1.2 m/s, bursts higher when GPS updates infrequently.
     private let minDistancePastWaypointToSkipOnStart: Double = 25.0 // When skipping passed waypoints on start, user must be at least this far past the waypoint (prevents single noisy reading from jumping ahead)
     
     // v2.1.27: Require multiple GPS readings to agree before skipping steps on walk start (prevents single noisy reading jumping to step 4)
@@ -420,8 +420,11 @@ class LocationService: NSObject, ObservableObject {
         locationManager.allowsBackgroundLocationUpdates = true
         locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.showsBackgroundLocationIndicator = true
+        // No minimum: get every GPS update; we filter with 0.5m/speed/30m-cap logic
+        locationManager.distanceFilter = kCLDistanceFilterNone
         
         locationManager.startUpdatingLocation()
+        print("[WALKED_DIST] reset to 0 at startTracking (distanceFilter=\(locationManager.distanceFilter == kCLDistanceFilterNone ? "none" : "\(locationManager.distanceFilter)m"))")
         locationManager.startUpdatingHeading()
         
         print("⏱️ [LOCATION] [\(timeString)] 📡 startUpdatingLocation() and startUpdatingHeading() called")
@@ -436,6 +439,7 @@ class LocationService: NSObject, ObservableObject {
         // Disable background location updates to save battery
         locationManager.allowsBackgroundLocationUpdates = false
         locationManager.showsBackgroundLocationIndicator = false
+        locationManager.distanceFilter = 10  // Restore for non-walk use
         
         locationManager.stopUpdatingLocation()
         locationManager.stopUpdatingHeading()
@@ -1270,7 +1274,7 @@ extension LocationService: CLLocationManagerDelegate {
                 print("⏱️ [LOCATION] [\(timeString)] 🎯 Start location set")
             }
             
-            // Calculate distance walked: movement ≥ 5m, both current and previous speed indicate walking (≥ 0.3 m/s), and implied speed (distance/time) ≤ 1.5 m/s to reject delayed/drift fixes and GPS jumps when phone is still.
+            // Calculate distance walked: movement ≥ 5m, and either reported speed or implied speed (distance/time) indicates walking (0.3–2.2 m/s). Use implied speed when device reports 0 (common when stationary or first few fixes).
             if let lastLocation = self.routeLocations.last {
                 let distance = newLocation.distance(from: lastLocation)
                 let speed = newLocation.speed >= 0 ? newLocation.speed : 0
@@ -1278,16 +1282,21 @@ extension LocationService: CLLocationManagerDelegate {
                 let timeSinceLast = newLocation.timestamp.timeIntervalSince(lastLocation.timestamp)
                 let impliedSpeed = timeSinceLast > 0 ? distance / timeSinceLast : 0
                 let plausibleSpeed = impliedSpeed <= self.maxPlausibleWalkingSpeed
-                let sustainedSpeed = lastSpeed >= self.minSpeedToCountAsWalked && speed >= self.minSpeedToCountAsWalked
-                let isMoving = distance >= self.minDistanceToCountAsWalked && sustainedSpeed && plausibleSpeed
+                // Use reported speed when available (≥ 0.3 m/s); otherwise use implied speed so we still count distance when GPS reports 0 (common on first steps or slow walk).
+                let effectiveSpeed = speed >= self.minSpeedToCountAsWalked ? speed : impliedSpeed
+                let speedIndicatesWalking = effectiveSpeed >= self.minSpeedToCountAsWalked && effectiveSpeed <= self.maxPlausibleWalkingSpeed
+                let isMoving = distance >= self.minDistanceToCountAsWalked && speedIndicatesWalking && plausibleSpeed
                 let added = isMoving ? min(distance, self.maxDistanceAddedPerUpdate) : 0.0
-                self.walkDebug("DISTANCE segment=\(String(format: "%.1f", distance))m dt=\(String(format: "%.1f", timeSinceLast))s implied=\(String(format: "%.2f", impliedSpeed))m/s lastSpeed=\(String(format: "%.2f", lastSpeed)) currSpeed=\(String(format: "%.2f", speed)) sustained=\(sustainedSpeed) plausible=\(plausibleSpeed) isMoving=\(isMoving) added=\(String(format: "%.1f", added))m total=\(Int(self.distanceWalked + added))m")
+                self.walkDebug("DISTANCE segment=\(String(format: "%.1f", distance))m dt=\(String(format: "%.1f", timeSinceLast))s implied=\(String(format: "%.2f", impliedSpeed))m/s lastSpeed=\(String(format: "%.2f", lastSpeed)) currSpeed=\(String(format: "%.2f", speed)) effective=\(String(format: "%.2f", effectiveSpeed)) plausible=\(plausibleSpeed) isMoving=\(isMoving) added=\(String(format: "%.1f", added))m total=\(Int(self.distanceWalked + added))m")
+                let totalAfter = self.distanceWalked + (isMoving ? min(distance, self.maxDistanceAddedPerUpdate) : 0)
+                print("[WALKED_DIST] segment=\(String(format: "%.1f", distance))m dt=\(String(format: "%.1f", timeSinceLast))s impliedSpeed=\(String(format: "%.2f", impliedSpeed)) currSpeed=\(String(format: "%.2f", speed)) effectiveSpeed=\(String(format: "%.2f", effectiveSpeed)) plausible=\(plausibleSpeed) isMoving=\(isMoving) added=\(String(format: "%.1f", added))m total=\(Int(totalAfter))m")
                 if isMoving {
                     let capped = min(distance, self.maxDistanceAddedPerUpdate)
                     self.distanceWalked += capped
                 }
             } else {
                 self.walkDebug("DISTANCE first fix (no segment) total=\(Int(self.distanceWalked))m")
+                print("[WALKED_DIST] first fix (no segment yet) total=\(Int(self.distanceWalked))m")
             }
             
             self.routeLocations.append(newLocation)
