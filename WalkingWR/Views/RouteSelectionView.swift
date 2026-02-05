@@ -6374,6 +6374,10 @@ struct WalkingAlertOverlay: View {
     var showStopButton: Bool = true
     var primaryLabel: String = "OK"
     var secondaryLabel: String = "Stop Alerts"
+    /// Option B: when true, top = Head back (green full width), bottom = Keep walking | Stop Alerts
+    var showHeadBackButton: Bool = false
+    var headBackLabel: String = "Head back"
+    var onHeadBack: (() -> Void)? = nil
     
     @Environment(\.colorScheme) var colorScheme
     
@@ -6395,6 +6399,10 @@ struct WalkingAlertOverlay: View {
     
     private var stopAlertsButtonBackground: Color {
         colorScheme == .dark ? Color.white.opacity(0.12) : Color.red.opacity(0.08)
+    }
+    
+    private var secondaryButtonBackground: Color {
+        colorScheme == .dark ? Color.white.opacity(0.15) : Color.gray.opacity(0.15)
     }
     
     private var dimmedBackdrop: Color {
@@ -6424,29 +6432,70 @@ struct WalkingAlertOverlay: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 
-                HStack(spacing: 12) {
-                    if let onStopAlerts = onStopAlerts, showStopButton {
-                        Button(action: onStopAlerts) {
-                            Text(secondaryLabel)
+                if showHeadBackButton, let onHeadBack = onHeadBack {
+                    // Option B: Head back full width on top, then Keep walking | Stop Alerts
+                    VStack(spacing: 12) {
+                        Button(action: onHeadBack) {
+                            Text(headBackLabel)
                                 .font(.body)
                                 .fontWeight(.semibold)
-                                .foregroundColor(.red)
+                                .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .background(stopAlertsButtonBackground)
+                                .background(Color.green)
                                 .cornerRadius(10)
                         }
+                        HStack(spacing: 12) {
+                            Button(action: onOK) {
+                                Text(primaryLabel)
+                                    .font(.body)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.primary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(secondaryButtonBackground)
+                                    .cornerRadius(10)
+                            }
+                            if let onStopAlerts = onStopAlerts {
+                                Button(action: onStopAlerts) {
+                                    Text(secondaryLabel)
+                                        .font(.body)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.red)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 12)
+                                        .background(stopAlertsButtonBackground)
+                                        .cornerRadius(10)
+                                }
+                            }
+                        }
                     }
-                    
-                    Button(action: onOK) {
-                        Text(primaryLabel)
-                            .font(.body)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(Color.green)
-                            .cornerRadius(10)
+                } else {
+                    // Original: HStack [ Stop Alerts ] [ OK ]
+                    HStack(spacing: 12) {
+                        if let onStopAlerts = onStopAlerts, showStopButton {
+                            Button(action: onStopAlerts) {
+                                Text(secondaryLabel)
+                                    .font(.body)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.red)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(stopAlertsButtonBackground)
+                                    .cornerRadius(10)
+                            }
+                        }
+                        
+                        Button(action: onOK) {
+                            Text(primaryLabel)
+                                .font(.body)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Color.green)
+                                .cornerRadius(10)
+                        }
                     }
                 }
             }
@@ -6665,6 +6714,15 @@ struct ActiveWalkView: View {
                     onStopAlerts: {
                         viewModel.disableWalkingAlerts()
                         viewModel.showHalfwayAlert = false
+                    },
+                    primaryLabel: "Keep walking",
+                    secondaryLabel: "Stop Alerts",
+                    showHeadBackButton: true,
+                    headBackLabel: "Head back",
+                    onHeadBack: {
+                        viewModel.userTappedHeadBack()
+                        viewModel.cancelAlertAutoDismissTimer()
+                        viewModel.showHalfwayAlert = false
                     }
                 )
             } else if viewModel.showReturnNowAlert {
@@ -6677,6 +6735,15 @@ struct ActiveWalkView: View {
                     },
                     onStopAlerts: {
                         viewModel.disableWalkingAlerts()
+                        viewModel.showReturnNowAlert = false
+                    },
+                    primaryLabel: "Keep walking",
+                    secondaryLabel: "Stop Alerts",
+                    showHeadBackButton: true,
+                    headBackLabel: "Head back",
+                    onHeadBack: {
+                        viewModel.userTappedHeadBack()
+                        viewModel.cancelAlertAutoDismissTimer()
                         viewModel.showReturnNowAlert = false
                     }
                 )

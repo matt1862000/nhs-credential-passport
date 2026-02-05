@@ -98,10 +98,15 @@ class WaitingRoomViewModel: ObservableObject {
     // v1.9.16: Cached return route for offline fallback
     @Published var cachedReturnRoutePolyline: [CLLocationCoordinate2D] = []
     @Published var hasCachedReturnRoute: Bool = false
+    /// When true, user tapped "Head back" and we switched to return route; skip 80% and 100% overlays. Reset in endWalk.
+    private(set) var isHeadingBack: Bool = false
     
     // v1.9.17: Walking alerts control
     @Published var walkingAlertsEnabled: Bool = true
     private var alertAutoDismissTimer: Timer?
+    
+    /// Freeze diagnostic: logs every 10s during a walk so we can see last activity if the app freezes (no crash).
+    private var walkHeartbeatTimer: Timer?
     
     // Clinician selection
     @Published var availableClinicians: [Clinician] = []
@@ -634,9 +639,8 @@ class WaitingRoomViewModel: ObservableObject {
     
     /// v2.1.1: Update current route with refreshed data (e.g., after background Google/MapKit fetch)
     /// Updates both selectedRoute and walkSession.currentRoute so map refreshes automatically.
-    /// Pill: Google's duration is the only source of truth — when sourceIsGoogle is true we always set the pill.
-    /// When sourceIsGoogle is false (MapKit), we only set the pill if we haven't had a Google refresh yet.
-    func updateCurrentRoute(_ route: WalkingRoute, sourceIsGoogle: Bool = false) {
+    /// When resetDirectionIndex is true (e.g. Head back), directions start from step 0.
+    func updateCurrentRoute(_ route: WalkingRoute, sourceIsGoogle: Bool = false, resetDirectionIndex: Bool = false) {
         let incomingMin = route.durationMinutes
         print("PILL | updateCurrentRoute ENTRY isActive=\(walkSession.isActive) incoming=\(incomingMin)min display=\(displayDurationMinutesForPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) lock=\(hasReceivedGoogleRefreshForPill) sourceIsGoogle=\(sourceIsGoogle) route.name=\(route.name)")
         selectedRoute = route
@@ -656,7 +660,11 @@ class WaitingRoomViewModel: ObservableObject {
             }
             // v2.1.1: Update direction monitoring with new directions
             if !route.walkingDirections.isEmpty {
-                locationService.updateDirections(route.walkingDirections, routePath: route.routePath)
+                if resetDirectionIndex {
+                    locationService.startDirectionMonitoring(directions: route.walkingDirections, routePath: route.routePath, skipPassedWaypoints: false)
+                } else {
+                    locationService.updateDirections(route.walkingDirections, routePath: route.routePath)
+                }
             }
             objectWillChange.send()
         } else {
@@ -784,6 +792,16 @@ class WaitingRoomViewModel: ObservableObject {
         // v1.9.79: Log walk start
         DebugLogger.shared.log("🚶🚶🚶 WALK STARTED 🚶🚶🚶", category: "WALK_LIFECYCLE")
         DebugLogger.shared.log("Route: \(route.name), Duration: \(route.durationMinutes) min, Waypoints: \(route.qrMarkers.count)", category: "WALK_LIFECYCLE")
+        
+        // Freeze diagnostic: heartbeat every 10s so we can see last activity if app freezes (logs to DebugLogs in Documents)
+        walkHeartbeatTimer?.invalidate()
+        walkHeartbeatTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.walkSession.isActive else { return }
+            let dist = Int(self.locationService.distanceWalked)
+            let name = self.walkSession.currentRoute?.name ?? "?"
+            DebugLogger.shared.log("walk_heartbeat route=\(name) distanceWalked=\(dist)m", category: "FREEZE_DIAG")
+        }
+        if let t = walkHeartbeatTimer { RunLoop.main.add(t, forMode: .common) }
         
         // Map opens centered on route with padding; no auto-follow (Let's Go flow)
         mapStayCenteredOnRoute = true
@@ -926,6 +944,9 @@ class WaitingRoomViewModel: ObservableObject {
         
         walkSession.isActive = false
         
+        walkHeartbeatTimer?.invalidate()
+        walkHeartbeatTimer = nil
+        
         // v1.7.5: Clear flag so app knows walk has ended
         UserDefaults.standard.set(false, forKey: "hasActiveWalk")
         
@@ -979,6 +1000,7 @@ class WaitingRoomViewModel: ObservableObject {
         // v1.9.16: Reset cached return route
         cachedReturnRoutePolyline = []
         hasCachedReturnRoute = false
+        isHeadingBack = false
         
         mapStayCenteredOnRoute = false
         
@@ -998,6 +1020,175 @@ class WaitingRoomViewModel: ObservableObject {
         // Return directions will be fetched live when user reaches last waypoint
         print("📍 Return route will be fetched live via Google when needed (ToS compliance)")
         hasCachedReturnRoute = false
+    }
+    
+    /// Called when user taps "Head back" on 50% or 80% overlay. Switches to return route (current → origin) and skips 80%/100% overlays.
+    func userTappedHeadBack() {
+        print("🏠 [HEAD HOME] userTappedHeadBack() — setting isHeadingBack=true, fetching return route")
+        isHeadingBack = true
+        fetchAndSwitchToReturnRoute()
+    }
+    
+    /// Fetch route from current location → origin and switch map/directions to it.
+    /// Uses Google Directions API first (street-following route); falls back to MapKit if Google fails.
+    private func fetchAndSwitchToReturnRoute() {
+        guard let currentCoord = locationService.currentLocation?.coordinate,
+              let originCoord = walkSession.startLocation,
+              let currentRoute = walkSession.currentRoute else {
+            print("🏠 [HEAD HOME] fetchAndSwitchToReturnRoute — SKIP: missing location or route")
+            return
+        }
+        let distanceToStart = CLLocation(latitude: currentCoord.latitude, longitude: currentCoord.longitude)
+            .distance(from: CLLocation(latitude: originCoord.latitude, longitude: originCoord.longitude))
+        print("🏠 [HEAD HOME] fetchAndSwitchToReturnRoute — current=(\(String(format: "%.5f", currentCoord.latitude)), \(String(format: "%.5f", currentCoord.longitude))), start=(\(String(format: "%.5f", originCoord.latitude)), \(String(format: "%.5f", originCoord.longitude))), distanceToStart=\(Int(distanceToStart))m")
+        
+        Task { @MainActor in
+            // If already at start, use a minimal route so the line is short (not to the first waypoint)
+            if distanceToStart < 25 {
+                let minimalPolyline = [currentCoord, originCoord]
+                let encodedPolyline = encodePolylineForReturnRoute(minimalPolyline)
+                let returnRoute = WalkingRoute(
+                    name: currentRoute.name,
+                    description: currentRoute.description,
+                    durationMinutes: 1,
+                    distanceMeters: Int(distanceToStart),
+                    difficulty: currentRoute.difficulty,
+                    isIndoor: currentRoute.isIndoor,
+                    isAccessible: currentRoute.isAccessible,
+                    landmarks: currentRoute.landmarks,
+                    icon: currentRoute.icon,
+                    color: currentRoute.color,
+                    qrMarkers: currentRoute.qrMarkers,
+                    routeType: currentRoute.routeType,
+                    encodedPolyline: encodedPolyline,
+                    walkingDirections: [WalkingDirection(instruction: "You're at the start", distance: "0m", distanceMeters: 0, duration: "", maneuver: "arrive")],
+                    usedOSRMRouting: false,
+                    isFromPrePopulatedDatabase: currentRoute.isFromPrePopulatedDatabase
+                )
+                updateCurrentRoute(returnRoute, resetDirectionIndex: true)
+                print("🏠 [HEAD HOME] Route updated: MINIMAL (already at start) — polyline points=2, from current to start")
+                return
+            }
+            
+            // Try Google Directions first for a street-following return route
+            print("🏠 [HEAD HOME] Requesting return route from Google Directions...")
+            if let result = await GoogleMapsService.shared.getReturnDirectionsLive(from: currentCoord, to: originCoord) {
+                let encodedPolyline = encodePolylineForReturnRoute(result.polyline)
+                let returnRoute = WalkingRoute(
+                    name: currentRoute.name,
+                    description: currentRoute.description,
+                    durationMinutes: max(1, result.totalDurationSeconds / 60),
+                    distanceMeters: result.totalDistanceMeters,
+                    difficulty: currentRoute.difficulty,
+                    isIndoor: currentRoute.isIndoor,
+                    isAccessible: currentRoute.isAccessible,
+                    landmarks: currentRoute.landmarks,
+                    icon: currentRoute.icon,
+                    color: currentRoute.color,
+                    qrMarkers: currentRoute.qrMarkers,
+                    routeType: currentRoute.routeType,
+                    encodedPolyline: encodedPolyline,
+                    walkingDirections: result.directions.isEmpty ? currentRoute.walkingDirections : result.directions,
+                    usedOSRMRouting: false,
+                    isFromPrePopulatedDatabase: currentRoute.isFromPrePopulatedDatabase
+                )
+                updateCurrentRoute(returnRoute, resetDirectionIndex: true)
+                let first = result.polyline.first.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
+                let last = result.polyline.last.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
+                print("🏠 [HEAD HOME] Route updated: GOOGLE — polyline points=\(result.polyline.count), first=(\(first)), last=(\(last))")
+                return
+            }
+            
+            // Fallback to MapKit if Google fails (e.g. no API key, quota, or network)
+            print("🏠 [HEAD HOME] Google failed or unavailable — using MapKit fallback")
+            let request = MKDirections.Request()
+            request.source = MKMapItem(placemark: MKPlacemark(coordinate: currentCoord))
+            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: originCoord))
+            request.transportType = .walking
+            
+            let directions = MKDirections(request: request)
+            directions.calculate { [weak self] response, error in
+                guard let self = self else { return }
+                if let error = error {
+                    print("🚶 [HEAD BACK] MapKit return route failed: \(error.localizedDescription)")
+                    return
+                }
+                guard let mkRoute = response?.routes.first else {
+                    print("🚶 [HEAD BACK] MapKit returned no route")
+                    return
+                }
+                let polylineCoords = self.polylineCoordinates(from: mkRoute.polyline)
+                guard !polylineCoords.isEmpty else {
+                    print("🚶 [HEAD BACK] No polyline coordinates")
+                    return
+                }
+                let encodedPolyline = self.encodePolylineForReturnRoute(polylineCoords)
+                let walkingDirs = self.extractDirectionsFromMKRoute(mkRoute)
+                let returnRoute = WalkingRoute(
+                    name: currentRoute.name,
+                    description: currentRoute.description,
+                    durationMinutes: max(1, Int(mkRoute.expectedTravelTime / 60)),
+                    distanceMeters: Int(mkRoute.distance),
+                    difficulty: currentRoute.difficulty,
+                    isIndoor: currentRoute.isIndoor,
+                    isAccessible: currentRoute.isAccessible,
+                    landmarks: currentRoute.landmarks,
+                    icon: currentRoute.icon,
+                    color: currentRoute.color,
+                    qrMarkers: currentRoute.qrMarkers,
+                    routeType: currentRoute.routeType,
+                    encodedPolyline: encodedPolyline,
+                    walkingDirections: walkingDirs.isEmpty ? currentRoute.walkingDirections : walkingDirs,
+                    usedOSRMRouting: false,
+                    isFromPrePopulatedDatabase: currentRoute.isFromPrePopulatedDatabase
+                )
+                Task { @MainActor in
+                    self.updateCurrentRoute(returnRoute, resetDirectionIndex: true)
+                    let first = polylineCoords.first.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
+                    let last = polylineCoords.last.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
+                    print("🏠 [HEAD HOME] Route updated: MAPKIT — polyline points=\(polylineCoords.count), first=(\(first)), last=(\(last))")
+                }
+            }
+        }
+    }
+    
+    private func polylineCoordinates(from polyline: MKPolyline) -> [CLLocationCoordinate2D] {
+        let count = polyline.pointCount
+        guard count > 0 else { return [] }
+        var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: count)
+        polyline.getCoordinates(&coords, range: NSRange(location: 0, length: count))
+        return coords
+    }
+    
+    private func encodePolylineForReturnRoute(_ coordinates: [CLLocationCoordinate2D]) -> String {
+        var encoded = ""
+        var prevLat = 0, prevLng = 0
+        for coord in coordinates {
+            let lat = Int(round(coord.latitude * 1e5))
+            let lng = Int(round(coord.longitude * 1e5))
+            encoded += encodePolylineSignedNumber(lat - prevLat)
+            encoded += encodePolylineSignedNumber(lng - prevLng)
+            prevLat = lat
+            prevLng = lng
+        }
+        return encoded
+    }
+    
+    private func encodePolylineSignedNumber(_ num: Int) -> String {
+        var sgn = num << 1
+        if num < 0 { sgn = ~sgn }
+        return encodePolylineNumber(sgn)
+    }
+    
+    private func encodePolylineNumber(_ num: Int) -> String {
+        var n = num
+        var result = ""
+        while n >= 0x20 {
+            result += String(UnicodeScalar((0x20 | (n & 0x1f)) + 63)!)
+            n >>= 5
+        }
+        result += String(UnicodeScalar(n + 63)!)
+        return result
     }
     
     // v1.9.16: Extract walking directions from MKRoute steps (helper for pre-calculation)
@@ -1146,8 +1337,8 @@ class WaitingRoomViewModel: ObservableObject {
             }
         }
         
-        // Check for return now point (80%) - independent check
-        if walkSession.progress >= 0.8 && walkSession.progress < 1.0 {
+        // Check for return now point (80%) - independent check; skip if user already chose Head back
+        if !isHeadingBack, walkSession.progress >= 0.8 && walkSession.progress < 1.0 {
             // Only show if not already shown and alerts are enabled
             if !walkSession.returnNowAlertSent {
                 if walkingAlertsEnabled {
@@ -1168,8 +1359,8 @@ class WaitingRoomViewModel: ObservableObject {
             }
         }
         
-        // Check if walk is complete (100%) - independent check
-        if walkSession.progress >= 1.0 {
+        // Check if walk is complete (100%) - independent check; skip if user already chose Head back
+        if !isHeadingBack, walkSession.progress >= 1.0 {
             // Only show if not already shown and alerts are enabled
             if !walkSession.walkCompleteAlertSent {
                 if walkingAlertsEnabled {

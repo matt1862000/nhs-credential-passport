@@ -418,16 +418,13 @@ struct EmbeddedWalkMapView: View {
     // Automatically handles both MapKit routes and Google Directions API polylines
     // Google polylines are decoded via WalkingRoute.routePath (uses PolylineDecoder)
     private var polylineToShow: [CLLocationCoordinate2D] {
-        // #region agent log
         let cur = viewModel.walkSession.currentRoute
-        let pathCount = cur?.routePath.count ?? 0
-        let guardFail = cur == nil || pathCount < 2 || isShowingReturnRoute
-        let logLine = "{\"location\":\"WalkingMapView.polylineToShow\",\"message\":\"entry\",\"data\":{\"currentRouteSet\":\(cur != nil),\"pathCount\":\(pathCount),\"guardFail\":\(guardFail),\"isShowingReturnRoute\":\(isShowingReturnRoute)},\"hypothesisId\":\"A\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
-        logLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
-        // #endregion
         guard let currentRoute = cur,
               currentRoute.routePath.count >= 2,
               !isShowingReturnRoute else { return [] }
+        
+        // When user tapped "Head Home", the return path is drawn via returnSegment (blue); skip main polyline
+        if viewModel.isHeadingBack { return [] }
         
         // Once MapKit/Google refresh has run, never draw straight-line fallback (avoids stale or empty-polyline route)
         if viewModel.hasReceivedGoogleRefreshForPill && (currentRoute.encodedPolyline ?? "").isEmpty {
@@ -439,10 +436,6 @@ struct EmbeddedWalkMapView: View {
            viewingId != Self.returnToStartWaypointId,
            let waypointPolyline = waypointRoutePolyline,
            !waypointPolyline.isEmpty {
-            // #region agent log
-            let l2 = "{\"location\":\"WalkingMapView.polylineToShow\",\"message\":\"branch_waypoint\",\"data\":{\"count\":\(waypointPolyline.count)},\"hypothesisId\":\"A\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
-            l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
-            // #endregion
             return waypointPolyline
         }
         
@@ -453,10 +446,6 @@ struct EmbeddedWalkMapView: View {
             let nextWaypointId = getNextWaypointId(markers: currentRoute.qrMarkers, visitedIds: viewModel.visitedMarkerIds)
             if let cached = cachedCurrentLegPolyline,
                cachedLegPolylineForWaypoint == nextWaypointId {
-                // #region agent log
-                let l2 = "{\"location\":\"WalkingMapView.polylineToShow\",\"message\":\"branch_cached_leg\",\"data\":{\"count\":\(cached.count),\"fullPathCount\":\(currentRoute.routePath.count)},\"hypothesisId\":\"A\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
-                l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
-                // #endregion
                 return cached
             } else {
                 if viewModel.visitedMarkerIds.count == currentRoute.qrMarkers.count && currentRoute.qrMarkers.count > 0 {
@@ -468,21 +457,12 @@ struct EmbeddedWalkMapView: View {
                         visitedIds: viewModel.visitedMarkerIds,
                         startLocation: viewModel.walkSession.startLocation
                     )
-                    // #region agent log
-                    let l2 = "{\"location\":\"WalkingMapView.polylineToShow\",\"message\":\"branch_calculated_leg\",\"data\":{\"count\":\(calculated.count),\"fullPathCount\":\(currentRoute.routePath.count)},\"hypothesisId\":\"A\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
-                    l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
-                    // #endregion
                     return calculated
                 }
             }
         } else {
             // Full route display - routePath handles Google polyline decoding automatically
-            let fullPath = currentRoute.routePath
-            // #region agent log
-            let l2 = "{\"location\":\"WalkingMapView.polylineToShow\",\"message\":\"branch_full_route\",\"data\":{\"count\":\(fullPath.count)},\"hypothesisId\":\"E\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
-            l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
-            // #endregion
-            return fullPath
+            return currentRoute.routePath
         }
     }
     
@@ -499,14 +479,36 @@ struct EmbeddedWalkMapView: View {
     // Works with both MapKit routes and Google Directions polylines
     // Google polylines are decoded via currentRoute.routePath
     private var returnSegment: [CLLocationCoordinate2D] {
-        // #region agent log
-        let cond = isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId
-        let line = "{\"location\":\"WalkingMapView.returnSegment\",\"message\":\"entry\",\"data\":{\"condition\":\(cond)},\"hypothesisId\":\"B\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
-        line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
-        // #endregion
-        guard cond,
-              let currentRoute = viewModel.walkSession.currentRoute,
-              let lastWaypoint = currentRoute.qrMarkers.last,
+        let cond = isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId || viewModel.isHeadingBack
+        guard cond else { return [] }
+        
+        // When user tapped "Head Home", ViewModel replaced currentRoute with the return route
+        // (current → home). Use that path, or a minimal current→start line if route not yet updated.
+        if viewModel.isHeadingBack {
+            let path: [CLLocationCoordinate2D]
+            if let currentRoute = viewModel.walkSession.currentRoute, currentRoute.routePath.count >= 2 {
+                path = currentRoute.routePath
+            } else if let currentCoord = viewModel.locationService.currentLocation?.coordinate,
+                      let startCoord = viewModel.walkSession.startLocation {
+                path = [currentCoord, startCoord]
+            } else {
+                return []
+            }
+            // Don't draw a zero-length line when already at start (same point twice or <1m apart)
+            if path.count >= 2,
+               let a = path.first, let b = path.last,
+               CLLocation(latitude: a.latitude, longitude: a.longitude).distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude)) < 1 {
+                return []
+            }
+            return path
+        }
+        
+        guard let currentRoute = viewModel.walkSession.currentRoute,
+              currentRoute.routePath.count >= 2 else {
+            return []
+        }
+        
+        guard let lastWaypoint = currentRoute.qrMarkers.last,
               let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first else {
             return []
         }
@@ -520,10 +522,6 @@ struct EmbeddedWalkMapView: View {
         )
         
         if !segment.isEmpty && segment.count >= 2 {
-            // #region agent log
-            let l2 = "{\"location\":\"WalkingMapView.returnSegment\",\"message\":\"return_extracted\",\"data\":{\"count\":\(segment.count)},\"hypothesisId\":\"B\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
-            l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
-            // #endregion
             return segment
         } else if let returnRoute = returnRoute {
             // Fallback: Extract from MapKit MKRoute polyline
@@ -531,17 +529,9 @@ struct EmbeddedWalkMapView: View {
             let pointCount = polyline.pointCount
             var coords = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
             polyline.getCoordinates(&coords, range: NSRange(location: 0, length: pointCount))
-            // #region agent log
-            let l2 = "{\"location\":\"WalkingMapView.returnSegment\",\"message\":\"return_mkroute\",\"data\":{\"count\":\(coords.count)},\"hypothesisId\":\"B\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
-            l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
-            // #endregion
             return coords
         } else if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
-            // Fallback: Use cached return route polyline
-            let cached = viewModel.cachedReturnRoutePolyline
-            let l2 = "{\"location\":\"WalkingMapView.returnSegment\",\"message\":\"return_cached\",\"data\":{\"count\":\(cached.count)},\"hypothesisId\":\"B\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
-            l2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
-            return cached
+            return viewModel.cachedReturnRoutePolyline
         }
         
         return []
@@ -618,8 +608,8 @@ struct EmbeddedWalkMapView: View {
                 }
             }
             
-            // Return Route Polyline
-            if isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId {
+            // Return Route Polyline (also when user tapped "Head Home" so we use return path + blue styling)
+            if isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId || viewModel.isHeadingBack {
                 MapPolyline(coordinates: returnSegment)
                     .stroke(Color.blue, lineWidth: 5)
             }

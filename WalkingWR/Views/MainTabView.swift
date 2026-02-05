@@ -21,8 +21,6 @@ struct MainTabView: View {
     @State private var showLocalRoutePicker = false
     @State private var wellbeingCategory: WellbeingCategory = .breathing
     @State private var wellbeingExercise: WellbeingContent? = nil
-    /// Trigger prepop POI download once when we get first location (postcode-specific only, no full DB)
-    @State private var hasTriggeredPrepopDownload = false
     
     init(viewModel: WaitingRoomViewModel) {
         self.viewModel = viewModel
@@ -141,9 +139,16 @@ struct MainTabView: View {
                 }
             }
         }
+        .onAppear {
+            // Trigger prepop on appear if we already have location (onChange doesn't fire for initial value)
+            if let loc = viewModel.locationService.currentLocation {
+                Task {
+                    await PrePopulatedPOIService.shared.downloadDatabaseIfNeeded(userLocation: loc.coordinate)
+                }
+            }
+        }
         .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
-            guard let loc = newLocation, !hasTriggeredPrepopDownload else { return }
-            hasTriggeredPrepopDownload = true
+            guard let loc = newLocation else { return }
             Task {
                 await PrePopulatedPOIService.shared.downloadDatabaseIfNeeded(userLocation: loc.coordinate)
             }

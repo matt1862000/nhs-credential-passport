@@ -976,9 +976,17 @@ class PrePopulatedPOIService {
             return
         }
 
-        // Already have cache and no need to re-download
+        // Already have cache and no need to re-download — unless user is in a different postcode (e.g. moved from WF2 to S5)
+        let cachedSource = UserDefaults.standard.string(forKey: databaseSourceKey)
+        let currentPostcode = getPostcodeDistrict(for: userLocation)
         if UserDefaults.standard.data(forKey: storageKey) != nil, hasDownloadedDatabase {
-            return
+            if let postcode = currentPostcode, postcode == cachedSource {
+                return
+            }
+            if currentPostcode == nil {
+                return
+            }
+            // User is in a different postcode than cache — proceed to download current area and replace cache
         }
 
         isDownloading = true
@@ -1066,9 +1074,13 @@ class PrePopulatedPOIService {
             
             // Check if database actually exists (not just version key)
             let databaseExists = UserDefaults.standard.data(forKey: storageKey) != nil
+            let cachedSource = UserDefaults.standard.string(forKey: databaseSourceKey)
             
-            // Check if this version is newer than what we have
-            if let currentVersion = currentVersion, databaseExists {
+            // Replace cache when: (1) downloaded file is for a different postcode than cached (user moved), or (2) same postcode but newer version, or (3) no cache yet
+            let cacheIsForDifferentArea = cachedSource != nil && cachedSource != postcodeDistrict
+            if cacheIsForDifferentArea {
+                print("📦 Pre-populated DB: Cached database is for '\(cachedSource!)', user is in '\(postcodeDistrict)' - replacing with current area (version: \(database.version))")
+            } else if let currentVersion = currentVersion, databaseExists {
                 if database.version <= currentVersion {
                     print("📦 Pre-populated DB: Firebase version (\(database.version)) is not newer than cached version (\(currentVersion)), keeping cached database")
                     print("📦 Pre-populated DB: To force update, clear database using debug button or increment version in Firebase")

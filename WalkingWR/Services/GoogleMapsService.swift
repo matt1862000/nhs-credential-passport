@@ -7580,11 +7580,11 @@ class GoogleMapsService: ObservableObject {
     /// - Parameters:
     ///   - origin: Current location (where user is now)
     ///   - destination: Where to go (typically start point for return journey)
-    /// - Returns: Tuple of (directions, polyline points) or nil if failed
+    /// - Returns: Tuple of (directions, polyline points, totalDistanceMeters, totalDurationSeconds) or nil if failed
     func getReturnDirectionsLive(
         from origin: CLLocationCoordinate2D,
         to destination: CLLocationCoordinate2D
-    ) async -> (directions: [WalkingDirection], polyline: [CLLocationCoordinate2D])? {
+    ) async -> (directions: [WalkingDirection], polyline: [CLLocationCoordinate2D], totalDistanceMeters: Int, totalDurationSeconds: Int)? {
         let startTime = Date()
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
@@ -7651,13 +7651,17 @@ class GoogleMapsService: ObservableObject {
             
             // Parse polyline
             var polylinePoints: [CLLocationCoordinate2D] = []
+            var overviewEncodedLength = 0
             if let overviewPolyline = firstRoute["overview_polyline"] as? [String: Any],
                let points = overviewPolyline["points"] as? String {
+                overviewEncodedLength = points.count
                 polylinePoints = decodePolyline(points)
             }
+            print("🌐 [RETURN DIRECTIONS] Overview polyline: encoded length=\(overviewEncodedLength), decoded points=\(polylinePoints.count)")
             
-            // Also try to get more detailed polyline from steps
+            // Also try to get more detailed polyline from steps (each step has polyline.points)
             var stepPolylinePoints: [CLLocationCoordinate2D] = []
+            var stepLocationPoints: [CLLocationCoordinate2D] = [] // Fallback: build from step start/end when step polyline missing
             var directions: [WalkingDirection] = []
             var totalDistance = 0
             var totalDuration = 0
@@ -7674,7 +7678,7 @@ class GoogleMapsService: ObservableObject {
                     }
                     
                     if let steps = leg["steps"] as? [[String: Any]] {
-                        for step in steps {
+                        for (stepIndex, step) in steps.enumerated() {
                             let instruction = (step["html_instructions"] as? String)?
                                 .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) ?? "Continue"
                             let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
@@ -7688,6 +7692,23 @@ class GoogleMapsService: ObservableObject {
                                 stepPolylinePoints.append(contentsOf: decodedStepPoints)
                             }
                             
+                            // Fallback: build polyline from step start_location / end_location (Google can return lat/lng as Double or String)
+                            func coord(from loc: [String: Any]) -> CLLocationCoordinate2D? {
+                                let lat: Double? = (loc["lat"] as? Double) ?? (loc["lat"] as? String).flatMap(Double.init)
+                                let lng: Double? = (loc["lng"] as? Double) ?? (loc["lng"] as? String).flatMap(Double.init)
+                                guard let lat = lat, let lng = lng else { return nil }
+                                return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+                            }
+                            if let startLoc = step["start_location"] as? [String: Any],
+                               let endLoc = step["end_location"] as? [String: Any],
+                               let startCoord = coord(from: startLoc),
+                               let endCoord = coord(from: endLoc) {
+                                if stepIndex == 0 {
+                                    stepLocationPoints.append(startCoord)
+                                }
+                                stepLocationPoints.append(endCoord)
+                            }
+                            
                             directions.append(WalkingDirection(
                                 instruction: instruction,
                                 distance: stepDistText,
@@ -7699,9 +7720,21 @@ class GoogleMapsService: ObservableObject {
                     }
                 }
             }
+            print("🌐 [RETURN DIRECTIONS] Steps: \(directions.count) directions, step polyline points=\(stepPolylinePoints.count), step location points=\(stepLocationPoints.count)")
             
-            // Use detailed step polyline if available (more points = follows roads better)
-            let finalPolyline = stepPolylinePoints.count > polylinePoints.count ? stepPolylinePoints : polylinePoints
+            // Use the polyline with the most points (best road-following)
+            var finalPolyline: [CLLocationCoordinate2D] = polylinePoints
+            if stepPolylinePoints.count > finalPolyline.count {
+                finalPolyline = stepPolylinePoints
+            }
+            if stepLocationPoints.count > finalPolyline.count {
+                finalPolyline = stepLocationPoints
+                print("🌐 [RETURN DIRECTIONS] Using step start/end locations for polyline (\(stepLocationPoints.count) points)")
+            }
+            if finalPolyline.isEmpty, !stepLocationPoints.isEmpty {
+                finalPolyline = stepLocationPoints
+                print("🌐 [RETURN DIRECTIONS] Using step locations fallback (\(stepLocationPoints.count) points)")
+            }
             let durationMinutes = max(1, totalDuration / 60)
             
             // v2.1.0: Debug logging for polyline quality
@@ -7762,10 +7795,12 @@ class GoogleMapsService: ObservableObject {
                         }
                         
                         let mkDurationMinutes = max(1, Int(mkRoute.expectedTravelTime / 60))
-                        print("✅ [RESTRICTED ROAD FALLBACK] MapKit return route: \(mkDurationMinutes)min, \(Int(mkRoute.distance))m, \(coords.count) polyline points")
-                        print("🌐 [RETURN DIRECTIONS] [\(timeString)] ✅ SUCCESS (via MapKit fallback): \(mkDurationMinutes)min, \(Int(mkRoute.distance))m, \(mapKitDirections.count) steps (elapsed: \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s)")
+                        let mkDistanceMeters = Int(mkRoute.distance)
+                        let mkDurationSeconds = Int(mkRoute.expectedTravelTime)
+                        print("✅ [RESTRICTED ROAD FALLBACK] MapKit return route: \(mkDurationMinutes)min, \(mkDistanceMeters)m, \(coords.count) polyline points")
+                        print("🌐 [RETURN DIRECTIONS] [\(timeString)] ✅ SUCCESS (via MapKit fallback): \(mkDurationMinutes)min, \(mkDistanceMeters)m, \(mapKitDirections.count) steps (elapsed: \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s)")
                         
-                        return (mapKitDirections, coords)
+                        return (mapKitDirections, coords, mkDistanceMeters, mkDurationSeconds)
                     }
                 } catch {
                     print("⚠️ [RESTRICTED ROAD FALLBACK] MapKit failed: \(error.localizedDescription) - using Google route despite restricted roads")
@@ -7774,7 +7809,7 @@ class GoogleMapsService: ObservableObject {
             
             print("🌐 [RETURN DIRECTIONS] [\(timeString)] ✅ SUCCESS: \(durationMinutes)min, \(totalDistance)m, \(directions.count) steps, \(finalPolyline.count) polyline points (elapsed: \(String(format: "%.2f", elapsed))s)")
             
-            return (directions, finalPolyline)
+            return (directions, finalPolyline, totalDistance, totalDuration)
             
         } catch {
             let elapsed = Date().timeIntervalSince(startTime)

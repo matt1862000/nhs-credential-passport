@@ -463,22 +463,16 @@ struct WalkingRoute: Identifiable, Hashable {
     var routePath: [CLLocationCoordinate2D] {
         if let polyline = encodedPolyline, !polyline.isEmpty {
             let decoded = PolylineDecoder.decode(polyline)
-            // #region agent log
-            let encLen = polyline.count
-            let logLine = "{\"location\":\"Models.routePath\",\"message\":\"decoded\",\"data\":{\"name\":\"\(name)\",\"decodedCount\":\(decoded.count),\"encodedLen\":\(encLen)},\"hypothesisId\":\"E\",\"timestamp\":\(Int(Date().timeIntervalSince1970 * 1000))}"
-            logLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
-            // #endregion
-            // v2.1.0: Debug logging for polyline quality
+            // Only log anomalies (low point count) to avoid main-thread spam during walks
             if decoded.count < 5 {
                 print("⚠️ [POLYLINE DEBUG] '\(name)': Low point count (\(decoded.count) points) - may show incorrect path")
-            } else {
-                print("✅ [POLYLINE DEBUG] '\(name)': Valid polyline with \(decoded.count) points")
             }
             return decoded
         }
-        // Fallback to marker coordinates if no polyline - THIS CREATES STRAIGHT LINES!
+        // Fallback to marker coordinates if no polyline - log once per route, not every read
+        #if DEBUG
         print("🚨 [POLYLINE DEBUG] '\(name)': NO POLYLINE - falling back to straight lines between \(qrMarkers.count) markers!")
-        print("🚨 [POLYLINE DEBUG] This will draw lines that cut across buildings/fields instead of following roads")
+        #endif
         return qrMarkers.map { $0.coordinate }
     }
     
