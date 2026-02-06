@@ -1245,27 +1245,8 @@ struct NatureSection: View {
     @State private var selectedPhoto: CapturedPhoto?
     @State private var showCamera = false
     @State private var showBirdChecklist = false
-    @State private var currentNatureFact: String = NatureSection.natureFacts.randomElement() ?? "Trees release chemicals called phytoncides that boost our immune system."
     
-    // Nature facts related to mental health and wellbeing
-    static let natureFacts = [
-        "Spending just 20 minutes in nature can significantly lower cortisol (stress hormone) levels.",
-        "Walking in green spaces has been shown to reduce symptoms of depression by up to 71%.",
-        "Bird songs activate the brain's attention restoration system, reducing mental fatigue.",
-        "The colour green is processed by the brain without strain, creating a calming effect.",
-        "Nature exposure increases activity in the prefrontal cortex, improving focus and decision-making.",
-        "Being near water (rivers, ponds, fountains) has been proven to reduce anxiety and boost mood.",
-        "Sunlight triggers serotonin production, the 'feel-good' hormone that regulates mood.",
-        "Walking among trees lowers blood pressure within 15 minutes of starting.",
-        "Natural environments help reduce rumination - the repetitive negative thoughts linked to depression.",
-        "Spending time outdoors improves sleep quality by helping reset your circadian rhythm.",
-        "Looking at fractal patterns in nature (trees, clouds, waves) naturally calms the nervous system.",
-        "Green exercise (physical activity in nature) is twice as effective at improving mood as indoor exercise.",
-        "Nature sounds can reduce the body's fight-or-flight response by up to 60%.",
-        "Regular nature exposure has been linked to increased creativity and problem-solving ability.",
-        "Walking in nature for 90 minutes reduces activity in the brain region linked to mental illness.",
-        "Touching natural materials like wood and leaves activates the parasympathetic nervous system."
-    ]
+    private static let betterPointsURL = URL(string: "https://sheffield.betterpoints.uk")!
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -1340,12 +1321,8 @@ struct NatureSection: View {
                 .cardStyle()
             }
             
-            // 3. Discover Nature Fact - tappable to get a new fact
-            Button {
-                withAnimation {
-                    currentNatureFact = NatureSection.natureFacts.randomElement() ?? currentNatureFact
-                }
-            } label: {
+            // 3. BetterPoints Sheffield - link to earn rewards for walking
+            Link(destination: Self.betterPointsURL) {
                 HStack(spacing: 16) {
                     ZStack {
                         Circle()
@@ -1357,23 +1334,19 @@ struct NatureSection: View {
                     }
                     
                     VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Nature Fact")
-                                .font(.bodyMedium)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.primary)
-                            
-                            Spacer()
-                            
-                            Text("Tap for another")
-                                .font(.caption2)
-                                .foregroundColor(.tealAccent)
-                        }
-                        Text(currentNatureFact)
+                        Text("BetterPoints Sheffield")
+                            .font(.bodyMedium)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        Text("Earn rewards for walking and sustainable travel in Sheffield.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.secondary)
                 }
                 .padding(16)
                 .cardStyle()
