@@ -6518,6 +6518,8 @@ struct ActiveWalkView: View {
     var isPresented: Binding<Bool>? = nil  // v1.9.28: Optional - only needed when shown in a sheet
     @State private var showAllDirections: Bool = false
     @State private var showEndConfirmation: Bool = false
+    @State private var showMotionExplainer: Bool = false  // Bottom "Track Steps" pill presents motion explainer
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         // v1.9.28: Immersive full-screen - no navigation wrapper
@@ -6619,7 +6621,7 @@ struct ActiveWalkView: View {
             // Map with expanded directions overlay
             ZStack {
                 // Embedded Map - always present
-                EmbeddedWalkMapView(viewModel: viewModel)
+                EmbeddedWalkMapView(viewModel: viewModel, showMotionExplainer: $showMotionExplainer)
                     .frame(maxHeight: .infinity)
                 
                 // Expanded directions overlay - covers map when shown
@@ -6650,8 +6652,34 @@ struct ActiveWalkView: View {
             // Bottom section with stats and end button
             VStack(spacing: 12) {
                 // Compact stats row (v1.6.13: removed delay badge - now shown in top banner)
+                // When steps not enabled, first pill is tappable "Track Steps" and presents motion explainer
                 HStack(spacing: 8) {
-                    CompactStatPill(icon: "figure.walk", value: "\(viewModel.walkSession.stepsThisSession)", label: "steps")
+                    if viewModel.stepTrackingWasEnabled && viewModel.healthKitService.isMotionAuthorized {
+                        CompactStatPill(icon: "figure.walk", value: "\(viewModel.walkSession.stepsThisSession)", label: "steps")
+                    } else {
+                        Button(action: { showMotionExplainer = true }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "figure.walk")
+                                    .font(.caption)
+                                    .foregroundColor(.tealAccent)
+                                Text("Track Steps")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                Image(systemName: "hand.tap.fill")
+                                    .font(.caption2)
+                                    .foregroundColor(.tealAccent.opacity(0.8))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(colorScheme == .dark ? Color.darkCardBackground : Color.white)
+                            .cornerRadius(20)
+                            .shadow(color: .black.opacity(colorScheme == .dark ? 0.3 : 0.05), radius: 2)
+                        }
+                        .buttonStyle(.plain)
+                        .fixedSize(horizontal: true, vertical: false)
+                    }
                     CompactStatPill(icon: "star.fill", value: "\(viewModel.userProgress.totalPoints)", label: "pts")
                     CompactStatPill(icon: "mappin", value: "\(viewModel.walkSession.markersScanned.count)", label: "spots")
                 }

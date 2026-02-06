@@ -309,7 +309,7 @@ struct EmbeddedWalkMapView: View {
     // v1.6.28: Opt-in step tracking state
     // Initialize to true if user has previously opted in and Motion is authorized
     @State private var isStepTrackingEnabled: Bool = false
-    @State private var showMotionExplainer: Bool = false
+    @Binding var showMotionExplainer: Bool  // Lifted so ActiveWalkView bottom pill can present sheet
     
     // v1.9.0: Turn navigation enhancements
     @State private var isApproachingTurn: Bool = false
@@ -3283,14 +3283,8 @@ struct CompactStatusRing: View {
     @State private var isMotionDenied: Bool = false
     @State private var isPedometerAvailable: Bool = false
 
-    // v1.9.33: If Motion is already authorized, don't alternate - just show "Time left"
-    // User will see HealthKit offer at end of walk
-    private var shouldAlternate: Bool {
-        !isStepTrackingEnabled &&
-        isPedometerAvailable &&
-        !isMotionDenied &&
-        !isMotionAuthorized // If Motion authorized, skip "Track steps?" prompt
-    }
+    // No longer alternate with "Track steps?" — steps CTA is now the bottom "Track Steps" pill only.
+    private var shouldAlternate: Bool { false }
 
     private var showStepsOnly: Bool {
         // Note: hasClinicianSelected is passed as parameter, not from healthKitService

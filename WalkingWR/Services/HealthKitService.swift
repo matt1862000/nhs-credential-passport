@@ -300,6 +300,26 @@ class HealthKitService: ObservableObject {
         fetchCurrentSteps(from: startDate)
     }
     
+    /// Call periodically during a walk to get steps/distance even when live pedometer updates are delayed.
+    /// CMPedometer.startUpdates can batch or delay callbacks; this explicit query returns steps from walk start to now.
+    func refreshSessionStepsFromPedometer() {
+        guard let start = pedometerStartDate, isPedometerAvailable else { return }
+        pedometer.queryPedometerData(from: start, to: Date()) { [weak self] data, error in
+            guard let self = self else { return }
+            if let error = error {
+                print("🔍 [MOTION DEBUG] refreshSessionStepsFromPedometer error: \(error.localizedDescription)")
+                return
+            }
+            guard let data = data else { return }
+            DispatchQueue.main.async {
+                self.stepCount = data.numberOfSteps.intValue
+                if let dist = data.distance {
+                    self.distance = dist.doubleValue
+                }
+            }
+        }
+    }
+    
     private func fetchCurrentSteps(from startDate: Date) {
         let predicate = HKQuery.predicateForSamples(
             withStart: startDate,

@@ -743,7 +743,12 @@ class WaitingRoomViewModel: ObservableObject {
         walkSession.isActive = true
         walkSession.startTime = Date()
         walkSession.currentRoute = route
-        let startMin = route.durationMinutes
+        // When route has 0 duration (bug/race), use pill/display so "10 min" choice is respected for pill and halfway
+        let effectiveMinutes = route.durationMinutes > 0 ? route.durationMinutes : (displayDurationMinutesForPill ?? lastKnownPillMinutes ?? 10)
+        let startMin = route.durationMinutes > 0 ? route.durationMinutes : effectiveMinutes
+        if route.durationMinutes <= 0 {
+            print("PILL | startWalk: route.durationMinutes=\(route.durationMinutes), using effectiveMinutes=\(effectiveMinutes) for pill and halfway")
+        }
         // Only set pill when starting fresh (no refresh yet). Never unlock: hasReceivedGoogleRefreshForPill is only set to false in endWalk().
         if !hasReceivedGoogleRefreshForPill {
             displayDurationMinutesForPill = startMin
@@ -774,16 +779,22 @@ class WaitingRoomViewModel: ObservableObject {
         // v1.9.17: Reset walking alerts for new walk
         walkingAlertsEnabled = true
         
-        // Calculate return time (halfway point of route duration)
-        let halfwaySeconds = Double(route.durationMinutes * 60) / 2
+        // Calculate return time (halfway point of route duration). Use effectiveMinutes (route or pill fallback) so "10 min" choice is respected.
+        let rawHalfway = Double(effectiveMinutes * 60) / 2
+        let halfwaySeconds = max(60.0, rawHalfway)
         walkSession.estimatedReturnTime = Date().addingTimeInterval(halfwaySeconds)
         
         // v1.6.30: Step tracking is now opt-in via the Steps card during walk
-        // Auto-start if user has previously opted in (trust UserDefaults flag)
+        // Auto-start if (1) user has previously opted in, or (2) Motion is already authorized at walk start
+        // so steps count without requiring a tap (avoids "Motion enabled but 0 steps" when user expected counting)
         let autoEnabled = UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled")
         print("🚶 startWalk - stepTrackingAutoEnabled: \(autoEnabled)")
-        if autoEnabled {
-            print("🚶 Auto-starting step observation, setting stepTrackingWasEnabled = true")
+        if autoEnabled || motionWasAuthorizedAtWalkStart {
+            if !autoEnabled {
+                print("🚶 Motion already authorized at walk start - auto-starting step observation")
+            } else {
+                print("🚶 Auto-starting step observation, setting stepTrackingWasEnabled = true")
+            }
             healthKitService.startObservingSteps(from: Date())
             stepTrackingWasEnabled = true
         }
@@ -912,8 +923,8 @@ class WaitingRoomViewModel: ObservableObject {
         }
         
         // Schedule notifications
-        notificationService.sendWalkStartedNotification(routeName: route.name, duration: route.durationMinutes)
-        scheduleWalkNotifications(routeDuration: route.durationMinutes)
+        notificationService.sendWalkStartedNotification(routeName: route.name, duration: effectiveMinutes)
+        scheduleWalkNotifications(routeDuration: effectiveMinutes)
         
         // Start session timer
         startSessionTimer()
@@ -1288,14 +1299,28 @@ class WaitingRoomViewModel: ObservableObject {
         // Update elapsed time
         walkSession.updateElapsedTime()
         
+        // Refresh steps from pedometer every 5 seconds; live CMPedometer callbacks can be delayed/batched so steps stay 0
+        if stepTrackingWasEnabled, walkSession.elapsedSeconds > 0, walkSession.elapsedSeconds % 5 == 0 {
+            healthKitService.refreshSessionStepsFromPedometer()
+        }
         // Update steps from pedometer/HealthKit (real-time)
         walkSession.stepsThisSession = healthKitService.stepCount
         
         // Use pedometer distance if available; otherwise keep GPS-derived distance (do not overwrite with 0 when stepCount is 0 — pedometer can lag or be zero while user is walking).
+        // Sanity: don't overwrite GPS with pedometer when GPS suggests we're barely moving and pedometer is much larger (phone jitter / hand movement counted as distance).
         if healthKitService.distance > 0 {
             let prev = locationService.distanceWalked
-            locationService.distanceWalked = healthKitService.distance
-            print("[WALKED_DIST] set from HealthKit: \(Int(healthKitService.distance))m (was GPS \(Int(prev))m)")
+            let pedometerM = healthKitService.distance
+            let elapsed = walkSession.elapsedSeconds
+            let maxPlausibleM = Double(max(elapsed, 1)) * 2.5 // 2.5 m/s max
+            let gpsSuggestsStationary = prev < 5
+            let pedometerMuchLarger = pedometerM > 10 && pedometerM > prev + 8
+            if pedometerM <= maxPlausibleM && !(gpsSuggestsStationary && pedometerMuchLarger) {
+                locationService.distanceWalked = pedometerM
+                print("[WALKED_DIST] set from HealthKit: \(Int(pedometerM))m (was GPS \(Int(prev))m)")
+            } else if gpsSuggestsStationary && pedometerMuchLarger {
+                print("[WALKED_DIST] keeping GPS \(Int(prev))m (pedometer \(Int(pedometerM))m likely phone jitter)")
+            }
         }
         
         #if targetEnvironment(simulator)
@@ -1317,8 +1342,10 @@ class WaitingRoomViewModel: ObservableObject {
         // Force view update for nested observable
         objectWillChange.send()
         
-        // Check for halfway point (50%)
+        // Check for halfway point (50%). Require at least 60s elapsed so we never show "Head back!" immediately after starting.
+        let elapsed = walkSession.elapsedSeconds
         if !walkSession.halfwayAlertSent,
+           elapsed >= 60,
            let returnTime = walkSession.estimatedReturnTime,
            Date() >= returnTime {
             let cameFrom = AppDelegate.cameFromWalkNotification

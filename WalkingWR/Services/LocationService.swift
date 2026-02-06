@@ -83,6 +83,10 @@ class LocationService: NSObject, ObservableObject {
     private var pendingSkipSuggestedIndices: [Int] = []
     private let requiredSkipReadingsCount: Int = 3
     
+    /// Time when startTracking() was last called; used to ignore distance for the first 15s (avoids "23m immediately" from GPS jitter).
+    private var trackingStartTime: Date?
+    private let distanceGracePeriodSeconds: TimeInterval = 15.0
+    
     /// Single tag for console filter: search "WALK_DEBUG" to see position, distance calc, updates, and step changes
     private func walkDebug(_ message: String) {
         let f = DateFormatter()
@@ -412,6 +416,7 @@ class LocationService: NSObject, ObservableObject {
         print("⏱️ [LOCATION] [\(timeString)] ✅ Starting location tracking...")
         
         isTracking = true
+        trackingStartTime = startTime
         distanceWalked = 0
         routeLocations = []
         startLocation = nil
@@ -435,6 +440,7 @@ class LocationService: NSObject, ObservableObject {
     
     func stopTracking() {
         isTracking = false
+        trackingStartTime = nil
         
         // Disable background location updates to save battery
         locationManager.allowsBackgroundLocationUpdates = false
@@ -1287,10 +1293,12 @@ extension LocationService: CLLocationManagerDelegate {
                 let speedIndicatesWalking = effectiveSpeed >= self.minSpeedToCountAsWalked && effectiveSpeed <= self.maxPlausibleWalkingSpeed
                 let isMoving = distance >= self.minDistanceToCountAsWalked && speedIndicatesWalking && plausibleSpeed
                 let added = isMoving ? min(distance, self.maxDistanceAddedPerUpdate) : 0.0
-                self.walkDebug("DISTANCE segment=\(String(format: "%.1f", distance))m dt=\(String(format: "%.1f", timeSinceLast))s implied=\(String(format: "%.2f", impliedSpeed))m/s lastSpeed=\(String(format: "%.2f", lastSpeed)) currSpeed=\(String(format: "%.2f", speed)) effective=\(String(format: "%.2f", effectiveSpeed)) plausible=\(plausibleSpeed) isMoving=\(isMoving) added=\(String(format: "%.1f", added))m total=\(Int(self.distanceWalked + added))m")
-                let totalAfter = self.distanceWalked + (isMoving ? min(distance, self.maxDistanceAddedPerUpdate) : 0)
-                print("[WALKED_DIST] segment=\(String(format: "%.1f", distance))m dt=\(String(format: "%.1f", timeSinceLast))s impliedSpeed=\(String(format: "%.2f", impliedSpeed)) currSpeed=\(String(format: "%.2f", speed)) effectiveSpeed=\(String(format: "%.2f", effectiveSpeed)) plausible=\(plausibleSpeed) isMoving=\(isMoving) added=\(String(format: "%.1f", added))m total=\(Int(totalAfter))m")
-                if isMoving {
+                let inGracePeriod = self.trackingStartTime.map { Date().timeIntervalSince($0) < self.distanceGracePeriodSeconds } ?? false
+                let actuallyAdded = (isMoving && !inGracePeriod) ? min(distance, self.maxDistanceAddedPerUpdate) : 0.0
+                self.walkDebug("DISTANCE segment=\(String(format: "%.1f", distance))m dt=\(String(format: "%.1f", timeSinceLast))s implied=\(String(format: "%.2f", impliedSpeed))m/s lastSpeed=\(String(format: "%.2f", lastSpeed)) currSpeed=\(String(format: "%.2f", speed)) effective=\(String(format: "%.2f", effectiveSpeed)) plausible=\(plausibleSpeed) isMoving=\(isMoving) added=\(String(format: "%.1f", actuallyAdded))m total=\(Int(self.distanceWalked + actuallyAdded))m")
+                let totalAfter = self.distanceWalked + actuallyAdded
+                print("[WALKED_DIST] segment=\(String(format: "%.1f", distance))m dt=\(String(format: "%.1f", timeSinceLast))s impliedSpeed=\(String(format: "%.2f", impliedSpeed)) currSpeed=\(String(format: "%.2f", speed)) effectiveSpeed=\(String(format: "%.2f", effectiveSpeed)) plausible=\(plausibleSpeed) isMoving=\(isMoving) added=\(String(format: "%.1f", actuallyAdded))m total=\(Int(totalAfter))m")
+                if isMoving && !inGracePeriod {
                     let capped = min(distance, self.maxDistanceAddedPerUpdate)
                     self.distanceWalked += capped
                 }
