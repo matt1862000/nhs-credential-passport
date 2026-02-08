@@ -745,8 +745,61 @@ struct EmbeddedWalkMapView: View {
                 onReturnNow: {
                     viewModel.showDelayChangeOverlay = false
                     calculateReturnRoute()
-                }
+                },
+                onUpdateRoute: {
+                    viewModel.requestNewRouteForDelayChange()
+                },
+                isLoading: viewModel.isLoadingDelayChangeRoute
             )
+        }
+    }
+    
+    @ViewBuilder
+    private var delayChangeLoadingOverlay: some View {
+        if viewModel.isLoadingDelayChangeRoute {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+            VStack(spacing: 16) {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    .scaleEffect(1.2)
+                Text("Finding new route…")
+                    .font(.headline)
+                    .foregroundColor(.white)
+            }
+            .padding(32)
+            .background(RoundedRectangle(cornerRadius: 16).fill(Color(UIColor.systemBackground)))
+        }
+    }
+    
+    @ViewBuilder
+    private var delayChangeErrorOverlay: some View {
+        if let error = viewModel.delayChangeRouteError {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+                .onTapGesture { viewModel.clearDelayChangeRouteError() }
+            VStack(spacing: 16) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.title)
+                    .foregroundColor(.orange)
+                Text(error)
+                    .font(.subheadline)
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                Button("OK") {
+                    viewModel.clearDelayChangeRouteError()
+                }
+                .font(.headline)
+                .foregroundColor(.white)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 10)
+                .background(Color.orange)
+                .cornerRadius(10)
+            }
+            .padding(24)
+            .background(RoundedRectangle(cornerRadius: 16).fill(Color(UIColor.systemBackground)))
+            .padding(.horizontal, 40)
         }
     }
     
@@ -756,6 +809,8 @@ struct EmbeddedWalkMapView: View {
             topOverlay
             bottomOverlay
             delayOverlay
+            delayChangeLoadingOverlay
+            delayChangeErrorOverlay
         }
         // ----------------------
         // Overlay (non-blocking)
@@ -3514,60 +3569,27 @@ private struct CompactStatusPillContent: View {
         .contentShape(Capsule())
     }
 
-    // MARK: - Info Pill (Time Left)
+    // MARK: - Info Pill (Time Left) — display only, not tappable
     private var infoPillView: some View {
-        Button(action: {
-            print("🔵 infoPillView TAPPED - isStepsEnabled=\(isStepsEnabled)")
-            let timestamp = Date()
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm:ss.SSS"
-            let timeString = formatter.string(from: timestamp)
-            
-            if !isStepsEnabled {
-                print("🔍 [MOTION DEBUG] [\(timeString)] 🔵 infoPillView tapped - Motion authorized: \(healthKitService.isMotionAuthorized)")
-                
-                // If Motion is already authorized, enable steps directly (this will trigger HealthKit permission)
-                if healthKitService.isMotionAuthorized {
-                    print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ Motion already authorized - enabling steps directly (will trigger HealthKit permission)")
-                    DispatchQueue.main.async {
-                        onEnableSteps()
-                    }
-                } else {
-                    print("🔍 [MOTION DEBUG] [\(timeString)]   ⚠️ Motion not authorized - showing explainer sheet")
-                    print("🔵 Setting showMotionExplainer = true")
-                    // Force binding update on next run loop to avoid conflicts with Timer/animations
-                    DispatchQueue.main.async {
-                        showMotionExplainer = true
-                        print("🔵 showMotionExplainer after async set: \(showMotionExplainer)")
-                    }
-                }
-            } else {
-                print("🔵 Button disabled - steps already enabled")
-            }
-        }) {
-            HStack(spacing: 6) {
-                Image(systemName: "figure.walk")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(urgencyColor)
-                Text("\(walkRemaining)")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundColor(urgencyColor)
-                    .monospacedDigit()
-                Text("mins left")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(urgencyColor.opacity(0.9))
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                Capsule()
-                    .fill(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.95))
-                    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 4, y: 2)
-            )
+        HStack(spacing: 6) {
+            Image(systemName: "figure.walk")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(urgencyColor)
+            Text("\(walkRemaining)")
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .foregroundColor(urgencyColor)
+                .monospacedDigit()
+            Text("mins left")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(urgencyColor.opacity(0.9))
         }
-        .buttonStyle(.plain)
-        .contentShape(Capsule())
-        .disabled(isStepsEnabled) // non-tappable if steps enabled
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            Capsule()
+                .fill(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.95))
+                .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 4, y: 2)
+        )
     }
 
     // MARK: - Waiting for Google refresh (no mins left until refreshed)
@@ -3784,13 +3806,16 @@ private struct DelayBannerContent: View {
 }
 
 // MARK: - Delay Change Overlay (v1.6.11)
-/// Full-screen overlay shown when delay changes mid-walk
+/// Full-screen overlay shown when delay changes mid-walk. Optional onUpdateRoute: when provided, shows "Extend my walk" / "Get shorter route" CTA.
 struct DelayChangeOverlay: View {
     let oldMinutes: Int
     let newMinutes: Int
     let isIncrease: Bool
     let onDismiss: () -> Void
     let onReturnNow: () -> Void
+    /// When set, primary CTA updates the route (new waypoints/duration); called then overlay is dismissed for loading.
+    var onUpdateRoute: (() -> Void)? = nil
+    var isLoading: Bool = false
     
     @State private var isAnimating = false
     
@@ -3804,7 +3829,7 @@ struct DelayChangeOverlay: View {
             Color.black.opacity(0.6)
                 .ignoresSafeArea()
                 .onTapGesture {
-                    onDismiss()
+                    if !isLoading { onDismiss() }
                 }
             
             // Content card
@@ -3877,8 +3902,44 @@ struct DelayChangeOverlay: View {
                 
                 // Action buttons
                 VStack(spacing: 12) {
-                    if !isIncrease {
-                        // Show "Take Me Back" for decrease
+                    if let onUpdate = onUpdateRoute {
+                        Button(action: {
+                            onUpdate()
+                        }) {
+                            HStack {
+                                if isLoading {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                } else {
+                                    Image(systemName: isIncrease ? "map.fill" : "arrow.down.right.and.arrow.up.left")
+                                    Text(isIncrease ? "Extend my walk" : "Get shorter route")
+                                }
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(isIncrease ? Color.green : Color.orange)
+                            .cornerRadius(12)
+                        }
+                        .disabled(isLoading)
+                    }
+                    
+                    if !isIncrease, onUpdateRoute != nil {
+                        Button(action: onReturnNow) {
+                            HStack {
+                                Image(systemName: "arrow.uturn.backward")
+                                Text("Take Me Back")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.orange.opacity(0.8))
+                            .cornerRadius(12)
+                        }
+                        .disabled(isLoading)
+                    } else if !isIncrease {
                         Button(action: onReturnNow) {
                             HStack {
                                 Image(systemName: "arrow.uturn.backward")
@@ -3902,6 +3963,7 @@ struct DelayChangeOverlay: View {
                             .background(isIncrease ? Color.green : Color.gray.opacity(0.2))
                             .cornerRadius(12)
                     }
+                    .disabled(isLoading)
                 }
                 .padding(.horizontal)
             }

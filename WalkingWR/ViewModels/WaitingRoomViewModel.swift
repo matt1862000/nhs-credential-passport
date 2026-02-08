@@ -60,6 +60,10 @@ class WaitingRoomViewModel: ObservableObject {
     /// When true, map stays centered on route with padding and does not auto-snap to user location (Let's Go flow).
     @Published var mapStayCenteredOnRoute: Bool = false
     
+    /// Delay-change route refresh: loading and error state for "Extend my walk" / "Get shorter route".
+    @Published var isLoadingDelayChangeRoute: Bool = false
+    @Published var delayChangeRouteError: String? = nil
+    
     private static let pillDisplayMinutesKey = "pillDisplayDurationMinutes"
     private static let pillLockKey = "pillHasReceivedGoogleRefresh"
     
@@ -146,9 +150,12 @@ class WaitingRoomViewModel: ObservableObject {
     let notificationService = NotificationService.shared
     let locationService = LocationService()
     let firebaseService = FirebaseService()
+    /// Optional; when nil, delay-change route refresh uses GoogleMapsService.shared.
+    private var mapsService: GoogleMapsService?
     
     // MARK: - Initialization
-    init() {
+    init(mapsService: GoogleMapsService? = nil) {
+        self.mapsService = mapsService
         // Check if notifications should auto-reset (new day = new appointment)
         let savedNotificationDate = UserDefaults.standard.object(forKey: "notificationsEnabledDate") as? Date
         let isNewDay = !Calendar.current.isDateInToday(savedNotificationDate ?? Date.distantPast)
@@ -677,6 +684,8 @@ class WaitingRoomViewModel: ObservableObject {
                 } else {
                     locationService.updateDirections(route.walkingDirections, routePath: route.routePath)
                 }
+                // Keep cached directions in sync so banner and expanded list show the new instructions (e.g. after delay-change route refresh).
+                cachedOriginalDirections = route.walkingDirections
             }
             objectWillChange.send()
         } else {
@@ -710,6 +719,66 @@ class WaitingRoomViewModel: ObservableObject {
     func declineAdjustedRoute() {
         pendingAdjustedRoute = nil
         showAdjustRouteAlert = false
+    }
+    
+    // MARK: - Delay-change route refresh
+    
+    /// Request a new route from current location with duration derived from new delay (extend or shorten). Updates pill and directions on success. Call when user taps "Extend my walk" or "Get shorter route" on the delay overlay.
+    func requestNewRouteForDelayChange() {
+        guard walkSession.isActive else { return }
+        let service = mapsService ?? GoogleMapsService.shared
+        guard let location = locationService.currentLocation?.coordinate else {
+            delayChangeRouteError = "Location unavailable. Keep walking your current route."
+            return
+        }
+        let isIncrease = waitTimeChangeInfo?.isIncrease ?? true
+        let newMinutes = waitTimeChangeInfo?.newMinutes ?? waitTimeInfo.estimatedMinutes
+        let buffer = isIncrease ? 5 : 8
+        let targetDurationMinutes = max(10, min(45, newMinutes - buffer))
+        
+        isLoadingDelayChangeRoute = true
+        delayChangeRouteError = nil
+        showDelayChangeOverlay = false
+        
+        Task {
+            do {
+                let generated = try await service.generateRouteTopologySafe(
+                    from: location,
+                    targetDurationMinutes: targetDurationMinutes,
+                    difficulty: nil,
+                    excludePlaceIds: [],
+                    excludePOIs: []
+                )
+                let walkingRoute = RouteConversionHelper.walkingRoute(
+                    from: generated,
+                    origin: location,
+                    name: isIncrease ? "Extended route" : "Shorter route",
+                    description: isIncrease ? "Route extended for extra time." : "Shorter route to head back sooner."
+                )
+                guard let refreshed = await service.refreshRouteWithGoogleOnly(route: walkingRoute, userLocation: location) else {
+                    await MainActor.run {
+                        delayChangeRouteError = "Couldn't update route. Keep walking your current route."
+                        isLoadingDelayChangeRoute = false
+                    }
+                    return
+                }
+                await MainActor.run {
+                    updateCurrentRoute(refreshed, sourceIsGoogle: true, resetDirectionIndex: true)
+                    isLoadingDelayChangeRoute = false
+                    delayChangeRouteError = nil
+                }
+            } catch {
+                await MainActor.run {
+                    delayChangeRouteError = "Couldn't find a new route. Keep walking your current route."
+                    isLoadingDelayChangeRoute = false
+                }
+            }
+        }
+    }
+    
+    /// Clear delay-change route error (e.g. when user dismisses the message).
+    func clearDelayChangeRouteError() {
+        delayChangeRouteError = nil
     }
     
     // MARK: - Permission Requests (Just-in-Time)
@@ -1388,9 +1457,9 @@ class WaitingRoomViewModel: ObservableObject {
         // Force view update for nested observable
         objectWillChange.send()
         
-        // Check for halfway point (50%). Skip if already on return leg (directions or user chose Head back).
+        // Check for halfway point (50%). Skip if finding new route, or already on return leg (directions or user chose Head back).
         let elapsed = walkSession.elapsedSeconds
-        if !isUsingReturnDirections, !isHeadingBack,
+        if !isLoadingDelayChangeRoute, !isUsingReturnDirections, !isHeadingBack,
            !walkSession.halfwayAlertSent,
            elapsed >= 60,
            let returnTime = walkSession.estimatedReturnTime,
@@ -1413,8 +1482,8 @@ class WaitingRoomViewModel: ObservableObject {
             }
         }
         
-        // Check for return now point (80%) - skip if already on return leg (directions or user chose Head back)
-        if !isHeadingBack, !isUsingReturnDirections, walkSession.progress >= 0.8 && walkSession.progress < 1.0 {
+        // Check for return now point (80%) - skip if finding new route or already on return leg (directions or user chose Head back)
+        if !isLoadingDelayChangeRoute, !isHeadingBack, !isUsingReturnDirections, walkSession.progress >= 0.8 && walkSession.progress < 1.0 {
             // Only show if not already shown and alerts are enabled
             if !walkSession.returnNowAlertSent {
                 if walkingAlertsEnabled {
@@ -1435,11 +1504,11 @@ class WaitingRoomViewModel: ObservableObject {
             }
         }
         
-        // Check if walk is complete (100%) - skip if already on return leg; when on return with all waypoints visited, rely on home arrival instead.
+        // Check if walk is complete (100%) - skip if finding new route or already on return leg; when on return with all waypoints visited, rely on home arrival instead.
         let onReturnWithAllVisited = (selectedRoute.map { route in
             route.qrMarkers.count > 0 && visitedMarkerIds.count == route.qrMarkers.count
         } ?? false) && isUsingReturnDirections
-        if !isHeadingBack, !isUsingReturnDirections, walkSession.progress >= 1.0, !onReturnWithAllVisited {
+        if !isLoadingDelayChangeRoute, !isHeadingBack, !isUsingReturnDirections, walkSession.progress >= 1.0, !onReturnWithAllVisited {
             // Only show if not already shown and alerts are enabled
             if !walkSession.walkCompleteAlertSent {
                 if walkingAlertsEnabled {

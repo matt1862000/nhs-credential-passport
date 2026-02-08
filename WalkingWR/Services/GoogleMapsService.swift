@@ -7291,20 +7291,44 @@ class GoogleMapsService: ObservableObject {
             var totalDistance = 0
             var totalDuration = 0
             if let legs = firstRoute["legs"] as? [[String: Any]] {
-                for leg in legs {
+                for (legIndex, leg) in legs.enumerated() {
                     if let distance = leg["distance"] as? [String: Any], let distValue = distance["value"] as? Int { totalDistance += distValue }
                     if let duration = leg["duration"] as? [String: Any], let durValue = duration["value"] as? Int { totalDuration += durValue }
                     if let steps = leg["steps"] as? [[String: Any]] {
-                        for step in steps {
-                            let instruction = (step["html_instructions"] as? String)?.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) ?? "Continue"
+                        let isReturnLeg = legIndex == legs.count - 1 && !route.qrMarkers.isEmpty
+                        for (stepIndex, step) in steps.enumerated() {
+                            var instruction = (step["html_instructions"] as? String)?.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) ?? "Continue"
                             let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
                             let stepDistValue = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
                             let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
-                            let maneuver = step["maneuver"] as? String ?? "straight"
+                            var maneuver = step["maneuver"] as? String ?? "straight"
                             if let stepPolyline = step["polyline"] as? [String: Any], let stepPoints = stepPolyline["points"] as? String {
                                 let decodedStepPoints = decodePolyline(stepPoints)
                                 stepPolylinePointCount += decodedStepPoints.count
                                 combinedStepPolyline.append(contentsOf: decodedStepPoints)
+                            }
+                            // Replace arrival instructions with waypoint names (same logic as RouteConversionHelper / RouteSelectionView)
+                            let isLastStepOfLeg = stepIndex == steps.count - 1
+                            if isLastStepOfLeg {
+                                let instructionLower = instruction.lowercased()
+                                let isArrivalInstruction = instructionLower.contains("destination is on your right") ||
+                                    instructionLower.contains("destination is on your left") ||
+                                    instructionLower.contains("the destination is on your right") ||
+                                    instructionLower.contains("the destination is on your left") ||
+                                    instructionLower.contains("arrive at") ||
+                                    (instructionLower.contains("destination") && (instructionLower.contains("on your right") || instructionLower.contains("on your left")))
+                                if isArrivalInstruction {
+                                    if isReturnLeg {
+                                        instruction = "Return to starting point"
+                                        maneuver = "arrive"
+                                    } else if legIndex < route.qrMarkers.count {
+                                        let waypointIndex = legIndex + 1
+                                        let waypointName = route.qrMarkers[legIndex].name
+                                        let side = instructionLower.contains("right") ? "right" : "left"
+                                        instruction = "Waypoint \(waypointIndex) (\(waypointName)) is on your \(side)"
+                                        maneuver = "arrive"
+                                    }
+                                }
                             }
                             freshDirections.append(WalkingDirection(instruction: instruction, distance: stepDistText, distanceMeters: stepDistValue, duration: stepDurText, maneuver: maneuver))
                         }

@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct SplashScreenView: View {
-    // Create ViewModel early so data starts loading immediately
-    @StateObject private var viewModel = WaitingRoomViewModel()
+    // Create ViewModel early so data starts loading immediately (inject mapsService for delay-change route refresh).
+    @StateObject private var viewModel = WaitingRoomViewModel(mapsService: GoogleMapsService.shared)
     
     @State private var minimumTimeElapsed = false
     @State private var logoOpacity = 0.0
