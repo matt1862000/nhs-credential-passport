@@ -905,6 +905,11 @@ struct EmbeddedWalkMapView: View {
             guard let heading = newHeading?.trueHeading else { return }
             handleHeading(heading)
         }
+        // When direction step advances (waypoint reached, e.g. return turn), re-orient map to direction of travel
+        .onChange(of: viewModel.locationService.currentDirectionIndex) { oldIndex, newIndex in
+            guard oldIndex != newIndex else { return }
+            reorientMapToDirectionOfTravel()
+        }
         // v1.9.13: Update cached leg polyline when waypoint changes (not during view rendering)
         .onChange(of: viewModel.visitedMarkerIds.count) { _, _ in
             // Waypoint count changed - update cache
@@ -1778,6 +1783,34 @@ struct EmbeddedWalkMapView: View {
     // v1.9.13: Helper to update camera heading smoothly
     private func updateCameraHeading(to heading: CLLocationDirection, at coordinate: CLLocationCoordinate2D) {
         updateCamera(location: coordinate, heading: heading)
+    }
+    
+    /// Bearing from one coordinate to another in degrees [0, 360). North = 0, clockwise.
+    private func bearing(from fromCoord: CLLocationCoordinate2D, to toCoord: CLLocationCoordinate2D) -> CLLocationDirection {
+        let lat1 = fromCoord.latitude * .pi / 180
+        let lon1 = fromCoord.longitude * .pi / 180
+        let lat2 = toCoord.latitude * .pi / 180
+        let lon2 = toCoord.longitude * .pi / 180
+        let dLon = lon2 - lon1
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        let b = atan2(y, x) * 180 / .pi
+        return (b + 360).truncatingRemainder(dividingBy: 360)
+    }
+    
+    /// When direction step advances (e.g. waypoint reached, return leg), orient map toward next target so "up" is direction of travel.
+    private func reorientMapToDirectionOfTravel() {
+        guard !viewModel.mapStayCenteredOnRoute else { return }
+        guard introPhase == .followingUser, !userInteractedWithMap else { return }
+        guard let location = viewModel.locationService.currentLocation else { return }
+        guard let nextTurn = viewModel.locationService.nextTurnCoordinate else { return }
+        let userCoord = location.coordinate
+        let heading = bearing(from: userCoord, to: nextTurn)
+        isProgrammaticCameraUpdate = true
+        lastProgrammaticUpdateTime = Date()
+        withAnimation(.easeInOut(duration: 0.6)) {
+            updateCameraHeading(to: heading, at: userCoord)
+        }
     }
     
     // MARK: - Interaction
