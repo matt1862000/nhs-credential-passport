@@ -60,6 +60,8 @@ class LocationService: NSObject, ObservableObject {
     @Published var isMonitoringDirections: Bool = false
     @Published var isSignificantlyOffRoute: Bool = false  // v1.9.15: Track if user has deviated significantly
     private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String, polylineIndex: Int)] = []
+    /// Max valid direction index (prevents crash when ViewModel sets index from cachedOriginalDirections which can have extra items e.g. arrival).
+    var safeMaxDirectionIndex: Int { directionWaypoints.isEmpty ? 0 : directionWaypoints.count - 1 }
     private var notifiedDirectionIndices: Set<Int> = []
     private var cachedRoutePath: [CLLocationCoordinate2D] = []  // v1.9.15: Cache route path for deviation detection
     private let directionNotificationRadius: Double = 30 // meters - notify when within 30m of turn
@@ -83,6 +85,10 @@ class LocationService: NSObject, ObservableObject {
     private var pendingSkipSuggestedIndices: [Int] = []
     private let requiredSkipReadingsCount: Int = 3
     
+    // v2.1.28: Option 1 + time confirmation — cap banner to +1 per update; after 2s re-check suggested and allow next step if still ahead (reduces 0→3 jump, shows 0→1→2→3)
+    private var directionCatchUpTimer: Timer?
+    private let directionCatchUpInterval: TimeInterval = 2.0
+    
     /// Time when startTracking() was last called; used to ignore distance for the first 15s (avoids "23m immediately" from GPS jitter).
     private var trackingStartTime: Date?
     private let distanceGracePeriodSeconds: TimeInterval = 15.0
@@ -98,6 +104,7 @@ class LocationService: NSObject, ObservableObject {
     private var lastMarkerPolylineIndex: Int? = nil
     private var returnJourneyStartIndex: Int? = nil  // v1.9.93: Direction index where return journey starts
     private var isLastMarkerVisited: (() -> Bool)? = nil
+    private var canAdvanceFromDirectionIndex: ((Int) -> Bool)? = nil  // When set, only advance from step N if this returns true (waypoint at N activated)
     
     // MARK: - Polyline Projection Helpers (v1.9.70)
     
@@ -471,13 +478,15 @@ class LocationService: NSObject, ObservableObject {
     ///   - lastMarkerPolylineIndex: Optional polyline index of the last marker (destination). If provided, prevents advancing to return journey until marker is visited.
     ///   - returnJourneyStartIndex: Optional direction index where return journey starts (after arrival instruction is filtered). More reliable than polyline index alone.
     ///   - isLastMarkerVisited: Optional closure that returns true if the last marker has been visited. Required if lastMarkerPolylineIndex is provided.
+    ///   - canAdvanceFromDirectionIndex: Optional. When advancing from step N to N+1, called with N; if false, do not advance (e.g. step N is a waypoint and not yet activated). Supports multiple waypoints.
     func startDirectionMonitoring(
         directions: [WalkingDirection],
         routePath: [CLLocationCoordinate2D],
         skipPassedWaypoints: Bool = false,
         lastMarkerPolylineIndex: Int? = nil,
         returnJourneyStartIndex: Int? = nil,
-        isLastMarkerVisited: (() -> Bool)? = nil
+        isLastMarkerVisited: (() -> Bool)? = nil,
+        canAdvanceFromDirectionIndex: ((Int) -> Bool)? = nil
     ) {
         // Build waypoints from directions
         // Each direction corresponds to a step - we'll use approximate positions along the route
@@ -491,6 +500,7 @@ class LocationService: NSObject, ObservableObject {
         self.lastMarkerPolylineIndex = lastMarkerPolylineIndex
         self.returnJourneyStartIndex = returnJourneyStartIndex  // v1.9.93: Store return journey start index
         self.isLastMarkerVisited = isLastMarkerVisited
+        self.canAdvanceFromDirectionIndex = canAdvanceFromDirectionIndex
         
         // Calculate cumulative distance for each step to find approximate positions
         var cumulativeDistance: Double = 0
@@ -568,6 +578,8 @@ class LocationService: NSObject, ObservableObject {
     
     /// Stop monitoring for directions
     func stopDirectionMonitoring() {
+        directionCatchUpTimer?.invalidate()
+        directionCatchUpTimer = nil
         isMonitoringDirections = false
         directionWaypoints = []
         notifiedDirectionIndices = []
@@ -578,6 +590,7 @@ class LocationService: NSObject, ObservableObject {
         lastMarkerPolylineIndex = nil  // v1.9.90: Clear last marker tracking
         returnJourneyStartIndex = nil  // v1.9.93: Clear return journey start index
         isLastMarkerVisited = nil
+        canAdvanceFromDirectionIndex = nil
         NotificationService.shared.cancelDirectionNotifications()
     }
     
@@ -704,6 +717,11 @@ class LocationService: NSObject, ObservableObject {
         debugLogger.log(projectionLog, category: "WAYPOINT")
         walkDebug("PROJECTED on route segment=\(userProjection.segmentIndex) t=\(String(format: "%.3f", userProjection.t)) distToRoute=\(String(format: "%.1f", userProjection.distanceToPolyline))m")
         
+        // Distance along route from start (for progress verification)
+        let distanceFromStart = distanceAlongRoute(fromSegment: 0, fromT: 0, toSegment: userProjection.segmentIndex, toT: userProjection.t, polyline: cachedRoutePath)
+        debugLogger.log("Distance along route from start: \(String(format: "%.0f", distanceFromStart))m", category: "WAYPOINT")
+        print("📍 [DIRECTION] Distance along route from start: \(String(format: "%.0f", distanceFromStart))m")
+        
         // v1.9.71: Add to position history for movement tracking
         let now = Date()
         recentProjectedPositions.append((userProjection.segmentIndex, userProjection.t, now))
@@ -712,6 +730,21 @@ class LocationService: NSObject, ObservableObject {
         recentProjectedPositions = recentProjectedPositions.filter { now.timeIntervalSince($0.timestamp) <= positionHistoryWindow }
         
         debugLogger.log("Position history: \(recentProjectedPositions.count) positions in last \(positionHistoryWindow)s", category: "WAYPOINT")
+        
+        // Short position history (last 3) for progress verification
+        let lastThree = Array(recentProjectedPositions.suffix(3))
+        let historyStr = lastThree.map { "\($0.segmentIndex),\(String(format: "%.2f", $0.t))" }.joined(separator: " ")
+        if !historyStr.isEmpty {
+            debugLogger.log("Position history (last \(lastThree.count)) segment,t: \(historyStr)", category: "WAYPOINT")
+        }
+        
+        // Direction appropriateness: compare suggested index from blue-dot position to current shown, with instruction text
+        let suggested = suggestedDirectionIndexFromProjection(segmentIndex: userProjection.segmentIndex, t: userProjection.t)
+        let suggestedInstruction = suggested < directionWaypoints.count ? directionWaypoints[suggested].instruction : "arrival"
+        let currentInstruction = currentDirectionIndex < directionWaypoints.count ? directionWaypoints[currentDirectionIndex].instruction : "arrival"
+        let appropriatenessLog = "Direction appropriateness: suggested from position=\(suggested) → '\(suggestedInstruction)', current shown=\(currentDirectionIndex) → '\(currentInstruction)', in sync=\(suggested == currentDirectionIndex), distance from start=\(String(format: "%.0f", distanceFromStart))m"
+        debugLogger.log(appropriatenessLog, category: "WAYPOINT")
+        print("📍 [DIRECTION] \(appropriatenessLog)")
         
         // v2.1.27: Collect multiple GPS readings before applying skip-passed waypoints on start
         if isCollectingSkipReadings {
@@ -816,6 +849,19 @@ class LocationService: NSObject, ObservableObject {
                         }
                         print("📍 [WAYPOINT CHECK] [\(timeString)] \(blockLog)")
                         debugLogger.log(blockLog, category: "DIRECTION_ADVANCE")
+                        // #region agent log
+                        let payload: [String: Any] = [
+                            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+                            "message": "TRIGGER_BLOCKED_RETURN_LAST_MARKER_NOT_VISITED",
+                            "hypothesisId": "H2",
+                            "location": "LocationService.swift:waypointCheck",
+                            "data": ["waypointIndex": index, "instruction": waypoint.instruction] as [String: Any]
+                        ]
+                        if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) {
+                            line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                        }
+                        debugLogger.log("AGENT TRIGGER_BLOCKED_RETURN_LAST_MARKER_NOT_VISITED waypointIndex=\(index) instruction=\"\(waypoint.instruction)\"", category: "AGENT_RETURN_LEG")
+                        // #endregion
                     }
                 } else {
                     // No check function provided - allow advancement (backward compatibility)
@@ -873,6 +919,12 @@ class LocationService: NSObject, ObservableObject {
             }
             
             if shouldTrigger {
+                // v2.1.28: Only advance (and notify) if we're allowed to leave the current step (e.g. waypoint at current step must be activated first)
+                let mayAdvanceFromCurrent = canAdvanceFromDirectionIndex?(currentDirectionIndex) ?? true
+                if !mayAdvanceFromCurrent {
+                    debugLogger.log("Waypoint trigger blocked - waypoint at current step (index \(currentDirectionIndex)) not yet activated", category: "DIRECTION_ADVANCE")
+                    break
+                }
                 let triggerLog = "✅ TRIGGERED waypoint \(index + 1): '\(waypoint.instruction)' - Advancing from index \(currentDirectionIndex) to \(min(index + 1, directionWaypoints.count - 1))"
                 print("📍 [WAYPOINT TRIGGER] [\(timeString)] \(triggerLog)")
                 debugLogger.log(triggerLog, category: "DIRECTION_ADVANCE")
@@ -889,11 +941,19 @@ class LocationService: NSObject, ObservableObject {
                 // Update current direction index
                 // v1.9.90: Don't advance if current index is beyond directionWaypoints (e.g., showing arrival instruction)
                 // The arrival instruction is added to cachedOriginalDirections but not to directionWaypoints
+                // v2.1: Cap advancement to suggested index so banner never jumps ahead of blue-dot position
+                // v2.1.28: Also cap to +1 per update so banner steps 0→1→2→3 (no jump on trigger)
                 if index >= currentDirectionIndex && currentDirectionIndex < directionWaypoints.count {
-                    let newIndex = min(index + 1, directionWaypoints.count - 1)
+                    let suggestedFromPosition = suggestedDirectionIndexFromProjection(segmentIndex: userProjection.segmentIndex, t: userProjection.t)
+                    let newIndex = min(index + 1, currentDirectionIndex + 1, suggestedFromPosition, directionWaypoints.count - 1)
                     let oldIndex = currentDirectionIndex
                     currentDirectionIndex = newIndex
                     debugLogger.log("Direction index updated: \(oldIndex) → \(newIndex)", category: "DIRECTION_ADVANCE")
+                    let stepDist = distanceAlongRoute(fromSegment: 0, fromT: 0, toSegment: userProjection.segmentIndex, toT: userProjection.t, polyline: cachedRoutePath)
+                    let stepInstruction = newIndex < directionWaypoints.count ? directionWaypoints[newIndex].instruction : "arrival"
+                    let stepChangeLog = "Step change: \(oldIndex) → \(newIndex) at segment=\(userProjection.segmentIndex) t=\(String(format: "%.3f", userProjection.t)), distance along route from start=\(String(format: "%.0f", stepDist))m, now showing '\(stepInstruction)'"
+                    debugLogger.log(stepChangeLog, category: "DIRECTION_ADVANCE")
+                    print("📍 [DIRECTION] \(stepChangeLog)")
                 } else if currentDirectionIndex >= directionWaypoints.count {
                     // v1.9.90: Currently showing arrival instruction (index beyond directionWaypoints) - don't override
                     debugLogger.log("⚠️ Waypoint advancement blocked - currently showing arrival instruction (index \(currentDirectionIndex) >= \(directionWaypoints.count))", category: "DIRECTION_ADVANCE")
@@ -909,6 +969,149 @@ class LocationService: NSObject, ObservableObject {
                 
                 print("📍 Direction: step \(index + 1)/\(directionWaypoints.count) - \(waypoint.instruction) (segment \(userProjection.segmentIndex), dist \(Int(distance))m, moved \(String(format: "%.1f", distanceMovedAlongRoute))m)")
                 break // Only send one notification at a time
+            }
+        }
+        
+        // Display sync: keep banner in sync with user position (blue dot).
+        // v2.1.28: Option 1 + time confirmation — advance at most +1 per update; when still behind, 2s timer re-checks and allows next step if position still ahead (avoids 0→3 jump, shows 0→1→2→3).
+        // - When suggested > current: advance banner by at most +1; if still behind, start/reschedule 2s catch-up timer.
+        // - When suggested < current: pull banner back to match dot and cancel catch-up timer.
+        if currentDirectionIndex < directionWaypoints.count {
+            let suggested = suggestedDirectionIndexFromProjection(segmentIndex: userProjection.segmentIndex, t: userProjection.t)
+            if suggested > currentDirectionIndex {
+                let oldIndex = currentDirectionIndex
+                let newIndex = min(currentDirectionIndex + 1, suggested, directionWaypoints.count - 1)
+                let lastMarkerVisited = isLastMarkerVisited?() ?? false
+                // Only advance to next step when current step's waypoint (if any) has been activated
+                let mayAdvance: Bool
+                if let canAdvance = canAdvanceFromDirectionIndex {
+                    mayAdvance = canAdvance(oldIndex)
+                    if !mayAdvance {
+                        debugLogger.log("Display sync: NOT advancing from \(oldIndex) to \(newIndex) - waypoint at current step not yet activated", category: "DIRECTION_ADVANCE")
+                    }
+                } else {
+                    let wouldAdvanceToReturn = returnJourneyStartIndex.map { newIndex >= $0 } ?? false
+                    mayAdvance = !(wouldAdvanceToReturn && !lastMarkerVisited)
+                    if !mayAdvance {
+                        debugLogger.log("Display sync: NOT advancing to \(newIndex) (return segment) - waypoint not yet activated", category: "DIRECTION_ADVANCE")
+                    }
+                }
+                if mayAdvance {
+                // #region agent log
+                if let returnStart = returnJourneyStartIndex, newIndex >= returnStart {
+                    let instruction = newIndex < directionWaypoints.count ? directionWaypoints[newIndex].instruction : ""
+                    let payload: [String: Any] = [
+                        "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+                        "message": "DISPLAY_SYNC_ADVANCING_TO_RETURN",
+                        "hypothesisId": "H1",
+                        "location": "LocationService.swift:displaySync",
+                        "data": [
+                            "suggested": suggested,
+                            "oldIndex": oldIndex,
+                            "newIndex": newIndex,
+                            "returnJourneyStartIndex": returnStart,
+                            "lastMarkerVisited": lastMarkerVisited,
+                            "instruction": instruction
+                        ] as [String: Any]
+                    ]
+                    if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) {
+                        line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                    }
+                    debugLogger.log("AGENT DISPLAY_SYNC_ADVANCING_TO_RETURN suggested=\(suggested) oldIndex=\(oldIndex) newIndex=\(newIndex) returnStart=\(returnStart) lastMarkerVisited=\(lastMarkerVisited) instruction=\"\(instruction)\"", category: "AGENT_RETURN_LEG")
+                }
+                // #endregion
+                for i in oldIndex..<newIndex {
+                    notifiedDirectionIndices.insert(i)
+                }
+                currentDirectionIndex = newIndex
+                debugLogger.log("Display sync: direction index \(oldIndex) → \(currentDirectionIndex) (cap +1 per update, suggested=\(suggested))", category: "DIRECTION_ADVANCE")
+                let stepDist = distanceAlongRoute(fromSegment: 0, fromT: 0, toSegment: userProjection.segmentIndex, toT: userProjection.t, polyline: cachedRoutePath)
+                let stepInstruction = currentDirectionIndex < directionWaypoints.count ? directionWaypoints[currentDirectionIndex].instruction : "arrival"
+                let stepChangeLog = "Step change: \(oldIndex) → \(currentDirectionIndex) at segment=\(userProjection.segmentIndex) t=\(String(format: "%.3f", userProjection.t)), distance along route from start=\(String(format: "%.0f", stepDist))m, now showing '\(stepInstruction)'"
+                debugLogger.log(stepChangeLog, category: "DIRECTION_ADVANCE")
+                print("📍 [DIRECTION] \(stepChangeLog)")
+                if suggested > currentDirectionIndex {
+                    directionCatchUpTimer?.invalidate()
+                    directionCatchUpTimer = Timer.scheduledTimer(withTimeInterval: directionCatchUpInterval, repeats: false) { [weak self] _ in
+                        self?.performDirectionCatchUpCheck()
+                    }
+                }
+                }
+            } else if suggested < currentDirectionIndex {
+                directionCatchUpTimer?.invalidate()
+                directionCatchUpTimer = nil
+                let oldIndex = currentDirectionIndex
+                currentDirectionIndex = max(0, suggested)
+                debugLogger.log("Display sync: direction index \(oldIndex) → \(currentDirectionIndex) (banner was ahead of position)", category: "DIRECTION_ADVANCE")
+                let stepDist = distanceAlongRoute(fromSegment: 0, fromT: 0, toSegment: userProjection.segmentIndex, toT: userProjection.t, polyline: cachedRoutePath)
+                let stepInstruction = currentDirectionIndex < directionWaypoints.count ? directionWaypoints[currentDirectionIndex].instruction : "arrival"
+                let stepChangeLog = "Step change: \(oldIndex) → \(currentDirectionIndex) at segment=\(userProjection.segmentIndex) t=\(String(format: "%.3f", userProjection.t)), distance along route from start=\(String(format: "%.0f", stepDist))m, now showing '\(stepInstruction)'"
+                debugLogger.log(stepChangeLog, category: "DIRECTION_ADVANCE")
+                print("📍 [DIRECTION] \(stepChangeLog)")
+            }
+        }
+    }
+    
+    /// v2.1.28: After 2s delay, re-check suggested from current location; if still ahead, advance banner by +1 (confirmation step so we don't advance on noise).
+    private func performDirectionCatchUpCheck() {
+        directionCatchUpTimer?.invalidate()
+        directionCatchUpTimer = nil
+        guard isMonitoringDirections, !cachedRoutePath.isEmpty, !directionWaypoints.isEmpty,
+              let location = currentLocation else { return }
+        guard let projection = projectOntoPolyline(coordinate: location.coordinate, polyline: cachedRoutePath) else { return }
+        let suggested = suggestedDirectionIndexFromProjection(segmentIndex: projection.segmentIndex, t: projection.t)
+        if suggested > currentDirectionIndex {
+            let oldIndex = currentDirectionIndex
+            let newIndex = min(currentDirectionIndex + 1, suggested, directionWaypoints.count - 1)
+            let lastMarkerVisited = isLastMarkerVisited?() ?? false
+            let mayAdvance: Bool
+            if let canAdvance = canAdvanceFromDirectionIndex {
+                mayAdvance = canAdvance(oldIndex)
+                if !mayAdvance {
+                    debugLogger.log("Catch-up: NOT advancing from \(oldIndex) to \(newIndex) - waypoint at current step not yet activated", category: "DIRECTION_ADVANCE")
+                    return
+                }
+            } else {
+                let wouldAdvanceToReturn = returnJourneyStartIndex.map { newIndex >= $0 } ?? false
+                mayAdvance = !(wouldAdvanceToReturn && !lastMarkerVisited)
+                if !mayAdvance {
+                    debugLogger.log("Catch-up: NOT advancing to \(newIndex) (return segment) - waypoint not yet activated", category: "DIRECTION_ADVANCE")
+                    return
+                }
+            }
+            // #region agent log
+            if let returnStart = returnJourneyStartIndex, newIndex >= returnStart {
+                let payload: [String: Any] = [
+                    "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+                    "message": "CATCHUP_ADVANCING_TO_RETURN",
+                    "hypothesisId": "H1",
+                    "location": "LocationService.swift:performDirectionCatchUpCheck",
+                    "data": [
+                        "suggested": suggested,
+                        "oldIndex": oldIndex,
+                        "newIndex": newIndex,
+                        "returnJourneyStartIndex": returnStart,
+                        "lastMarkerVisited": lastMarkerVisited
+                    ] as [String: Any]
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) {
+                    line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                }
+                debugLogger.log("AGENT CATCHUP_ADVANCING_TO_RETURN suggested=\(suggested) oldIndex=\(oldIndex) newIndex=\(newIndex) returnStart=\(returnStart) lastMarkerVisited=\(lastMarkerVisited)", category: "AGENT_RETURN_LEG")
+            }
+            // #endregion
+            for i in oldIndex..<newIndex {
+                notifiedDirectionIndices.insert(i)
+            }
+            currentDirectionIndex = newIndex
+            let stepDist = distanceAlongRoute(fromSegment: 0, fromT: 0, toSegment: projection.segmentIndex, toT: projection.t, polyline: cachedRoutePath)
+            let stepInstruction = newIndex < directionWaypoints.count ? directionWaypoints[newIndex].instruction : "arrival"
+            debugLogger.log("Catch-up: after \(Int(directionCatchUpInterval))s re-check suggested=\(suggested), direction index \(oldIndex) → \(newIndex) (now showing '\(stepInstruction)')", category: "DIRECTION_ADVANCE")
+            print("📍 [DIRECTION] Catch-up: suggested=\(suggested), \(oldIndex) → \(newIndex) at segment=\(projection.segmentIndex) t=\(String(format: "%.3f", projection.t)), dist=\(String(format: "%.0f", stepDist))m")
+            if suggested > currentDirectionIndex {
+                directionCatchUpTimer = Timer.scheduledTimer(withTimeInterval: directionCatchUpInterval, repeats: false) { [weak self] _ in
+                    self?.performDirectionCatchUpCheck()
+                }
             }
         }
     }

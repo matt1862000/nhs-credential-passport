@@ -1816,6 +1816,8 @@ struct SettingsView: View {
     
     // MARK: - List Sections (extracted to reduce compiler complexity)
     
+    @State private var showLogsCopied = false
+    
     private var aboutSection: some View {
         Section("About") {
             HStack {
@@ -1823,6 +1825,19 @@ struct SettingsView: View {
                 Spacer()
                 Text(appVersion)
                     .foregroundColor(.primary)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                // Double-tap Version to copy debug log to pasteboard (for on-device debugging)
+                if DebugLogger.shared.copyLogToPasteboard() {
+                    showLogsCopied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { showLogsCopied = false }
+                }
+            }
+            if showLogsCopied {
+                Text("Debug log copied — paste in Messages/Notes to share")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             
             Link(destination: URL(string: "https://www.sheffieldpartnership.nhs.uk")!) {

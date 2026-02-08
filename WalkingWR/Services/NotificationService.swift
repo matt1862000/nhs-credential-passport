@@ -364,6 +364,21 @@ class NotificationService: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
     
+    /// Cancel only 50%/80%/100% progress notifications (halfway, return, complete). Use when user is already on return leg so they don't get "80% - head back" while heading back.
+    func cancelProgressNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let progressPrefixes = ["halfway-", "return-", "complete-"]
+            let ids = requests
+                .filter { req in progressPrefixes.contains { req.identifier.hasPrefix($0) } }
+                .map(\.identifier)
+            if !ids.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: ids)
+                print("🔕 Cancelled \(ids.count) progress notifications (50%/80%/100%)")
+            }
+        }
+    }
+    
     func cancelAllWalkingNotifications() {
         // v1.7.13: Only cancel walk-specific notifications, not delay notifications
         // This preserves clinician delay alerts while stopping stale walk alerts
@@ -371,7 +386,7 @@ class NotificationService: ObservableObject {
         
         center.getPendingNotificationRequests { requests in
             // Walk notification prefixes - these should be cancelled
-            let walkPrefixes = ["walk-started-", "halfway-", "return-", "complete-", 
+            let walkPrefixes = ["walk-started-", "halfway-", "return-", "complete-",
                                "marker-arrival-", "direction-", "encouragement-"]
             
             let walkNotificationIds = requests

@@ -7341,6 +7341,11 @@ struct MarkerArrivalSheet: View {
             }
             .navigationTitle("Marker Discovered")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                if let marker = viewModel.currentMarker {
+                    DebugLogger.shared.log("MarkerArrivalSheet onAppear: marker='\(marker.name)' contentType=\(marker.contentType.rawValue) (breathing carousel shown=\(marker.contentType == .breathingExercise))", category: "ARRIVAL")
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Continue") {
@@ -7539,6 +7544,9 @@ struct HomeArrivalSheet: View {
                     }
                     .padding(.horizontal, 20)
                 }
+            }
+            .onAppear {
+                DebugLogger.shared.log("HomeArrivalSheet onAppear - walk complete screen shown", category: "HOME")
             }
             .navigationTitle("Walk Complete")
             .navigationBarTitleDisplayMode(.inline)

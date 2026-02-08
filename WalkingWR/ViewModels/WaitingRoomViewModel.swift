@@ -29,6 +29,8 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var showWaitTimeDecreasedAlert: Bool = false
     @Published var waitTimeChangeInfo: (oldMinutes: Int, newMinutes: Int, isIncrease: Bool)?
     @Published var showDelayChangeOverlay: Bool = false  // v1.6.11: In-map overlay when walking
+    /// Don't show delay-change overlay for this many seconds after walk start (route loading + intro animation).
+    private let delayOverlayGracePeriodSeconds: Int = 20
     @Published var showPreWalkWellbeing: Bool = false
     @Published var showPostWalkWellbeing: Bool = false
     
@@ -94,6 +96,8 @@ class WaitingRoomViewModel: ObservableObject {
     
     // v1.9.83: Store arrival instruction to show when close to destination
     private var arrivalInstruction: WalkingDirection? = nil
+    /// Map direction index -> marker ID for waypoint steps (so we only advance to next step when that waypoint is activated). Cleared in endWalk.
+    private var directionIndexToMarkerId: [Int: UUID] = [:]
     
     // v1.9.16: Cached return route for offline fallback
     @Published var cachedReturnRoutePolyline: [CLLocationCoordinate2D] = []
@@ -509,10 +513,14 @@ class WaitingRoomViewModel: ObservableObject {
                                 }
                                 waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: true)
                                 
-                                // v1.6.11: Show in-map overlay if walking, otherwise standard alert
+                                // v1.6.11: Show in-map overlay if walking, otherwise standard alert. Defer until after route/animations (grace period).
                                 if isWalking {
-                                    showDelayChangeOverlay = true
-                                    print("🗺️ SHOWING MAP OVERLAY: Delay increased \(previousDelay) → \(newDelay) min (walking)")
+                                    if walkSession.elapsedSeconds >= delayOverlayGracePeriodSeconds {
+                                        showDelayChangeOverlay = true
+                                        print("🗺️ SHOWING MAP OVERLAY: Delay increased \(previousDelay) → \(newDelay) min (walking)")
+                                    } else {
+                                        print("🗺️ DEFERRING delay overlay (elapsed \(walkSession.elapsedSeconds)s < \(delayOverlayGracePeriodSeconds)s grace)")
+                                    }
                                 } else {
                                     showWaitTimeIncreasedAlert = true
                                     print("⚠️ SHOWING ALERT: Delay increased \(previousDelay) → \(newDelay) min")
@@ -528,10 +536,14 @@ class WaitingRoomViewModel: ObservableObject {
                                 }
                                 waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: false)
                                 
-                                // v1.6.11: Show in-map overlay if walking, otherwise standard alert
+                                // v1.6.11: Show in-map overlay if walking, otherwise standard alert. Defer until after route/animations (grace period).
                                 if isWalking {
-                                    showDelayChangeOverlay = true
-                                    print("🗺️ SHOWING MAP OVERLAY: Delay decreased \(previousDelay) → \(newDelay) min (walking)")
+                                    if walkSession.elapsedSeconds >= delayOverlayGracePeriodSeconds {
+                                        showDelayChangeOverlay = true
+                                        print("🗺️ SHOWING MAP OVERLAY: Delay decreased \(previousDelay) → \(newDelay) min (walking)")
+                                    } else {
+                                        print("🗺️ DEFERRING delay overlay (elapsed \(walkSession.elapsedSeconds)s < \(delayOverlayGracePeriodSeconds)s grace)")
+                                    }
                                 } else {
                                     showWaitTimeDecreasedAlert = true
                                     print("✅ SHOWING ALERT: Delay decreased \(previousDelay) → \(newDelay) min")
@@ -909,6 +921,17 @@ class WaitingRoomViewModel: ObservableObject {
                 DebugLogger.shared.log("📍 Return journey starts at filtered direction index: \(returnJourneyStartIndex!) (original arrival index: \(arrivalIndexInOriginal))", category: "DIRECTION_MONITORING")
             }
             
+            // Build mapping: direction index -> marker ID for waypoint steps (first Waypoint = first marker, etc.)
+            directionIndexToMarkerId = [:]
+            var waypointCount = 0
+            for (index, dir) in filteredDirections.enumerated() {
+                if dir.instruction.contains("Waypoint") && dir.instruction.contains("is on your"),
+                   waypointCount < route.qrMarkers.count {
+                    directionIndexToMarkerId[index] = route.qrMarkers[waypointCount].id
+                    waypointCount += 1
+                }
+            }
+            
             locationService.startDirectionMonitoring(
                 directions: filteredDirections,
                 routePath: route.routePath,
@@ -918,6 +941,13 @@ class WaitingRoomViewModel: ObservableObject {
                     guard let self = self,
                           let lastMarker = route.qrMarkers.last else { return false }
                     return self.visitedMarkerIds.contains(lastMarker.id)
+                },
+                canAdvanceFromDirectionIndex: { [weak self] index in
+                    guard let self = self else { return true }
+                    if let markerId = self.directionIndexToMarkerId[index] {
+                        return self.visitedMarkerIds.contains(markerId)
+                    }
+                    return true
                 }
             )
         }
@@ -936,8 +966,10 @@ class WaitingRoomViewModel: ObservableObject {
     }
     
     func endWalk(completed: Bool) {
+        // Log immediately so we can see order vs home arrival / sheet (search for [HOME] and [WALK_LIFECYCLE])
+        DebugLogger.shared.log("endWalk(completed: \(completed)) CALLED - showHomeArrivalPrompt=\(showHomeArrivalPrompt) hasReachedHome=\(hasReachedHome)", category: "HOME")
         // v1.9.79: Log walk end
-        DebugLogger.shared.log("🏁🏁🏁 WALK ENDED 🏁🏁🏁 - Completed: \(completed)", category: "WALK_LIFECYCLE")
+        DebugLogger.shared.log("WALK ENDED - Completed: \(completed)", category: "WALK_LIFECYCLE")
         if let route = walkSession.currentRoute {
             DebugLogger.shared.log("Final stats - Distance: \(Int(locationService.distanceWalked))m, Duration: \(walkSession.elapsedTime) seconds", category: "WALK_LIFECYCLE")
             print("[WALKED_DIST] endWalk completed=\(completed) finalDistance=\(Int(locationService.distanceWalked))m duration=\(walkSession.elapsedTime)s")
@@ -956,6 +988,10 @@ class WaitingRoomViewModel: ObservableObject {
         }
         
         walkSession.isActive = false
+        
+        // Prevent "reached home" sheet from appearing after user has already ended the walk
+        showHomeArrivalPrompt = false
+        hasReachedHome = true  // so checkHomeArrival won't fire again
         
         walkHeartbeatTimer?.invalidate()
         walkHeartbeatTimer = nil
@@ -1014,6 +1050,7 @@ class WaitingRoomViewModel: ObservableObject {
         cachedReturnRoutePolyline = []
         hasCachedReturnRoute = false
         isHeadingBack = false
+        directionIndexToMarkerId = [:]
         
         mapStayCenteredOnRoute = false
         
@@ -1039,7 +1076,16 @@ class WaitingRoomViewModel: ObservableObject {
     func userTappedHeadBack() {
         print("🏠 [HEAD HOME] userTappedHeadBack() — setting isHeadingBack=true, fetching return route")
         isHeadingBack = true
+        didSwitchToReturnDirections()
         fetchAndSwitchToReturnRoute()
+    }
+    
+    /// Call when switching to return leg (directions or route). Dismisses 50%/80% overlays and cancels pending progress notifications so user doesn't see "head back" while already heading back.
+    func didSwitchToReturnDirections() {
+        showHalfwayAlert = false
+        showReturnNowAlert = false
+        cancelAlertAutoDismissTimer()
+        notificationService.cancelProgressNotifications()
     }
     
     /// Fetch route from current location → origin and switch map/directions to it.
@@ -1342,9 +1388,10 @@ class WaitingRoomViewModel: ObservableObject {
         // Force view update for nested observable
         objectWillChange.send()
         
-        // Check for halfway point (50%). Require at least 60s elapsed so we never show "Head back!" immediately after starting.
+        // Check for halfway point (50%). Skip if already on return leg (directions or user chose Head back).
         let elapsed = walkSession.elapsedSeconds
-        if !walkSession.halfwayAlertSent,
+        if !isUsingReturnDirections, !isHeadingBack,
+           !walkSession.halfwayAlertSent,
            elapsed >= 60,
            let returnTime = walkSession.estimatedReturnTime,
            Date() >= returnTime {
@@ -1366,8 +1413,8 @@ class WaitingRoomViewModel: ObservableObject {
             }
         }
         
-        // Check for return now point (80%) - independent check; skip if user already chose Head back
-        if !isHeadingBack, walkSession.progress >= 0.8 && walkSession.progress < 1.0 {
+        // Check for return now point (80%) - skip if already on return leg (directions or user chose Head back)
+        if !isHeadingBack, !isUsingReturnDirections, walkSession.progress >= 0.8 && walkSession.progress < 1.0 {
             // Only show if not already shown and alerts are enabled
             if !walkSession.returnNowAlertSent {
                 if walkingAlertsEnabled {
@@ -1388,8 +1435,11 @@ class WaitingRoomViewModel: ObservableObject {
             }
         }
         
-        // Check if walk is complete (100%) - independent check; skip if user already chose Head back
-        if !isHeadingBack, walkSession.progress >= 1.0 {
+        // Check if walk is complete (100%) - skip if already on return leg; when on return with all waypoints visited, rely on home arrival instead.
+        let onReturnWithAllVisited = (selectedRoute.map { route in
+            route.qrMarkers.count > 0 && visitedMarkerIds.count == route.qrMarkers.count
+        } ?? false) && isUsingReturnDirections
+        if !isHeadingBack, !isUsingReturnDirections, walkSession.progress >= 1.0, !onReturnWithAllVisited {
             // Only show if not already shown and alerts are enabled
             if !walkSession.walkCompleteAlertSent {
                 if walkingAlertsEnabled {
@@ -1434,18 +1484,19 @@ class WaitingRoomViewModel: ObservableObject {
                 // Temporarily add arrival instruction to cached directions so banner can show it
                 if !cachedOriginalDirections.contains(where: { $0.id == arrivalInst.id }) {
                     cachedOriginalDirections.append(arrivalInst)
-                    // Set direction index to show the arrival instruction
+                    // Set direction index only if within LocationService's waypoint list (avoid index out of range crash)
                     let arrivalIndex = cachedOriginalDirections.count - 1
-                    locationService.currentDirectionIndex = arrivalIndex
-                    DebugLogger.shared.log("📍 Showing arrival instruction - within \(Int(distanceToLastMarker))m of final destination (index: \(arrivalIndex))", category: "ARRIVAL")
+                    let safeIndex = min(arrivalIndex, locationService.safeMaxDirectionIndex)
+                    locationService.currentDirectionIndex = safeIndex
+                    DebugLogger.shared.log("📍 Showing arrival instruction - within \(Int(distanceToLastMarker))m of final destination (index: \(safeIndex), requested: \(arrivalIndex))", category: "ARRIVAL")
                 }
             } else {
                 // Remove arrival instruction if we're further away
                 if let arrivalIndex = cachedOriginalDirections.firstIndex(where: { $0.id == arrivalInst.id }) {
                     cachedOriginalDirections.remove(at: arrivalIndex)
-                    // Reset direction index if it was pointing to the arrival instruction
+                    // Reset direction index if it was pointing to the arrival instruction; clamp to service's valid range
                     if locationService.currentDirectionIndex >= cachedOriginalDirections.count {
-                        locationService.currentDirectionIndex = max(0, cachedOriginalDirections.count - 1)
+                        locationService.currentDirectionIndex = min(max(0, cachedOriginalDirections.count - 1), locationService.safeMaxDirectionIndex)
                     }
                 }
             }
@@ -1455,7 +1506,7 @@ class WaitingRoomViewModel: ObservableObject {
                let arrivalIndex = cachedOriginalDirections.firstIndex(where: { $0.id == arrivalInst.id }) {
                 cachedOriginalDirections.remove(at: arrivalIndex)
                 if locationService.currentDirectionIndex >= cachedOriginalDirections.count {
-                    locationService.currentDirectionIndex = max(0, cachedOriginalDirections.count - 1)
+                    locationService.currentDirectionIndex = min(max(0, cachedOriginalDirections.count - 1), locationService.safeMaxDirectionIndex)
                 }
             }
         }
@@ -1484,32 +1535,49 @@ class WaitingRoomViewModel: ObservableObject {
             if userDistanceToMarker < activationRadius {
                 // Check if another waypoint was activated recently
                 if !canActivate {
-                    print("📍 Waypoint activation blocked: \(marker.name) (distance: \(Int(userDistanceToMarker))m, radius: \(Int(activationRadius))m) - too soon after last activation (\(String(format: "%.1f", timeSinceLastActivation))s < \(minTimeBetweenActivations)s)")
+                    DebugLogger.shared.log("Waypoint activation BLOCKED: \(marker.name) (distance: \(Int(userDistanceToMarker))m, radius: \(Int(activationRadius))m) - too soon after last activation (\(String(format: "%.1f", timeSinceLastActivation))s < \(minTimeBetweenActivations)s)", category: "WAYPOINT")
                     continue // Skip this waypoint, check next one
                 }
                 
-                print("📍 Waypoint activated: \(marker.name) (distance: \(Int(userDistanceToMarker))m, radius: \(Int(activationRadius))m)")
+                let isLast = marker.id == route.qrMarkers.last?.id
+                DebugLogger.shared.log("Waypoint ACTIVATED: \(marker.name) (distance: \(Int(userDistanceToMarker))m, radius: \(Int(activationRadius))m) isLast=\(isLast) contentType=\(marker.contentType.rawValue)", category: "WAYPOINT")
                 lastWaypointActivationTime = Date() // Track activation time
                 currentMarker = marker
                 visitedMarkerIds.insert(marker.id)
+                // #region agent log
+                if marker.id == route.qrMarkers.last?.id {
+                    let payload: [String: Any] = [
+                        "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+                        "message": "LAST_MARKER_VISITED",
+                        "hypothesisId": "H3",
+                        "location": "WaitingRoomViewModel.swift:checkWaypointArrival",
+                        "data": ["markerName": marker.name, "markerId": marker.id.uuidString, "distanceToMarker": userDistanceToMarker] as [String: Any]
+                    ]
+                    if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) {
+                        line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                    }
+                    DebugLogger.shared.log("AGENT LAST_MARKER_VISITED markerName=\"\(marker.name)\" markerId=\(marker.id) distanceToMarker=\(String(format: "%.1f", userDistanceToMarker))m", category: "AGENT_RETURN_LEG")
+                }
+                // #endregion
                 walkSession.markersScanned.append(marker)
                 userProgress.qrScansCompleted += 1
                 userProgress.todayQRScansCompleted += 1
                 userProgress.addPoints(marker.pointsValue)
                 
                 // v1.9.84: If this is the last marker, clear arrival instruction for return leg
-                if marker.id == route.qrMarkers.last?.id, let arrivalInst = arrivalInstruction {
+                if isLast, let arrivalInst = arrivalInstruction {
                     // Remove arrival instruction from cached directions
                     if let arrivalIndex = cachedOriginalDirections.firstIndex(where: { $0.id == arrivalInst.id }) {
                         cachedOriginalDirections.remove(at: arrivalIndex)
-                        DebugLogger.shared.log("🧹 Cleared arrival instruction - reached final destination, preparing for return leg", category: "ARRIVAL")
+                        DebugLogger.shared.log("Cleared arrival instruction - reached final destination, preparing for return leg", category: "ARRIVAL")
                     }
                     // Clear the stored arrival instruction so it doesn't interfere with return directions
                     arrivalInstruction = nil
                 }
                 
-                // Show the photo prompt
+                // Show the photo prompt (marker arrival sheet)
                 showMarkerArrivalPrompt = true
+                DebugLogger.shared.log("Set showMarkerArrivalPrompt=true for marker '\(marker.name)' (visited=\(visitedMarkerIds.count)/\(route.qrMarkers.count))", category: "ARRIVAL")
                 
                 // Send notification
                 notificationService.sendMarkerArrivalNotification(markerName: marker.name)
@@ -1529,7 +1597,12 @@ class WaitingRoomViewModel: ObservableObject {
               let userLocation = locationService.currentLocation,
               let startLocation = walkSession.startLocation ?? route.routePath.first,
               !hasReachedHome,
-              walkSession.isActive else { return }
+              walkSession.isActive else {
+            if selectedRoute == nil || locationService.currentLocation == nil { return }
+            if hasReachedHome { return }
+            if !walkSession.isActive { DebugLogger.shared.log("checkHomeArrival SKIP: walkSession.isActive=false", category: "HOME"); return }
+            return
+        }
         
         // CRITICAL: Only check for home arrival if ALL waypoints have been visited
         // This ensures we're at the END of the walk, not the beginning
@@ -1542,11 +1615,14 @@ class WaitingRoomViewModel: ObservableObject {
         
         let startPoint = CLLocation(latitude: startLocation.latitude, longitude: startLocation.longitude)
         let distanceToHome = userLocation.distance(from: startPoint)
+        if distanceToHome < 50 && distanceToHome >= 30 {
+            DebugLogger.shared.log("checkHomeArrival: approaching (distance: \(Int(distanceToHome))m, need <30m)", category: "HOME")
+        }
         
         // v1.9.15: Use actual start location, not route end point
         // Activate when within 30 meters of start location
         if distanceToHome < 30 {
-            print("🏠 Home arrival detected at END of walk! (distance: \(Int(distanceToHome))m, elapsed: \(walkSession.elapsedSeconds)s, waypoints visited: \(visitedMarkerIds.count)/\(route.qrMarkers.count))")
+            DebugLogger.shared.log("Home arrival DETECTED (distance: \(Int(distanceToHome))m, elapsed: \(walkSession.elapsedSeconds)s, waypoints: \(visitedMarkerIds.count)/\(route.qrMarkers.count)) - setting showHomeArrivalPrompt=true", category: "HOME")
             hasReachedHome = true
             showHomeArrivalPrompt = true
             

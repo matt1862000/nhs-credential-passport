@@ -1051,20 +1051,49 @@ class PrePopulatedPOIService {
         print("📦   URL: \(url.absoluteString)")
         print("\(Self.telem) FIREBASE_DOWNLOAD_START file=\(firebaseJsonFile)")
         
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                print("📦 Pre-populated DB: ❌ Download failed - invalid response (status: \((response as? HTTPURLResponse)?.statusCode ?? 0))")
-                if hasDownloadedDatabase {
-                    print("📦 Pre-populated DB: Using cached database, will retry Firebase download on next launch")
-                } else {
-                    print("📦 Pre-populated DB: ⚠️  No cached database available - app will use API calls")
+        let maxAttempts = 3
+        let downloadTimeoutSeconds: TimeInterval = 20
+        var data: Data?
+        var response: URLResponse?
+        
+        for attempt in 1...maxAttempts {
+            do {
+                var request = URLRequest(url: url)
+                request.timeoutInterval = downloadTimeoutSeconds
+                let result = try await URLSession.shared.data(for: request)
+                data = result.0
+                response = result.1
+                guard let httpResponse = response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200 else {
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    if attempt < maxAttempts {
+                        print("📦 Pre-populated DB: Attempt \(attempt)/\(maxAttempts) failed - invalid response (status: \(status)), retrying...")
+                    } else {
+                        print("📦 Pre-populated DB: ❌ Download failed after \(maxAttempts) attempts - invalid response (status: \(status))")
+                    }
+                    continue
                 }
-                return
+                break
+            } catch {
+                if attempt < maxAttempts {
+                    print("📦 Pre-populated DB: Attempt \(attempt)/\(maxAttempts) failed (\(error.localizedDescription)), retrying (max \(Int(downloadTimeoutSeconds))s per attempt)...")
+                } else {
+                    print("📦 Pre-populated DB: ❌ Download error after \(maxAttempts) attempts: \(error.localizedDescription)")
+                }
             }
-            
+        }
+        
+        guard let data = data, let response = response,
+              let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            if hasDownloadedDatabase {
+                print("📦 Pre-populated DB: Using cached database, will retry Firebase download on next launch")
+            } else {
+                print("📦 Pre-populated DB: ⚠️  No cached database available - app will use API calls")
+            }
+            return
+        }
+        
+        do {
             let decoder = createJSONDecoder()
             let database = try decoder.decode(PrePopulatedPOIDatabase.self, from: data)
             

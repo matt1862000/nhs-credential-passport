@@ -943,7 +943,19 @@ struct EmbeddedWalkMapView: View {
                         isShowingReturnRoute = true
                     }
                     if returnRoute == nil {
-                        calculateReturnRoute()
+                        // Defer return route so marker arrival sheet can present first (avoid race)
+                        if viewModel.showMarkerArrivalPrompt {
+                            DebugLogger.shared.log("Return route DEFERRED: marker arrival sheet is showing - will retry in 2.5s", category: "RETURN_ROUTE")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                if returnRoute == nil && viewModel.walkSession.currentRoute != nil {
+                                    DebugLogger.shared.log("Return route: running deferred calculation", category: "RETURN_ROUTE")
+                                    calculateReturnRoute()
+                                }
+                            }
+                        } else {
+                            DebugLogger.shared.log("Return route: all waypoints visited, calculating now", category: "RETURN_ROUTE")
+                            calculateReturnRoute()
+                        }
                     }
                 }
             }
@@ -1643,6 +1655,12 @@ struct EmbeddedWalkMapView: View {
             
             if !viewModel.isUsingReturnDirections {
                 if !viewModel.cachedReturnDirections.isEmpty, let currentRoute = viewModel.walkSession.currentRoute {
+                    // #region agent log
+                    let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "message": "SWITCHED_TO_RETURN_DIRECTIONS", "hypothesisId": "H5", "location": "WalkingMapView.swift:viewReturnToStart", "data": ["reason": "tapReturnToStart_cached"] as [String: Any]]
+                    if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) { line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                    DebugLogger.shared.log("AGENT SWITCHED_TO_RETURN_DIRECTIONS reason=tapReturnToStart_cached", category: "AGENT_RETURN_LEG")
+                    // #endregion
+                    viewModel.didSwitchToReturnDirections()
                     viewModel.isUsingReturnDirections = true
                     let cachedPolyline = viewModel.cachedReturnRoutePolyline
                     viewModel.locationService.startDirectionMonitoring(
@@ -2249,18 +2267,24 @@ struct EmbeddedWalkMapView: View {
                     
                     // Switch to return route directions
                     if !result.directions.isEmpty {
+                        // #region agent log
+                        let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "message": "SWITCHED_TO_RETURN_DIRECTIONS", "hypothesisId": "H5", "location": "WalkingMapView.swift:calculateReturnRouteFromLastWaypoint", "data": ["reason": "liveFromLastWaypoint"] as [String: Any]]
+                        if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) { line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                        DebugLogger.shared.log("AGENT SWITCHED_TO_RETURN_DIRECTIONS reason=liveFromLastWaypoint", category: "AGENT_RETURN_LEG")
+                        // #endregion
+                        self.viewModel.didSwitchToReturnDirections()
                         self.viewModel.isUsingReturnDirections = true
                         self.viewModel.locationService.startDirectionMonitoring(
                             directions: result.directions,
                             routePath: result.polyline,
                             skipPassedWaypoints: true
                         )
-                        print("📍 Switched to live return route directions: \(result.directions.count) steps")
+                        DebugLogger.shared.log("Switched to return route directions (from last waypoint): \(result.directions.count) steps", category: "RETURN_ROUTE")
                     }
                 }
             } else {
                 await MainActor.run {
-                    print("⚠️ Google Directions failed for return route - navigation may be limited")
+                    DebugLogger.shared.log("Google Directions failed for return route - navigation may be limited", category: "RETURN_ROUTE")
                 }
             }
         }
@@ -2295,19 +2319,31 @@ struct EmbeddedWalkMapView: View {
                     
                     // Switch to return route directions
                     if !result.directions.isEmpty {
+                        // #region agent log
+                        let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "message": "SWITCHED_TO_RETURN_DIRECTIONS", "hypothesisId": "H5", "location": "WalkingMapView.swift:calculateReturnRoute", "data": ["reason": "liveFromCurrentLocation"] as [String: Any]]
+                        if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) { line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                        DebugLogger.shared.log("AGENT SWITCHED_TO_RETURN_DIRECTIONS reason=liveFromCurrentLocation", category: "AGENT_RETURN_LEG")
+                        // #endregion
+                        self.viewModel.didSwitchToReturnDirections()
                         self.viewModel.isUsingReturnDirections = true
                         self.viewModel.locationService.startDirectionMonitoring(
                             directions: result.directions,
                             routePath: result.polyline,
                             skipPassedWaypoints: true
                         )
-                        print("📍 Switched to live return route directions: \(result.directions.count) steps")
+                        DebugLogger.shared.log("Switched to return route directions (from current location): \(result.directions.count) steps", category: "RETURN_ROUTE")
                     }
                 }
             } else {
                 await MainActor.run {
-                    print("⚠️ Google Directions failed - using route polyline for visual (no turn-by-turn)")
+                    DebugLogger.shared.log("Google Directions failed - using route polyline for visual (no turn-by-turn)", category: "RETURN_ROUTE")
                     // Fall back to just showing the route segment without turn-by-turn directions
+                    // #region agent log
+                    let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "message": "SWITCHED_TO_RETURN_DIRECTIONS", "hypothesisId": "H5", "location": "WalkingMapView.swift:calculateReturnRoute_fallback", "data": ["reason": "googleFailed"] as [String: Any]]
+                    if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) { line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                    DebugLogger.shared.log("AGENT SWITCHED_TO_RETURN_DIRECTIONS reason=googleFailed", category: "AGENT_RETURN_LEG")
+                    // #endregion
+                    self.viewModel.didSwitchToReturnDirections()
                     self.viewModel.isUsingReturnDirections = true
                 }
             }
@@ -2323,6 +2359,12 @@ struct EmbeddedWalkMapView: View {
             return
         }
         
+        // #region agent log
+        let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "message": "SWITCHED_TO_RETURN_DIRECTIONS", "hypothesisId": "H5", "location": "WalkingMapView.swift:applyCachedReturnRoute", "data": ["reason": "applyCached"] as [String: Any]]
+        if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) { line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+        DebugLogger.shared.log("AGENT SWITCHED_TO_RETURN_DIRECTIONS reason=applyCached", category: "AGENT_RETURN_LEG")
+        // #endregion
+        viewModel.didSwitchToReturnDirections()
         // Apply cached directions and start monitoring
         viewModel.isUsingReturnDirections = true
         viewModel.locationService.startDirectionMonitoring(
