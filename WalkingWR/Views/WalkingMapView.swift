@@ -740,9 +740,9 @@ struct EmbeddedWalkMapView: View {
                 .padding(.bottom, 8)
             } else if let currentRoute = viewModel.walkSession.currentRoute {
                 WaypointCarousel(
-                    markers: currentRoute.qrMarkers,
+                    markers: viewModel.isHeadingBack ? [] : currentRoute.qrMarkers,
                     visitedIds: viewModel.visitedMarkerIds,
-                    startLocation: currentRoute.routePath.first,
+                    startLocation: viewModel.walkSession.startLocation ?? currentRoute.routePath.first,
                     onTapWaypoint: { coordinate in
                         zoomToWaypoint(coordinate)
                     },
