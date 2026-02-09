@@ -728,6 +728,10 @@ class WaitingRoomViewModel: ObservableObject {
                    }) {
                     let orig = directionsToUse[idx].instruction
                     let side = orig.lowercased().contains("right") ? "right" : "left"
+                    // #region agent log
+                    let _wrLog: [String: Any] = ["location": "WaitingRoomViewModel:singleWP:side", "message": "Single-waypoint safeguard waypoint side", "data": ["waypointName": name, "instructionPrefix": String(orig.prefix(120)), "containsRight": orig.lowercased().contains("right"), "containsLeft": orig.lowercased().contains("left"), "side": side], "timestamp": Int(Date().timeIntervalSince1970 * 1000), "hypothesisId": "D"]
+                    if let _wrData = try? JSONSerialization.data(withJSONObject: _wrLog), let _wrLine = String(data: _wrData, encoding: .utf8) { _wrLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                    // #endregion
                     directionsToUse[idx] = WalkingDirection(
                         instruction: "Waypoint 1 (\(name)) is on your \(side)",
                         distance: directionsToUse[idx].distance,

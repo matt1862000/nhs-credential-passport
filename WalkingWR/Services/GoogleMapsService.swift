@@ -6343,7 +6343,32 @@ class GoogleMapsService: ObservableObject {
                         } else if i < waypointNames.count {
                             let waypointIndex = i + 1
                             let waypointName = waypointNames[i]
-                            let side = instructionLower.contains("right") ? "right" : "left"
+                            let waypointCoord = waypoints[i]
+                            // Prefer explicit side from API; when MapKit omits "right"/"left", use geometry
+                            let side: String
+                            if instructionLower.contains("right") {
+                                side = "right"
+                            } else if instructionLower.contains("left") {
+                                side = "left"
+                            } else {
+                                let pointCount = step.polyline.pointCount
+                                if pointCount >= 2 {
+                                    var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: pointCount)
+                                    step.polyline.getCoordinates(&coords, range: NSRange(location: 0, length: pointCount))
+                                    side = waypointSideFromGeometry(approachStart: coords[pointCount - 2], approachEnd: coords[pointCount - 1], waypoint: waypointCoord)
+                                } else {
+                                    side = "left"
+                                }
+                            }
+                            // #region agent log
+                            _agentLogGM("GoogleMapsService:MapKit:lastStep:side", "MapKit waypoint side", [
+                                "waypointName": waypointName,
+                                "instructionPrefix": String(instruction.prefix(120)),
+                                "containsRight": instructionLower.contains("right"),
+                                "containsLeft": instructionLower.contains("left"),
+                                "side": side
+                            ], "A")
+                            // #endregion
                             instruction = "Waypoint \(waypointIndex) (\(waypointName)) is on your \(side)"
                         }
                     }
@@ -7342,7 +7367,32 @@ class GoogleMapsService: ObservableObject {
                                     // Always inject waypoint name for last step of waypoint leg (API sometimes omits "arrival" phrasing)
                                     let waypointIndex = legIndex + 1
                                     let waypointName = route.qrMarkers[legIndex].name
-                                    let side = instructionLower.contains("right") ? "right" : "left"
+                                    let waypointCoord = route.qrMarkers[legIndex].coordinate
+                                    // Prefer explicit side from API; when refresh omits "right"/"left" (e.g. generic "Arrive at destination"), use geometry so we don't overwrite correct MapKit "right" with wrong default "left"
+                                    let side: String
+                                    if instructionLower.contains("right") {
+                                        side = "right"
+                                    } else if instructionLower.contains("left") {
+                                        side = "left"
+                                    } else if let stepPolyline = step["polyline"] as? [String: Any], let stepPoints = stepPolyline["points"] as? String {
+                                        let pts = decodePolyline(stepPoints)
+                                        if pts.count >= 2 {
+                                            side = waypointSideFromGeometry(approachStart: pts[pts.count - 2], approachEnd: pts[pts.count - 1], waypoint: waypointCoord)
+                                        } else {
+                                            side = "left"
+                                        }
+                                    } else {
+                                        side = "left"
+                                    }
+                                    // #region agent log
+                                    _agentLogGM("GoogleMapsService:Google:lastStep:side", "Google waypoint side", [
+                                        "waypointName": waypointName,
+                                        "instructionPrefix": String(instruction.prefix(120)),
+                                        "containsRight": instructionLower.contains("right"),
+                                        "containsLeft": instructionLower.contains("left"),
+                                        "side": side
+                                    ], "B")
+                                    // #endregion
                                     instruction = "Waypoint \(waypointIndex) (\(waypointName)) is on your \(side)"
                                     maneuver = "arrive"
                                 }
@@ -17165,6 +17215,17 @@ class GoogleMapsService: ObservableObject {
         let loc1 = CLLocation(latitude: c1.latitude, longitude: c1.longitude)
         let loc2 = CLLocation(latitude: c2.latitude, longitude: c2.longitude)
         return loc1.distance(from: loc2)
+    }
+    
+    /// Compute "left" or "right" for waypoint relative to approach direction (so "Waypoint X is on your left/right" is correct).
+    /// Uses 2D cross product: positive => waypoint is to the left of travel direction.
+    private func waypointSideFromGeometry(approachStart: CLLocationCoordinate2D, approachEnd: CLLocationCoordinate2D, waypoint: CLLocationCoordinate2D) -> String {
+        let dx = approachEnd.longitude - approachStart.longitude
+        let dy = approachEnd.latitude - approachStart.latitude
+        let px = waypoint.longitude - approachEnd.longitude
+        let py = waypoint.latitude - approachEnd.latitude
+        let cross = dx * py - dy * px
+        return cross > 0 ? "left" : "right"
     }
     
     // MARK: - v1.9.48: POI Deduplication Helper

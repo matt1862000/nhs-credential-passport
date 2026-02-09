@@ -4810,19 +4810,20 @@ struct LocalRoutePickerSheet: View {
                             
                             // #region agent log
                             let logData2: [String: Any] = [
-                                "sessionId": "debug-session",
-                                "runId": "run1",
-                                "hypothesisId": "A",
-                                "location": "RouteSelectionView.swift:4171",
-                                "message": "Creating waypoint-specific instruction",
+                                "location": "RouteSelectionView:extractWalkingDirections:side",
+                                "message": "RouteSelectionView waypoint side",
                                 "data": [
                                     "legIndex": legIndex,
                                     "waypointIndex": waypointIndex,
                                     "waypointName": waypointName,
                                     "side": side,
-                                    "waypointsCount": waypoints.count
+                                    "waypointsCount": waypoints.count,
+                                    "instructionPrefix": String(direction.instruction.prefix(120)),
+                                    "containsRight": instructionLower.contains("right"),
+                                    "containsLeft": instructionLower.contains("left")
                                 ],
-                                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                                "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+                                "hypothesisId": "E"
                             ]
                             if let logJSON2 = try? JSONSerialization.data(withJSONObject: logData2),
                                let logString2 = String(data: logJSON2, encoding: .utf8) {

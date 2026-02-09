@@ -101,6 +101,10 @@ enum RouteConversionHelper {
                             let waypoint = waypoints[legIndex]
                             let waypointName = waypoint.name
                             let side = instructionLower.contains("right") ? "right" : "left"
+                            // #region agent log
+                            let _logPayload: [String: Any] = ["location": "RouteConversionHelper:lastStep:side", "message": "RouteConversionHelper waypoint side", "data": ["waypointName": waypointName, "instructionPrefix": String(direction.instruction.prefix(120)), "containsRight": instructionLower.contains("right"), "containsLeft": instructionLower.contains("left"), "side": side], "timestamp": Int(Date().timeIntervalSince1970 * 1000), "hypothesisId": "C"]
+                            if let _logData = try? JSONSerialization.data(withJSONObject: _logPayload), let _logLine = String(data: _logData, encoding: .utf8) { _logLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                            // #endregion
                             direction = WalkingDirection(
                                 instruction: "Waypoint \(waypointIndex) (\(waypointName)) is on your \(side)",
                                 distance: step.distance.text,
