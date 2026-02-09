@@ -767,6 +767,19 @@ class WaitingRoomViewModel: ObservableObject {
         showDelayChangeOverlay = false
         
         Task {
+            // Timeout after 60 seconds; only set timeout message if still loading (work didn't finish first)
+            _ = Task {
+                try? await Task.sleep(nanoseconds: 60_000_000_000) // 60 seconds
+                await MainActor.run {
+                    if isLoadingDelayChangeRoute {
+                        isLoadingDelayChangeRoute = false
+                        if delayChangeRouteError == nil {
+                            delayChangeRouteError = "We couldn't find a new route within 60 seconds. Keep walking your current route or head back to the clinic."
+                        }
+                    }
+                }
+            }
+            
             do {
                 print("REFRESH_FALLBACK | Delay-change: targetDuration=\(targetDurationMinutes)min (newMinutes=\(newMinutes), buffer=\(buffer), isIncrease=\(isIncrease))")
                 
@@ -789,8 +802,10 @@ class WaitingRoomViewModel: ObservableObject {
                 print("REFRESH_FALLBACK | Delay-change: requesting route refresh (Google prioritised, then MapKit if quota/denied) — waypoints=\(walkingRoute.qrMarkers.count)")
                 guard let refreshed = await service.refreshRouteWithGoogleOnly(route: walkingRoute, userLocation: location) else {
                     await MainActor.run {
-                        delayChangeRouteError = "Couldn't update route. Keep walking your current route."
-                        isLoadingDelayChangeRoute = false
+                        if isLoadingDelayChangeRoute {
+                            delayChangeRouteError = "Couldn't update route. Keep walking your current route or head back."
+                            isLoadingDelayChangeRoute = false
+                        }
                     }
                     return
                 }
@@ -801,8 +816,10 @@ class WaitingRoomViewModel: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    delayChangeRouteError = "Couldn't find a new route. Keep walking your current route."
-                    isLoadingDelayChangeRoute = false
+                    if isLoadingDelayChangeRoute {
+                        delayChangeRouteError = "Couldn't find a new route. Keep walking your current route or head back."
+                        isLoadingDelayChangeRoute = false
+                    }
                 }
             }
         }

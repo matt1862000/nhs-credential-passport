@@ -712,7 +712,33 @@ struct EmbeddedWalkMapView: View {
         VStack {
             Spacer()
             
-            if let currentRoute = viewModel.walkSession.currentRoute {
+            if viewModel.isLoadingDelayChangeRoute {
+                // In-place loading: same slot as next-stop card, map stays interactive
+                HStack(spacing: 12) {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .tealAccent))
+                        .scaleEffect(1.0)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Finding a new route — this may take a minute.")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        Text("Keep walking your current route in the meantime.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 90)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(colorScheme == .dark ? Color(.systemGray6) : Color.white)
+                        .shadow(color: Color.black.opacity(0.15), radius: 4, y: 2)
+                )
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            } else if let currentRoute = viewModel.walkSession.currentRoute {
                 WaypointCarousel(
                     markers: currentRoute.qrMarkers,
                     visitedIds: viewModel.visitedMarkerIds,
@@ -755,24 +781,6 @@ struct EmbeddedWalkMapView: View {
     }
     
     @ViewBuilder
-    private var delayChangeLoadingOverlay: some View {
-        if viewModel.isLoadingDelayChangeRoute {
-            Color.black.opacity(0.5)
-                .ignoresSafeArea()
-            VStack(spacing: 16) {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    .scaleEffect(1.2)
-                Text("Finding new route…")
-                    .font(.headline)
-                    .foregroundColor(.white)
-            }
-            .padding(32)
-            .background(RoundedRectangle(cornerRadius: 16).fill(Color(UIColor.systemBackground)))
-        }
-    }
-    
-    @ViewBuilder
     private var delayChangeErrorOverlay: some View {
         if let error = viewModel.delayChangeRouteError {
             Color.black.opacity(0.5)
@@ -787,15 +795,27 @@ struct EmbeddedWalkMapView: View {
                     .foregroundColor(.primary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
-                Button("OK") {
-                    viewModel.clearDelayChangeRouteError()
+                HStack(spacing: 12) {
+                    Button("Head back") {
+                        viewModel.clearDelayChangeRouteError()
+                        viewModel.userTappedHeadBack()
+                    }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.blue)
+                    .cornerRadius(10)
+                    Button("OK") {
+                        viewModel.clearDelayChangeRouteError()
+                    }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
+                    .background(Color.orange)
+                    .cornerRadius(10)
                 }
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 10)
-                .background(Color.orange)
-                .cornerRadius(10)
             }
             .padding(24)
             .background(RoundedRectangle(cornerRadius: 16).fill(Color(UIColor.systemBackground)))
@@ -809,7 +829,6 @@ struct EmbeddedWalkMapView: View {
             topOverlay
             bottomOverlay
             delayOverlay
-            delayChangeLoadingOverlay
             delayChangeErrorOverlay
         }
         // ----------------------
