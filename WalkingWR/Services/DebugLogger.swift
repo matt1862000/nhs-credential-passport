@@ -87,6 +87,35 @@ class DebugLogger {
         return text
     }
     
+    // #region agent log
+    /// Agent debug: append one NDJSON line to .cursor/debug.log (for debug mode instrumentation).
+    static func agentLog(location: String, message: String, hypothesisId: String, data: [String: Any] = [:]) {
+        let path = "/Users/raihant/Documents/WalkingWR/.cursor/debug.log"
+        var payload: [String: Any] = [
+            "id": "log_\(Int(Date().timeIntervalSince1970 * 1000))_\(UUID().uuidString.prefix(8))",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "location": location,
+            "message": message,
+            "hypothesisId": hypothesisId
+        ]
+        if !data.isEmpty { payload["data"] = data }
+        guard let json = try? JSONSerialization.data(withJSONObject: payload),
+              let line = String(data: json, encoding: .utf8) else { return }
+        let lineWithNewline = line + "\n"
+        guard let d = lineWithNewline.data(using: .utf8) else { return }
+        let url = URL(fileURLWithPath: path)
+        if FileManager.default.fileExists(atPath: path) {
+            if let h = try? FileHandle(forWritingTo: url) {
+                h.seekToEndOfFile()
+                h.write(d)
+                try? h.close()
+            }
+        } else {
+            try? d.write(to: url)
+        }
+    }
+    // #endregion agent log
+
     /// Copy current log file content to the pasteboard. Returns true if something was copied.
     /// Includes return-leg debug lines (search for [AGENT_RETURN_LEG] for DISPLAY_SYNC_ADVANCING_TO_RETURN, LAST_MARKER_VISITED, SWITCHED_TO_RETURN_DIRECTIONS).
     @discardableResult

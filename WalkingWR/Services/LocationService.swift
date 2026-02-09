@@ -1463,8 +1463,15 @@ extension LocationService: CLLocationManagerDelegate {
         print("⏱️ [LOCATION] [\(timeString)] 📍 didUpdateLocations: lat=\(String(format: "%.5f", newLocation.coordinate.latitude)), lon=\(String(format: "%.5f", newLocation.coordinate.longitude)), accuracy=\(String(format: "%.1f", newLocation.horizontalAccuracy))m\(isFirstLocation ? " (FIRST LOCATION)" : "")")
         
         DispatchQueue.main.async {
+            // #region agent log
+            let speedVal = newLocation.speed >= 0 ? newLocation.speed : 0.0
+            DebugLogger.agentLog(location: "LocationService.didUpdateLocations", message: "before WALK_DEBUG UPDATE", hypothesisId: "H5_H6_H7", data: ["speedType": "Double", "speedVal": speedVal, "stepCur": self.currentDirectionIndex + 1, "stepTotal": self.directionWaypoints.count])
+            // #endregion agent log
             // [WALK_DEBUG] UPDATE: where app thinks user is
-            self.walkDebug("UPDATE position lat=\(String(format: "%.6f", newLocation.coordinate.latitude)) lon=\(String(format: "%.6f", newLocation.coordinate.longitude)) accuracy=\(String(format: "%.1f", newLocation.horizontalAccuracy))m speed=\(String(format: "%.2f", newLocation.speed >= 0 ? newLocation.speed : 0))m/s step=\(self.currentDirectionIndex + 1)/\(self.directionWaypoints.count)")
+            self.walkDebug("UPDATE position lat=\(String(format: "%.6f", newLocation.coordinate.latitude)) lon=\(String(format: "%.6f", newLocation.coordinate.longitude)) accuracy=\(String(format: "%.1f", newLocation.horizontalAccuracy))m speed=\(String(format: "%.2f", newLocation.speed >= 0 ? newLocation.speed : 0.0))m/s step=\(self.currentDirectionIndex + 1)/\(self.directionWaypoints.count)")
+            // #region agent log
+            DebugLogger.agentLog(location: "LocationService.didUpdateLocations", message: "after WALK_DEBUG UPDATE", hypothesisId: "H5_H6_H7", data: [:])
+            // #endregion agent log
             
             // Mark fetching complete and cancel retry timer
             let wasFetching = self.isFetchingLocation
@@ -1473,6 +1480,9 @@ extension LocationService: CLLocationManagerDelegate {
             
             if wasFetching, let startTime = requestStartTime {
                 let elapsed = updateTime.timeIntervalSince(startTime)
+                // #region agent log
+                DebugLogger.agentLog(location: "LocationService.didUpdateLocations", message: "before elapsed print", hypothesisId: "H5_H6", data: ["elapsedType": "TimeInterval", "elapsedVal": elapsed])
+                // #endregion agent log
                 print("⏱️ [LOCATION] [\(timeString)] ✅ Location obtained in \(String(format: "%.2f", elapsed))s")
                 self.locationRequestStartTime = nil
             }
@@ -1511,6 +1521,9 @@ extension LocationService: CLLocationManagerDelegate {
             }
             
             self.routeLocations.append(newLocation)
+            // #region agent log
+            DebugLogger.agentLog(location: "LocationService.didUpdateLocations", message: "before set currentLocation", hypothesisId: "H8", data: [:])
+            // #endregion agent log
             self.currentLocation = newLocation
             
             // v1.9.15: Check if user has deviated significantly from route

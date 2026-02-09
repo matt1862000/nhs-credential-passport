@@ -1860,7 +1860,7 @@ struct LocalRoutePickerSheet: View {
                 }
                 
                 // If postcode hit and prepop DB not ready: stay on "Finding places nearby" until download finishes OR 10s, then proceed
-                let inPostcodeArea = PrePopulatedPOIService.shared.isInTargetPostcodeArea(userLocation.coordinate)
+                let inPostcodeArea = await PrePopulatedPOIService.shared.isInTargetPostcodeArea(userLocation.coordinate)
                 if inPostcodeArea && !PrePopulatedPOIService.shared.hasDownloadedDatabase {
                     let prepopWaitStart = Date()
                     await PrePopulatedPOIService.shared.ensureDatabaseReadyWithTimeout(userLocation: userLocation.coordinate, waitUpToSeconds: 10.0)
@@ -2546,10 +2546,24 @@ struct LocalRoutePickerSheet: View {
                 // v1.8.7: Loading screen Task already started at the beginning of Task block
                 
                 do {
+                    // If prefetch is in progress, wait up to 3s for it to reach a minimum POI count (faster than starting a new fetch)
+                    var (prefetchCount, isPrefetching) = await MainActor.run { (prefetchedPOIs.count, isPrefetchingPOIs) }
+                    if prefetchCount == 0 && isPrefetching {
+                        let waitStart = Date()
+                        for _ in 0..<15 {
+                            try? await Task.sleep(nanoseconds: 200_000_000) // 0.2s
+                            (prefetchCount, isPrefetching) = await MainActor.run { (prefetchedPOIs.count, isPrefetchingPOIs) }
+                            if prefetchCount >= 15 || !isPrefetching { break }
+                            if Date().timeIntervalSince(waitStart) >= 3.0 { break }
+                        }
+                        if prefetchCount > 0 {
+                            print("⏱️ Pre-fetch ready after \(String(format: "%.1f", Date().timeIntervalSince(waitStart)))s wait (\(prefetchCount) POIs)")
+                        }
+                    }
                     // Use pre-fetched POIs if available (faster!)
-                    let poisToUse = prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
-                    if poisToUse != nil {
-                        print("⚡ Using \(prefetchedPOIs.count) pre-fetched POIs for instant route generation")
+                    let poisToUse = await MainActor.run { prefetchedPOIs.isEmpty ? nil : prefetchedPOIs }
+                    if let pois = poisToUse {
+                        print("⚡ Using \(pois.count) pre-fetched POIs for instant route generation")
                     } else {
                         print("⚠️ No pre-fetched POIs - will fetch during generation (slower)")
                     }

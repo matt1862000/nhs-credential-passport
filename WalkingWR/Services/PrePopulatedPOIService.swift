@@ -46,6 +46,13 @@ class PrePopulatedPOIService {
         "S36"       // Sheffield S36
     ]
     
+    /// Postcode districts we have prepop JSON for (GPS → reverse geocode → match this set → download).
+    private static let supportedDistricts: Set<String> = [
+        "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14",
+        "S17", "S20", "S21", "S25", "S26", "S35", "S36",
+        "WF1", "WF2"
+    ]
+    
     /// Max pre-populated routes to return per (postcode, duration). "Best" = least total time from user (route start + loop). Script emits all; app filters here because user location varies.
     private let maxPrePopulatedRoutesPerBucket = 10
 
@@ -126,6 +133,37 @@ class PrePopulatedPOIService {
         ("S20", 53.3400, -1.4500), ("S21", 53.3300, -1.4800), ("S25", 53.4200, -1.4200),
         ("S26", 53.3450, -1.4200), ("S35", 53.4200, -1.4800), ("S36", 53.4350, -1.5000)
     ]
+    
+    /// Normalise full UK postcode to district (outward code): "WF1 1QY" → "WF1", "S10 1AA" → "S10".
+    /// UK format is "OUTWARD INWARD"; we want the first part only (split on space).
+    private static func normaliseToDistrict(_ postalCode: String?) -> String? {
+        guard let raw = postalCode?.trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        let firstPart = raw.split(separator: " ").first.map { String($0) } ?? raw
+        let s = firstPart.uppercased()
+        return s.isEmpty ? nil : s
+    }
+    
+    /// Reverse geocode: GPS → postcode district if in supported list. Returns nil on failure or unsupported district.
+    private func getPostcodeDistrictFromGeocode(for location: CLLocationCoordinate2D) async -> String? {
+        let loc = CLLocation(latitude: location.latitude, longitude: location.longitude)
+        let geocoder = CLGeocoder()
+        do {
+            let placemarks = try await geocoder.reverseGeocodeLocation(loc)
+            guard let placemark = placemarks.first else { return nil }
+            let district = Self.normaliseToDistrict(placemark.postalCode)
+            guard let d = district, Self.supportedDistricts.contains(d) else {
+                if let pc = placemark.postalCode {
+                    print("📦 Pre-populated DB: Geocode returned postcode '\(pc)' (district '\(district ?? "nil")') - not in supported list")
+                }
+                return nil
+            }
+            print("📦 Pre-populated DB: Geocode → postcode '\(placemark.postalCode ?? "?")' → district '\(d)' (in supported list)")
+            return d
+        } catch {
+            print("📦 Pre-populated DB: Reverse geocode failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
     
     // MARK: - Database Structure
     
@@ -661,37 +699,32 @@ class PrePopulatedPOIService {
         return nil
     }
     
-    /// Determine which postcode district a location belongs to
-    /// Returns the postcode district (e.g., "S10") or nil if not in any target area
-    private func getPostcodeDistrict(for location: CLLocationCoordinate2D) -> String? {
+    /// Fallback: determine district by distance to known postcode centers (2500m radius). Used when reverse geocode fails or is unavailable.
+    private func getPostcodeDistrictFromCenters(for location: CLLocationCoordinate2D) -> String? {
         var closestPostcode: String? = nil
         var closestDistance: Double = Double.infinity
-        
-        // Find the closest postcode area center (uses shared postcodeCenters)
         for (postcode, centerLat, centerLon) in Self.postcodeCenters {
             let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
             let distance = distanceBetween(location, center)
-            
-            // Check if within the area's radius (2500m)
             if distance <= 2500.0 && distance < closestDistance {
                 closestPostcode = postcode
                 closestDistance = distance
             }
         }
-        
-        if let postcode = closestPostcode {
-            // Extract district (S10 -> S10, WF2 0GU -> WF2)
-            if postcode.hasPrefix("S") {
-                // Extract number part for S postcodes
-                let district = String(postcode.prefix(while: { $0.isLetter || $0.isNumber }))
-                return district
-            } else if postcode.hasPrefix("WF") {
-                return "WF2"  // Wakefield area
-            }
-            return postcode
+        guard let postcode = closestPostcode else { return nil }
+        if postcode.hasPrefix("S") {
+            return String(postcode.prefix(while: { $0.isLetter || $0.isNumber }))
         }
-        
-        return nil
+        if postcode.hasPrefix("WF") { return "WF2" }
+        return postcode
+    }
+    
+    /// Determine postcode district for a location: 1) Reverse geocode → normalise → match supported list; 2) Fallback: distance to known centers (2500m).
+    private func getPostcodeDistrict(for location: CLLocationCoordinate2D) async -> String? {
+        if let district = await getPostcodeDistrictFromGeocode(for: location) {
+            return district
+        }
+        return getPostcodeDistrictFromCenters(for: location)
     }
     
     /// Effective center for an area: prefer known postcode center when we have one (avoids swapped/wrong stored lat/lon); else use stored if valid.
@@ -953,9 +986,9 @@ class PrePopulatedPOIService {
     }
 
     /// Returns true if the coordinate is in a target postcode area (we have prepop data for it).
-    /// Use this to decide whether to wait on "Finding places" for the prepop download.
-    func isInTargetPostcodeArea(_ coordinate: CLLocationCoordinate2D) -> Bool {
-        getPostcodeDistrict(for: coordinate) != nil
+    /// Uses reverse geocode first, then fallback to distance-to-centers.
+    func isInTargetPostcodeArea(_ coordinate: CLLocationCoordinate2D) async -> Bool {
+        await getPostcodeDistrict(for: coordinate) != nil
     }
 
     /// Download pre-populated database when we have a user location.
@@ -978,7 +1011,7 @@ class PrePopulatedPOIService {
 
         // Already have cache and no need to re-download — unless user is in a different postcode (e.g. moved from WF2 to S5)
         let cachedSource = UserDefaults.standard.string(forKey: databaseSourceKey)
-        let currentPostcode = getPostcodeDistrict(for: userLocation)
+        let currentPostcode = await getPostcodeDistrict(for: userLocation)
         if UserDefaults.standard.data(forKey: storageKey) != nil, hasDownloadedDatabase {
             if let postcode = currentPostcode, postcode == cachedSource {
                 return
@@ -995,8 +1028,8 @@ class PrePopulatedPOIService {
         downloadTask = Task {
             defer { isDownloading = false; downloadTask = nil }
         
-        // Determine postcode district from location (postcode-only download)
-        let postcodeDistrict = getPostcodeDistrict(for: userLocation)
+        // Determine postcode district from location: reverse geocode first, then fallback to distance-to-centers
+        let postcodeDistrict = await getPostcodeDistrict(for: userLocation)
         if let district = postcodeDistrict {
             print("📦 Pre-populated DB: User in postcode district '\(district)' - downloading postcode file only")
             print("\(Self.telem) DOWNLOAD_START attemptedPostcode=\(district) location=(\(String(format: "%.5f", userLocation.latitude)),\(String(format: "%.5f", userLocation.longitude)))")

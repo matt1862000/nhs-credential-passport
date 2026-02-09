@@ -151,14 +151,13 @@ private actor OSMMirrorHealthTracker {
     private let maxConsecutiveFailures = 3  // After 3 failures, deprioritize
     
     init() {
-        // Initialize with known mirrors
+        // Initialize with known mirrors (kumi.systems omitted: TLS -1200)
         let knownMirrors = [
             "https://lz4.overpass-api.de/api/interpreter",
             "https://overpass-api.de/api/interpreter",
             "https://overpass.private.coffee/api/interpreter",
             "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-            "https://overpass.osm.jp/api/interpreter",
-            "https://overpass.kumi.systems/api/interpreter"
+            "https://overpass.osm.jp/api/interpreter"
         ]
         
         for mirror in knownMirrors {
@@ -577,11 +576,11 @@ struct RoutingToggles {
     }
     
     // Minimum waypoints by duration
-    // SPRINT-5: Adjusted thresholds to prevent 1-WP collapse
-    // 10-15 min → 2 WPs, 16-34 min → 3 WPs, 35+ min → 4 WPs
+    // 10 min → 1 WP (2 preferred); 11-15 min → 2 WPs; 16-34 min → 3 WPs; 35+ min → 4 WPs
     static func minWaypoints(forDuration duration: Int) -> Int {
+        if duration <= 10 { return 1 }  // Allow 1 waypoint; 2 is preference
         if duration <= 15 { return 2 }
-        if duration <= 34 { return 3 }  // SPRINT-5: Extended from 30 to 34 to cover mid-range better
+        if duration <= 34 { return 3 }
         return 4  // 35-60 min
     }
     
@@ -1916,12 +1915,14 @@ class GoogleMapsService: ObservableObject {
     /// 4. Geograph (FREE, experimental - requires API key from https://www.geograph.org.uk/help/api)
     /// 
     /// - Parameter skipGoogle: If true, skips Google Places API call (cost optimization for first-run)
+    /// - Parameter canonicalMaxTimeSeconds: If set, canonical dedup is capped so first route is not blocked (nil = full dedup for prefetch/cache).
     func findNearbyPlaces(
         location: CLLocationCoordinate2D,
         radiusMeters: Int = 2500,  // Increased from 500m for better coverage
         types: [String] = ["point_of_interest"],
         skipGoogle: Bool = false,  // v1.9.50: Skip Google on first run to save costs
-        targetDurationMinutes: Int? = nil  // v2.0.3 Phase 2A: For diversity check in DB blending
+        targetDurationMinutes: Int? = nil,  // v2.0.3 Phase 2A: For diversity check in DB blending
+        canonicalMaxTimeSeconds: TimeInterval? = nil  // Cap canonical dedup for fast first route (prefetch uses full dedup)
     ) async throws -> [PlaceResult] {
         let startTime = Date()
         let formatter = DateFormatter()
@@ -2274,6 +2275,13 @@ class GoogleMapsService: ObservableObject {
                         break
                     }
                     
+                    // Early exit: enough POIs for route quality - don't wait for slower sources
+                    if collected.count >= minimumPOIsRequired {
+                        print("⏱️ Early exit - have \(collected.count) POIs (≥ \(minimumPOIsRequired)) in \(String(format: "%.2f", elapsed))s")
+                        group.cancelAll()
+                        break
+                    }
+                    
                     // Timeout check
                     if elapsed >= timeoutSeconds {
                         print("⏱️ Timeout reached (\(timeoutSeconds)s) - proceeding with \(collected.count) POIs")
@@ -2365,7 +2373,7 @@ class GoogleMapsService: ObservableObject {
         let beforeCanonical = allResults.count
         let canonicalStartTime = Date()
         print("🎯 [CANONICAL] Starting canonical POI deduplication...")
-        allResults = canonicalizePOIs(allResults, origin: location)
+        allResults = canonicalizePOIs(allResults, origin: location, maxTimeSeconds: canonicalMaxTimeSeconds)
         let canonicalElapsed = Date().timeIntervalSince(canonicalStartTime)
         let canonicalRemoved = beforeCanonical - allResults.count
         if canonicalRemoved > 0 {
@@ -3342,15 +3350,13 @@ class GoogleMapsService: ObservableObject {
         """
         
         // Try multiple Overpass API mirrors for reliability
-        // Overpass API mirrors - ordered by reliability
-        // Note: kumi.systems has SSL issues, moved to last
+        // Overpass API mirrors - ordered by reliability (kumi.systems removed: TLS -1200 confirmed)
         let allMirrors = [
             "https://lz4.overpass-api.de/api/interpreter",           // Fast mirror - usually works
             "https://overpass-api.de/api/interpreter",               // Main server
             "https://overpass.private.coffee/api/interpreter",       // No rate limits, global
             "https://maps.mail.ru/osm/tools/overpass/api/interpreter", // VK Maps, no limits, global
-            "https://overpass.osm.jp/api/interpreter",               // Japan mirror, global
-            "https://overpass.kumi.systems/api/interpreter"          // Has SSL issues, last resort
+            "https://overpass.osm.jp/api/interpreter"                // Japan mirror, global
         ]
         
         // v2.0.3 Phase 1.5: Prioritize mirrors by health (rate-limited mirrors deprioritized)
@@ -3385,7 +3391,9 @@ class GoogleMapsService: ObservableObject {
                         config.timeoutIntervalForRequest = 30
                         config.timeoutIntervalForResource = 60
                         let session = URLSession(configuration: config)
-                
+                // #region agent log
+                        DebugLogger.agentLog(location: "GoogleMapsService.OSM_mirror", message: "Overpass OSM mirror request start", hypothesisId: "H1_H5", data: ["mirrorIndex": index + 1, "url": baseUrl])
+                // #endregion agent log
                         let (data, response) = try await session.data(for: request)
                 
                         guard let httpResponse = response as? HTTPURLResponse else {
@@ -3475,6 +3483,11 @@ class GoogleMapsService: ObservableObject {
                         return (index: index, results: parsedResults)
                         
                     } catch {
+                        // #region agent log
+                        let nsErr = error as NSError
+                        let isTLS = (nsErr.domain == NSURLErrorDomain && [-1200, -9816, -1201, -1202, -1203, -1204, -1205, -1206].contains(nsErr.code))
+                        DebugLogger.agentLog(location: "GoogleMapsService.OSM_mirror", message: "Overpass OSM mirror failed", hypothesisId: "H1_H4_H5", data: ["mirrorIndex": index + 1, "url": baseUrl, "domain": nsErr.domain, "code": nsErr.code, "isTLS": isTLS])
+                        // #endregion agent log
                         print("🗺️ OSM mirror \(index + 1) failed: \(error.localizedDescription)")
                         
                         // P1 FIX: Detect SSL errors (-1200, -9816) and blacklist mirror
@@ -4951,7 +4964,9 @@ class GoogleMapsService: ObservableObject {
         guard let url = URL(string: "https://lz4.overpass-api.de/api/interpreter") else {
             return nil
         }
-        
+        // #region agent log
+        DebugLogger.agentLog(location: "GoogleMapsService.executeRoadSnapQuery", message: "Overpass request start", hypothesisId: "H1_H2_H3", data: ["url": url.absoluteString, "description": description])
+        // #endregion agent log
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -5008,6 +5023,11 @@ class GoogleMapsService: ObservableObject {
             return closestPoint
             
         } catch {
+            // #region agent log
+            let nsErr = error as NSError
+            let isTLS = (nsErr.domain == NSURLErrorDomain && [NSURLErrorSecureConnectionFailed, -1200, -9816].contains(nsErr.code))
+            DebugLogger.agentLog(location: "GoogleMapsService.executeRoadSnapQuery", message: "Overpass request failed", hypothesisId: "H1_H2_H4", data: ["domain": nsErr.domain, "code": nsErr.code, "isTLS": isTLS, "description": description])
+            // #endregion agent log
             print("🛤️ ❌ Failed to find nearest \(description): \(error.localizedDescription)")
             return nil
         }
@@ -10580,7 +10600,12 @@ class GoogleMapsService: ObservableObject {
                 // SPRINT-7: Insert 1-2 POIs per pass (not all at once)
                 // v2.1.7: Same as waypoint distance (100m short routes, 200m for 25+ min)
                 let insertCount = min(2, min(needed, sortedPOIs.count))
-                let minMicroSpurDistance = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
+                var minMicroSpurDistance = RoutingToggles.minWaypointDistance(durationMinutes: targetDurationMinutes)
+                // When we have only 1 waypoint and need 2+, relax spacing so we can add a second (fixes "too close" spur rejections)
+                if enhancedPlaces.count == 1 && minWaypoints >= 2 {
+                    minMicroSpurDistance = min(minMicroSpurDistance, 50.0)
+                    print("📍 [WP-MIN] Relaxed micro-spur min distance to \(Int(minMicroSpurDistance))m (1 WP → need \(minWaypoints))")
+                }
                 for i in 0..<insertCount {
                     let candidatePOI = sortedPOIs[i]
                     // Check if candidate is too close to any existing waypoint
@@ -10655,7 +10680,9 @@ class GoogleMapsService: ObservableObject {
         let hardCap130 = Int(Double(targetDurationMinutes) * 1.30)
         
         // SPRINT-4: Micro-trim if route >130% (shave far spur/leg)
-        if accuracyRatio > 1.30 && finalRoute.places.count > 1, let originCoord = origin {
+        // Do not trim if it would drop below minimum waypoints (avoids NEAR_MISS <minWP)
+        let finalTrimWouldKeepMinWP = (finalRoute.places.count - 1) >= minWaypoints
+        if accuracyRatio > 1.30 && finalRoute.places.count > 1 && finalTrimWouldKeepMinWP, let originCoord = origin {
             print("🔧 [FINAL-GUARD] Route \(routeMins)min (\(String(format: "%.1f", accuracyRatio * 100))%) >130% - attempting micro-trim")
             
             // Find farthest waypoint from origin
@@ -11905,18 +11932,22 @@ class GoogleMapsService: ObservableObject {
                 location: location,
                 radiusMeters: searchRadius,
                 skipGoogle: true,  // Skip Google on first attempt
-                targetDurationMinutes: targetDurationMinutes  // v2.0.3 Phase 2A: For diversity check
+                targetDurationMinutes: targetDurationMinutes,  // v2.0.3 Phase 2A: For diversity check
+                canonicalMaxTimeSeconds: 4.0  // Cap canonical dedup so first route is not blocked (~34s → ~4s)
             )
             
             let freeSourcesElapsed = Date().timeIntervalSince(freeSourcesStartTime)
             print("⏱️ [TIMING] Free sources fetch COMPLETED in \(String(format: "%.2f", freeSourcesElapsed))s")
             print("🗺️ Free sources: Found \(places.count) POIs (need \(desiredSpots) for route)")
             
-            // SPRINT-5: Budget check AFTER POI fetch - abort if hard-stop already exceeded
-            // This prevents 57+ second POI fetches from wasting additional time in routing
+            // SPRINT-5: Budget check AFTER POI fetch - if we have enough POIs, still build a route (don't abort)
             if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "POI_FETCH_COMPLETE") {
-                print("⛔ [HARD-STOP] Budget exceeded after POI fetch - aborting route generation")
-                throw GoogleMapsError.noRouteFound
+                if places.count >= 15 {
+                    print("⛔ [HARD-STOP] Budget exceeded after POI fetch - but we have \(places.count) POIs, continuing to build route")
+                } else {
+                    print("⛔ [HARD-STOP] Budget exceeded after POI fetch - aborting (only \(places.count) POIs)")
+                    throw GoogleMapsError.noRouteFound
+                }
             }
             
             // Check if we used the pre-populated database (comprehensive, no need for Google fallback)
@@ -11944,7 +11975,8 @@ class GoogleMapsService: ObservableObject {
                     location: location,
                     radiusMeters: searchRadius,
                     skipGoogle: false,  // Include Google
-                    targetDurationMinutes: targetDurationMinutes  // v2.0.3 Phase 2A: For diversity check
+                    targetDurationMinutes: targetDurationMinutes,  // v2.0.3 Phase 2A: For diversity check
+                    canonicalMaxTimeSeconds: 4.0  // Cap so route building is not blocked
                 )
                 
                 let googleFallbackElapsed = Date().timeIntervalSince(googleFallbackStartTime)
@@ -16423,8 +16455,11 @@ class GoogleMapsService: ObservableObject {
                 // v2.0.3: Early trim on obvious overshoot (>140%) or if we already have a valid route
                 let shouldTrimEarly = (totalDuration > Int(Double(targetDurationSeconds) * 1.40)) || 
                                       (totalDuration > maxAcceptable && !validRoutes.isEmpty)
+                let minWPForTrim = RoutingToggles.minWaypoints(forDuration: targetDurationMinutes)
+                // Do not trim if it would leave fewer than minimum waypoints (fixes NEAR_MISS <minWP)
+                let trimWouldKeepMinWP = (orderedWaypoints.count - 1) >= minWPForTrim
                 
-                if shouldTrimEarly && orderedWaypoints.count > 1 {
+                if shouldTrimEarly && orderedWaypoints.count > 1 && trimWouldKeepMinWP {
                     let trimReason = totalDuration > Int(Double(targetDurationSeconds) * 1.40) ? 
                         ">140% overshoot" : "already have valid route"
                     print("🗺️ ✂️ [TRIM] [EARLY TRIM] Route \(trimReason) - trimming farthest waypoint immediately")
@@ -17638,9 +17673,10 @@ class GoogleMapsService: ObservableObject {
     /// 2. Name normalization + similarity (≥0.85) - merges similar names
     /// 3. Source priority - chooses best representative (Google > Apple > OSM > Geograph)
     /// 4. Preserves provenance - logs all merged aliases
-    private func canonicalizePOIs(_ pois: [PlaceResult], origin: CLLocationCoordinate2D) -> [PlaceResult] {
+    private func canonicalizePOIs(_ pois: [PlaceResult], origin: CLLocationCoordinate2D, maxTimeSeconds: TimeInterval? = nil) -> [PlaceResult] {
         guard !pois.isEmpty else { return pois }
         
+        let canonicalStartTime = Date()
         print("🎯 [CANONICAL] Processing \(pois.count) POIs with type-aware merge rules:")
         print("   • Requires: (1) proximity ≤150m (or ≤400m with same grid ref/OSM ID), (2) compatible types, (3) name similarity ≥0.85 OR shared source signal")
         print("   • Never merges incompatible types (e.g., pub vs postbox)")
@@ -17664,6 +17700,17 @@ class GoogleMapsService: ObservableObject {
         }
         
         for poi in sorted {
+            // Fast path: cap canonical time so first route is not blocked (e.g. 4s)
+            if let cap = maxTimeSeconds, Date().timeIntervalSince(canonicalStartTime) >= cap {
+                let unprocessed = sorted.filter { !processed.contains($0.placeId) && !isNonPOI($0) }
+                for other in unprocessed {
+                    canonical.append(other)
+                    processed.insert(other.placeId)
+                }
+                print("🎯 [CANONICAL] Time cap (\(String(format: "%.1f", cap))s) reached - returning \(canonical.count) POIs (\(unprocessed.count) unmerged)")
+                return canonical
+            }
+            
             // Skip if already processed
             if processed.contains(poi.placeId) {
                 continue
