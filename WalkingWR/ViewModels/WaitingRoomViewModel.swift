@@ -770,53 +770,21 @@ class WaitingRoomViewModel: ObservableObject {
             do {
                 print("REFRESH_FALLBACK | Delay-change: targetDuration=\(targetDurationMinutes)min (newMinutes=\(newMinutes), buffer=\(buffer), isIncrease=\(isIncrease))")
                 
-                // When extending: preserve current waypoints only if current route is already close to target duration; otherwise generate a longer route so the suggested walk matches the extended time.
-                let walkingRoute: WalkingRoute
-                let currentRoute = walkSession.currentRoute
-                let currentMin = currentRoute?.durationMinutes ?? 0
-                let minRatioToPreserve: Double = 0.5  // Preserve waypoints only if current >= 50% of target
-                let shouldPreserve = isIncrease && currentRoute != nil && !currentRoute!.qrMarkers.isEmpty && (Double(currentMin) / Double(targetDurationMinutes)) >= minRatioToPreserve
-                
-                if shouldPreserve {
-                    print("REFRESH_FALLBACK | Delay-change: extending — preserving current \(currentRoute!.qrMarkers.count) waypoints (current=\(currentMin)min ~= target=\(targetDurationMinutes)min) [\(currentRoute!.qrMarkers.map { $0.name }.joined(separator: ", "))]")
-                    walkingRoute = WalkingRoute(
-                        name: "Extended route",
-                        description: "Route extended for extra time.",
-                        durationMinutes: targetDurationMinutes,
-                        distanceMeters: currentRoute!.distanceMeters,
-                        difficulty: currentRoute!.difficulty,
-                        isIndoor: currentRoute!.isIndoor,
-                        isAccessible: currentRoute!.isAccessible,
-                        landmarks: ["Start"] + currentRoute!.qrMarkers.map { $0.name } + ["Return"],
-                        icon: currentRoute!.icon,
-                        color: currentRoute!.color,
-                        qrMarkers: currentRoute!.qrMarkers,
-                        routeType: currentRoute!.routeType,
-                        trimmed: currentRoute!.trimmed,
-                        walkingDirections: currentRoute!.walkingDirections,
-                        usedOSRMRouting: currentRoute!.usedOSRMRouting,
-                        isFromPrePopulatedDatabase: currentRoute!.isFromPrePopulatedDatabase
-                    )
-                } else {
-                    if isIncrease, currentRoute != nil, !currentRoute!.qrMarkers.isEmpty {
-                        print("REFRESH_FALLBACK | Delay-change: current route short (\(currentMin)min) vs target (\(targetDurationMinutes)min) — generating new longer route with more waypoints")
-                    }
-                    // Shorten, or extend with a short current route: generate a new route for target duration
-                    let generated = try await service.generateRouteTopologySafe(
-                        from: location,
-                        targetDurationMinutes: targetDurationMinutes,
-                        difficulty: nil,
-                        excludePlaceIds: [],
-                        excludePOIs: []
-                    )
-                    print("REFRESH_FALLBACK | Delay-change: generator returned places=\(generated.places.count) [\(generated.places.map { $0.name }.joined(separator: ", "))]")
-                    walkingRoute = RouteConversionHelper.walkingRoute(
-                        from: generated,
-                        origin: location,
-                        name: isIncrease ? "Extended route" : "Shorter route",
-                        description: isIncrease ? "Route extended for extra time." : "Shorter route to head back sooner."
-                    )
-                }
+                // Always generate a new route for the target duration (both extend and shorten). New time = new route.
+                let generated = try await service.generateRouteTopologySafe(
+                    from: location,
+                    targetDurationMinutes: targetDurationMinutes,
+                    difficulty: nil,
+                    excludePlaceIds: [],
+                    excludePOIs: []
+                )
+                print("REFRESH_FALLBACK | Delay-change: generator returned places=\(generated.places.count) [\(generated.places.map { $0.name }.joined(separator: ", "))]")
+                let walkingRoute = RouteConversionHelper.walkingRoute(
+                    from: generated,
+                    origin: location,
+                    name: isIncrease ? "Extended route" : "Shorter route",
+                    description: isIncrease ? "Route extended for extra time." : "Shorter route to head back sooner."
+                )
                 
                 print("REFRESH_FALLBACK | Delay-change: requesting route refresh (Google prioritised, then MapKit if quota/denied) — waypoints=\(walkingRoute.qrMarkers.count)")
                 guard let refreshed = await service.refreshRouteWithGoogleOnly(route: walkingRoute, userLocation: location) else {
