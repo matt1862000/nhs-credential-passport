@@ -299,7 +299,7 @@
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 336;
+				CURRENT_PROJECT_VERSION = 337;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -322,7 +322,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.26;
+				MARKETING_VERSION = 2.1.27;
 				PRODUCT_BUNDLE_IDENTIFIER = com.nhs.WalkingWR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -343,7 +343,7 @@
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 336;
+				CURRENT_PROJECT_VERSION = 337;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -366,7 +366,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.1.26;
+				MARKETING_VERSION = 2.1.27;
 				PRODUCT_BUNDLE_IDENTIFIER = com.nhs.WalkingWR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

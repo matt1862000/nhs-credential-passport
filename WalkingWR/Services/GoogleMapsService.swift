@@ -6603,6 +6603,65 @@ class GoogleMapsService: ObservableObject {
         return refreshedRoute
     }
     
+    // MARK: - Preview final dedup: ensure all waypoints are unique when showing route preview
+    /// Converts route markers to places, runs route dedup, and if duplicates were removed returns a new route + data with unique waypoints and refreshed polyline/directions.
+    /// Call when the user is shown the route preview to avoid displaying the same POI twice (e.g. two "The Star Inn" waypoints).
+    func deduplicateWalkingRouteForPreview(route: WalkingRoute, origin: CLLocationCoordinate2D) async -> (WalkingRoute, GeneratedRoute)? {
+        guard route.qrMarkers.count > 1 else { return nil }
+        let places = route.qrMarkers.map { placeResult(from: $0) }
+        let deduplicated = deduplicateRoutePlaces(places)
+        guard deduplicated.count < route.qrMarkers.count else { return nil }
+        print("🛡️ [PREVIEW DEDUP] Removed \(route.qrMarkers.count - deduplicated.count) duplicate waypoint(s) for preview — \(deduplicated.count) unique")
+        // Map deduplicated places back to QRMarkers (keep first matching marker per unique place)
+        var keptMarkers: [QRMarker] = []
+        for place in deduplicated {
+            if let firstMatch = route.qrMarkers.first(where: { isRouteDuplicate(place, placeResult(from: $0)) }) {
+                keptMarkers.append(firstMatch)
+            }
+        }
+        guard keptMarkers.count == deduplicated.count else { return nil }
+        let routeWithUniqueMarkers = WalkingRoute(
+            name: route.name,
+            description: route.description,
+            durationMinutes: route.durationMinutes,
+            distanceMeters: route.distanceMeters,
+            difficulty: route.difficulty,
+            isIndoor: route.isIndoor,
+            isAccessible: route.isAccessible,
+            landmarks: ["Start"] + keptMarkers.map { $0.name } + ["Return"],
+            icon: route.icon,
+            color: route.color,
+            qrMarkers: keptMarkers,
+            routeType: route.routeType,
+            encodedPolyline: nil,
+            walkingDirections: [],
+            usedOSRMRouting: route.usedOSRMRouting,
+            isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase
+        )
+        let refreshed = await refreshRouteWithMapKit(route: routeWithUniqueMarkers, userLocation: origin)
+        let data = GeneratedRoute(
+            places: keptMarkers.map { placeResult(from: $0) },
+            polyline: refreshed.encodedPolyline ?? "",
+            distanceMeters: refreshed.distanceMeters,
+            durationSeconds: refreshed.durationMinutes * 60,
+            legs: []
+        )
+        return (refreshed, data)
+    }
+    
+    private func placeResult(from marker: QRMarker) -> PlaceResult {
+        let loc = PlaceLocation(lat: marker.coordinate.latitude, lng: marker.coordinate.longitude)
+        let geom = PlaceGeometry(location: loc)
+        return PlaceResult(
+            placeId: "preview_\(marker.id.uuidString)",
+            name: marker.name,
+            vicinity: marker.location,
+            geometry: geom,
+            types: nil,
+            source: .unknown
+        )
+    }
+    
     // MARK: - v2.1.3: Refresh Route with MapKit using pre-snapped waypoints
     /// Used as fallback when Google quota is exceeded - uses already-snapped waypoints for better route
     private func refreshRouteWithMapKitUsingSnappedWaypoints(

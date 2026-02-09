@@ -3029,6 +3029,10 @@ struct LocalRoutePickerSheet: View {
                 onRefresh: nil,  // Refresh button removed
                 isRefreshingRoutes: isRefreshingRoutes
             )
+            // Final dedup when user sees preview: ensure all waypoints are unique (e.g. avoid two "The Star Inn")
+            .task(id: route.id) {
+                await runPreviewDedupIfNeeded(route: route)
+            }
             // v1.6.47: Force re-render when route data changes - SwiftUI can optimize away re-renders
             .id("preview-\(allRoutes.count)-\(currentRouteIndex)-\(isPreGeneratingRoutes)")
             .background(Color(.systemBackground))
@@ -3037,6 +3041,20 @@ struct LocalRoutePickerSheet: View {
             if isShuffling {
                 shuffleLoadingOverlay()
             }
+        }
+    }
+    
+    /// Run final waypoint dedup when preview is shown; replace route in state if duplicates were removed.
+    private func runPreviewDedupIfNeeded(route: WalkingRoute) async {
+        guard let origin = locationService.currentLocation?.coordinate else { return }
+        guard let result = await mapsService.deduplicateWalkingRouteForPreview(route: route, origin: origin) else { return }
+        let (dedupedRoute, dedupedData) = result
+        await MainActor.run {
+            let idx = currentRouteIndex
+            guard idx < allRoutes.count else { return }
+            allRoutes[idx] = (route: dedupedRoute, data: dedupedData, isDeadZoneFallback: allRoutes[idx].isDeadZoneFallback)
+            generatedRoute = dedupedRoute
+            generatedRouteData = dedupedData
         }
     }
     
