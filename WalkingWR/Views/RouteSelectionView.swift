@@ -2700,6 +2700,13 @@ struct LocalRoutePickerSheet: View {
                         usedOSRMRouting: filteredResult.usedOSRM  // v1.7.1: Track OSRM usage for polyline refresh
                     )
                     
+                    // v2.1.x: Snap POIs to road and replace polyline so route doesn’t go into buildings (e.g. school grounds)
+                    var displayRoute = localRoute
+                    if let snappedRoute = await mapsService.refreshRouteWithGoogleOnly(route: localRoute, userLocation: userLocation.coordinate) {
+                        displayRoute = snappedRoute
+                        print("🛤️ [ROUTE CREATION] Applied road snap — polyline and markers now on road (no off-road POI)")
+                    }
+                    
                     // FINAL SAFETY CHECK: Deduplicate before storing (use filteredResult)
                     print("🛡️ ROUTE SELECTION VIEW: Final deduplication check before storing route")
                     let deduplicatedResult = await MainActor.run {
@@ -2719,10 +2726,10 @@ struct LocalRoutePickerSheet: View {
                     
                     await MainActor.run {
                         // #region agent log
-                        if localRoute.qrMarkers.count > 1 {
-                            let distances = (0..<localRoute.qrMarkers.count-1).map { i in
-                                let loc1 = CLLocation(latitude: localRoute.qrMarkers[i].coordinate.latitude, longitude: localRoute.qrMarkers[i].coordinate.longitude)
-                                let loc2 = CLLocation(latitude: localRoute.qrMarkers[i+1].coordinate.latitude, longitude: localRoute.qrMarkers[i+1].coordinate.longitude)
+                        if displayRoute.qrMarkers.count > 1 {
+                            let distances = (0..<displayRoute.qrMarkers.count-1).map { i in
+                                let loc1 = CLLocation(latitude: displayRoute.qrMarkers[i].coordinate.latitude, longitude: displayRoute.qrMarkers[i].coordinate.longitude)
+                                let loc2 = CLLocation(latitude: displayRoute.qrMarkers[i+1].coordinate.latitude, longitude: displayRoute.qrMarkers[i+1].coordinate.longitude)
                                 return loc1.distance(from: loc2)
                             }
                             let logData: [String: Any] = [
@@ -2732,9 +2739,9 @@ struct LocalRoutePickerSheet: View {
                                 "location": "RouteSelectionView.swift:2375",
                                 "message": "Route assigned to view: final waypoint distances",
                                 "data": [
-                                    "routeName": localRoute.name,
-                                    "waypointCount": localRoute.qrMarkers.count,
-                                    "waypoints": localRoute.qrMarkers.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                                    "routeName": displayRoute.name,
+                                    "waypointCount": displayRoute.qrMarkers.count,
+                                    "waypoints": displayRoute.qrMarkers.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
                                     "distances": distances,
                                     "minDistance": distances.min() ?? 0
                                 ],
@@ -2749,11 +2756,11 @@ struct LocalRoutePickerSheet: View {
                         
                         isGenerating = false
                         routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
-                        generatedRoute = localRoute
+                        generatedRoute = displayRoute
                         generatedRouteData = deduplicatedResult
-                        print("TIME_SOURCE | Fresh route shown: \(localRoute.durationMinutes) min — FROM MAPKIT/OSRM (Google refresh will run after Let's Go)")
+                        print("TIME_SOURCE | Fresh route shown: \(displayRoute.durationMinutes) min — FROM MAPKIT/OSRM (Google refresh will run after Let's Go)")
                         // Save as last valid for recycling on shuffle
-                        lastValidRoute = localRoute
+                        lastValidRoute = displayRoute
                         lastValidRouteData = deduplicatedResult
                         
                         // v1.8.8: Check if initial route is too short (< 50% of target)
@@ -2766,7 +2773,7 @@ struct LocalRoutePickerSheet: View {
                         
                         // Initialize route array with first route
                         // v1.6.47: Include isDeadZoneFallback per-route
-                        allRoutes = [(route: localRoute, data: deduplicatedResult, isDeadZoneFallback: isShortRoute)]
+                        allRoutes = [(route: displayRoute, data: deduplicatedResult, isDeadZoneFallback: isShortRoute)]
                         currentRouteIndex = 0
                         preGenerationComplete = false
                         isRecycledRoute = false  // First route is never recycled
@@ -2815,7 +2822,7 @@ struct LocalRoutePickerSheet: View {
                     refreshRaceState.walkStarted = false
                     refreshRaceState.googleApplied = false
                     let liveRaceState = refreshRaceState
-                    let liveFirstRoute = localRoute
+                    let liveFirstRoute = displayRoute
                     let liveUserLoc = userLocation.coordinate
                     Task {
                         let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: liveFirstRoute, userLocation: liveUserLoc)
@@ -4756,12 +4763,17 @@ struct LocalRoutePickerSheet: View {
                 // v2.1.6: Replace arrival instructions with waypoint-specific text
                 if isLastStepOfLeg {
                     let instructionLower = direction.instruction.lowercased()
-                    let isArrivalInstruction = instructionLower.contains("destination is on your right") ||
-                                             instructionLower.contains("destination is on your left") ||
-                                             instructionLower.contains("the destination is on your right") ||
-                                             instructionLower.contains("the destination is on your left") ||
-                                             instructionLower.contains("arrive at") ||
-                                             (instructionLower.contains("destination") && (instructionLower.contains("on your right") || instructionLower.contains("on your left")))
+                    // Last step of leg = arrival; match all phrasings so every waypoint gets name + flag
+                    let isArrivalInstruction =
+                        instructionLower.contains("destination is on your right") ||
+                        instructionLower.contains("destination is on your left") ||
+                        instructionLower.contains("the destination is on your right") ||
+                        instructionLower.contains("the destination is on your left") ||
+                        instructionLower.contains("destination will be on the right") ||
+                        instructionLower.contains("destination will be on the left") ||
+                        instructionLower.contains("arrive at") ||
+                        (instructionLower.contains("destination") && (instructionLower.contains("on your right") || instructionLower.contains("on your left") || instructionLower.contains("on the right") || instructionLower.contains("on the left"))) ||
+                        (instructionLower.contains("destination") || instructionLower.contains("arrive"))
                     
                     if isArrivalInstruction {
                         if isReturnLeg {

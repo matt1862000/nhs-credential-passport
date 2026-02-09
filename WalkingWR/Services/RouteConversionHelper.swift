@@ -76,12 +76,17 @@ enum RouteConversionHelper {
                 let isLastStepOfLeg = stepIndex == steps.count - 1
                 if isLastStepOfLeg {
                     let instructionLower = direction.instruction.lowercased()
-                    let isArrivalInstruction = instructionLower.contains("destination is on your right") ||
+                    // Last step of leg = arrival; match all phrasings so every waypoint gets name + flag
+                    let isArrivalInstruction =
+                        instructionLower.contains("destination is on your right") ||
                         instructionLower.contains("destination is on your left") ||
                         instructionLower.contains("the destination is on your right") ||
                         instructionLower.contains("the destination is on your left") ||
+                        instructionLower.contains("destination will be on the right") ||
+                        instructionLower.contains("destination will be on the left") ||
                         instructionLower.contains("arrive at") ||
-                        (instructionLower.contains("destination") && (instructionLower.contains("on your right") || instructionLower.contains("on your left")))
+                        (instructionLower.contains("destination") && (instructionLower.contains("on your right") || instructionLower.contains("on your left") || instructionLower.contains("on the right") || instructionLower.contains("on the left"))) ||
+                        (instructionLower.contains("destination") || instructionLower.contains("arrive"))
                     if isArrivalInstruction {
                         if isReturnLeg {
                             direction = WalkingDirection(

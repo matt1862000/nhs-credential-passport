@@ -679,13 +679,38 @@ class WaitingRoomViewModel: ObservableObject {
             }
             // v2.1.1: Update direction monitoring with new directions
             if !route.walkingDirections.isEmpty {
+                // Safeguard: for single-waypoint routes (e.g. extend), ensure arrival step shows "Waypoint 1 (Name)" not "Arrive at the destination"
+                var directionsToUse = route.walkingDirections
+                if route.qrMarkers.count == 1,
+                   let name = route.qrMarkers.first?.name,
+                   let idx = directionsToUse.firstIndex(where: { d in
+                       let l = d.instruction.lowercased()
+                       return (l.contains("arrive") || l.contains("destination")) && !d.instruction.contains("Waypoint")
+                   }) {
+                    let orig = directionsToUse[idx].instruction
+                    let side = orig.lowercased().contains("right") ? "right" : "left"
+                    directionsToUse[idx] = WalkingDirection(
+                        instruction: "Waypoint 1 (\(name)) is on your \(side)",
+                        distance: directionsToUse[idx].distance,
+                        distanceMeters: directionsToUse[idx].distanceMeters,
+                        duration: directionsToUse[idx].duration,
+                        maneuver: "arrive"
+                    )
+                    print("REFRESH_FALLBACK | Single-waypoint safeguard: replaced '\(orig.prefix(40))...' with Waypoint 1 (\(name))")
+                }
                 if resetDirectionIndex {
-                    locationService.startDirectionMonitoring(directions: route.walkingDirections, routePath: route.routePath, skipPassedWaypoints: false)
+                    locationService.startDirectionMonitoring(directions: directionsToUse, routePath: route.routePath, skipPassedWaypoints: false)
                 } else {
-                    locationService.updateDirections(route.walkingDirections, routePath: route.routePath)
+                    locationService.updateDirections(directionsToUse, routePath: route.routePath)
                 }
                 // Keep cached directions in sync so banner and expanded list show the new instructions (e.g. after delay-change route refresh).
-                cachedOriginalDirections = route.walkingDirections
+                cachedOriginalDirections = directionsToUse
+                // #region agent log — waypoint directions diagnostic (filter Xcode by WAYPOINT_DIAG)
+                let wpCountUpdate = directionsToUse.filter { $0.instruction.contains("Waypoint") && $0.instruction.contains("is on your") }.count
+                print("WAYPOINT_DIAG updateCurrentRoute | route='\(route.name)' waypoints=\(route.qrMarkers.count) names=[\(route.qrMarkers.map { $0.name }.joined(separator: ", "))] | directions=\(directionsToUse.count) waypointLines=\(wpCountUpdate)")
+                let updatePayload: [String: Any] = ["location": "WaitingRoomViewModel:updateCurrentRoute:diag", "message": "route update waypoint diagnostic", "data": ["routeName": route.name, "expectedWaypoints": route.qrMarkers.count, "waypointNames": route.qrMarkers.map { $0.name }, "directionCount": directionsToUse.count, "waypointLineCount": wpCountUpdate], "timestamp": Int(Date().timeIntervalSince1970 * 1000), "hypothesisId": "A"]
+                if let updateData = try? JSONSerialization.data(withJSONObject: updatePayload), let updateLine = String(data: updateData, encoding: .utf8) { updateLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                // #endregion
             }
             objectWillChange.send()
         } else {
@@ -724,6 +749,7 @@ class WaitingRoomViewModel: ObservableObject {
     // MARK: - Delay-change route refresh
     
     /// Request a new route from current location with duration derived from new delay (extend or shorten). Updates pill and directions on success. Call when user taps "Extend my walk" or "Get shorter route" on the delay overlay.
+    /// When extending: preserves current route's waypoints and refreshes directions/polyline (so all waypoint names stay). When shortening or no current route: generates a new route.
     func requestNewRouteForDelayChange() {
         guard walkSession.isActive else { return }
         let service = mapsService ?? GoogleMapsService.shared
@@ -742,19 +768,57 @@ class WaitingRoomViewModel: ObservableObject {
         
         Task {
             do {
-                let generated = try await service.generateRouteTopologySafe(
-                    from: location,
-                    targetDurationMinutes: targetDurationMinutes,
-                    difficulty: nil,
-                    excludePlaceIds: [],
-                    excludePOIs: []
-                )
-                let walkingRoute = RouteConversionHelper.walkingRoute(
-                    from: generated,
-                    origin: location,
-                    name: isIncrease ? "Extended route" : "Shorter route",
-                    description: isIncrease ? "Route extended for extra time." : "Shorter route to head back sooner."
-                )
+                print("REFRESH_FALLBACK | Delay-change: targetDuration=\(targetDurationMinutes)min (newMinutes=\(newMinutes), buffer=\(buffer), isIncrease=\(isIncrease))")
+                
+                // When extending: preserve current waypoints only if current route is already close to target duration; otherwise generate a longer route so the suggested walk matches the extended time.
+                let walkingRoute: WalkingRoute
+                let currentRoute = walkSession.currentRoute
+                let currentMin = currentRoute?.durationMinutes ?? 0
+                let minRatioToPreserve: Double = 0.5  // Preserve waypoints only if current >= 50% of target
+                let shouldPreserve = isIncrease && currentRoute != nil && !currentRoute!.qrMarkers.isEmpty && (Double(currentMin) / Double(targetDurationMinutes)) >= minRatioToPreserve
+                
+                if shouldPreserve {
+                    print("REFRESH_FALLBACK | Delay-change: extending — preserving current \(currentRoute!.qrMarkers.count) waypoints (current=\(currentMin)min ~= target=\(targetDurationMinutes)min) [\(currentRoute!.qrMarkers.map { $0.name }.joined(separator: ", "))]")
+                    walkingRoute = WalkingRoute(
+                        name: "Extended route",
+                        description: "Route extended for extra time.",
+                        durationMinutes: targetDurationMinutes,
+                        distanceMeters: currentRoute!.distanceMeters,
+                        difficulty: currentRoute!.difficulty,
+                        isIndoor: currentRoute!.isIndoor,
+                        isAccessible: currentRoute!.isAccessible,
+                        landmarks: ["Start"] + currentRoute!.qrMarkers.map { $0.name } + ["Return"],
+                        icon: currentRoute!.icon,
+                        color: currentRoute!.color,
+                        qrMarkers: currentRoute!.qrMarkers,
+                        routeType: currentRoute!.routeType,
+                        trimmed: currentRoute!.trimmed,
+                        walkingDirections: currentRoute!.walkingDirections,
+                        usedOSRMRouting: currentRoute!.usedOSRMRouting,
+                        isFromPrePopulatedDatabase: currentRoute!.isFromPrePopulatedDatabase
+                    )
+                } else {
+                    if isIncrease, currentRoute != nil, !currentRoute!.qrMarkers.isEmpty {
+                        print("REFRESH_FALLBACK | Delay-change: current route short (\(currentMin)min) vs target (\(targetDurationMinutes)min) — generating new longer route with more waypoints")
+                    }
+                    // Shorten, or extend with a short current route: generate a new route for target duration
+                    let generated = try await service.generateRouteTopologySafe(
+                        from: location,
+                        targetDurationMinutes: targetDurationMinutes,
+                        difficulty: nil,
+                        excludePlaceIds: [],
+                        excludePOIs: []
+                    )
+                    print("REFRESH_FALLBACK | Delay-change: generator returned places=\(generated.places.count) [\(generated.places.map { $0.name }.joined(separator: ", "))]")
+                    walkingRoute = RouteConversionHelper.walkingRoute(
+                        from: generated,
+                        origin: location,
+                        name: isIncrease ? "Extended route" : "Shorter route",
+                        description: isIncrease ? "Route extended for extra time." : "Shorter route to head back sooner."
+                    )
+                }
+                
+                print("REFRESH_FALLBACK | Delay-change: requesting route refresh (Google prioritised, then MapKit if quota/denied) — waypoints=\(walkingRoute.qrMarkers.count)")
                 guard let refreshed = await service.refreshRouteWithGoogleOnly(route: walkingRoute, userLocation: location) else {
                     await MainActor.run {
                         delayChangeRouteError = "Couldn't update route. Keep walking your current route."
@@ -904,6 +968,31 @@ class WaitingRoomViewModel: ObservableObject {
         
         // v1.9.15: Cache original directions for offline use
         cachedOriginalDirections = route.walkingDirections
+        // #region agent log
+        let dirs = route.walkingDirections
+        let destinationOrWaypoint = dirs.filter { $0.instruction.lowercased().contains("destination") || $0.instruction.contains("Waypoint") }
+        let payload: [String: Any] = [
+            "location": "WaitingRoomViewModel:startWalk:cachedDirs",
+            "message": "directions cached for display",
+            "data": [
+                "count": dirs.count,
+                "samples": destinationOrWaypoint.prefix(5).map { String($0.instruction.prefix(70)) }
+            ],
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "hypothesisId": "E"
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) {
+            line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+        }
+        print("WAYPOINT_DIR WaitingRoomViewModel:startWalk:cachedDirs | directions cached for display | count=\(dirs.count) samples=\(destinationOrWaypoint.prefix(5).map { String($0.instruction.prefix(70)) })")
+        // #endregion
+        // #region agent log — waypoint directions diagnostic (filter Xcode by WAYPOINT_DIAG)
+        let waypointNames = route.qrMarkers.map { $0.name }
+        let waypointLineCount = dirs.filter { $0.instruction.contains("Waypoint") && $0.instruction.contains("is on your") }.count
+        print("WAYPOINT_DIAG startWalk | expected waypoints=\(route.qrMarkers.count) names=[\(waypointNames.joined(separator: ", "))] | directions=\(dirs.count) waypointLines=\(waypointLineCount)")
+        let diagPayload: [String: Any] = ["location": "WaitingRoomViewModel:startWalk:diag", "message": "waypoint diagnostic", "data": ["expectedWaypoints": route.qrMarkers.count, "waypointNames": waypointNames, "directionCount": dirs.count, "waypointLineCount": waypointLineCount], "timestamp": Int(Date().timeIntervalSince1970 * 1000), "hypothesisId": "E"]
+        if let diagData = try? JSONSerialization.data(withJSONObject: diagPayload), let diagLine = String(data: diagData, encoding: .utf8) { diagLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+        // #endregion
         cachedReturnDirections = []
         isUsingReturnDirections = false
         

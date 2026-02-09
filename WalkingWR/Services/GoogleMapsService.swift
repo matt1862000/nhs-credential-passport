@@ -11,6 +11,8 @@ import MapKit
 import Combine
 
 // #region agent log
+/// Filter Xcode console by this tag to see waypoint-direction debug logs only.
+fileprivate let WAYPOINT_DIR_TAG = "WAYPOINT_DIR"
 fileprivate func _agentLogGM(_ loc: String, _ msg: String, _ data: [String: Any] = [:], _ hid: String = "C") {
     let path = "/Users/raihant/Documents/WalkingWR/.cursor/debug.log"
     var d: [String: Any] = ["location": loc, "message": msg, "timestamp": Int(Date().timeIntervalSince1970 * 1000), "sessionId": "debug-session", "hypothesisId": hid]
@@ -18,6 +20,7 @@ fileprivate func _agentLogGM(_ loc: String, _ msg: String, _ data: [String: Any]
     guard let j = try? JSONSerialization.data(withJSONObject: d), let s = String(data: j, encoding: .utf8) else { return }
     if !FileManager.default.fileExists(atPath: path) { try? Data().write(to: URL(fileURLWithPath: path)) }
     if let h = try? FileHandle(forUpdating: URL(fileURLWithPath: path)) { h.seekToEndOfFile(); h.write((s + "\n").data(using: .utf8)!); h.closeFile() }
+    print("\(WAYPOINT_DIR_TAG) \(loc) | \(msg) | \(data)")
 }
 // #endregion
 
@@ -6306,37 +6309,22 @@ class GoogleMapsService: ObservableObject {
                     let durationText = stepDurationSeconds >= 60 ? "\(stepDurationSeconds / 60) min" : "\(stepDurationSeconds) sec"
                     
                     // Extract maneuver type from instructions
-                    let maneuver = extractManeuverType(from: step.instructions)
+                    var maneuver = extractManeuverType(from: step.instructions)
                     
                     var instruction = step.instructions
                     let isLastStepOfLeg = stepIndex == lastStepWithInstructions
                     
-                    // v2.1.6: Replace arrival instructions with waypoint-specific text
+                    // v2.1.6: Always replace last step of waypoint leg with waypoint name (API sometimes omits "arrival" phrasing)
                     if isLastStepOfLeg {
                         let instructionLower = instruction.lowercased()
-                        let isArrivalInstruction = instructionLower.contains("destination is on your right") ||
-                                                 instructionLower.contains("destination is on your left") ||
-                                                 instructionLower.contains("the destination is on your right") ||
-                                                 instructionLower.contains("the destination is on your left") ||
-                                                 instructionLower.contains("arrive at") ||
-                                                 instructionLower.contains("arrive") ||
-                                                 (instructionLower.contains("destination") && (instructionLower.contains("on your right") || instructionLower.contains("on your left")))
-                        
-                        if isArrivalInstruction {
-                            if isReturnLeg {
-                                // Last leg is return to origin
-                                instruction = "Return to starting point"
-                            } else if i < waypointNames.count {
-                                // Intermediate waypoint - create waypoint-specific instruction
-                                let waypointIndex = i + 1 // 1-indexed for display
-                                let waypointName = waypointNames[i]
-                                
-                                // Determine left/right from original instruction
-                                let side = instructionLower.contains("right") ? "right" : "left"
-                                
-                                instruction = "Waypoint \(waypointIndex) (\(waypointName)) is on your \(side)"
-                            }
-                            // If i >= waypointNames.count but not return leg, keep original instruction
+                        maneuver = "arrive"
+                        if isReturnLeg {
+                            instruction = "Return to starting point"
+                        } else if i < waypointNames.count {
+                            let waypointIndex = i + 1
+                            let waypointName = waypointNames[i]
+                            let side = instructionLower.contains("right") ? "right" : "left"
+                            instruction = "Waypoint \(waypointIndex) (\(waypointName)) is on your \(side)"
                         }
                     }
                     
@@ -6635,8 +6623,8 @@ class GoogleMapsService: ObservableObject {
                     print("🍎 [MAPKIT SNAPPED] Leg \(i): \(routeDistance)m, \(routePoints.count) points")
                 }
             } catch {
-                print("🍎 [MAPKIT SNAPPED] ⚠️ Leg \(i) failed: \(error.localizedDescription)")
-                // Add straight line as fallback for this leg
+                print("🍎 [MAPKIT SNAPPED] ⚠️ Leg \(i) failed: \(error.localizedDescription) — using straight segment (polyline may cut across roads)")
+                // Fallback: straight segment when routing fails (e.g. rate limit, no route). Road-snapped waypoints still help.
                 freshPolylinePoints.append(legOrigin)
                 freshPolylinePoints.append(legDestination)
             }
@@ -6758,10 +6746,10 @@ class GoogleMapsService: ObservableObject {
             }
             print("🛤️ [ROAD SNAP] Waypoint snapping complete")
             
-            // Optimize waypoint order locally (Nearest Neighbor) to stay in Essentials SKU
-            let waypoints = performLocalOptimization(origin: userLocation, waypoints: snappedWaypoints)
+            // Preserve waypoint order when refreshing so polyline follows intended sequence (no cutting across)
+            let waypoints = snappedWaypoints
             
-            print("🌐   🎯 Waypoints: \(waypoints.count) (optimized locally, road-snapped)")
+            print("🌐   🎯 Waypoints: \(waypoints.count) (display order preserved, road-snapped)")
             for (index, waypoint) in waypoints.enumerated() {
                 print("🌐      [\(index + 1)] (\(String(format: "%.5f", waypoint.latitude)), \(String(format: "%.5f", waypoint.longitude)))")
             }
@@ -7244,10 +7232,12 @@ class GoogleMapsService: ObservableObject {
     
     /// Google Directions with given waypoints (raw or snapped). Used for raw-first flow and refinement.
     /// Sets lastGoogleDirectionsErrorStatus when API returns non-OK so caller can try MapKit fallback.
-    private func fetchGoogleDirections(route: WalkingRoute, userLocation: CLLocationCoordinate2D, waypointsInDisplayOrder: [CLLocationCoordinate2D]) async -> WalkingRoute? {
+    /// - Parameter preserveWaypointOrder: If true, waypoints are sent in the order given (no optimization). Use when refreshing a route that already has a fixed sequence (e.g. War Memorial → Star Inn → …) so the polyline follows roads in that order instead of cutting across.
+    private func fetchGoogleDirections(route: WalkingRoute, userLocation: CLLocationCoordinate2D, waypointsInDisplayOrder: [CLLocationCoordinate2D], preserveWaypointOrder: Bool = false) async -> WalkingRoute? {
         lastGoogleDirectionsErrorStatus = nil
         guard !waypointsInDisplayOrder.isEmpty else { return nil }
-        let waypoints = performLocalOptimization(origin: userLocation, waypoints: waypointsInDisplayOrder)
+        let waypoints = preserveWaypointOrder ? waypointsInDisplayOrder : performLocalOptimization(origin: userLocation, waypoints: waypointsInDisplayOrder)
+        if preserveWaypointOrder { print("🌐 [REFRESH] Preserving waypoint order (polyline will follow War Memorial → Star Inn → …)") }
         let waypointsParam = waypoints.map { String(format: "%.6f,%.6f", $0.latitude, $0.longitude) }.joined(separator: "|")
         var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
         urlString += "origin=\(String(format: "%.6f,%.6f", userLocation.latitude, userLocation.longitude))"
@@ -7307,27 +7297,34 @@ class GoogleMapsService: ObservableObject {
                                 stepPolylinePointCount += decodedStepPoints.count
                                 combinedStepPolyline.append(contentsOf: decodedStepPoints)
                             }
-                            // Replace arrival instructions with waypoint names (same logic as RouteConversionHelper / RouteSelectionView)
+                            // Replace last step of each leg with waypoint name or return text so waypoint always appears in directions
                             let isLastStepOfLeg = stepIndex == steps.count - 1
                             if isLastStepOfLeg {
                                 let instructionLower = instruction.lowercased()
-                                let isArrivalInstruction = instructionLower.contains("destination is on your right") ||
-                                    instructionLower.contains("destination is on your left") ||
-                                    instructionLower.contains("the destination is on your right") ||
-                                    instructionLower.contains("the destination is on your left") ||
-                                    instructionLower.contains("arrive at") ||
-                                    (instructionLower.contains("destination") && (instructionLower.contains("on your right") || instructionLower.contains("on your left")))
-                                if isArrivalInstruction {
-                                    if isReturnLeg {
-                                        instruction = "Return to starting point"
-                                        maneuver = "arrive"
-                                    } else if legIndex < route.qrMarkers.count {
-                                        let waypointIndex = legIndex + 1
-                                        let waypointName = route.qrMarkers[legIndex].name
-                                        let side = instructionLower.contains("right") ? "right" : "left"
-                                        instruction = "Waypoint \(waypointIndex) (\(waypointName)) is on your \(side)"
-                                        maneuver = "arrive"
-                                    }
+                                let isArrivalPhrasing = instructionLower.contains("destination") || instructionLower.contains("arrive")
+                                // #region agent log
+                                var replaced = false
+                                if isReturnLeg { replaced = true }
+                                else if legIndex < route.qrMarkers.count { replaced = true }
+                                _agentLogGM("GoogleMapsService:fetchGoogleDirections:lastStep", "last step of leg", [
+                                    "instruction": String(instruction.prefix(100)),
+                                    "isArrivalPhrasing": isArrivalPhrasing,
+                                    "isReturnLeg": isReturnLeg,
+                                    "legIndex": legIndex,
+                                    "qrMarkersCount": route.qrMarkers.count,
+                                    "replaced": replaced
+                                ], "A")
+                                // #endregion
+                                if isReturnLeg {
+                                    instruction = "Return to starting point"
+                                    maneuver = "arrive"
+                                } else if legIndex < route.qrMarkers.count {
+                                    // Always inject waypoint name for last step of waypoint leg (API sometimes omits "arrival" phrasing)
+                                    let waypointIndex = legIndex + 1
+                                    let waypointName = route.qrMarkers[legIndex].name
+                                    let side = instructionLower.contains("right") ? "right" : "left"
+                                    instruction = "Waypoint \(waypointIndex) (\(waypointName)) is on your \(side)"
+                                    maneuver = "arrive"
                                 }
                             }
                             freshDirections.append(WalkingDirection(instruction: instruction, distance: stepDistText, distanceMeters: stepDistValue, duration: stepDurText, maneuver: maneuver))
@@ -7352,6 +7349,9 @@ class GoogleMapsService: ObservableObject {
                 lastRouteHadRestrictedRoads = true
                 pendingMapKitFallbackWaypoints = waypoints
                 pendingMapKitFallbackOrigin = userLocation
+                // #region agent log
+                _agentLogGM("GoogleMapsService:fetchGoogleDirections:restricted", "restricted roads - MapKit fallback may be used", ["freshDirCount": freshDirections.count], "B")
+                // #endregion
             } else {
                 lastRouteHadRestrictedRoads = false
             }
@@ -7364,6 +7364,23 @@ class GoogleMapsService: ObservableObject {
                     updatedMarkers.append(marker)
                 }
             }
+            let directionsToUse = freshDirections.isEmpty ? route.walkingDirections : freshDirections
+            // #region agent log
+            let hasWaypointInDirs = directionsToUse.contains(where: { $0.instruction.contains("Waypoint") })
+            _agentLogGM("GoogleMapsService:fetchGoogleDirections:return", "returning route", [
+                "usedFresh": !freshDirections.isEmpty,
+                "freshCount": freshDirections.count,
+                "hasWaypointInDirections": hasWaypointInDirs
+            ], "D")
+            // #endregion
+            // #region agent log — waypoint directions diagnostic (filter Xcode by WAYPOINT_DIAG)
+            let legsCount = (firstRoute["legs"] as? [[String: Any]])?.count ?? 0
+            let waypointLineCount = directionsToUse.filter { $0.instruction.contains("Waypoint") && $0.instruction.contains("is on your") }.count
+            let expectedNames = route.qrMarkers.map { $0.name }
+            print("WAYPOINT_DIAG fetchGoogleDirections:return | legs=\(legsCount) expectedWaypoints=\(route.qrMarkers.count) names=[\(expectedNames.joined(separator: ", "))] | dirCount=\(directionsToUse.count) waypointLines=\(waypointLineCount)")
+            let returnDiag: [String: Any] = ["location": "GoogleMapsService:fetchGoogleDirections:diag", "message": "Google return waypoint diagnostic", "data": ["legsCount": legsCount, "expectedWaypoints": route.qrMarkers.count, "waypointNames": expectedNames, "directionCount": directionsToUse.count, "waypointLineCount": waypointLineCount], "timestamp": Int(Date().timeIntervalSince1970 * 1000), "hypothesisId": "B"]
+            if let rd = try? JSONSerialization.data(withJSONObject: returnDiag), let rdl = String(data: rd, encoding: .utf8) { rdl.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+            // #endregion
             return WalkingRoute(
                 name: route.name,
                 description: route.description,
@@ -7378,7 +7395,7 @@ class GoogleMapsService: ObservableObject {
                 qrMarkers: updatedMarkers,
                 routeType: route.routeType,
                 trimmed: finalPolyline.isEmpty ? route.trimmed : finalPolyline,
-                walkingDirections: freshDirections.isEmpty ? route.walkingDirections : freshDirections
+                walkingDirections: directionsToUse
             )
         } catch {
             return nil
@@ -7391,14 +7408,14 @@ class GoogleMapsService: ObservableObject {
         let rawWaypoints = route.qrMarkers.map { $0.coordinate }
         guard !rawWaypoints.isEmpty else { return nil }
         print("🌐 [GOOGLE-ONLY REFRESH] 📡 Calling Google Directions API (raw waypoints, no OSM snap)...")
-        return await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: rawWaypoints)
+        return await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: rawWaypoints, preserveWaypointOrder: true)
     }
     
     /// Optimistic hybrid: refinement step — Google Directions with snapped waypoints. Call when OSM snap moved any waypoint > 20m.
     func refreshRouteWithGoogleOnlyWithWaypoints(route: WalkingRoute, userLocation: CLLocationCoordinate2D, waypoints: [CLLocationCoordinate2D]) async -> WalkingRoute? {
         guard canUseGoogleDirectionsRefresh, hasAPIKey, !waypoints.isEmpty else { return nil }
         print("🌐 [GOOGLE-ONLY REFRESH] 📡 Refinement: Calling Google Directions API with snapped waypoints...")
-        return await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: waypoints)
+        return await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: waypoints, preserveWaypointOrder: true)
     }
     
     // MARK: - v1.9.39: Google-Only Refresh (no MapKit fallback)
@@ -7448,13 +7465,19 @@ class GoogleMapsService: ObservableObject {
             }
         }
         
-        if let result = await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snappedWaypoints) {
+        // Always try Google first (prioritise over MapKit for extend/delay-change refresh)
+        print("REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: trying Google first (prioritised)")
+        if let result = await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snappedWaypoints, preserveWaypointOrder: true) {
             let elapsed = Date().timeIntervalSince(startTime)
             print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready)")
             return result
         }
-        // v2.1.3: Fall back to MapKit when Google quota exceeded or request denied
-        if lastGoogleDirectionsErrorStatus == "OVER_QUERY_LIMIT" || lastGoogleDirectionsErrorStatus == "REQUEST_DENIED" {
+        // Log why Google failed so we can diagnose when MapKit fallback is used
+        let googleStatus = lastGoogleDirectionsErrorStatus ?? "unknown"
+        print("REFRESH_FALLBACK | Google returned nil — status=\(googleStatus) (filter Xcode by REFRESH_FALLBACK to see when MapKit is used)")
+        // v2.1.3: Fall back to MapKit only when Google quota exceeded or request denied
+        if googleStatus == "OVER_QUERY_LIMIT" || googleStatus == "REQUEST_DENIED" {
+            print("REFRESH_FALLBACK | Using MapKit fallback — reason: \(googleStatus == "OVER_QUERY_LIMIT" ? "quota exceeded" : "request denied")")
             print("🍎 [MAPKIT FALLBACK] Google quota/access issue - falling back to MapKit with snapped waypoints")
             if let mapKitRoute = await refreshRouteWithMapKitUsingSnappedWaypoints(
                 route: route,
@@ -7462,9 +7485,12 @@ class GoogleMapsService: ObservableObject {
                 snappedWaypoints: snappedWaypoints
             ) {
                 let totalElapsed = Date().timeIntervalSince(startTime)
+                print("REFRESH_FALLBACK | MapKit fallback succeeded — route has \(mapKitRoute.walkingDirections.count) directions (extend/delay-change used MapKit, not Google)")
                 print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ✅ MapKit fallback succeeded (total elapsed: \(String(format: "%.2f", totalElapsed))s)")
                 return mapKitRoute
             }
+        } else {
+            print("REFRESH_FALLBACK | Not using MapKit — Google failed with status '\(googleStatus)' (fallback only for OVER_QUERY_LIMIT or REQUEST_DENIED)")
         }
         print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Returning nil - no fallback available")
         return nil
