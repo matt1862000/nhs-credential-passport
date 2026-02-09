@@ -6376,6 +6376,12 @@ struct StatBadge: View {
 
 // MARK: - Active Walk View
 // MARK: - v2.1.6: Walking Alert Overlay
+/// Which action is primary (green, top) for 50%/80% alerts. Drives button order and prominence.
+enum PrimaryAlertAction {
+    case headBack   // Head back on top (when time is tight)
+    case keepWalking // Keep walking on top (when plenty of time left)
+}
+
 /// Custom overlay alert that doesn't dismiss the underlying map view
 /// Dark mode: black card to match walk UI. Light mode: white card with subtle shadow.
 struct WalkingAlertOverlay: View {
@@ -6386,10 +6392,12 @@ struct WalkingAlertOverlay: View {
     var showStopButton: Bool = true
     var primaryLabel: String = "OK"
     var secondaryLabel: String = "Stop Alerts"
-    /// Option B: when true, top = Head back (green full width), bottom = Keep walking | Stop Alerts
+    /// Option B: when true, top = Head back or Keep walking (see primaryHalfwayAction), bottom = the other + Stop Alerts
     var showHeadBackButton: Bool = false
     var headBackLabel: String = "Head back"
     var onHeadBack: (() -> Void)? = nil
+    /// When showHeadBackButton is true: .headBack = Head back green on top; .keepWalking = Keep walking green on top.
+    var primaryHalfwayAction: PrimaryAlertAction = .headBack
     
     @Environment(\.colorScheme) var colorScheme
     
@@ -6445,39 +6453,77 @@ struct WalkingAlertOverlay: View {
                     .fixedSize(horizontal: false, vertical: true)
                 
                 if showHeadBackButton, let onHeadBack = onHeadBack {
-                    // Option B: Head back full width on top, then Keep walking | Stop Alerts
+                    // Primary action on top (green), other + Stop Alerts below
                     VStack(spacing: 12) {
-                        Button(action: onHeadBack) {
-                            Text(headBackLabel)
-                                .font(.body)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(Color.green)
-                                .cornerRadius(10)
-                        }
-                        HStack(spacing: 12) {
+                        if primaryHalfwayAction == .headBack {
+                            Button(action: onHeadBack) {
+                                Text(headBackLabel)
+                                    .font(.body)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(Color.green)
+                                    .cornerRadius(10)
+                            }
+                            HStack(spacing: 12) {
+                                Button(action: onOK) {
+                                    Text(primaryLabel)
+                                        .font(.body)
+                                        .fontWeight(.semibold)
+                                        .foregroundColor(.primary)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 12)
+                                        .background(secondaryButtonBackground)
+                                        .cornerRadius(10)
+                                }
+                                if let onStopAlerts = onStopAlerts {
+                                    Button(action: onStopAlerts) {
+                                        Text(secondaryLabel)
+                                            .font(.body)
+                                            .fontWeight(.semibold)
+                                            .foregroundColor(.red)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 12)
+                                            .background(stopAlertsButtonBackground)
+                                            .cornerRadius(10)
+                                    }
+                                }
+                            }
+                        } else {
+                            // Keep walking primary (green on top), then Head back + Stop Alerts
                             Button(action: onOK) {
                                 Text(primaryLabel)
                                     .font(.body)
                                     .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
+                                    .foregroundColor(.white)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
-                                    .background(secondaryButtonBackground)
+                                    .background(Color.green)
                                     .cornerRadius(10)
                             }
-                            if let onStopAlerts = onStopAlerts {
-                                Button(action: onStopAlerts) {
-                                    Text(secondaryLabel)
+                            HStack(spacing: 12) {
+                                Button(action: onHeadBack) {
+                                    Text(headBackLabel)
                                         .font(.body)
                                         .fontWeight(.semibold)
-                                        .foregroundColor(.red)
+                                        .foregroundColor(.primary)
                                         .frame(maxWidth: .infinity)
                                         .padding(.vertical, 12)
-                                        .background(stopAlertsButtonBackground)
+                                        .background(secondaryButtonBackground)
                                         .cornerRadius(10)
+                                }
+                                if let onStopAlerts = onStopAlerts {
+                                    Button(action: onStopAlerts) {
+                                        Text(secondaryLabel)
+                                            .font(.body)
+                                            .fontWeight(.semibold)
+                                            .foregroundColor(.red)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 12)
+                                            .background(stopAlertsButtonBackground)
+                                            .cornerRadius(10)
+                                    }
                                 }
                             }
                         }
@@ -6746,7 +6792,7 @@ struct ActiveWalkView: View {
                 let _ = print("[HALFWAY] overlay rendering")
                 WalkingAlertOverlay(
                     title: "Halfway Point! 🚶",
-                    message: "You've completed half your walk. Check your clinic delay and consider heading back.",
+                    message: viewModel.halfwayAlertMessage,
                     onOK: {
                         viewModel.cancelAlertAutoDismissTimer()
                         viewModel.showHalfwayAlert = false
@@ -6763,12 +6809,13 @@ struct ActiveWalkView: View {
                         viewModel.userTappedHeadBack()
                         viewModel.cancelAlertAutoDismissTimer()
                         viewModel.showHalfwayAlert = false
-                    }
+                    },
+                    primaryHalfwayAction: viewModel.halfwayAlertSuggestHeadBack ? .headBack : .keepWalking
                 )
             } else if viewModel.showReturnNowAlert {
                 WalkingAlertOverlay(
                     title: "Time to Head Back 🏥",
-                    message: "You've completed 80% of your walk. Consider heading back to the clinic.",
+                    message: viewModel.returnNowAlertMessage,
                     onOK: {
                         viewModel.cancelAlertAutoDismissTimer()
                         viewModel.showReturnNowAlert = false
@@ -6785,7 +6832,8 @@ struct ActiveWalkView: View {
                         viewModel.userTappedHeadBack()
                         viewModel.cancelAlertAutoDismissTimer()
                         viewModel.showReturnNowAlert = false
-                    }
+                    },
+                    primaryHalfwayAction: viewModel.returnNowAlertSuggestHeadBack ? .headBack : .keepWalking
                 )
             } else if viewModel.showWalkCompleteAlert {
                 WalkingAlertOverlay(
@@ -6793,17 +6841,23 @@ struct ActiveWalkView: View {
                     message: "Great job completing your walk! Head back to the waiting area when ready.",
                     onOK: {
                         viewModel.cancelAlertAutoDismissTimer()
+                        viewModel.showWalkCompleteAlert = false
+                    },
+                    onStopAlerts: nil,
+                    showStopButton: false,
+                    primaryLabel: "Keep walking",
+                    showHeadBackButton: true,
+                    headBackLabel: "End walk",
+                    onHeadBack: {
+                        viewModel.cancelAlertAutoDismissTimer()
                         viewModel.endWalk(completed: true)
                         viewModel.showWalkCompleteAlert = false
-                        // Dismiss fullscreen cover after ending walk
                         if let isPresented = isPresented {
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                 isPresented.wrappedValue = false
                             }
                         }
-                    },
-                    onStopAlerts: nil,
-                    showStopButton: false
+                    }
                 )
             } else if viewModel.showAdjustRouteAlert {
                 WalkingAlertOverlay(

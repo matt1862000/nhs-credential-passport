@@ -85,6 +85,45 @@ class WaitingRoomViewModel: ObservableObject {
         if hasReceivedGoogleRefreshForPill, let v = lastKnownPillMinutes { return v }
         return nil
     }
+    
+    // MARK: - Context-aware 50% / 80% alerts (remaining time → primary action and message)
+    /// Remaining outbound minutes (time left on current leg). Used to decide whether to suggest Head back or Keep walking.
+    var remainingOutboundMinutes: Int? {
+        guard walkSession.isActive else { return nil }
+        let durationMinutes = effectiveDisplayDurationMinutesForPill ?? walkSession.currentRoute?.durationMinutes ?? 10
+        let durationSec = Double(durationMinutes * 60)
+        let remaining = max(0, durationSec - Double(walkSession.elapsedSeconds))
+        return Int(remaining / 60)
+    }
+    
+    /// Threshold (minutes): when remaining ≤ this, suggest Head back as primary; otherwise Keep walking primary.
+    private static let suggestHeadBackThresholdMinutes: Int = 2
+    
+    /// When true, user has little time left → Head back should be primary on 50% alert.
+    var halfwayAlertSuggestHeadBack: Bool {
+        (remainingOutboundMinutes ?? 99) <= Self.suggestHeadBackThresholdMinutes
+    }
+    
+    /// Message for 50% alert: softer when plenty of time, more direct when time is tight.
+    var halfwayAlertMessage: String {
+        if halfwayAlertSuggestHeadBack {
+            return "You're around halfway. Consider heading back soon to stay on time for your appointment."
+        }
+        return "You're halfway. You can keep walking or head back whenever you're ready."
+    }
+    
+    /// When true, user has little time left → Head back should be primary on 80% alert.
+    var returnNowAlertSuggestHeadBack: Bool {
+        (remainingOutboundMinutes ?? 99) <= Self.suggestHeadBackThresholdMinutes
+    }
+    
+    /// Message for 80% alert: context-aware.
+    var returnNowAlertMessage: String {
+        if returnNowAlertSuggestHeadBack {
+            return "You've completed 80% of your walk. Consider heading back soon to stay on time."
+        }
+        return "You're nearly done with your walk. Head back to the clinic whenever you're ready."
+    }
 
     // v2.1.7: Track last waypoint activation time to prevent rapid multiple activations
     private var lastWaypointActivationTime: Date?
