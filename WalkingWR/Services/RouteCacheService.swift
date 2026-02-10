@@ -15,7 +15,7 @@ import CoreLocation
 class RouteCacheService {
     static let shared = RouteCacheService()
     
-    private let cacheKey = "cachedRoutes_v41"  // v41: Filter restricted POIs from cached routes (v1.9.16)
+    private let cacheKey = "cachedRoutes_v42"  // v42: On-route POIs only within max distance of main destination (duration-believable)
     private let maxCachedRouteSets = 50
     private let maxRoutesPerDuration = 10  // v1.6.46: Limit routes per location/duration to prevent unbounded growth
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position

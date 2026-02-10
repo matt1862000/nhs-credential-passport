@@ -498,6 +498,16 @@ struct WalkingRoute: Identifiable, Hashable {
         return Int(Double(distanceMeters) / 0.76)
     }
     
+    /// Approximate minutes added by breathing-exercise (and similar) triggers at waypoints (~1 min per trigger). Used for total time display.
+    var triggerStopsMinutes: Int {
+        qrMarkers.filter { $0.contentType == .breathingExercise }.count
+    }
+    
+    /// Total display duration in minutes (walking + trigger stops). Use when showing "total time" to the user.
+    var totalDisplayMinutes: Int {
+        durationMinutes + triggerStopsMinutes
+    }
+    
     var isCurated: Bool {
         routeType == .curated
     }

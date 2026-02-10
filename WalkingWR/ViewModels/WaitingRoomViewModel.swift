@@ -763,9 +763,15 @@ class WaitingRoomViewModel: ObservableObject {
     }
     
     /// Pre-pop duration adjust: offer user to switch to shorter route when we dropped waypoints (over target).
+    /// Alert is shown only after the transition animation (fullScreenCover + map) has finished.
     func offerAdjustedRoute(_ route: WalkingRoute) {
         pendingAdjustedRoute = route
-        showAdjustRouteAlert = true
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 600_000_000) // 0.6s — wait for animation to finish
+            if pendingAdjustedRoute != nil {
+                showAdjustRouteAlert = true
+            }
+        }
     }
     
     /// Apply an adjusted route (shorter or longer) and update "mins left" pill to match. Use when user accepts shortened route or when we auto-apply a longer adjusted route.

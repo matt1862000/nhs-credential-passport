@@ -388,14 +388,7 @@ class PrePopulatedPOIService {
                         print("\(Self.telem) DB_PREPOP_BUCKET duration=\(checkDuration) routes_in_bucket=\(routeGroup.routes.count) requested=\(roundedDuration)")
                         for routeData in routeGroup.routes {
                             let routeName = self.routeIdentifier(name: routeData.name, places: routeData.places)
-                            // Precedence: if this is a multi-waypoint route and the first POI's single-waypoint duration fits the request, add only that and skip the multi-waypoint (so e.g. Village Store 8min appears for 10min, not as part of an 18min route for 15min).
-                            if routeData.places.count >= 2, let firstPOI = routeData.places.first,
-                               let single = self.createSingleWaypointRoute(poi: firstPOI, location: location, roundedDuration: roundedDuration) {
-                                result.append(single)
-                                print("📦 First-POI precedence: '\(routeName)' → \(firstPOI.name) only (\(single.route.durationSeconds / 60)min) for \(roundedDuration)min request; multi-waypoint route skipped")
-                                print("\(Self.telem) ROUTE_ADDED name=\"\(firstPOI.name)\" reason=first_poi_precedence totalMin=\(single.route.durationSeconds / 60) requested=\(roundedDuration)")
-                                continue
-                            }
+                            // Prefer multi-waypoint routes: no longer replace with single first-POI when it fits (was first-POI precedence).
                             if requireMinWaypoints >= 2 && routeData.places.count < 2 {
                                 print("\(Self.telem) ROUTE_DISCARDED name=\"\(routeName)\" reason=single_waypoint placesCount=\(routeData.places.count) requireMinWaypoints=\(requireMinWaypoints)")
                                 continue
@@ -527,16 +520,17 @@ class PrePopulatedPOIService {
                                 )
                             }
                             
-                            // User-based duration: single-waypoint = round-trip from user; multi-waypoint = user → WP1 → … → WPn → user (pathFactor per segment). No API.
+                            // User-based duration: single-waypoint = round-trip from user; multi-waypoint = user → WP1 → … → WPn → user.
+                            // Uses route-specific OSRM-derived ratio (real walking distance / straight-line total) instead of generic pathFactor. No API.
+                            let routeRatio = self.osrmDerivedRatio(routeData: routeData, areaCenter: areaCenter)
                             let (displayDurationSeconds, displayDistanceMeters, displayPolyline, travelToStartSeconds): (Int, Int, String, Int?) = {
                                 if filteredPlaces.count == 1, let firstPOI = filteredPOIs.first {
                                     let poiCoord = CLLocationCoordinate2D(latitude: firstPOI.latitude, longitude: firstPOI.longitude)
-                                    let factor = self.pathFactor(straightLineM: distanceToStart)
-                                    let dPath = distanceToStart * factor
+                                    let dPath = distanceToStart * routeRatio
                                     let roundTripSeconds = Int(2 * (dPath / walkingSpeedMperMin) * 60)
                                     let roundTripMeters = Int(2 * dPath)
                                     let userPolyline = self.encodeSimplePolyline([location, poiCoord, location])
-                                    print("📦 Route '\(routeName)': single waypoint — using user round-trip \(roundTripSeconds/60)min (\(Int(roundTripMeters))m) instead of DB loop \(routeData.durationSeconds/60)min")
+                                    print("📦 Route '\(routeName)': single waypoint — using user round-trip \(roundTripSeconds/60)min (\(Int(roundTripMeters))m) instead of DB loop \(routeData.durationSeconds/60)min (osrmRatio=\(String(format: "%.2f", routeRatio)) vs pathFactor=\(self.pathFactor(straightLineM: distanceToStart)))")
                                     return (roundTripSeconds, roundTripMeters, userPolyline, nil)
                                 }
                                 if filteredPlaces.count >= 2 {
@@ -546,28 +540,92 @@ class PrePopulatedPOIService {
                                     for poi in filteredPOIs {
                                         let coord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
                                         let dStraight = self.distanceBetween(prev, coord)
-                                        let factor = self.pathFactor(straightLineM: dStraight)
-                                        let dPath = dStraight * factor
+                                        let dPath = dStraight * routeRatio
                                         totalSeconds += (dPath / walkingSpeedMperMin) * 60
                                         totalMeters += dPath
                                         prev = coord
                                     }
                                     let dStraightBack = self.distanceBetween(prev, location)
-                                    let factorBack = self.pathFactor(straightLineM: dStraightBack)
-                                    let dPathBack = dStraightBack * factorBack
+                                    let dPathBack = dStraightBack * routeRatio
                                     totalSeconds += (dPathBack / walkingSpeedMperMin) * 60
                                     totalMeters += dPathBack
                                     let coords = [location] + filteredPOIs.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) } + [location]
                                     let userPolyline = self.encodeSimplePolyline(coords)
-                                    print("📦 Route '\(routeName)': multi-waypoint — using user-based \(Int(totalSeconds)/60)min (\(Int(totalMeters))m) instead of DB loop \(routeData.durationSeconds/60)min + travel")
+                                    print("📦 Route '\(routeName)': multi-waypoint — using user-based \(Int(totalSeconds)/60)min (\(Int(totalMeters))m) instead of DB loop \(routeData.durationSeconds/60)min + travel (osrmRatio=\(String(format: "%.2f", routeRatio)))")
                                     return (Int(totalSeconds), Int(totalMeters), userPolyline, nil)
                                 }
                                 return (routeData.durationSeconds, routeData.distanceMeters, routeData.polyline, timeToStartSeconds)
                             }()
                             
+                            // On-route POIs: add POIs that lie on the path (no extra time) when under requested duration or when route has few waypoints. MapKit/Google refresh will use the full list.
+                            var finalFilteredPOIs = filteredPOIs
+                            var finalFilteredPlaces = filteredPlaces
+                            let totalDurationMin = displayDurationSeconds / 60 + (travelToStartSeconds ?? 0) / 60
+                            let decodedPolyline = PolylineDecoder.decode(displayPolyline)
+                            if (totalDurationMin < roundedDuration || filteredPOIs.count <= 2),
+                               decodedPolyline.count >= 2 {
+                                let existingIds = Set(filteredPOIs.map(\.placeId))
+                                // Only add POIs not further from origin than the route's furthest waypoint (keep duration believable).
+                                let maxDistFromOrigin: Double = {
+                                    guard !filteredPOIs.isEmpty else { return .infinity }
+                                    let maxD = filteredPOIs.map { poi in
+                                        self.distanceBetween(location, CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude))
+                                    }.max() ?? 0
+                                    return maxD * 1.15
+                                }()
+                                let candidates = area.pois
+                                    .filter { !existingIds.contains($0.placeId) }
+                                    .filter { poi in
+                                        self.distanceBetween(location, CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)) <= maxDistFromOrigin
+                                    }
+                                    .map { RouteGeometryHelper.Candidate(id: $0.placeId, coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)) }
+                                let existingCoords = filteredPOIs.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                                let onRouteResults = RouteGeometryHelper.selectOnRoutePOIs(
+                                    polyline: decodedPolyline,
+                                    candidates: candidates,
+                                    origin: location,
+                                    existingWaypointCoords: existingCoords,
+                                    minDistanceBetweenWaypoints: self.minWaypointDistanceForTriggerZone,
+                                    onRouteThresholdMeters: 50,
+                                    maxToAdd: 3
+                                )
+                                if !onRouteResults.isEmpty {
+                                    let areaPoiById = Dictionary(uniqueKeysWithValues: area.pois.map { ($0.placeId, $0) })
+                                    var withProgress: [(poi: PrePopulatedPOIDatabase.PrePopulatedPOI, progress: Double)] = []
+                                    for poi in filteredPOIs {
+                                        let coord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+                                        if let proj = RouteGeometryHelper.projectOntoPolyline(coordinate: coord, polyline: decodedPolyline) {
+                                            let len = RouteGeometryHelper.polylineLength(decodedPolyline)
+                                            let progress = len > 0 ? RouteGeometryHelper.distanceAlongPolyline(polyline: decodedPolyline, segmentIndex: proj.segmentIndex, t: proj.t) / len : 0
+                                            withProgress.append((poi, progress))
+                                        } else {
+                                            withProgress.append((poi, 0))
+                                        }
+                                    }
+                                    for res in onRouteResults {
+                                        if let poi = areaPoiById[res.candidate.id] {
+                                            withProgress.append((poi, res.progress))
+                                        }
+                                    }
+                                    withProgress.sort { $0.progress < $1.progress }
+                                    finalFilteredPOIs = withProgress.map(\.poi)
+                                    finalFilteredPlaces = finalFilteredPOIs.map { poi in
+                                        PlaceResult(
+                                            placeId: poi.placeId,
+                                            name: poi.name,
+                                            vicinity: poi.vicinity,
+                                            geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)),
+                                            types: poi.types,
+                                            source: POISource.fromString(poi.source)
+                                        )
+                                    }
+                                    print("📦 On-route POIs added: \(onRouteResults.count) for '\(routeName)' (was \(filteredPOIs.count) waypoints, now \(finalFilteredPOIs.count))")
+                                }
+                            }
+                            
                             // Create GeneratedRoute: show route-only duration in preview; travel-to-start is used for session pill when they tap Let's Go
                             let generatedRoute = GeneratedRoute(
-                                places: filteredPlaces,
+                                places: finalFilteredPlaces,
                                 polyline: displayPolyline,
                                 distanceMeters: displayDistanceMeters,
                                 durationSeconds: displayDurationSeconds,
@@ -749,6 +807,107 @@ class PrePopulatedPOIService {
         return nil
     }
     
+    /// Returns up to 2 short routes from the lower duration bucket (extendToDuration - 5) plus area POIs as extend candidates.
+    /// Caller should extend these routes to extendToDuration (e.g. add detour waypoints) and append to the main list.
+    /// Does not replace or reduce normal routes; use as an additional source.
+    func getLowerBucketRoutesForExtend(near location: CLLocationCoordinate2D, extendToDuration: Int) -> (routes: [RouteCacheService.CachedRouteWithMetadata], candidatePOIs: [PlaceResult])? {
+        guard extendToDuration >= 10 else { return nil }  // Lower bucket would be < 5 min
+        let lowerBucket = extendToDuration - 5
+        guard let database = loadDatabase() else { return nil }
+        let roundedDuration = RouteCacheService.roundToNearest5Minutes(extendToDuration)
+        let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
+        let (minPercent, _) = isEdgeCase ? (0.75, 1.25) : (0.80, 1.20)
+        let minAcceptableMinutes = Int(Double(roundedDuration) * minPercent)  // Routes we want have total < this (short)
+        
+        for area in database.postcodeAreas {
+            guard let routes = area.routes else { continue }
+            let areaCenter = effectiveCenter(for: area)
+            let distanceToArea = distanceBetween(location, areaCenter)
+            guard distanceToArea <= Double(area.radiusMeters) else { continue }
+            guard let routeGroup = routes.first(where: { $0.durationMinutes == lowerBucket }) else { continue }
+            
+            let walkingSpeedMperMin = Double(GoogleMapsService.shared.adaptiveWalkingSpeed)
+            var toExtend: [RouteCacheService.CachedRouteWithMetadata] = []
+            for routeData in routeGroup.routes {
+                let (timeToStartSeconds, distanceToStart) = {
+                    guard !routeData.places.isEmpty else {
+                        let d = distanceBetween(location, areaCenter)
+                        return (Int((d / walkingSpeedMperMin) * 60), d)
+                    }
+                    var minDist = Double.infinity
+                    for poi in routeData.places {
+                        let d = distanceBetween(location, CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude))
+                        if d < minDist { minDist = d }
+                    }
+                    return (Int((minDist / walkingSpeedMperMin) * 60), minDist)
+                }()
+                let totalDurationMinutes = (routeData.durationSeconds + timeToStartSeconds) / 60
+                guard totalDurationMinutes < minAcceptableMinutes else { continue }
+                guard let filteredPOIsUnordered = filterCloseWaypoints(places: routeData.places, minDistance: minWaypointDistanceForTriggerZone) else { continue }
+                let filteredPOIs: [PrePopulatedPOIDatabase.PrePopulatedPOI] = {
+                    guard filteredPOIsUnordered.count > 1 else { return filteredPOIsUnordered }
+                    var bestIdx = 0
+                    var bestD = Double.infinity
+                    for (i, poi) in filteredPOIsUnordered.enumerated() {
+                        let d = distanceBetween(location, CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude))
+                        if d < bestD { bestD = d; bestIdx = i }
+                    }
+                    if bestIdx == 0 { return filteredPOIsUnordered }
+                    return Array(filteredPOIsUnordered[bestIdx...]) + Array(filteredPOIsUnordered[..<bestIdx])
+                }()
+                let filteredPlaces = filteredPOIs.map { poi in
+                    PlaceResult(placeId: poi.placeId, name: poi.name, vicinity: poi.vicinity,
+                               geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)),
+                               types: poi.types, source: POISource.fromString(poi.source))
+                }
+                let routeRatio = osrmDerivedRatio(routeData: routeData, areaCenter: areaCenter)
+                let (displayDurationSeconds, displayDistanceMeters, displayPolyline): (Int, Int, String) = {
+                    if filteredPlaces.count == 1, let first = filteredPOIs.first {
+                        let dPath = distanceToStart * routeRatio
+                        let roundTripSeconds = Int(2 * (dPath / walkingSpeedMperMin) * 60)
+                        let roundTripMeters = Int(2 * dPath)
+                        let coord = CLLocationCoordinate2D(latitude: first.latitude, longitude: first.longitude)
+                        return (roundTripSeconds, roundTripMeters, encodeSimplePolyline([location, coord, location]))
+                    }
+                    if filteredPlaces.count >= 2 {
+                        var totalSeconds = 0.0
+                        var totalMeters = 0.0
+                        var prev = location
+                        for poi in filteredPOIs {
+                            let coord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+                            let dPath = distanceBetween(prev, coord) * routeRatio
+                            totalSeconds += (dPath / walkingSpeedMperMin) * 60
+                            totalMeters += dPath
+                            prev = coord
+                        }
+                        totalSeconds += (distanceBetween(prev, location) * routeRatio / walkingSpeedMperMin) * 60
+                        totalMeters += distanceBetween(prev, location) * routeRatio
+                        let coords = [location] + filteredPOIs.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) } + [location]
+                        return (Int(totalSeconds), Int(totalMeters), encodeSimplePolyline(coords))
+                    }
+                    return (routeData.durationSeconds, routeData.distanceMeters, routeData.polyline)
+                }()
+                let generatedRoute = GeneratedRoute(places: filteredPlaces, polyline: displayPolyline, distanceMeters: displayDistanceMeters, durationSeconds: displayDurationSeconds, legs: [], travelToStartSeconds: timeToStartSeconds)
+                let walkingDirections = routeData.directions?.map { dir in
+                    WalkingDirection(instruction: dir.instruction, distance: dir.distance, distanceMeters: dir.distanceMeters, duration: dir.duration, maneuver: dir.maneuver)
+                }
+                let cached = RouteCacheService.CachedRouteWithMetadata(route: generatedRoute, name: routeData.name, description: routeData.description, directions: walkingDirections, isFromPrePopulatedDatabase: true)
+                toExtend.append(cached)
+                if toExtend.count >= 2 { break }
+            }
+            if !toExtend.isEmpty {
+                let candidatePOIs = area.pois.map { poi in
+                    PlaceResult(placeId: poi.placeId, name: poi.name, vicinity: poi.vicinity,
+                               geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)),
+                               types: poi.types, source: POISource.fromString(poi.source))
+                }
+                print("📦 Lower-bucket for extend: \(toExtend.count) short \(lowerBucket)min route(s) to extend to \(extendToDuration)min, \(candidatePOIs.count) candidate POIs")
+                return (toExtend, candidatePOIs)
+            }
+        }
+        return nil
+    }
+    
     /// Fallback: determine district by distance to known postcode centers (2500m radius). Used when reverse geocode fails or is unavailable.
     private func getPostcodeDistrictFromCenters(for location: CLLocationCoordinate2D) -> String? {
         var closestPostcode: String? = nil
@@ -854,6 +1013,30 @@ class PrePopulatedPOIService {
         if straightLineM <= 400 { return 1.5 }
         if straightLineM <= 800 { return 1.35 }
         return 1.25
+    }
+    
+    /// Derive the real straight-line-to-walking ratio from stored OSRM data for a specific route.
+    /// Uses the stored OSRM walking distance and the straight-line distances between the stored
+    /// loop waypoints (areaCenter → WP1 → … → WPn → areaCenter) to compute a route-specific
+    /// winding factor. Falls back to 1.35 (mid-tier pathFactor) if data is insufficient.
+    private func osrmDerivedRatio(
+        routeData: PrePopulatedPOIDatabase.PrePopulatedRoute.PrePopulatedRouteData,
+        areaCenter: CLLocationCoordinate2D
+    ) -> Double {
+        guard routeData.distanceMeters > 0, !routeData.places.isEmpty else { return 1.35 }
+        // Compute straight-line total for the stored loop: areaCenter → WP1 → … → WPn → areaCenter
+        var straightTotal = 0.0
+        var prev = areaCenter
+        for poi in routeData.places {
+            let coord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+            straightTotal += distanceBetween(prev, coord)
+            prev = coord
+        }
+        straightTotal += distanceBetween(prev, areaCenter)
+        guard straightTotal > 50 else { return 1.35 }  // avoid divide-by-near-zero
+        let ratio = Double(routeData.distanceMeters) / straightTotal
+        // Clamp to reasonable range (1.1 – 2.0) to guard against bad data
+        return min(2.0, max(1.1, ratio))
     }
     
     /// Returns the single-waypoint round-trip duration in minutes for the given POI (pathFactor applied). Nil if POI is restricted.

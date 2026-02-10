@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UserNotifications
+import UIKit
 
 // MARK: - Timeout Helper (shared with GoogleMapsService)
 /// Wraps an async operation with a timeout, throwing TimeoutError if exceeded
@@ -712,7 +713,11 @@ struct CompactRouteCard: View {
                         }
                         
                         HStack(spacing: 8) {
-                            Label("\(route.durationMinutes)m", systemImage: "clock")
+                            if route.triggerStopsMinutes > 0 {
+                                Label("\(route.totalDisplayMinutes)m (incl. stops)", systemImage: "clock")
+                            } else {
+                                Label("\(route.durationMinutes)m", systemImage: "clock")
+                            }
                             Label("\(route.qrMarkers.count) spots", systemImage: "mappin")
                             if route.isIndoor {
                                 Label("Indoor", systemImage: "building.2")
@@ -773,9 +778,15 @@ struct CompactRouteCard: View {
                     HStack(spacing: 16) {
                         // Duration & Distance
                         VStack(alignment: .leading, spacing: 4) {
-                            Label("\(route.durationMinutes) minutes", systemImage: "clock.fill")
-                                .font(.caption)
-                                .foregroundColor(.primary)
+                            if route.triggerStopsMinutes > 0 {
+                                Label("\(route.totalDisplayMinutes) min (incl. ~\(route.triggerStopsMinutes) min at stops)", systemImage: "clock.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.primary)
+                            } else {
+                                Label("\(route.durationMinutes) minutes", systemImage: "clock.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.primary)
+                            }
                             Label("\(route.distanceMeters)m distance", systemImage: "figure.walk")
                                 .font(.caption)
                                 .foregroundColor(.primary)
@@ -893,12 +904,6 @@ struct RouteMapPreview: View {
     
     var body: some View {
         Map {
-            // Route polyline
-            if route.routePath.count >= 2 {
-                MapPolyline(coordinates: route.routePath)
-                    .stroke(route.color, lineWidth: 3)
-            }
-            
             // Start marker (stable id avoids invalid reuse)
             if let start = route.routePath.first {
                 Annotation("Start", coordinate: start) {
@@ -1035,6 +1040,8 @@ struct LocalRoutePickerSheet: View {
     @State private var isRouteRefreshed = false  // v1.9.22: Track if route has been refreshed
     @State private var isRefreshingRoutes = false  // Loading state when user taps Refresh to reload route list
     @State private var refreshRaceState = RefreshRaceState()  // MapKit vs Google race: last route always Google
+    /// When true, first route came from 30s Google fallback — skip Google refresh on Let's Go.
+    @State private var currentRouteIsFromGoogle30sFallback = false
     @State private var generatedRoute: WalkingRoute?
     @State private var generatedRouteData: GeneratedRoute?
     @State private var showMapPreview = false
@@ -1062,6 +1069,8 @@ struct LocalRoutePickerSheet: View {
     @State private var viewedRouteIndices: Set<Int> = []  // Track which routes user has seen
     @State private var showPremiumUpsell = false  // Show upgrade message when all routes viewed
     @State private var showLocationLimitAlert = false  // Show when free tier location limit reached
+    @State private var showBucketAudit = false  // Route bucket audit sheet (current location, 5–60 min)
+    @State private var auditLocation: CLLocationCoordinate2D?
     
     // v1.6.25: Route deduplication - track unique route signatures
     @State private var routeSignatures: Set<String> = []  // Unique signatures: "sortedPOIIds|distanceBucket"
@@ -1443,10 +1452,26 @@ struct LocalRoutePickerSheet: View {
                         isPresented = false
                     }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if let loc = locationService.currentLocation?.coordinate {
+                        Button("Audit") {
+                            auditLocation = loc
+                            showBucketAudit = true
+                        }
+                    }
+                }
             }
             .fullScreenCover(isPresented: $showActiveWalk) {
                 // v1.9.28: Immersive full-screen presentation - no navigation context
                 ActiveWalkView(viewModel: viewModel, locationService: viewModel.locationService, isPresented: $showActiveWalk)
+            }
+            .sheet(isPresented: $showBucketAudit) {
+                if let loc = auditLocation {
+                    RouteBucketAuditView(location: loc)
+                } else {
+                    Text("No location for audit")
+                        .padding()
+                }
             }
             .onChange(of: showActiveWalk) { oldValue, newValue in
                 let timestamp = Date()
@@ -1792,6 +1817,7 @@ struct LocalRoutePickerSheet: View {
         
         isGenerating = true
         routeGenerationComplete = false  // v1.8.5: Reset for new generation
+        currentRouteIsFromGoogle30sFallback = false
         errorMessage = nil
         mapsService.resetRouteAttempts()
         
@@ -1934,10 +1960,14 @@ struct LocalRoutePickerSheet: View {
                     
                     // v2.1.7: Filter close waypoints from cached routes (100m under 25min, 200m for 25+ min). Pre-populated routes always use 200m to match DB/trigger zone (e.g. Outwood Primary / Kirkhamgate Village Hall ~98 ft → collapse).
                     let filteredCachedRoute = mapsService.filterCloseWaypointsSync(from: firstCached.route, durationMinutes: selectedDuration, origin: userLocation.coordinate, isFromPrePopulatedDatabase: firstCached.isFromPrePopulatedDatabase)
+                    // Add on-route POIs when route has 1–2 waypoints so single-waypoint cache/prepop routes get extra stops (same as generated routes).
+                    let firstRouteData: GeneratedRoute = (filteredCachedRoute.places.count <= 2 && !prefetchedPOIs.isEmpty)
+                        ? mapsService.addOnRoutePOIsIfNeeded(filteredCachedRoute, origin: userLocation.coordinate, candidatePOIs: prefetchedPOIs, durationMinutes: selectedDuration)
+                        : filteredCachedRoute
                     
                     // Create markers early so we can use them for MapKit full-loop (prepop) or display
                     let firstMarkersForPrepop: [QRMarker] = {
-                        let realPlaces = filteredCachedRoute.places.filter { $0.name != "Route Point" }
+                        let realPlaces = firstRouteData.places.filter { $0.name != "Route Point" }
                         return realPlaces.enumerated().map { index, place in
                             let content = WellbeingContent.breathingExercises.randomElement() ?? WellbeingContent.breathingExercises[0]
                             return QRMarker(
@@ -1953,9 +1983,9 @@ struct LocalRoutePickerSheet: View {
                     }()
                     
                     // Pre-populated routes: show map immediately with cached polyline/directions; refresh with MapKit in background (avoids 30s+ wait when rate limited)
-                    var polylineToUse = filteredCachedRoute.polyline
-                    var durationToUse = filteredCachedRoute.durationSeconds
-                    var distanceToUse = filteredCachedRoute.distanceMeters
+                    var polylineToUse = firstRouteData.polyline
+                    var durationToUse = firstRouteData.durationSeconds
+                    var distanceToUse = firstRouteData.distanceMeters
                     var directionsFromGpsToFirst: [WalkingDirection] = []
                     var directionsFromLastToGps: [WalkingDirection] = []
                     var firstDirections: [WalkingDirection] = []
@@ -1982,7 +2012,7 @@ struct LocalRoutePickerSheet: View {
                             "data": [
                                 "cachedDirectionsCount": firstDirections.count,
                                 "waypointInstructions": firstDirections.filter { $0.instruction.contains("Waypoint") }.map { $0.instruction },
-                                "waypointsCount": filteredCachedRoute.places.count,
+                                "waypointsCount": firstRouteData.places.count,
                                 "hasWaypointInstructions": firstDirections.contains { $0.instruction.contains("Waypoint") }
                             ],
                             "timestamp": Int(Date().timeIntervalSince1970 * 1000)
@@ -1998,7 +2028,7 @@ struct LocalRoutePickerSheet: View {
                     let firstRouteDifficulty: RouteDifficulty = (durationToUse / 60) <= 10 ? .easy : ((durationToUse / 60) <= 20 ? .moderate : .challenging)
                     
                     let firstRouteName = firstCached.name ?? "Local Discovery"
-                    let firstRouteDesc = firstCached.description ?? "A \(filteredCachedRoute.formattedDuration) walk passing \(filteredCachedRoute.places.count) local points of interest."
+                    let firstRouteDesc = firstCached.description ?? "A \(firstRouteData.formattedDuration) walk passing \(firstRouteData.places.count) local points of interest."
                     
                     let firstRoute = WalkingRoute(
                         name: firstRouteName,
@@ -2008,20 +2038,20 @@ struct LocalRoutePickerSheet: View {
                         difficulty: firstRouteDifficulty,
                         isIndoor: false,
                         isAccessible: true,
-                        landmarks: ["Start"] + filteredCachedRoute.places.map { $0.name } + ["Return"],
+                        landmarks: ["Start"] + firstRouteData.places.map { $0.name } + ["Return"],
                         icon: "location.fill",
                         color: .tealAccent,
                         qrMarkers: firstMarkers,
                         routeType: .local,
                         trimmed: polylineToUse,
                         walkingDirections: firstDirections,
-                        usedOSRMRouting: filteredCachedRoute.usedOSRM,
+                        usedOSRMRouting: firstRouteData.usedOSRM,
                         isFromPrePopulatedDatabase: firstCached.isFromPrePopulatedDatabase,
                         travelToStartMinutes: firstCached.route.travelToStartSeconds.map { $0 / 60 }
                     )
                     
-                    loadedRoutes.append((route: firstRoute, data: filteredCachedRoute, isDeadZoneFallback: firstCached.isDeadZoneFallback))
-                    loadedPlaceIdSets.append(Set(firstCached.route.places.map { $0.placeId }))
+                    loadedRoutes.append((route: firstRoute, data: firstRouteData, isDeadZoneFallback: firstCached.isDeadZoneFallback))
+                    loadedPlaceIdSets.append(Set(firstRouteData.places.map { $0.placeId }))
                     
                     // v1.9.24: Show first route IMMEDIATELY (<0.1s), enhance in background
                     await MainActor.run {
@@ -2045,7 +2075,7 @@ struct LocalRoutePickerSheet: View {
                                     "distances": distances,
                                     "minDistance": distances.min() ?? 0,
                                     "source": "cache",
-                                    "places": firstCached.route.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] }
+                                    "places": firstRouteData.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] }
                                 ],
                                 "timestamp": Int(Date().timeIntervalSince1970 * 1000)
                             ]
@@ -2067,9 +2097,9 @@ struct LocalRoutePickerSheet: View {
                         } else {
                             currentRouteIndex = 0
                             generatedRoute = firstRoute
-                            generatedRouteData = firstCached.route
+                            generatedRouteData = firstRouteData
                             lastValidRoute = firstRoute
-                            lastValidRouteData = firstCached.route
+                            lastValidRouteData = firstRouteData
                             viewedRouteIndices = [0]
                             print("TIME_SOURCE | PREVIEW: First route shown: \(firstRoute.durationMinutes) min, \(firstRoute.distanceMeters)m — FROM CACHE/PRE-POP (Google refresh pending)")
                         }
@@ -2092,7 +2122,7 @@ struct LocalRoutePickerSheet: View {
                     if firstCached.isFromPrePopulatedDatabase,
                        (firstCached.name == nil || (firstCached.name ?? "").isEmpty || (firstCached.name ?? "") == "Local Discovery"),
                        !filteredCachedRoute.places.isEmpty {
-                        let placesForGemini = filteredCachedRoute.places
+                        let placesForGemini = firstRouteData.places
                         let durationMin = max(1, durationToUse / 60)
                         let diff = firstRouteDifficulty
                         let origin = userLocation.coordinate
@@ -2161,7 +2191,7 @@ struct LocalRoutePickerSheet: View {
                         var enhancedDirections = firstDirections
                         
                         // Enhance markers if needed (full processing for better quality)
-                        if firstMarkers.isEmpty || firstMarkers.count != firstCached.route.places.count {
+                        if firstMarkers.isEmpty || firstMarkers.count != firstRouteData.places.count {
                             // Check cancellation before heavy work
                             let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
                             if shouldCancel {
@@ -2171,10 +2201,10 @@ struct LocalRoutePickerSheet: View {
                             
                             enhancedMarkers = await MainActor.run {
                                 // #region agent log
-                                if firstCached.route.places.count > 1 {
-                                    let distances = (0..<firstCached.route.places.count-1).map { i in
-                                        let loc1 = CLLocation(latitude: firstCached.route.places[i].coordinate.latitude, longitude: firstCached.route.places[i].coordinate.longitude)
-                                        let loc2 = CLLocation(latitude: firstCached.route.places[i+1].coordinate.latitude, longitude: firstCached.route.places[i+1].coordinate.longitude)
+                                if firstRouteData.places.count > 1 {
+                                    let distances = (0..<firstRouteData.places.count-1).map { i in
+                                        let loc1 = CLLocation(latitude: firstRouteData.places[i].coordinate.latitude, longitude: firstRouteData.places[i].coordinate.longitude)
+                                        let loc2 = CLLocation(latitude: firstRouteData.places[i+1].coordinate.latitude, longitude: firstRouteData.places[i+1].coordinate.longitude)
                                         return loc1.distance(from: loc2)
                                     }
                                     let logData: [String: Any] = [
@@ -2185,8 +2215,8 @@ struct LocalRoutePickerSheet: View {
                                         "message": "Cached route: waypoint distances",
                                         "data": [
                                             "routeName": firstCached.name ?? "Unknown",
-                                            "waypointCount": firstCached.route.places.count,
-                                            "waypoints": firstCached.route.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
+                                            "waypointCount": firstRouteData.places.count,
+                                            "waypoints": firstRouteData.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] },
                                             "distances": distances,
                                             "minDistance": distances.min() ?? 0,
                                             "source": "cache"
@@ -2199,7 +2229,7 @@ struct LocalRoutePickerSheet: View {
                                     }
                                 }
                                 // #endregion
-                                return createMarkersFromPlaces(firstCached.route.places, origin: userLocation.coordinate)
+                                return createMarkersFromPlaces(firstRouteData.places, origin: userLocation.coordinate)
                             }
                             needsUpdate = true
                         }
@@ -2214,11 +2244,11 @@ struct LocalRoutePickerSheet: View {
                             }
                             
                             enhancedDirections = await MainActor.run {
-                                extractWalkingDirections(from: firstCached.route.legs, waypoints: firstCached.route.places)
+                                extractWalkingDirections(from: firstRouteData.legs, waypoints: firstRouteData.places)
                             }
                             
                             // Get MapKit directions if still empty
-                            if enhancedDirections.isEmpty && !firstCached.route.places.isEmpty {
+                            if enhancedDirections.isEmpty && !firstRouteData.places.isEmpty {
                                 // Final cancellation check before expensive MapKit call
                                 let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
                                 if shouldCancel {
@@ -2227,8 +2257,8 @@ struct LocalRoutePickerSheet: View {
                                 }
                                 
                                 print("🍎 Enhancing first route with MapKit directions...")
-                                let waypointCoords = firstCached.route.places.map { $0.coordinate }
-                                let waypointNames = firstCached.route.places.map { $0.name }
+                                let waypointCoords = firstRouteData.places.map { $0.coordinate }
+                                let waypointNames = firstRouteData.places.map { $0.name }
                                 enhancedDirections = await mapsService.getMapKitDirectionsForRoute(
                                     origin: userLocation.coordinate,
                                     waypoints: waypointCoords,
@@ -2289,27 +2319,30 @@ struct LocalRoutePickerSheet: View {
                                 group.addTask {
                                     // v2.1.7: Filter close waypoints from cached routes (100m under 25min, 200m for 25+ min). Pre-populated routes use 200m to match DB/trigger zone.
                                     let filteredCachedRoute = mapsService.filterCloseWaypointsSync(from: cached.route, durationMinutes: selectedDuration, origin: userLocation.coordinate, isFromPrePopulatedDatabase: cached.isFromPrePopulatedDatabase)
+                                    let routeData: GeneratedRoute = (filteredCachedRoute.places.count <= 2 && !prefetchedPOIs.isEmpty)
+                                        ? mapsService.addOnRoutePOIsIfNeeded(filteredCachedRoute, origin: userLocation.coordinate, candidatePOIs: prefetchedPOIs, durationMinutes: selectedDuration)
+                                        : filteredCachedRoute
                                     
                                     // Pre-populated routes: start = GPS; prepend GPS → first waypoint, append last waypoint → GPS (return to start)
-                                    var polylineToUse = filteredCachedRoute.polyline
-                                    var durationToUse = filteredCachedRoute.durationSeconds
-                                    var distanceToUse = filteredCachedRoute.distanceMeters
+                                    var polylineToUse = routeData.polyline
+                                    var durationToUse = routeData.durationSeconds
+                                    var distanceToUse = routeData.distanceMeters
                                     var directionsFromGpsToFirst: [WalkingDirection] = []
                                     var directionsFromLastToGps: [WalkingDirection] = []
-                                    if cached.isFromPrePopulatedDatabase, let firstPlace = filteredCachedRoute.places.first {
+                                    if cached.isFromPrePopulatedDatabase, let firstPlace = routeData.places.first {
                                         if let merged = await mapsService.prependGpsToFirstWaypointLeg(
                                             userLocation: userLocation.coordinate,
                                             firstWaypoint: firstPlace.coordinate,
-                                            existingRoutePolyline: filteredCachedRoute.polyline,
-                                            existingDurationSeconds: filteredCachedRoute.durationSeconds,
-                                            existingDistanceMeters: filteredCachedRoute.distanceMeters
+                                            existingRoutePolyline: routeData.polyline,
+                                            existingDurationSeconds: routeData.durationSeconds,
+                                            existingDistanceMeters: routeData.distanceMeters
                                         ) {
                                             polylineToUse = merged.polyline
                                             durationToUse = merged.durationSeconds
                                             distanceToUse = merged.distanceMeters
                                             directionsFromGpsToFirst = merged.directionsFromGpsToFirst
                                         }
-                                        if let lastPlace = filteredCachedRoute.places.last {
+                                        if let lastPlace = routeData.places.last {
                                             if let withReturn = await mapsService.appendLastWaypointToGpsLeg(
                                                 userLocation: userLocation.coordinate,
                                                 lastWaypoint: lastPlace.coordinate,
@@ -2326,7 +2359,7 @@ struct LocalRoutePickerSheet: View {
                                     }
                                     
                                     let markers = await MainActor.run {
-                                        createMarkersFromPlaces(filteredCachedRoute.places, origin: userLocation.coordinate)
+                                        createMarkersFromPlaces(routeData.places, origin: userLocation.coordinate)
                                     }
                                     
                                     // First directions = from GPS to first waypoint (pre-populated); then cached or extracted route directions
@@ -2347,7 +2380,7 @@ struct LocalRoutePickerSheet: View {
                                                 "cachedDirectionsCount": cachedDirections.count,
                                                 "filteredDirectionsCount": filteredCachedDirections.count,
                                                 "waypointInstructions": filteredCachedDirections.filter { $0.instruction.contains("Waypoint") }.map { $0.instruction },
-                                                "waypointsCount": filteredCachedRoute.places.count,
+                                                "waypointsCount": routeData.places.count,
                                                 "hasWaypointInstructions": filteredCachedDirections.contains { $0.instruction.contains("Waypoint") }
                                             ],
                                             "timestamp": Int(Date().timeIntervalSince1970 * 1000)
@@ -2362,7 +2395,7 @@ struct LocalRoutePickerSheet: View {
                                         directions += filteredCachedDirections
                                     } else {
                                         directions += await MainActor.run {
-                                            extractWalkingDirections(from: filteredCachedRoute.legs, waypoints: filteredCachedRoute.places)
+                                            extractWalkingDirections(from: routeData.legs, waypoints: routeData.places)
                                         }
                                     }
                                     directions += directionsFromLastToGps
@@ -2371,11 +2404,11 @@ struct LocalRoutePickerSheet: View {
                                     
                                     // Pre-populated routes from DB often have no name/description — generate with Gemini
                                     var routeName = cached.name ?? "Local Discovery"
-                                    var routeDesc = cached.description ?? "A \(filteredCachedRoute.formattedDuration) walk passing \(filteredCachedRoute.places.count) local points of interest."
+                                    var routeDesc = cached.description ?? "A \(routeData.formattedDuration) walk passing \(routeData.places.count) local points of interest."
                                     if (cached.name == nil || (cached.name ?? "").isEmpty || (cached.name ?? "") == "Local Discovery"),
                                        cached.isFromPrePopulatedDatabase,
-                                       !filteredCachedRoute.places.isEmpty {
-                                        let waypointInfos = filteredCachedRoute.places.map {
+                                       !routeData.places.isEmpty {
+                                        let waypointInfos = routeData.places.map {
                                             GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity)
                                         }
                                         let content = await GeminiService.shared.generateRouteContent(
@@ -2397,19 +2430,19 @@ struct LocalRoutePickerSheet: View {
                                         difficulty: routeDifficulty,
                                         isIndoor: false,
                                         isAccessible: true,
-                                        landmarks: ["Start"] + filteredCachedRoute.places.map { $0.name } + ["Return"],
+                                        landmarks: ["Start"] + routeData.places.map { $0.name } + ["Return"],
                                         icon: "location.fill",
                                         color: .tealAccent,
                                         qrMarkers: markers,
                                         routeType: .local,
                                         trimmed: polylineToUse,
                                         walkingDirections: directions,
-                                        usedOSRMRouting: filteredCachedRoute.usedOSRM,
+                                        usedOSRMRouting: routeData.usedOSRM,
                                         isFromPrePopulatedDatabase: cached.isFromPrePopulatedDatabase
                                     )
                                     
-                                    let placeIds = Set(filteredCachedRoute.places.map { $0.placeId })
-                                    return (route: localRoute, data: filteredCachedRoute, isDeadZoneFallback: cached.isDeadZoneFallback, placeIds: placeIds)
+                                    let placeIds = Set(routeData.places.map { $0.placeId })
+                                    return (route: localRoute, data: routeData, isDeadZoneFallback: cached.isDeadZoneFallback, placeIds: placeIds)
                                 }
                             }
                             
@@ -2525,6 +2558,25 @@ struct LocalRoutePickerSheet: View {
                     // Refresh happens in background and updates route when ready
                     routeGenerationComplete = true
                     
+                    // Lower-bucket + extend: add extra route options (short base extended to target) when prepop and we have room. Does not replace normal routes.
+                    if firstCached.isFromPrePopulatedDatabase, cachedRoutes.count < maxRoutesToGenerate {
+                        Task {
+                            guard let (lowerRoutes, candidatePOIs) = PrePopulatedPOIService.shared.getLowerBucketRoutesForExtend(near: userLocation.coordinate, extendToDuration: selectedDuration) else { return }
+                            for cached in lowerRoutes {
+                                guard await MainActor.run(body: { allRoutes.count }) < maxRoutesToGenerate else { break }
+                                guard let extended = await mapsService.extendRouteToTargetDuration(cachedRoute: cached, userLocation: userLocation.coordinate, targetMinutes: selectedDuration, candidatePOIs: candidatePOIs) else { continue }
+                                let displayRoute = RouteConversionHelper.walkingRoute(from: extended.route, origin: userLocation.coordinate, name: extended.name ?? "Extended route", description: extended.description ?? "Route extended to \(selectedDuration) min")
+                                await MainActor.run {
+                                    if allRoutes.count < maxRoutesToGenerate {
+                                        allRoutes.append((route: displayRoute, data: extended.route, isDeadZoneFallback: false))
+                                        registerRouteSignature(places: extended.route.places, distanceMeters: extended.route.distanceMeters)
+                                        print("📦 Lower-bucket extended route added: \(displayRoute.name) (\(displayRoute.durationMinutes)min) — total routes: \(allRoutes.count)")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
                     // Only pre-generate more if we don't have enough
                     if cachedRoutes.count < maxRoutesToGenerate {
                         print("📦 Only \(cachedRoutes.count)/\(maxRoutesToGenerate) routes cached - will pre-generate more")
@@ -2583,6 +2635,205 @@ struct LocalRoutePickerSheet: View {
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting route generation...")
                     print("ROUTE_PHASE phase=route_gen_call_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     let routeGenStartTime = Date()
+                    let userLoc = userLocation.coordinate
+                    
+                    // Google fallback: trigger when MapKit is throttling (so we don't wait 30s) or after max 30s. Only show preview when result is within 10% of target; iterate with tighter/wider waypoints until sensible or max attempts.
+                    let fallbackTask = Task {
+                        let fallbackStart = Date()
+                        let maxWaitSeconds = 30.0
+                        let pollInterval: UInt64 = 2_000_000_000 // 2s
+                        var shouldRunFallback = false
+                        while Date().timeIntervalSince(fallbackStart) < maxWaitSeconds {
+                            let stillGenerating = await MainActor.run { showLoadingScreen && !routeGenerationComplete && isGenerating }
+                            guard stillGenerating else { return }
+                            let throttling = await mapsService.shouldPauseBackgroundGeneration()
+                            let elapsed = Date().timeIntervalSince(fallbackStart)
+                            if throttling {
+                                print("⏱️ [FALLBACK] MapKit throttling detected at \(String(format: "%.1f", elapsed))s — triggering Google fallback")
+                                shouldRunFallback = true
+                                break
+                            }
+                            if elapsed >= maxWaitSeconds - 0.5 {
+                                print("⏱️ [FALLBACK] Max wait \(Int(maxWaitSeconds))s reached — triggering Google fallback")
+                                shouldRunFallback = true
+                                break
+                            }
+                            try? await Task.sleep(nanoseconds: pollInterval)
+                        }
+                        let shouldRun = await MainActor.run { showLoadingScreen && !routeGenerationComplete && isGenerating }
+                        guard shouldRun, shouldRunFallback, mapsService.hasAPIKey else { return }
+                        var places = await MainActor.run { prefetchedPOIs.isEmpty ? [] : prefetchedPOIs }
+                        if places.isEmpty {
+                            let duration = await MainActor.run { selectedDuration }
+                            let radius = max(800, duration * 80)
+                            do {
+                                places = try await withTimeout(seconds: 5) {
+                                    try await mapsService.findNearbyPlaces(
+                                        location: userLoc,
+                                        radiusMeters: radius,
+                                        skipGoogle: false,
+                                        minimumForEarlyReturn: 5,
+                                        maxWaitSecondsForFirstRoute: 5
+                                    )
+                                }
+                            } catch {
+                                print("⏱️ [FALLBACK] POI fetch failed or timed out — skipping")
+                                return
+                            }
+                        }
+                        if places.isEmpty { return }
+                        let duration = await MainActor.run { selectedDuration }
+                        let minAcceptable = max(1, Int(Double(duration) * 0.9))
+                        let maxAcceptable = Int(Double(duration) * 1.1)
+                        let sortedByDistance = places.sorted { distanceBetweenCoordinates(userLoc, $0.coordinate) < distanceBetweenCoordinates(userLoc, $1.coordinate) }
+                        let tightBands: [(Double, Double)] = [(10, 28), (8, 22), (6, 18)]
+                        let wideBands: [(Double, Double)] = [(28, 999), (32, 999), (36, 999)]
+                        var tightIndex = 0
+                        var wideIndex = 0
+                        for attempt in 0..<4 {
+                            let minMult: Double
+                            let maxMult: Double
+                            if attempt == 0 {
+                                minMult = 24.0
+                                maxMult = 999.0
+                            } else if tightIndex > 0 {
+                                let band = tightBands[min(tightIndex - 1, tightBands.count - 1)]
+                                minMult = band.0
+                                maxMult = band.1
+                            } else if wideIndex > 0 {
+                                let band = wideBands[min(wideIndex - 1, wideBands.count - 1)]
+                                minMult = band.0
+                                maxMult = band.1
+                            } else {
+                                minMult = 24.0
+                                maxMult = 999.0
+                            }
+                            let minDist = Double(duration) * minMult
+                            let maxDist = Double(duration) * maxMult
+                            let pool = sortedByDistance.filter { d in
+                                let dist = distanceBetweenCoordinates(userLoc, d.coordinate)
+                                return dist >= minDist && dist <= maxDist
+                            }
+                            let candidatePool = pool.isEmpty ? sortedByDistance : pool
+                            let count = duration <= 15 ? 1 : min(2, candidatePool.count)
+                            let selected: [PlaceResult]
+                            if count == 1 {
+                                selected = Array(candidatePool.prefix(1))
+                            } else {
+                                let minSeparation = 400.0
+                                let first = candidatePool.first
+                                if let first = first, let second = candidatePool.first(where: { p in
+                                    p.placeId != first.placeId && distanceBetweenCoordinates(first.coordinate, p.coordinate) >= minSeparation
+                                }) {
+                                    selected = [first, second]
+                                } else {
+                                    selected = Array(candidatePool.prefix(2))
+                                }
+                            }
+                            let markers = RouteConversionHelper.markersFromPlaces(selected, origin: userLoc)
+                            let minimalRoute = WalkingRoute(
+                                name: "Quick route",
+                                description: "About \(duration) min",
+                                durationMinutes: 0,
+                                distanceMeters: 0,
+                                difficulty: .moderate,
+                                isIndoor: false,
+                                isAccessible: true,
+                                landmarks: ["Start"] + selected.map(\.name) + ["Return"],
+                                icon: "location.fill",
+                                color: .tealAccent,
+                                qrMarkers: markers,
+                                routeType: .local,
+                                encodedPolyline: nil,
+                                walkingDirections: [],
+                                usedOSRMRouting: false,
+                                isFromPrePopulatedDatabase: false,
+                                travelToStartMinutes: nil
+                            )
+                            guard let refreshed = await mapsService.refreshRouteWithGoogleOnly(route: minimalRoute, userLocation: userLoc) else { continue }
+                            let actualMin = refreshed.durationMinutes
+                            if actualMin >= minAcceptable && actualMin <= maxAcceptable {
+                                let placesForData = refreshed.qrMarkers.map { m in
+                                    PlaceResult(
+                                        placeId: m.id.uuidString,
+                                        name: m.name,
+                                        vicinity: m.location,
+                                        geometry: PlaceGeometry(location: PlaceLocation(lat: m.coordinate.latitude, lng: m.coordinate.longitude)),
+                                        types: ["point_of_interest"],
+                                        source: .unknown
+                                    )
+                                }
+                                var generatedData = GeneratedRoute(
+                                    places: placesForData,
+                                    polyline: refreshed.encodedPolyline ?? "",
+                                    distanceMeters: refreshed.distanceMeters,
+                                    durationSeconds: refreshed.durationMinutes * 60,
+                                    legs: []
+                                )
+                                let enrichedData = mapsService.addOnRoutePOIsIfNeeded(generatedData, origin: userLoc, candidatePOIs: places, durationMinutes: duration)
+                                generatedData = enrichedData
+                                let enrichedMarkers = RouteConversionHelper.markersFromPlaces(generatedData.places, origin: userLoc)
+                                let waypointInfos = generatedData.places.map {
+                                    GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity)
+                                }
+                                let fallbackDifficulty: RouteDifficulty = actualMin <= 10 ? .easy : (actualMin <= 20 ? .moderate : .challenging)
+                                let routeContent = await GeminiService.shared.generateRouteContent(
+                                    waypoints: waypointInfos,
+                                    durationMinutes: actualMin,
+                                    distanceMeters: refreshed.distanceMeters,
+                                    difficulty: fallbackDifficulty
+                                )
+                                let displayRoute = WalkingRoute(
+                                    name: routeContent.name,
+                                    description: routeContent.description,
+                                    durationMinutes: refreshed.durationMinutes,
+                                    distanceMeters: refreshed.distanceMeters,
+                                    difficulty: refreshed.difficulty,
+                                    isIndoor: refreshed.isIndoor,
+                                    isAccessible: refreshed.isAccessible,
+                                    landmarks: ["Start"] + generatedData.places.map(\.name) + ["Return"],
+                                    icon: refreshed.icon,
+                                    color: refreshed.color,
+                                    qrMarkers: enrichedMarkers,
+                                    routeType: refreshed.routeType,
+                                    encodedPolyline: refreshed.encodedPolyline,
+                                    walkingDirections: refreshed.walkingDirections,
+                                    usedOSRMRouting: refreshed.usedOSRMRouting,
+                                    isFromPrePopulatedDatabase: refreshed.isFromPrePopulatedDatabase,
+                                    travelToStartMinutes: refreshed.travelToStartMinutes
+                                )
+                                await MainActor.run {
+                                    currentRouteIsFromGoogle30sFallback = true
+                                    generatedRoute = displayRoute
+                                    generatedRouteData = generatedData
+                                    routeGenerationComplete = true
+                                    isGenerating = false
+                                    showLoadingScreen = false
+                                    lastValidRoute = displayRoute
+                                    lastValidRouteData = generatedData
+                                    allRoutes = [(displayRoute, generatedData, false)]
+                                    currentRouteIndex = 0
+                                    preGenerationComplete = true
+                                    isPreGeneratingRoutes = false
+                                    viewedRouteIndices = [0]
+                                    shownPlaceIdSets = [Set(generatedData.places.map(\.placeId))]
+                                    routeRefreshStatus = nil
+                                    registerRouteSignature(places: generatedData.places, distanceMeters: refreshed.distanceMeters)
+                                    showMapPreview = true
+                                    print("⏱️ [FALLBACK] Route within 10% (\(actualMin)min) — skip refresh on Let's Go")
+                                }
+                                return
+                            }
+                            if actualMin > maxAcceptable {
+                                tightIndex += 1
+                                print("⏱️ [FALLBACK] Attempt \(attempt + 1): \(actualMin)min too long (target \(duration), 10% = \(minAcceptable)–\(maxAcceptable)) — tightening")
+                            } else {
+                                wideIndex += 1
+                                print("⏱️ [FALLBACK] Attempt \(attempt + 1): \(actualMin)min too short — widening next")
+                            }
+                        }
+                        print("⏱️ [FALLBACK] No route within 10% after 4 attempts — not showing fallback")
+                    }
                     
                     // v1.9.51: Collect excluded POIs for duplicate detection (empty for first route)
                     let excludedPlaceIds: Set<String> = []
@@ -2597,6 +2848,11 @@ struct LocalRoutePickerSheet: View {
                         excludePOIs: excludedPOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
                         prefetchedPOIs: poisToUse
                     )
+                    
+                    if await MainActor.run(body: { currentRouteIsFromGoogle30sFallback }) {
+                        print("⏱️ [30s FALLBACK] Main generation finished late — keeping Google fallback route")
+                        return
+                    }
                     
                     let routeGenTime = Date().timeIntervalSince(routeGenStartTime)
                     let totalTime = Date().timeIntervalSince(generateStartTime)
@@ -2658,12 +2914,14 @@ struct LocalRoutePickerSheet: View {
                         )
                     }
                     
-                    // Start template generation in parallel (Route 1 uses template)
+                    // Try Gemini first for Route 1 (3s timeout), then fall back to template
                     let namingTask = Task {
-                        GeminiService.shared.generateTemplateContent(
+                        let difficulty: RouteDifficulty = filteredResult.durationMinutes <= 10 ? .easy : (filteredResult.durationMinutes <= 20 ? .moderate : .challenging)
+                        return await GeminiService.shared.generateRouteContent(
                             waypoints: waypointInfos,
                             durationMinutes: filteredResult.durationMinutes,
-                            distanceMeters: filteredResult.distanceMeters
+                            distanceMeters: filteredResult.distanceMeters,
+                            difficulty: difficulty
                         )
                     }
                     
@@ -2694,13 +2952,13 @@ struct LocalRoutePickerSheet: View {
                     // Determine difficulty based on duration
                     let routeDifficulty: RouteDifficulty = filteredResult.durationMinutes <= 10 ? .easy : (filteredResult.durationMinutes <= 20 ? .moderate : .challenging)
                     
-                    // Get route name (should be ready by now since template is instant)
+                    // Get route name (Gemini or template fallback)
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Getting route name (parallel)...")
-                    let templateContent = await namingTask.value
-                    print("⚡ Route 1: '\(templateContent.name)' (instant template, generated in parallel)")
+                    let routeContent = await namingTask.value
+                    print("⚡ Route 1: '\(routeContent.name)' (Gemini or template)")
                     
-                    let routeName = templateContent.name
-                    let description = templateContent.description
+                    let routeName = routeContent.name
+                    let description = routeContent.description
                     
                     // v2.1.0: Debug logging for polyline quality at route creation
                     let polylinePointCount = filteredResult.polyline.isEmpty ? 0 : PolylineDecoder.decode(filteredResult.polyline).count
@@ -3109,6 +3367,10 @@ struct LocalRoutePickerSheet: View {
         // Start walk IMMEDIATELY with current route
         viewModel.selectRoute(route)
         viewModel.startWalk()
+        // When route came from Google fallback, we skip the post–Let's Go refresh — set pill to route duration so it shows "X mins left" instead of "Calculating time left"
+        if currentRouteIsFromGoogle30sFallback {
+            viewModel.updateCurrentRoute(route, sourceIsGoogle: true)
+        }
         
         // Show map right away
         if viewModel.showPreWalkWellbeing {
@@ -3127,9 +3389,12 @@ struct LocalRoutePickerSheet: View {
         print("⏱️ [LET'S GO] [\(timeString)] ✅ Instant start: \(String(format: "%.3f", instantElapsed))s")
         
         // v2.1.1: Google refresh on Let's Go — location found then Google (MapKit already in flight from preview)
-        // If MapKit finishes first → already shown by MapKit task. If Google finishes first → show Google, never show MapKit.
-        // When Google finishes → always show Google (last route is always Google).
+        // When route came from 30s Google fallback, we already have a Google route — skip refresh.
         Task {
+            if await MainActor.run(body: { currentRouteIsFromGoogle30sFallback }) {
+                print("DIRECTIONS | Route from 30s Google fallback — skipping refresh on Let's Go")
+                return
+            }
             let taskTimeString = formatter.string(from: Date())
             let routeSource: String
             if route.usedOSRMRouting {
@@ -3172,6 +3437,52 @@ struct LocalRoutePickerSheet: View {
             ) {
                 let googleElapsed = Date().timeIntervalSince(googleStart)
                 print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_done elapsed=\(String(format: "%.2f", googleElapsed))s")
+                let targetMin = await MainActor.run { selectedDuration }
+                // Only offer adjust when route is at least 10% over requested time (e.g. 11+ min for 10 min, 17+ for 15 min).
+                let overThreshold = max(1, Int(ceil(Double(targetMin) * 0.10)))
+                if refreshedRoute.durationMinutes > targetMin + overThreshold,
+                   refreshedRoute.qrMarkers.count >= 2,
+                   route.qrMarkers.count >= 2 {
+                    var bestShortened: WalkingRoute? = nil
+                    var bestShortenedMins = Int.max
+                    for dropIndex in 0..<route.qrMarkers.count {
+                        let keptMarkers = route.qrMarkers.enumerated().filter { $0.offset != dropIndex }.map(\.element)
+                        guard keptMarkers.count >= 1 else { continue }
+                        let routeWithDropped = WalkingRoute(
+                            name: route.name,
+                            description: route.description,
+                            durationMinutes: route.durationMinutes,
+                            distanceMeters: route.distanceMeters,
+                            difficulty: route.difficulty,
+                            isIndoor: route.isIndoor,
+                            isAccessible: route.isAccessible,
+                            landmarks: ["Start"] + keptMarkers.map { $0.name } + ["Return"],
+                            icon: route.icon,
+                            color: route.color,
+                            qrMarkers: keptMarkers,
+                            routeType: route.routeType,
+                            encodedPolyline: nil,
+                            walkingDirections: [],
+                            usedOSRMRouting: false,
+                            isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase,
+                            travelToStartMinutes: route.travelToStartMinutes
+                        )
+                        if let shortened = await mapsService.refreshRouteWithGoogleOnly(route: routeWithDropped, userLocation: userLocation),
+                           shortened.durationMinutes <= targetMin + 3,
+                           shortened.durationMinutes < bestShortenedMins {
+                            bestShortened = shortened
+                            bestShortenedMins = shortened.durationMinutes
+                        }
+                    }
+                    if let adjusted = bestShortened {
+                        // Apply same road-snapping rules to adjusted route so POIs are snapped to the road (matches rest of app).
+                        let adjustedSnapped = await mapsService.ensureWaypointsSnappedToRoads(route: adjusted)
+                        await MainActor.run {
+                            viewModel.offerAdjustedRoute(adjustedSnapped)
+                            print("DIRECTIONS | [\(formatter.string(from: Date()))] 📋 Offered shorter route (\(adjustedSnapped.durationMinutes)min) — Google was \(refreshedRoute.durationMinutes)min vs target \(targetMin)min")
+                        }
+                    }
+                }
                 await MainActor.run {
                     refreshRaceState.googleApplied = true
                     viewModel.updateCurrentRoute(refreshedRoute, sourceIsGoogle: true)
@@ -3214,6 +3525,7 @@ struct LocalRoutePickerSheet: View {
         // Reset MapKit vs Google race state for next walk
         refreshRaceState.walkStarted = false
         refreshRaceState.googleApplied = false
+        currentRouteIsFromGoogle30sFallback = false
         
         // Reset pre-generation state
         allRoutes = []
@@ -5303,24 +5615,6 @@ struct LocalRouteMapPreview: View {
                     }
                 }
                 
-                // Route polyline (if available from Google Directions)
-                // Split into outbound (teal) and return leg (orange)
-                if hasRealPolyline, route.routePath.count >= 2 {
-                    let splitResult = splitRouteAtLastWaypoint()
-                    
-                    // Outbound leg (to waypoints) - teal
-                    if splitResult.outbound.count >= 2 {
-                        MapPolyline(coordinates: splitResult.outbound)
-                            .stroke(Color.tealAccent, lineWidth: 4)
-                    }
-                    
-                    // Return leg (back to start) - orange
-                    if splitResult.returnLeg.count >= 2 {
-                        MapPolyline(coordinates: splitResult.returnLeg)
-                            .stroke(Color.orange.opacity(0.8), lineWidth: 4)
-                    }
-                }
-                
                 // Discovery markers (POIs) — stable id per marker
                 ForEach(route.qrMarkers) { marker in
                     Annotation(marker.name, coordinate: marker.coordinate) {
@@ -6132,12 +6426,6 @@ struct RouteMapPreviewSheet: View {
                                 .foregroundColor(.white)
                         }
                         .id("startEnd")
-                    }
-                    
-                    // Route path line (follows actual walking route)
-                    if route.routePath.count >= 2 {
-                        MapPolyline(coordinates: route.routePath)
-                            .stroke(route.color, lineWidth: 4)
                     }
                     
                     // Discovery markers — stable id per marker
@@ -8886,6 +9174,188 @@ extension View {
         self
         // Alerts are now shown as overlays in ActiveWalkView, not system alerts
         // This prevents the map from being dismissed when alerts appear
+    }
+}
+
+// MARK: - Route bucket audit (current location: 5–60 min)
+/// For each duration bucket: cache/prepop first, then search (generateLocalRoute) if empty. Shows waypoint names and supports copy.
+struct RouteBucketAuditView: View {
+    let location: CLLocationCoordinate2D
+    private let durations = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
+    
+    @State private var results: [(duration: Int, routes: [RouteCacheService.CachedRouteWithMetadata])] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+    @State private var copyFeedback = false
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading {
+                    ProgressView("Auditing buckets…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let err = errorMessage {
+                    Text(err)
+                        .foregroundStyle(.secondary)
+                        .padding()
+                } else {
+                    List {
+                        ForEach(results, id: \.duration) { item in
+                            Section(header: Text("\(item.duration) min bucket")) {
+                                Text("Routes: \(item.routes.count)")
+                                    .font(.subheadline.weight(.medium))
+                                ForEach(Array(item.routes.enumerated()), id: \.offset) { idx, cached in
+                                    let r = cached.route
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack {
+                                            Text("Route \(idx + 1)")
+                                            Spacer()
+                                            Text("\(r.places.count) waypoints · \(r.durationMinutes) min")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .font(.caption)
+                                        if !r.places.isEmpty {
+                                            Text(r.places.map(\.displayName).joined(separator: " → "))
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(4)
+                                        }
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Bucket audit")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    if !results.isEmpty {
+                        Button(copyFeedback ? "Copied" : "Copy") {
+                            copyResultsToClipboard()
+                            copyFeedback = true
+                            Task {
+                                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                                await MainActor.run { copyFeedback = false }
+                            }
+                        }
+                        .disabled(copyFeedback)
+                    }
+                }
+            }
+            .task {
+                await runAudit()
+            }
+        }
+    }
+    
+    private func copyResultsToClipboard() {
+        var lines: [String] = []
+        for item in results {
+            lines.append("--- \(item.duration) min bucket ---")
+            lines.append("Routes: \(item.routes.count)")
+            for (idx, cached) in item.routes.enumerated() {
+                let r = cached.route
+                lines.append("  Route \(idx + 1): \(r.places.count) waypoints · \(r.durationMinutes) min")
+                if !r.places.isEmpty {
+                    lines.append("    " + r.places.map(\.displayName).joined(separator: " → "))
+                }
+            }
+            lines.append("")
+        }
+        let text = lines.joined(separator: "\n")
+        #if os(iOS)
+        UIPasteboard.general.string = text
+        #endif
+    }
+    
+    private func runAudit() async {
+        await MainActor.run {
+            isLoading = true
+            errorMessage = nil
+            results = []
+        }
+        let location = self.location
+        let durations = self.durations
+        // Fetch candidate POIs once for on-route enrichment (so 1–2 waypoint routes get extra stops in the report).
+        var candidatePOIs: [PlaceResult] = []
+        if let prepop = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: location, radiusMeters: 2500), !prepop.isEmpty {
+            candidatePOIs = prepop
+        } else if let cached = POICacheService.shared.getCachedPOIs(near: location), !cached.isEmpty {
+            candidatePOIs = cached
+        }
+        let mapsService = GoogleMapsService.shared
+        var out: [(duration: Int, routes: [RouteCacheService.CachedRouteWithMetadata])] = []
+        for d in durations {
+            var routes = RouteCacheService.shared.getCachedRoutes(near: location, durationMinutes: d) ?? []
+            if routes.isEmpty {
+                do {
+                    let generated = try await GoogleMapsService.shared.generateLocalRouteWithRetry(
+                        from: location,
+                        targetDurationMinutes: d,
+                        difficulty: nil,
+                        excludePlaceIds: [],
+                        excludePOIs: [],
+                        prefetchedPOIs: nil
+                    )
+                    if !generated.places.isEmpty, generated.durationSeconds > 0 {
+                        let meta = RouteCacheService.CachedRouteWithMetadata(
+                            route: generated,
+                            name: nil,
+                            description: nil,
+                            directions: nil,
+                            isFromPrePopulatedDatabase: false
+                        )
+                        routes = [meta]
+                    }
+                } catch {
+                    // leave routes empty for this bucket
+                }
+            }
+            // Enrich 1–2 waypoint routes with on-route POIs so the audit report matches app behavior.
+            if !candidatePOIs.isEmpty {
+                routes = routes.map { cached in
+                    guard cached.route.places.count <= 2 else { return cached }
+                    let enriched = mapsService.addOnRoutePOIsIfNeeded(
+                        cached.route,
+                        origin: location,
+                        candidatePOIs: candidatePOIs,
+                        durationMinutes: d
+                    )
+                    guard enriched.places.count > cached.route.places.count else { return cached }
+                    return RouteCacheService.CachedRouteWithMetadata(
+                        route: enriched,
+                        name: cached.name,
+                        description: cached.description,
+                        directions: cached.directions,
+                        isFromPrePopulatedDatabase: cached.isFromPrePopulatedDatabase
+                    )
+                }
+            }
+            // Sanitize: drop waypoints that are too far for the route's duration (fixes old cache/prepop with incorrect on-route adds).
+            routes = routes.map { cached in
+                let sanitized = mapsService.sanitizeWaypointsByDuration(cached.route, origin: location)
+                if sanitized.places.count == cached.route.places.count { return cached }
+                return RouteCacheService.CachedRouteWithMetadata(
+                    route: sanitized,
+                    name: cached.name,
+                    description: cached.description,
+                    directions: cached.directions,
+                    isFromPrePopulatedDatabase: cached.isFromPrePopulatedDatabase
+                )
+            }
+            out.append((duration: d, routes: routes))
+        }
+        await MainActor.run {
+            results = out
+            isLoading = false
+        }
     }
 }
 

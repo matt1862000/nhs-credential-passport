@@ -7324,6 +7324,37 @@ class GoogleMapsService: ObservableObject {
         return snapped
     }
     
+    /// Returns the same route with qrMarkers updated to use road-snapped coordinates.
+    /// Use when offering an adjusted (shortened) route so POIs respect the same "snapped to road" rules as the rest of the app.
+    func ensureWaypointsSnappedToRoads(route: WalkingRoute) async -> WalkingRoute {
+        let snapped = await snapWaypointsToRoads(route: route)
+        guard snapped.count == route.qrMarkers.count else { return route }
+        var updatedMarkers: [QRMarker] = []
+        for (index, marker) in route.qrMarkers.enumerated() {
+            let coord = snapped[index]
+            updatedMarkers.append(QRMarker(code: marker.code, name: marker.name, location: marker.location, coordinate: coord, contentType: marker.contentType, content: marker.content, pointsValue: marker.pointsValue))
+        }
+        return WalkingRoute(
+            name: route.name,
+            description: route.description,
+            durationMinutes: route.durationMinutes,
+            distanceMeters: route.distanceMeters,
+            difficulty: route.difficulty,
+            isIndoor: route.isIndoor,
+            isAccessible: route.isAccessible,
+            landmarks: route.landmarks,
+            icon: route.icon,
+            color: route.color,
+            qrMarkers: updatedMarkers,
+            routeType: route.routeType,
+            encodedPolyline: route.encodedPolyline,
+            walkingDirections: route.walkingDirections,
+            usedOSRMRouting: route.usedOSRMRouting,
+            isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase,
+            travelToStartMinutes: route.travelToStartMinutes
+        )
+    }
+    
     /// Per-waypoint refinement check: true if any snapped waypoint is > 20m from its raw coordinate.
     /// Returns false if counts differ (no refinement).
     func shouldRefineWithSnappedWaypoints(rawWaypoints: [CLLocationCoordinate2D], snappedWaypoints: [CLLocationCoordinate2D]) -> Bool {
@@ -7628,6 +7659,71 @@ class GoogleMapsService: ObservableObject {
             print("REFRESH_FALLBACK | Not using MapKit — Google failed with status '\(googleStatus)' (fallback only for OVER_QUERY_LIMIT or REQUEST_DENIED)")
         }
         print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Returning nil - no fallback available")
+        return nil
+    }
+    
+    /// Extend a short route (e.g. from lower bucket) to target duration by adding 1–2 detour waypoints.
+    /// Returns extended route as CachedRouteWithMetadata if duration is in band (90–120% of target), else nil.
+    /// Used as an additional option alongside normal routes (does not replace them).
+    func extendRouteToTargetDuration(
+        cachedRoute: RouteCacheService.CachedRouteWithMetadata,
+        userLocation: CLLocationCoordinate2D,
+        targetMinutes: Int,
+        candidatePOIs: [PlaceResult]
+    ) async -> RouteCacheService.CachedRouteWithMetadata? {
+        let existingIds = Set(cachedRoute.route.places.map(\.placeId))
+        let candidates = candidatePOIs.filter { !existingIds.contains($0.placeId) }
+        guard !candidates.isEmpty else {
+            print("🗺️ [EXTEND] No candidate POIs (all already in route)")
+            return nil
+        }
+        let minAcceptable = Int(Double(targetMinutes) * 0.90)
+        let maxAcceptable = Int(Double(targetMinutes) * 1.20)
+        let existingPlaces = cachedRoute.route.places
+        // Try adding one POI after the first waypoint
+        for insertIndex in 1...min(2, existingPlaces.count) {
+            for poi in candidates.prefix(5) {
+                var newPlaces = existingPlaces
+                newPlaces.insert(poi, at: min(insertIndex, newPlaces.count))
+                let markers = RouteConversionHelper.markersFromPlaces(newPlaces, origin: userLocation)
+                let walkingRoute = WalkingRoute(
+                    name: cachedRoute.name ?? "Extended route",
+                    description: cachedRoute.description ?? "Route extended to \(targetMinutes) min",
+                    durationMinutes: 0,
+                    distanceMeters: 0,
+                    difficulty: .moderate,
+                    isIndoor: false,
+                    isAccessible: true,
+                    landmarks: ["Start"] + newPlaces.map(\.name) + ["Return"],
+                    icon: "location.fill",
+                    color: .tealAccent,
+                    qrMarkers: markers,
+                    routeType: .local,
+                    trimmed: nil,
+                    walkingDirections: [],
+                    usedOSRMRouting: false,
+                    isFromPrePopulatedDatabase: true
+                )
+                if let refreshed = await refreshRouteWithGoogleOnly(route: walkingRoute, userLocation: userLocation) {
+                    let mins = refreshed.durationMinutes
+                    if mins >= minAcceptable && mins <= maxAcceptable {
+                        let generated = GeneratedRoute(
+                            places: refreshed.qrMarkers.map { m in
+                                PlaceResult(placeId: m.id.uuidString, name: m.name, vicinity: nil, geometry: PlaceGeometry(location: PlaceLocation(lat: m.coordinate.latitude, lng: m.coordinate.longitude)), types: ["point_of_interest"], source: .unknown)
+                            },
+                            polyline: refreshed.trimmed ?? "",
+                            distanceMeters: refreshed.distanceMeters,
+                            durationSeconds: refreshed.durationMinutes * 60,
+                            legs: [],
+                            travelToStartSeconds: cachedRoute.route.travelToStartSeconds
+                        )
+                        print("🗺️ [EXTEND] Extended to \(mins)min (target \(targetMinutes), added '\(poi.name)')")
+                        return RouteCacheService.CachedRouteWithMetadata(route: generated, name: cachedRoute.name, description: cachedRoute.description, directions: refreshed.walkingDirections, isFromPrePopulatedDatabase: true)
+                    }
+                }
+            }
+        }
+        print("🗺️ [EXTEND] Could not extend route to \(targetMinutes)min")
         return nil
     }
     
@@ -11614,6 +11710,87 @@ class GoogleMapsService: ObservableObject {
         return finalRoute
     }
     
+    /// When route has 1–2 waypoints, add POIs that lie on the path (within 50m) for more interesting routes without adding time.
+    /// Uses RouteGeometryHelper.selectOnRoutePOIs; same idea as PrePopulatedPOIService on-route merge but for generated routes.
+    /// Only adds POIs that are not further from origin than the main destination, so duration stays believable (e.g. don't add Star Inn 12min away to an 8min Oriental Chef route).
+    /// Internal so RouteSelectionView can call when loading from cache (prepop/cache may have 1 WP and no candidate POIs at build time).
+    func addOnRoutePOIsIfNeeded(_ route: GeneratedRoute, origin: CLLocationCoordinate2D, candidatePOIs: [PlaceResult], durationMinutes: Int) -> GeneratedRoute {
+        guard route.places.count <= 2, !route.polyline.isEmpty else { return route }
+        let decoded = PolylineDecoder.decode(route.polyline)
+        guard decoded.count >= 2 else { return route }
+        let existingIds = Set(route.places.map(\.placeId))
+        // Only add POIs not further from origin than the route's furthest waypoint (avoid implying a longer round trip).
+        let maxDistFromOrigin: Double? = {
+            guard !route.places.isEmpty else { return nil }
+            let maxD = route.places.map { RouteGeometryHelper.distanceBetween(origin, $0.coordinate) }.max() ?? 0
+            return maxD * 1.15  // 15% tolerance for path curvature
+        }()
+        let candidates = candidatePOIs
+            .filter { !existingIds.contains($0.placeId) && !isRestrictedPOI($0) }
+            .filter { poi in
+                guard let maxD = maxDistFromOrigin else { return true }
+                return RouteGeometryHelper.distanceBetween(origin, poi.coordinate) <= maxD
+            }
+            .map { RouteGeometryHelper.Candidate(id: $0.placeId, coordinate: $0.coordinate) }
+        guard !candidates.isEmpty else { return route }
+        let minDist = RoutingToggles.minWaypointDistance(durationMinutes: durationMinutes)
+        let existingCoords = route.places.map(\.coordinate)
+        let onRouteResults = RouteGeometryHelper.selectOnRoutePOIs(
+            polyline: decoded,
+            candidates: candidates,
+            origin: origin,
+            existingWaypointCoords: existingCoords,
+            minDistanceBetweenWaypoints: minDist,
+            onRouteThresholdMeters: 50,
+            maxToAdd: 3
+        )
+        guard !onRouteResults.isEmpty else { return route }
+        let poiById = Dictionary(uniqueKeysWithValues: candidatePOIs.map { ($0.placeId, $0) })
+        var withProgress: [(place: PlaceResult, progress: Double)] = []
+        for p in route.places {
+            if let proj = RouteGeometryHelper.projectOntoPolyline(coordinate: p.coordinate, polyline: decoded) {
+                let len = RouteGeometryHelper.polylineLength(decoded)
+                let progress = len > 0 ? RouteGeometryHelper.distanceAlongPolyline(polyline: decoded, segmentIndex: proj.segmentIndex, t: proj.t) / len : 0
+                withProgress.append((p, progress))
+            } else {
+                withProgress.append((p, 0))
+            }
+        }
+        for res in onRouteResults {
+            if let poi = poiById[res.candidate.id] {
+                withProgress.append((poi, res.progress))
+            }
+        }
+        withProgress.sort { $0.progress < $1.progress }
+        let merged = withProgress.map(\.place)
+        print("🗺️ On-route POIs added: \(onRouteResults.count) (was \(route.places.count) waypoints, now \(merged.count))")
+        return GeneratedRoute(
+            places: merged,
+            polyline: route.polyline,
+            distanceMeters: route.distanceMeters,
+            durationSeconds: route.durationSeconds,
+            legs: route.legs
+        )
+    }
+    
+    /// Remove waypoints that are too far from origin for the route's duration (fixes old/pre-stored routes that had incorrect on-route adds).
+    /// Keeps only places within (duration round-trip implied one-way distance) * 1.15.
+    func sanitizeWaypointsByDuration(_ route: GeneratedRoute, origin: CLLocationCoordinate2D) -> GeneratedRoute {
+        guard route.places.count > 1 else { return route }
+        let oneWayMeters = (Double(route.durationSeconds) / 60.0) * Double(adaptiveWalkingSpeed) * 0.5
+        let maxDist = oneWayMeters * 1.15
+        let kept = route.places.filter { RouteGeometryHelper.distanceBetween(origin, $0.coordinate) <= maxDist }
+        guard kept.count < route.places.count else { return route }
+        print("🗺️ Sanitized waypoints by duration: \(route.places.count) → \(kept.count) (dropped \(route.places.count - kept.count) beyond \(Int(maxDist))m for \(route.durationSeconds/60)min route)")
+        return GeneratedRoute(
+            places: kept,
+            polyline: route.polyline,
+            distanceMeters: route.distanceMeters,
+            durationSeconds: route.durationSeconds,
+            legs: route.legs
+        )
+    }
+    
     /// Async version for cases where polyline regeneration is needed
     private func finalizeRouteDedupAsync(_ route: GeneratedRoute, buildPolyline: ((_ places: [PlaceResult]) async throws -> String)? = nil) async -> GeneratedRoute {
         let deduplicatedPlaces = deduplicateRoutePlaces(route.places)
@@ -13952,7 +14129,7 @@ class GoogleMapsService: ObservableObject {
                 if let finalized = result.route {
                     let elapsed = Date().timeIntervalSince(startTime)
                     printRouteSummary(route: finalized, targetDuration: targetDurationMinutes, elapsedSec: elapsed, mode: isQuickMode ? "quick" : "endpoint")
-                    return finalized
+                    return addOnRoutePOIsIfNeeded(finalized, origin: location, candidatePOIs: places, durationMinutes: targetDurationMinutes)
                 }
                 print("⛔ [GUARD] Route rejected by finalizeAndReturnRoute - falling through to fallback")
             } else if let firstValid = validEndpointRoutes.first {
@@ -16365,7 +16542,7 @@ class GoogleMapsService: ObservableObject {
             print("   📦 Database used: \(usedDatabase ? "Yes" : "No")")
             print("   ⏱️ Total time: \(String(format: "%.2f", elapsed))s")
             print("   📊 Fallback reason: \(fallbackReason)")
-            return finalized
+            return addOnRoutePOIsIfNeeded(finalized, origin: location, candidatePOIs: places, durationMinutes: targetDurationMinutes)
         }
         
         lastNoRouteReason = "ALL_STRATEGIES_EXHAUSTED validRoutes=\(validRoutes.count) totalAttempts=\(totalAttempts) places=\(places.count) elapsed=\(String(format: "%.1f", Date().timeIntervalSince(startTime)))s"
