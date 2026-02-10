@@ -106,13 +106,20 @@ class RouteCacheService {
         
         /// v1.6.46: Calculate quality score for route comparison
         /// Higher score = better route. Factors:
-        /// - Duration accuracy (closer to target = better)
+        /// - Duration accuracy (closer to target = better; 90-110% gets bonus)
         /// - POI variety (more diverse types = better)
         /// - Skip count (lower = better, users don't like this route)
         func qualityScore(targetDurationMinutes: Int) -> Double {
             // Duration accuracy: 0-40 points (perfect match = 40, 10min off = 0)
             let durationDiff = abs(durationMinutes - targetDurationMinutes)
-            let durationScore = max(0, 40 - (durationDiff * 4))
+            var durationScore = max(0, 40 - (durationDiff * 4))
+            // Bonus for routes in 90-110% of target (prefer "closer to requested time")
+            if targetDurationMinutes > 0 {
+                let ratio = Double(durationMinutes) / Double(targetDurationMinutes)
+                if ratio >= 0.90 && ratio <= 1.10 {
+                    durationScore += 20
+                }
+            }
             
             // POI variety: 0-30 points (unique type categories)
             let uniqueTypes = Set(places.flatMap { $0.types }).count
@@ -323,20 +330,27 @@ class RouteCacheService {
                     }
                     
                     if !validRoutes.isEmpty {
+                        // Prefer routes closer to requested duration (90-110% best); sort by duration accuracy first
+                        let sortedValid = validRoutes.sorted { r1, r2 in
+                            let d1 = abs(r1.route.durationMinutes - roundedDuration)
+                            let d2 = abs(r2.route.durationMinutes - roundedDuration)
+                            if d1 != d2 { return d1 < d2 }
+                            return r1.route.durationMinutes >= r2.route.durationMinutes
+                        }
                         if checkDuration == roundedDuration {
                             // Exact match
-                            if validRoutes.count < allRoutes.count {
-                                print("📦 Route Cache HIT! Found \(validRoutes.count)/\(allRoutes.count) valid routes cached \(Int(distance))m away for \(roundedDuration)min (filtered \(allRoutes.count - validRoutes.count) out-of-tolerance)")
+                            if sortedValid.count < allRoutes.count {
+                                print("📦 Route Cache HIT! Found \(sortedValid.count)/\(allRoutes.count) valid routes cached \(Int(distance))m away for \(roundedDuration)min (filtered \(allRoutes.count - sortedValid.count) out-of-tolerance)")
                             } else {
-                                print("📦 Route Cache HIT! Found \(validRoutes.count) routes cached \(Int(distance))m away for \(roundedDuration)min (requested \(durationMinutes)min)")
+                                print("📦 Route Cache HIT! Found \(sortedValid.count) routes cached \(Int(distance))m away for \(roundedDuration)min (requested \(durationMinutes)min)")
                             }
                         } else {
                             // Fallback from adjacent slot
-                            let actualDurations = validRoutes.map { "\($0.route.durationMinutes)min" }.joined(separator: ", ")
+                            let actualDurations = sortedValid.map { "\($0.route.durationMinutes)min" }.joined(separator: ", ")
                             print("📦 Route Cache FALLBACK! Using \(checkDuration)min slot for \(roundedDuration)min request → [\(actualDurations)] (within \(isEdgeCase ? "75-125%" : "80-120%") tolerance)")
                         }
-                        print("ROUTES_SOURCE | source=memory_cache count=\(validRoutes.count) duration=\(durationMinutes) (in-memory/disk cache)")
-                        return validRoutes
+                        print("ROUTES_SOURCE | source=memory_cache count=\(sortedValid.count) duration=\(durationMinutes) (in-memory/disk cache)")
+                        return sortedValid
                     }
                     
                     // v1.6.39: DEAD ZONE ESCAPE HATCH

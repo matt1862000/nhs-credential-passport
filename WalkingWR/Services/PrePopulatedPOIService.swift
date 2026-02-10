@@ -527,13 +527,52 @@ class PrePopulatedPOIService {
                                 )
                             }
                             
-                            // Create GeneratedRoute
+                            // User-based duration: single-waypoint = round-trip from user; multi-waypoint = user → WP1 → … → WPn → user (pathFactor per segment). No API.
+                            let (displayDurationSeconds, displayDistanceMeters, displayPolyline, travelToStartSeconds): (Int, Int, String, Int?) = {
+                                if filteredPlaces.count == 1, let firstPOI = filteredPOIs.first {
+                                    let poiCoord = CLLocationCoordinate2D(latitude: firstPOI.latitude, longitude: firstPOI.longitude)
+                                    let factor = self.pathFactor(straightLineM: distanceToStart)
+                                    let dPath = distanceToStart * factor
+                                    let roundTripSeconds = Int(2 * (dPath / walkingSpeedMperMin) * 60)
+                                    let roundTripMeters = Int(2 * dPath)
+                                    let userPolyline = self.encodeSimplePolyline([location, poiCoord, location])
+                                    print("📦 Route '\(routeName)': single waypoint — using user round-trip \(roundTripSeconds/60)min (\(Int(roundTripMeters))m) instead of DB loop \(routeData.durationSeconds/60)min")
+                                    return (roundTripSeconds, roundTripMeters, userPolyline, nil)
+                                }
+                                if filteredPlaces.count >= 2 {
+                                    var totalSeconds = 0.0
+                                    var totalMeters = 0.0
+                                    var prev = location
+                                    for poi in filteredPOIs {
+                                        let coord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+                                        let dStraight = self.distanceBetween(prev, coord)
+                                        let factor = self.pathFactor(straightLineM: dStraight)
+                                        let dPath = dStraight * factor
+                                        totalSeconds += (dPath / walkingSpeedMperMin) * 60
+                                        totalMeters += dPath
+                                        prev = coord
+                                    }
+                                    let dStraightBack = self.distanceBetween(prev, location)
+                                    let factorBack = self.pathFactor(straightLineM: dStraightBack)
+                                    let dPathBack = dStraightBack * factorBack
+                                    totalSeconds += (dPathBack / walkingSpeedMperMin) * 60
+                                    totalMeters += dPathBack
+                                    let coords = [location] + filteredPOIs.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) } + [location]
+                                    let userPolyline = self.encodeSimplePolyline(coords)
+                                    print("📦 Route '\(routeName)': multi-waypoint — using user-based \(Int(totalSeconds)/60)min (\(Int(totalMeters))m) instead of DB loop \(routeData.durationSeconds/60)min + travel")
+                                    return (Int(totalSeconds), Int(totalMeters), userPolyline, nil)
+                                }
+                                return (routeData.durationSeconds, routeData.distanceMeters, routeData.polyline, timeToStartSeconds)
+                            }()
+                            
+                            // Create GeneratedRoute: show route-only duration in preview; travel-to-start is used for session pill when they tap Let's Go
                             let generatedRoute = GeneratedRoute(
                                 places: filteredPlaces,
-                                polyline: routeData.polyline,
-                                distanceMeters: routeData.distanceMeters,
-                                durationSeconds: totalDurationSeconds,  // Includes travel time from GPS to first waypoint
-                                legs: []  // Legs not stored in pre-populated database
+                                polyline: displayPolyline,
+                                distanceMeters: displayDistanceMeters,
+                                durationSeconds: displayDurationSeconds,
+                                legs: [],  // Legs not stored in pre-populated database
+                                travelToStartSeconds: travelToStartSeconds
                             )
                             
                             // Convert directions
@@ -670,10 +709,21 @@ class PrePopulatedPOIService {
                         print("📦 Band filter: \(capped.count) → \(bandFiltered.count) (removed \(capped.count - bandFiltered.count) routes outside 80–120%)")
                         print("\(Self.telem) DB_BAND_FILTER before=\(capped.count) after=\(bandFiltered.count) allowed=\(minAcceptableMinutes)-\(maxAcceptableMinutes) requested=\(roundedDuration)")
                     }
-                    print("📦 ✅ PRE-POPULATED ROUTES HIT! Found \(bandFiltered.count) routes for \(roundedDuration)min from postcode area '\(area.postcode)' - using database (no route generation needed)")
-                    print("\(Self.telem) DB_RESULT returned=\(bandFiltered.count) postcode=\(area.postcode) requested=\(roundedDuration)")
-                    print("\(Self.telem) \(Self.prepopTimingTag) stage=routes_used at=\(Self.prepopTimingStamp()) count=\(bandFiltered.count) requested=\(roundedDuration)")
-                    return bandFiltered
+                    // Prefer routes in 90-110% of target (duration-accurate), then by closest to target
+                    let sortedByDurationAccuracy = bandFiltered.sorted { r1, r2 in
+                        let min1 = r1.route.durationSeconds / 60
+                        let min2 = r2.route.durationSeconds / 60
+                        let ratio1 = Double(min1) / Double(roundedDuration)
+                        let ratio2 = Double(min2) / Double(roundedDuration)
+                        let inSweetSpot1 = ratio1 >= 0.90 && ratio1 <= 1.10
+                        let inSweetSpot2 = ratio2 >= 0.90 && ratio2 <= 1.10
+                        if inSweetSpot1 != inSweetSpot2 { return inSweetSpot1 }
+                        return abs(ratio1 - 1.0) < abs(ratio2 - 1.0)
+                    }
+                    print("📦 ✅ PRE-POPULATED ROUTES HIT! Found \(sortedByDurationAccuracy.count) routes for \(roundedDuration)min from postcode area '\(area.postcode)' - using database (no route generation needed)")
+                    print("\(Self.telem) DB_RESULT returned=\(sortedByDurationAccuracy.count) postcode=\(area.postcode) requested=\(roundedDuration)")
+                    print("\(Self.telem) \(Self.prepopTimingTag) stage=routes_used at=\(Self.prepopTimingStamp()) count=\(sortedByDurationAccuracy.count) requested=\(roundedDuration)")
+                    return sortedByDurationAccuracy
                 } else {
                     let totalInBuckets = durationsToCheck.reduce(0) { sum, d in sum + (routes.first(where: { $0.durationMinutes == d })?.routes.count ?? 0) }
                     print("📦 Pre-populated DB: Postcode area '\(area.postcode)' has routes but none passed filters for \(roundedDuration)min (checked \(roundedDuration)±5,±10 min buckets; total routes in those buckets=\(totalInBuckets))")

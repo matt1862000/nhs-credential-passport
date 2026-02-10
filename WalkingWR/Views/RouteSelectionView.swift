@@ -1827,6 +1827,7 @@ struct LocalRoutePickerSheet: View {
             Task {
                 let taskStartTime = Date()
                 let taskTimeString = formatter.string(from: taskStartTime)
+                print("ROUTE_START duration=\(selectedDuration) (grep this + first ROUTE_FIRST_DISPLAYED for time-to-preview)")
                 print("⏱️ [ROUTE GENERATION] [\(taskTimeString)] 📥 Task started")
                 // v1.8.14: Check location limit INSIDE Task to prevent main thread blocking
                 let cacheService = POICacheService.shared
@@ -1890,6 +1891,12 @@ struct LocalRoutePickerSheet: View {
                 if shouldUseCache, let cachedRoutes = RouteCacheService.shared.getCachedRoutes(near: userLocation.coordinate, durationMinutes: selectedDuration), !cachedRoutes.isEmpty {
                     let cacheCheckElapsed = Date().timeIntervalSince(cacheCheckStartTime)
                     let sourceLabel = cachedRoutes.first?.isFromPrePopulatedDatabase == true ? "prepop_database" : "memory_cache"
+                    let firstActual = cachedRoutes.first?.route.durationSeconds ?? 0
+                    let firstActualMin = firstActual / 60
+                    let ratioPct = selectedDuration > 0 ? Int(round(Double(firstActualMin) / Double(selectedDuration) * 100)) : 0
+                    let inBand = (ratioPct >= 80 && ratioPct <= 120)
+                    let timeToFirstRoute = Date().timeIntervalSince(generateStartTime)
+                    print("ROUTE_RESULT target=\(selectedDuration) actual=\(firstActualMin) ratio_pct=\(ratioPct) in_80_120=\(inBand ? "Y" : "n") waypoints=\(cachedRoutes.first?.route.places.count ?? 0) elapsed_sec=— mode=\(sourceLabel) time_to_first_route_sec=\(String(format: "%.2f", timeToFirstRoute))")
                     print("ROUTES_SOURCE | using_routes source=\(sourceLabel) count=\(cachedRoutes.count) duration=\(selectedDuration) (confirm: app is using \(sourceLabel == "prepop_database" ? "pre-populated database" : "in-memory cache") for routes)")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE HIT! Found \(cachedRoutes.count) cached routes")
                     print("⏱️ [TIMING] Cache check: \(String(format: "%.3f", cacheCheckElapsed))s")
@@ -2009,7 +2016,8 @@ struct LocalRoutePickerSheet: View {
                         trimmed: polylineToUse,
                         walkingDirections: firstDirections,
                         usedOSRMRouting: filteredCachedRoute.usedOSRM,
-                        isFromPrePopulatedDatabase: firstCached.isFromPrePopulatedDatabase
+                        isFromPrePopulatedDatabase: firstCached.isFromPrePopulatedDatabase,
+                        travelToStartMinutes: firstCached.route.travelToStartSeconds.map { $0 / 60 }
                     )
                     
                     loadedRoutes.append((route: firstRoute, data: filteredCachedRoute, isDeadZoneFallback: firstCached.isDeadZoneFallback))
@@ -2069,6 +2077,8 @@ struct LocalRoutePickerSheet: View {
                         isRecycledRoute = false
                         isDeadZoneFallback = firstCached.isDeadZoneFallback
                         shownPlaceIdSets = loadedPlaceIdSets
+                        let timeToFirstRoute = Date().timeIntervalSince(generateStartTime)
+                        print("ROUTE_FIRST_DISPLAYED time_to_first_route_sec=\(String(format: "%.2f", timeToFirstRoute)) duration=\(selectedDuration) source=cache")
                     }
                     
                     // PREPOP ONLY: MapKit validate-and-reorder (all routes: update preview time from MapKit, then reorder valid first when user on route 1)
@@ -2116,7 +2126,8 @@ struct LocalRoutePickerSheet: View {
                                     trimmed: existing.trimmed,
                                     walkingDirections: existing.walkingDirections,
                                     usedOSRMRouting: existing.usedOSRMRouting,
-                                    isFromPrePopulatedDatabase: existing.isFromPrePopulatedDatabase
+                                    isFromPrePopulatedDatabase: existing.isFromPrePopulatedDatabase,
+                                    travelToStartMinutes: existing.travelToStartMinutes
                                 )
                                 allRoutes[0] = (route: updated, data: allRoutes[0].data, isDeadZoneFallback: allRoutes[0].isDeadZoneFallback)
                                 if currentRouteIndex == 0 {
@@ -2528,6 +2539,7 @@ struct LocalRoutePickerSheet: View {
                 }
                 
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE MISS - generating fresh route...")
+                print("ROUTE_PHASE phase=cache_miss_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                 print("ROUTES_SOURCE | source=live_generation duration=\(selectedDuration) (no database/cache hit, generating routes now)")
                 
                 // 🔧 DEBUG: Database-only mode - don't generate routes if database doesn't have them
@@ -2569,6 +2581,7 @@ struct LocalRoutePickerSheet: View {
                     }
                     
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting route generation...")
+                    print("ROUTE_PHASE phase=route_gen_call_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     let routeGenStartTime = Date()
                     
                     // v1.9.51: Collect excluded POIs for duplicate detection (empty for first route)
@@ -2587,6 +2600,7 @@ struct LocalRoutePickerSheet: View {
                     
                     let routeGenTime = Date().timeIntervalSince(routeGenStartTime)
                     let totalTime = Date().timeIntervalSince(generateStartTime)
+                    print("ROUTE_PHASE phase=route_ready_elapsed elapsed_sec=\(String(format: "%.2f", totalTime))")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Route generated in \(String(format: "%.2f", routeGenTime))s")
                     print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
                     print("⏱️ [TIMING] ROUTE GENERATION SUMMARY")
@@ -2616,12 +2630,14 @@ struct LocalRoutePickerSheet: View {
                     // v2.1.7: Filter close waypoints from fresh routes (100m under 25min, 200m for 25+ min to avoid clustered village waypoints).
                     let filteredResult = mapsService.filterCloseWaypointsSync(from: result, durationMinutes: selectedDuration, origin: userLocation.coordinate)
                     
+                    print("ROUTE_PHASE phase=markers_start_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Creating markers...")
                     
                     // Create markers from places (needs MainActor for some operations)
                     let markers = await MainActor.run {
                         createMarkersFromPlaces(filteredResult.places, origin: userLocation.coordinate)
                     }
+                    print("ROUTE_PHASE phase=markers_done_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     
                     // Ensure we have at least one marker
                     guard !markers.isEmpty else {
@@ -2651,6 +2667,7 @@ struct LocalRoutePickerSheet: View {
                         )
                     }
                     
+                    print("ROUTE_PHASE phase=directions_start_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Extracting directions...")
                     
                     // Extract walking directions from OSRM/Google legs (in parallel with naming)
@@ -2672,6 +2689,7 @@ struct LocalRoutePickerSheet: View {
                         )
                         print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - MapKit directions took \(String(format: "%.2f", Date().timeIntervalSince(mapKitStartTime)))s")
                     }
+                    print("ROUTE_PHASE phase=directions_done_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     
                     // Determine difficulty based on duration
                     let routeDifficulty: RouteDifficulty = filteredResult.durationMinutes <= 10 ? .easy : (filteredResult.durationMinutes <= 20 ? .moderate : .challenging)
@@ -2716,10 +2734,12 @@ struct LocalRoutePickerSheet: View {
                     
                     // v2.1.x: Snap POIs to road and replace polyline so route doesn’t go into buildings (e.g. school grounds)
                     var displayRoute = localRoute
+                    print("ROUTE_PHASE phase=road_snap_start_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     if let snappedRoute = await mapsService.refreshRouteWithGoogleOnly(route: localRoute, userLocation: userLocation.coordinate) {
                         displayRoute = snappedRoute
                         print("🛤️ [ROUTE CREATION] Applied road snap — polyline and markers now on road (no off-road POI)")
                     }
+                    print("ROUTE_PHASE phase=road_snap_done_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     
                     // FINAL SAFETY CHECK: Deduplicate before storing (use filteredResult)
                     print("🛡️ ROUTE SELECTION VIEW: Final deduplication check before storing route")
@@ -2805,6 +2825,7 @@ struct LocalRoutePickerSheet: View {
                         // showMapPreview = true  // REMOVED - this was causing stages to be skipped
                         
                         let totalTime = Date().timeIntervalSince(generateStartTime)
+                        print("ROUTE_FIRST_DISPLAYED time_to_first_route_sec=\(String(format: "%.2f", totalTime)) duration=\(selectedDuration) source=live")
                         print("═══════════════════════════════════════════════════════════")
                         print("✅ ROUTE 1 READY - Total time: \(String(format: "%.2f", totalTime))s")
                         print("   📍 \(filteredResult.places.count) POIs, \(filteredResult.durationMinutes)min, \(filteredResult.distanceMeters)m")
@@ -3338,7 +3359,8 @@ struct LocalRoutePickerSheet: View {
                     trimmed: polylineToUse,
                     walkingDirections: directions,
                     usedOSRMRouting: filteredCachedRoute.usedOSRM,
-                    isFromPrePopulatedDatabase: cached.isFromPrePopulatedDatabase
+                    isFromPrePopulatedDatabase: cached.isFromPrePopulatedDatabase,
+                    travelToStartMinutes: cached.route.travelToStartSeconds.map { $0 / 60 }
                 )
                 loadedRoutes.append((route: localRoute, data: filteredCachedRoute, isDeadZoneFallback: cached.isDeadZoneFallback))
                 loadedPlaceIdSets.append(Set(filteredCachedRoute.places.map { $0.placeId }))
@@ -3420,14 +3442,16 @@ struct LocalRoutePickerSheet: View {
                     trimmed: poly,
                     walkingDirections: mapKitRoute.walkingDirections,
                     usedOSRMRouting: route.usedOSRMRouting,
-                    isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase
+                    isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase,
+                    travelToStartMinutes: route.travelToStartMinutes
                 )
                 let updatedData = GeneratedRoute(
                     places: data.places,
                     polyline: poly,
                     distanceMeters: mapKitRoute.distanceMeters,
                     durationSeconds: durationMin * 60,
-                    legs: data.legs
+                    legs: data.legs,
+                    travelToStartSeconds: data.travelToStartSeconds
                 )
                 isValidByRouteName[route.name] = isValid
                 await MainActor.run {
@@ -4390,48 +4414,60 @@ struct LocalRoutePickerSheet: View {
         
         print("🔮 Pre-generating other durations (prioritized): \(durationsToGenerate.map { "\($0)min" }.joined(separator: ", "))")
         
-        for duration in durationsToGenerate {
+        // Process in batches of 3 to respect MapKit rate limits while reducing wall-clock time
+        let batchSize = 3
+        let batches = stride(from: 0, to: durationsToGenerate.count, by: batchSize).map {
+            Array(durationsToGenerate[$0..<min($0 + batchSize, durationsToGenerate.count)])
+        }
+        
+        for batch in batches {
             // v1.6.33: Check rate limit - pause briefly if too high
             if await mapsService.shouldPauseBackgroundGeneration() {
-                // Wait 5 seconds then continue (quota refreshes over time)
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
-                // Don't skip - just continue after brief pause
             }
             
-            // Check if already cached
-            if RouteCacheService.shared.getCachedRoutes(near: location, durationMinutes: duration) != nil {
-                print("📦 \(duration)min already cached, skipping")
-                continue
-            }
-            
-            do {
-                // v1.9.51: Collect excluded POIs for duplicate detection (empty for background cache generation)
-                let excludedPOIs: [PlaceResult] = []
-                
-                let result = try await mapsService.generateLocalRoute(
-                    from: location,
-                    targetDurationMinutes: duration,
-                    difficulty: nil,
-                    excludePlaceIds: [],
-                    excludePOIs: excludedPOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
-                    prefetchedPOIs: pois
-                )
-                
-                // Validate and cache
-                guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
-                    print("⚠️ \(duration)min generation failed validation")
-                    continue
+            // Run this batch in parallel (up to batchSize concurrent)
+            await withTaskGroup(of: (Int, Result<GeneratedRoute, Error>).self) { group in
+                for duration in batch {
+                    if RouteCacheService.shared.getCachedRoutes(near: location, durationMinutes: duration) != nil {
+                        print("📦 \(duration)min already cached, skipping")
+                        continue
+                    }
+                    group.addTask {
+                        let excludedPOIs: [PlaceResult] = []
+                        do {
+                            let result = try await mapsService.generateLocalRoute(
+                                from: location,
+                                targetDurationMinutes: duration,
+                                difficulty: nil,
+                                excludePlaceIds: [],
+                                excludePOIs: excludedPOIs,
+                                prefetchedPOIs: pois
+                            )
+                            return (duration, .success(result))
+                        } catch {
+                            return (duration, .failure(error))
+                        }
+                    }
                 }
-                
-                // Cache this route for future use
-                RouteCacheService.shared.cacheRoutes([result], at: location, durationMinutes: duration)
-                print("✅ Pre-generated and cached \(duration)min route (\(result.durationSeconds/60)min actual)")
-                
-                // v1.6.33: Reduced delay for faster pre-generation (0.5s instead of 1s)
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds between durations
-                
-            } catch {
-                print("⚠️ \(duration)min pre-generation error: \(error.localizedDescription)")
+                for await (duration, outcome) in group {
+                    switch outcome {
+                    case .success(let result):
+                        guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
+                            print("⚠️ \(duration)min generation failed validation")
+                            continue
+                        }
+                        RouteCacheService.shared.cacheRoutes([result], at: location, durationMinutes: duration)
+                        print("✅ Pre-generated and cached \(duration)min route (\(result.durationSeconds/60)min actual)")
+                    case .failure(let error):
+                        print("⚠️ \(duration)min pre-generation error: \(error.localizedDescription)")
+                    }
+                }
+            }
+            
+            // Delay between batches (not between every duration) to avoid thundering herd
+            if batch != batches.last {
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s between batches
             }
         }
         

@@ -47,136 +47,157 @@ class PrePopulatedPOIGenerator: ObservableObject {
     // MARK: - OSRM Route Generation (for pre-populated database)
     
     /// Generate a route using OSRM (Open Source Routing Machine)
-    /// Uses OpenStreetMap data - can be cached legally
+    /// Uses OpenStreetMap data - can be cached legally.
+    /// Tries multiple waypoint sets (different distance factors) and returns the route whose duration is closest to target within 70-130%.
     private func generateOSRMRoute(
         from origin: CLLocationCoordinate2D,
         targetDurationMinutes: Int,
         pois: [PlaceResult]
     ) async throws -> GeneratedRoute {
-        // Select waypoints from POIs (simple selection algorithm)
-        let waypoints = selectWaypointsForRoute(
-            pois: pois,
-            origin: origin,
-            targetDurationMinutes: targetDurationMinutes
-        )
+        let targetSec = targetDurationMinutes * 60
+        let minAcceptable = Int(Double(targetSec) * 0.70)
+        let maxAcceptable = Int(Double(targetSec) * 1.30)
+        // Try 3 candidate waypoint sets (different routeOverheadFactor: shorter, default, longer)
+        let factors: [Double] = [0.55, 0.65, 0.75]
+        var bestResult: (waypoints: [CLLocationCoordinate2D], distance: Int, duration: Int, polyline: [CLLocationCoordinate2D])?
+        var bestDiff = Int.max
         
-        guard !waypoints.isEmpty else {
-            throw NSError(domain: "PrePopulatedPOIGenerator", code: 1, userInfo: [NSLocalizedDescriptionKey: "No waypoints selected"])
+        for factor in factors {
+            let waypoints = selectWaypointsForRoute(
+                pois: pois,
+                origin: origin,
+                targetDurationMinutes: targetDurationMinutes,
+                routeOverheadFactor: factor
+            )
+            guard !waypoints.isEmpty else { continue }
+            var allCoords: [CLLocationCoordinate2D] = [origin]
+            allCoords.append(contentsOf: waypoints)
+            allCoords.append(origin)
+            do {
+                let (distance, duration, polylinePoints) = try await callOSRMAPI(coordinates: allCoords)
+                guard duration >= minAcceptable && duration <= maxAcceptable else { continue }
+                let diff = abs(duration - targetSec)
+                if diff < bestDiff {
+                    bestDiff = diff
+                    bestResult = (waypoints, distance, duration, polylinePoints)
+                }
+                // If we landed in 85-115%, prefer to stop (good enough)
+                if Double(duration) >= Double(targetSec) * 0.85 && Double(duration) <= Double(targetSec) * 1.15 {
+                    break
+                }
+            } catch {
+                continue
+            }
         }
         
-        // Build coordinates: origin -> waypoints -> origin (loop)
-        var allCoords: [CLLocationCoordinate2D] = [origin]
-        allCoords.append(contentsOf: waypoints)
-        allCoords.append(origin)
+        guard let result = bestResult else {
+            // Fallback: single attempt with default factor
+            let waypoints = selectWaypointsForRoute(pois: pois, origin: origin, targetDurationMinutes: targetDurationMinutes, routeOverheadFactor: 0.65)
+            guard !waypoints.isEmpty else {
+                throw NSError(domain: "PrePopulatedPOIGenerator", code: 1, userInfo: [NSLocalizedDescriptionKey: "No waypoints selected"])
+            }
+            var allCoords: [CLLocationCoordinate2D] = [origin]
+            allCoords.append(contentsOf: waypoints)
+            allCoords.append(origin)
+            let (distance, duration, polylinePoints) = try await callOSRMAPI(coordinates: allCoords)
+            let routePOIs = waypoints.compactMap { coord -> PlaceResult? in
+                pois.min(by: { distanceBetween($0.coordinate, coord) < distanceBetween($1.coordinate, coord) })
+            }
+            return GeneratedRoute(
+                places: routePOIs,
+                polyline: encodePolyline(polylinePoints),
+                distanceMeters: distance,
+                durationSeconds: duration,
+                legs: []
+            )
+        }
         
-        // Call OSRM API
-        let (distance, duration, polylinePoints) = try await callOSRMAPI(coordinates: allCoords)
-        
-        // Convert waypoint coordinates back to PlaceResults
-        let routePOIs = waypoints.compactMap { coord -> PlaceResult? in
-            // Find the closest POI to this coordinate
+        let routePOIs = result.waypoints.compactMap { coord -> PlaceResult? in
             pois.min(by: { distanceBetween($0.coordinate, coord) < distanceBetween($1.coordinate, coord) })
         }
-        
-        // Encode polyline
-        let encodedPolyline = encodePolyline(polylinePoints)
-        
         return GeneratedRoute(
             places: routePOIs,
-            polyline: encodedPolyline,
-            distanceMeters: distance,
-            durationSeconds: duration,
-            legs: []  // OSRM doesn't provide detailed legs
+            polyline: encodePolyline(result.polyline),
+            distanceMeters: result.distance,
+            durationSeconds: result.duration,
+            legs: []
         )
     }
     
     /// Select waypoints from POIs for a target duration
+    /// - Parameter routeOverheadFactor: 0.55 = shorter route, 0.65 = default, 0.75 = longer (more waypoints/distance)
     private func selectWaypointsForRoute(
         pois: [PlaceResult],
         origin: CLLocationCoordinate2D,
-        targetDurationMinutes: Int
+        targetDurationMinutes: Int,
+        routeOverheadFactor: Double = 0.65
     ) -> [CLLocationCoordinate2D] {
         guard !pois.isEmpty else { return [] }
         
-        // Calculate ideal distance (walking speed ~80m/min, routes are ~1.5-2x longer)
         let walkingSpeedMetersPerMin = 80.0
-        let routeOverheadFactor = 0.65  // Conservative estimate
         let idealDistance = Double(targetDurationMinutes) * walkingSpeedMetersPerMin * routeOverheadFactor
         
-        // Sort POIs by distance from origin
         let poisWithDistance = pois.map { poi -> (poi: PlaceResult, distance: Double) in
-            let dist = distanceBetween(origin, poi.coordinate)
-            return (poi, dist)
+            (poi, distanceBetween(origin, poi.coordinate))
         }.sorted { $0.distance < $1.distance }
         
-        // Select waypoints that fit within target distance
         var selected: [CLLocationCoordinate2D] = []
         var cumulativeDistance: Double = 0
         
         for (poi, distance) in poisWithDistance {
-            // *2 for return journey
             if cumulativeDistance + (distance * 2) <= idealDistance {
                 selected.append(poi.coordinate)
                 cumulativeDistance += distance * 2
-                if selected.count >= 3 {  // Limit to 3 waypoints
-                    break
-                }
+                if selected.count >= 3 { break }
             }
         }
         
         return selected
     }
     
-    /// Call OSRM API to get route
+    /// Call OSRM API to get route. Tries walking/foot first for real walking duration; falls back to driving + distance→walking conversion.
     private func callOSRMAPI(coordinates: [CLLocationCoordinate2D]) async throws -> (distance: Int, duration: Int, polyline: [CLLocationCoordinate2D]) {
         guard coordinates.count >= 2 else {
             throw NSError(domain: "PrePopulatedPOIGenerator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Need at least 2 coordinates"])
         }
         
-        // Build coordinate string: lon,lat;lon,lat;...
         let coordStrings = coordinates.map { "\($0.longitude),\($0.latitude)" }
         let coordsPath = coordStrings.joined(separator: ";")
-        
-        // OSRM public server (using driving profile, we'll convert to walking time)
-        let urlString = "https://router.project-osrm.org/route/v1/driving/\(coordsPath)?overview=full&geometries=polyline"
-        
-        guard let url = URL(string: urlString) else {
-            throw NSError(domain: "PrePopulatedPOIGenerator", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid OSRM URL"])
-        }
-        
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 30.0
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw NSError(domain: "PrePopulatedPOIGenerator", code: 1, userInfo: [NSLocalizedDescriptionKey: "OSRM HTTP error"])
-        }
-        
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let code = json["code"] as? String,
-              code == "Ok",
-              let routes = json["routes"] as? [[String: Any]],
-              let firstRoute = routes.first,
-              let distance = firstRoute["distance"] as? Double,
-              let geometry = firstRoute["geometry"] as? String else {
-            throw NSError(domain: "PrePopulatedPOIGenerator", code: 1, userInfo: [NSLocalizedDescriptionKey: "OSRM invalid response"])
-        }
-        
-        // Decode polyline
-        let polylinePoints = decodePolyline(geometry)
-        
-        guard !polylinePoints.isEmpty else {
-            throw NSError(domain: "PrePopulatedPOIGenerator", code: 1, userInfo: [NSLocalizedDescriptionKey: "OSRM empty polyline"])
-        }
-        
-        // Convert driving time to walking time (OSRM public server uses driving profile)
+        let profilesToTry = ["walking", "foot", "driving"]
         let walkingSpeedMetersPerMin = 80.0
-        let walkingMinutes = distance / walkingSpeedMetersPerMin
-        let walkingDurationSeconds = Int(walkingMinutes * 60)
         
-        return (distance: Int(distance), duration: walkingDurationSeconds, polyline: polylinePoints)
+        for profile in profilesToTry {
+            let urlString = "https://router.project-osrm.org/route/v1/\(profile)/\(coordsPath)?overview=full&geometries=polyline"
+            guard let url = URL(string: urlString) else { continue }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 30.0
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { continue }
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let code = json["code"] as? String,
+                      code == "Ok",
+                      let routes = json["routes"] as? [[String: Any]],
+                      let firstRoute = routes.first,
+                      let distance = firstRoute["distance"] as? Double,
+                      let geometry = firstRoute["geometry"] as? String,
+                      distance > 0 else { continue }
+                let polylinePoints = decodePolyline(geometry)
+                guard !polylinePoints.isEmpty else { continue }
+                let isWalkingProfile = (profile == "walking" || profile == "foot")
+                let durationSec: Int
+                if isWalkingProfile, let duration = firstRoute["duration"] as? Double {
+                    durationSec = Int(duration)
+                } else {
+                    let walkingMinutes = distance / walkingSpeedMetersPerMin
+                    durationSec = Int(walkingMinutes * 60)
+                }
+                return (distance: Int(distance), duration: durationSec, polyline: polylinePoints)
+            } catch {
+                continue
+            }
+        }
+        throw NSError(domain: "PrePopulatedPOIGenerator", code: 1, userInfo: [NSLocalizedDescriptionKey: "OSRM HTTP error"])
     }
     
     /// Decode polyline string to coordinates

@@ -916,11 +916,13 @@ class WaitingRoomViewModel: ObservableObject {
         walkSession.isActive = true
         walkSession.startTime = Date()
         walkSession.currentRoute = route
+        // Pre-pop routes: durationMinutes is route-only; add travel-to-start for pill/halfway
+        let totalMinutes = route.durationMinutes + (route.travelToStartMinutes ?? 0)
         // When route has 0 duration (bug/race), use pill/display so "10 min" choice is respected for pill and halfway
-        let effectiveMinutes = route.durationMinutes > 0 ? route.durationMinutes : (displayDurationMinutesForPill ?? lastKnownPillMinutes ?? 10)
-        let startMin = route.durationMinutes > 0 ? route.durationMinutes : effectiveMinutes
-        if route.durationMinutes <= 0 {
-            print("PILL | startWalk: route.durationMinutes=\(route.durationMinutes), using effectiveMinutes=\(effectiveMinutes) for pill and halfway")
+        let effectiveMinutes = totalMinutes > 0 ? totalMinutes : (displayDurationMinutesForPill ?? lastKnownPillMinutes ?? 10)
+        let startMin = totalMinutes > 0 ? totalMinutes : effectiveMinutes
+        if totalMinutes <= 0 {
+            print("PILL | startWalk: totalMinutes=\(totalMinutes) (route=\(route.durationMinutes) + travel=\(route.travelToStartMinutes ?? 0)), using effectiveMinutes=\(effectiveMinutes) for pill and halfway")
         }
         // Only set pill when starting fresh (no refresh yet). Never unlock: hasReceivedGoogleRefreshForPill is only set to false in endWalk().
         if !hasReceivedGoogleRefreshForPill {

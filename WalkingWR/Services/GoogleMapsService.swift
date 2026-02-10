@@ -551,8 +551,14 @@ struct RoutingToggles {
     // SPRINT-5: Hard stop at 17.8s (200ms guard band before 18s ceiling)
     struct Budget {
         let t0: TimeInterval
-        let soft: TimeInterval = 12.0
-        let hard: TimeInterval = 17.8  // SPRINT-5: 200ms guard band to prevent scheduler jitter pushing p99 past 18s
+        let soft: TimeInterval
+        let hard: TimeInterval
+        
+        init(t0: TimeInterval, soft: TimeInterval = 12.0, hard: TimeInterval = 17.8) {
+            self.t0 = t0
+            self.soft = soft
+            self.hard = hard
+        }
         
         func within() -> Bool {
             let elapsed = Date().timeIntervalSince1970 - t0
@@ -669,6 +675,9 @@ class GoogleMapsService: ObservableObject {
     
     // v2.0.3: Batch test mode flag - skip Apple Maps to avoid rate limiting
     private var isBatchTestMode: Bool = false
+    
+    // Diagnostic: last reason for noRouteFound (set before each throw, read in test catch)
+    private var lastNoRouteReason: String = ""
     
     @Published var isLoading = false
     @Published var errorMessage: String?
@@ -885,7 +894,7 @@ class GoogleMapsService: ObservableObject {
     // Track daily usage to cap costs per user
     // Conservative limit: 10 calls/day = ~£0.24/day max per user (~£7.20/month)
     // Adjust based on your budget: 5 = £0.12/day, 20 = £0.48/day
-    private let googlePlacesDailyCap = 10  // Max calls per day per user
+    private let googlePlacesDailyCap = 10  // Production: ~$0.32/day max per user (batch test mode bypasses this)
     private var googlePlacesCallsToday = 0
     private let googlePlacesCountKey = "googlePlacesCount"
     private let googlePlacesDateKey = "googlePlacesDate"
@@ -903,6 +912,11 @@ class GoogleMapsService: ObservableObject {
     
     /// Check if we can make a Google Places API call (daily cap + quota check)
     private var canMakeGooglePlacesCall: Bool {
+        // SPRINT-9: Batch test mode bypasses ALL limits (cap + cooldown) for fair testing
+        if isBatchTestMode {
+            return true
+        }
+        
         // Check quota cooldown first
         if isGooglePlacesDisabled {
             return false
@@ -950,6 +964,11 @@ class GoogleMapsService: ObservableObject {
     
     /// Disable Google Places temporarily after quota error
     private func disableGooglePlacesTemporarily() {
+        // SPRINT-9: Don't disable in batch test mode
+        guard !isBatchTestMode else {
+            print("🌐 [QUOTA] Skipping cooldown in batch test mode")
+            return
+        }
         googlePlacesDisabledUntil = Date().addingTimeInterval(googlePlacesCooldownMinutes * 60)
         print("🛑 [QUOTA] Google Places disabled for \(Int(googlePlacesCooldownMinutes)) minutes due to quota/rate limit")
     }
@@ -1264,9 +1283,15 @@ class GoogleMapsService: ObservableObject {
                                "community_centre", "historic", "place_of_worship"])
         if !types.isDisjoint(with: osmGoodTypes) { return 0.5 }
         
+        // Deprioritise parking as POI: strongly avoid (-2) so routes prefer other destinations
+        let parkingTypes = Set(["parking"])
+        let parkingNames = ["car park", "parking"]
+        if !types.isDisjoint(with: parkingTypes) { return -2.0 }
+        if parkingNames.contains(where: { nameLower.contains($0) }) { return -2.0 }
+        
         // Avoid for walking (-1)
         let avoid = Set(["gas_station", "car_wash", "car_repair", "car_dealer",
-                        "parking", "atm", "bank", "insurance_agency"])
+                        "atm", "bank", "insurance_agency"])
         if !types.isDisjoint(with: avoid) { return -1.0 }
         
         // Strongly avoid (-2)
@@ -1916,15 +1941,20 @@ class GoogleMapsService: ObservableObject {
     /// 
     /// - Parameter skipGoogle: If true, skips Google Places API call (cost optimization for first-run)
     /// - Parameter canonicalMaxTimeSeconds: If set, canonical dedup is capped so first route is not blocked (nil = full dedup for prefetch/cache).
+    /// - Parameter minimumForEarlyReturn: If set (e.g. 10), return as soon as we have this many POIs from free sources (faster first route).
+    /// - Parameter maxWaitSecondsForFirstRoute: If set (e.g. 6), return after this many seconds with whatever we have (≥ minimumForEarlyReturn) to show first route sooner.
     func findNearbyPlaces(
         location: CLLocationCoordinate2D,
         radiusMeters: Int = 2500,  // Increased from 500m for better coverage
         types: [String] = ["point_of_interest"],
         skipGoogle: Bool = false,  // v1.9.50: Skip Google on first run to save costs
         targetDurationMinutes: Int? = nil,  // v2.0.3 Phase 2A: For diversity check in DB blending
-        canonicalMaxTimeSeconds: TimeInterval? = nil  // Cap canonical dedup for fast first route (prefetch uses full dedup)
+        canonicalMaxTimeSeconds: TimeInterval? = nil,  // Cap canonical dedup for fast first route (prefetch uses full dedup)
+        minimumForEarlyReturn: Int? = nil,  // Return as soon as we have this many (e.g. 10 for first route)
+        maxWaitSecondsForFirstRoute: Double? = nil  // Return after this many seconds with partial POIs for faster first route
     ) async throws -> [PlaceResult] {
         let startTime = Date()
+        print("ROUTE_POI_FETCH_START")
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: startTime)
@@ -2012,7 +2042,8 @@ class GoogleMapsService: ObservableObject {
                 
                 // Fetch live POIs from free sources only (Apple Maps + OSM, no Google)
                 // v2.0.3: Skip Apple Maps in batch mode to avoid rate limiting
-                let livePOIs = await fetchLivePOIsForBlending(location: location, radiusMeters: radiusMeters, skipAppleMaps: isBatchTestMode)
+                // Note: No longer skip Apple Maps in batch test - need realistic POI counts
+                let livePOIs = await fetchLivePOIsForBlending(location: location, radiusMeters: radiusMeters, skipAppleMaps: false)
                 let blendElapsed = Date().timeIntervalSince(blendStartTime)
                 
                 if !livePOIs.isEmpty {
@@ -2069,7 +2100,7 @@ class GoogleMapsService: ObservableObject {
             let endTimeString = formatter.string(from: endTime)
             print("📦 ✅ Final POIs after blending: \(allResults.count)")
             print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalTime))s")
-            
+            print("ROUTE_POI_FETCH_END elapsed_sec=\(String(format: "%.2f", totalTime))")
             return allResults
         }
         
@@ -2275,9 +2306,17 @@ class GoogleMapsService: ObservableObject {
                         break
                     }
                     
-                    // Early exit: enough POIs for route quality - don't wait for slower sources
-                    if collected.count >= minimumPOIsRequired {
-                        print("⏱️ Early exit - have \(collected.count) POIs (≥ \(minimumPOIsRequired)) in \(String(format: "%.2f", elapsed))s")
+                    // Early exit: enough POIs - don't wait for slower sources
+                    let earlyReturnThreshold = minimumForEarlyReturn ?? minimumPOIsRequired
+                    if collected.count >= earlyReturnThreshold {
+                        print("⏱️ Early exit - have \(collected.count) POIs (≥ \(earlyReturnThreshold)) in \(String(format: "%.2f", elapsed))s")
+                        group.cancelAll()
+                        break
+                    }
+                    
+                    // First-route fast path: return partial POIs after max wait so first route can show sooner
+                    if let maxWait = maxWaitSecondsForFirstRoute, elapsed >= maxWait, collected.count >= (minimumForEarlyReturn ?? 10) {
+                        print("⏱️ First-route timeout - returning \(collected.count) POIs after \(String(format: "%.1f", maxWait))s (faster first route)")
                         group.cancelAll()
                         break
                     }
@@ -2300,10 +2339,12 @@ class GoogleMapsService: ObservableObject {
             
             // ═══════════════════════════════════════════════════════════════
             // STEP 2: If not enough POIs, fetch from Google (PAID, NOT CACHED)
+            // Skip Google when we used first-route fast path (10–14 POIs) so first route shows sooner
             // ═══════════════════════════════════════════════════════════════
+            let usedFirstRouteFastPath = (minimumForEarlyReturn != nil || maxWaitSecondsForFirstRoute != nil) && allResults.count >= (minimumForEarlyReturn ?? 10) && allResults.count < minimumPOIsRequired
             let googleEnabled = !skipGoogle && !apiKey.isEmpty && canMakeGooglePlacesCall
             
-            if allResults.count < minimumPOIsRequired && googleEnabled {
+            if allResults.count < minimumPOIsRequired && googleEnabled && !usedFirstRouteFastPath {
                 print("📍 Step 2: Free sources insufficient (\(allResults.count) < \(minimumPOIsRequired)) - fetching from Google...")
                 
                 let googleStartTime = Date()
@@ -2336,6 +2377,8 @@ class GoogleMapsService: ObservableObject {
                 if restrictedCount > 0 {
                     print("   🏫 Filtered \(restrictedCount) restricted Google POIs")
                 }
+            } else if usedFirstRouteFastPath {
+                print("📍 Step 2: Skipping Google - first-route fast path (\(allResults.count) POIs, show route sooner)")
             } else if allResults.count >= minimumPOIsRequired {
                 print("📍 Step 2: Skipping Google - have enough POIs (\(allResults.count) >= \(minimumPOIsRequired))")
             } else if !googleEnabled {
@@ -2467,7 +2510,7 @@ class GoogleMapsService: ObservableObject {
         print("   📸 Geograph: \(geographCount)")
         print("═══════════════════════════════════════════════════════════")
         print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalElapsed))s")
-        
+        print("ROUTE_POI_FETCH_END elapsed_sec=\(String(format: "%.2f", totalElapsed))")
         return allResults
     }
     
@@ -5188,86 +5231,49 @@ class GoogleMapsService: ObservableObject {
         coordStrings.append("\(destination.longitude),\(destination.latitude)")
         
         let coordsPath = coordStrings.joined(separator: ";")
-        // Note: Using "driving" profile as public server doesn't support "foot"
-        // We estimate walking time from distance afterwards
-        let urlString = "https://router.project-osrm.org/route/v1/driving/\(coordsPath)?overview=full&geometries=polyline"
-        
-        guard let url = URL(string: urlString) else {
-            throw GoogleMapsError.invalidURL
+        // Try OSRM walking/foot profile first (real walking duration); fall back to driving + distance→walking conversion
+        let profilesToTry = ["walking", "foot", "driving"]
+        var lastError: Error?
+        for profile in profilesToTry {
+            let urlString = "https://router.project-osrm.org/route/v1/\(profile)/\(coordsPath)?overview=full&geometries=polyline"
+            guard let url = URL(string: urlString) else { continue }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 10
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { continue }
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                if let code = json["code"] as? String, code != "Ok" { continue }
+                guard let routes = json["routes"] as? [[String: Any]],
+                      let firstRoute = routes.first,
+                      let distance = firstRoute["distance"] as? Double,
+                      let duration = firstRoute["duration"] as? Double,
+                      let geometry = firstRoute["geometry"] as? String,
+                      distance > 0 else { continue }
+                let polylinePoints = decodePolyline(geometry)
+                if polylinePoints.isEmpty { continue }
+                let isWalkingProfile = (profile == "walking" || profile == "foot")
+                let finalDuration: Int
+                if isWalkingProfile {
+                    finalDuration = Int(duration)
+                    print("🗺️ OSRM: Using \(profile) profile → \(Int(duration / 60))min (API walking time)")
+                } else {
+                    let userWalkingSpeed = Double(adaptiveWalkingSpeed)
+                    let walkingMinutes = distance / userWalkingSpeed
+                    finalDuration = Int(walkingMinutes * 60)
+                    print("🗺️ OSRM: Using driving profile → converted to \(finalDuration / 60)min @ \(Int(userWalkingSpeed))m/min")
+                }
+                return (distance: Int(distance), duration: finalDuration, polyline: polylinePoints)
+            } catch {
+                lastError = error
+                continue
+            }
         }
-        
-        // Create request with timeout (public server can be slow)
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 10  // 10 second timeout
-        
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await URLSession.shared.data(for: request)
-        } catch {
-            print("🗺️ OSRM: Network error - \(error.localizedDescription)")
+        if let err = lastError {
+            print("🗺️ OSRM: All profiles failed - \(err.localizedDescription)")
             throw GoogleMapsError.apiError("OSRM network error")
         }
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw GoogleMapsError.apiError("OSRM invalid response")
-        }
-        
-        // Handle HTTP errors
-        if httpResponse.statusCode != 200 {
-            print("🗺️ OSRM: HTTP error \(httpResponse.statusCode)")
-            throw GoogleMapsError.apiError("OSRM HTTP \(httpResponse.statusCode)")
-        }
-        
-        // Parse JSON response
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw GoogleMapsError.apiError("OSRM invalid JSON")
-        }
-        
-        // Check OSRM status code (not HTTP, but in JSON)
-        if let code = json["code"] as? String, code != "Ok" {
-            let message = json["message"] as? String ?? "Unknown error"
-            print("🗺️ OSRM: API error - \(code): \(message)")
-            throw GoogleMapsError.noRouteFound
-        }
-        
-        guard let routes = json["routes"] as? [[String: Any]],
-              let firstRoute = routes.first,
-              let distance = firstRoute["distance"] as? Double,
-              let duration = firstRoute["duration"] as? Double,
-              let geometry = firstRoute["geometry"] as? String else {
-            print("🗺️ OSRM: No route found in response")
-            throw GoogleMapsError.noRouteFound
-        }
-        
-        // Validate distance is reasonable
-        if distance <= 0 {
-            throw GoogleMapsError.noRouteFound
-        }
-        
-        // Decode polyline
-        let polylinePoints = decodePolyline(geometry)
-        
-        // Handle empty polyline
-        if polylinePoints.isEmpty {
-            print("🗺️ OSRM: Empty polyline returned")
-            throw GoogleMapsError.noRouteFound
-        }
-        
-        // IMPORTANT: OSRM public server returns CAR routing times
-        // We ALWAYS estimate walking time from distance
-        // Walking speed: ~80 m/min (5 km/h) - adjustable based on user's actual speed
-        let userWalkingSpeed = Double(adaptiveWalkingSpeed)  // m/min from user's history
-        let walkingMinutes = distance / userWalkingSpeed
-        let finalDuration = Int(walkingMinutes * 60)  // Convert to seconds
-        
-        let osrmMinutes = Int(duration / 60)
-        let walkingMins = Int(walkingMinutes)
-        if osrmMinutes != walkingMins {
-            print("🗺️ OSRM: Converted driving time to walking (\(osrmMinutes)min → \(walkingMins)min @ \(Int(userWalkingSpeed))m/min)")
-        }
-        
-        return (distance: Int(distance), duration: finalDuration, polyline: polylinePoints)
+        throw GoogleMapsError.noRouteFound
     }
     
     /// Check if we should use OSRM instead of MapKit (when approaching rate limit)
@@ -8442,6 +8448,197 @@ class GoogleMapsService: ObservableObject {
         }
     }
     
+    // MARK: - Route quality test (single location, file output for Cursor)
+    
+    /// Run route quality test for one postcode (e.g. WF1): clear caches, generate 10–60 min routes, write results to a file you can paste into Cursor.
+    /// Call with launch argument: -RunRouteQualityTest WF1
+    /// - Parameters:
+    ///   - postcodeLabel: e.g. "WF1"
+    ///   - includeGoogleRefresh: If true, call Google Directions per route for "real" duration (uses quota).
+    ///   - progress: Optional callback (message) called on MainActor after each duration for UI progress.
+    /// - Returns: File URL of the output file, or nil on failure.
+    func testRouteQualitySingleLocation(postcodeLabel: String, includeGoogleRefresh: Bool = false, progress: (@Sendable (String) -> Void)? = nil) async -> URL? {
+        // Clear caches for reproducible test
+        RouteCacheService.shared.clearCache()
+        POICacheService.shared.clearCache()
+        print("📦 Caches cleared for reproducible test (route + POI)")
+        
+        isBatchTestMode = true
+        defer { isBatchTestMode = false }
+        
+        // Resolve location for postcode
+        let location: CLLocationCoordinate2D
+        if let areas = PrePopulatedPOIService.shared.getAllPostcodeAreas(),
+           let area = areas.first(where: { $0.postcode == postcodeLabel }) {
+            location = CLLocationCoordinate2D(latitude: area.centerLatitude, longitude: area.centerLongitude)
+            print("📍 Using \(postcodeLabel) from database: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))")
+        } else {
+            // Fallback coordinates for test locations (urban + suburban + small town mix)
+            let fallbacks: [String: (lat: Double, lon: Double)] = [
+                // Urban city centres
+                "WF1": (53.6830, -1.4970),     // Wakefield centre (small city)
+                "M1":  (53.4808, -2.2426),     // Manchester city centre (large urban)
+                "B1":  (52.4862, -1.8904),     // Birmingham city centre (large urban)
+                "LS1": (53.7997, -1.5492),     // Leeds city centre (large urban)
+                // Suburban
+                "WF2": (53.7029, -1.5496),     // Wakefield outskirts (suburban)
+                "M20": (53.4153, -2.2253),     // Didsbury, Manchester (suburban)
+                "B15": (52.4667, -1.9167),     // Edgbaston, Birmingham (suburban)
+                "LS6": (53.8196, -1.5602),     // Headingley, Leeds (suburban)
+                // Small towns
+                "HX1": (53.7253, -1.8629),     // Halifax (small town)
+                "HD1": (53.6458, -1.7850),     // Huddersfield (small town)
+                "SK1": (53.4106, -2.1575),     // Stockport (small town)
+                // Rural / village
+                "HG1": (53.9921, -1.5418),     // Harrogate (market town, semi-rural)
+                "YO1": (53.9591, -1.0815),     // York centre (historic, mixed)
+                "DL8": (54.3080, -1.8540),     // Leyburn, Yorkshire Dales (rural)
+                "S33": (53.3434, -1.6764),     // Castleton, Peak District (rural village)
+            ]
+            let coords = fallbacks[postcodeLabel] ?? (53.6830, -1.4970)
+            location = CLLocationCoordinate2D(latitude: coords.lat, longitude: coords.lon)
+            print("📍 Using \(postcodeLabel) fallback coords: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))")
+        }
+        
+        var lines: [String] = []
+        lines.append("PASTE THIS ENTIRE FILE INTO CURSOR FOR ANALYSIS")
+        lines.append("--- Route quality test: \(postcodeLabel) | Caches cleared each run ---")
+        lines.append("postcode=\(postcodeLabel) include_google_refresh=\(includeGoogleRefresh)")
+        lines.append("duration_requested,success,gen_time_sec,routes_attempted,valid_routes_found,route_min,google_min,accuracy_vs_requested_pct,accuracy_vs_google_pct,waypoints,google_api_calls,poi_names")
+        
+        // PRE-FETCH: Search Apple Maps once and reuse POIs for all durations
+        // This simulates production behavior where POI cache persists across route generations
+        // (without this, Apple Maps rate-limits after 80+ sequential MKLocalSearch queries)
+        let prefetchRadius = max(2500, Int(60 * 80 * 0.8))  // Cover the largest walk radius
+        let prefetchedTestPOIs = await searchAppleMapsForPOIsFast(location: location, radiusMeters: prefetchRadius)
+        print("📦 Pre-fetched \(prefetchedTestPOIs.count) Apple Maps POIs for test (radius=\(prefetchRadius)m)")
+        
+        let durations = Array(stride(from: 10, through: 60, by: 5))
+        let totalCount = durations.count
+        var allSuccess = true
+        var totalGenTime: Double = 0
+        var successCount = 0
+        
+        for (index, duration) in durations.enumerated() {
+            // Clear route cache between durations (fair comparison for route generation)
+            // POI cache is NOT cleared — pre-fetched POIs are passed explicitly
+            RouteCacheService.shared.clearCache()
+            if let p = progress {
+                await MainActor.run { p("Testing \(duration) min... (\(index + 1)/\(totalCount))") }
+            }
+            let startTime = Date()
+            var success = false
+            var genTimeSec: Double = 0
+            var routesAttempted: Int = 0
+            var validRoutesFound: Int = 0
+            var routeMin: Int = 0
+            var googleMin: Int? = nil
+            var waypoints: Int = 0
+            var poiNames: String = ""
+            var errorMsg: String = ""
+            var googleAPICalls: Int = 0
+            
+            // Track Google Places API calls for this duration bucket
+            let googleCallsBefore = getGooglePlacesCallCount().today
+            
+            do {
+                let result = try await generateRouteTopologySafeExtended(
+                    from: location,
+                    targetDurationMinutes: duration,
+                    difficulty: nil,
+                    excludePlaceIds: [],
+                    excludePOIs: [],
+                    prefetchedPOIs: prefetchedTestPOIs.isEmpty ? nil : prefetchedTestPOIs
+                )
+                let route = result.selectedRoute
+                genTimeSec = result.generationTime
+                routesAttempted = result.routesAttempted
+                validRoutesFound = result.validRoutesFound
+                routeMin = route.durationSeconds / 60
+                waypoints = route.places.count
+                poiNames = route.places.map { $0.name }.joined(separator: " | ")
+                success = true
+                successCount += 1
+                totalGenTime += genTimeSec
+                
+                if includeGoogleRefresh, hasAPIKey, canUseGoogleDirectionsRefresh {
+                    let walkingRoute = RouteConversionHelper.walkingRoute(
+                        from: route,
+                        origin: location,
+                        name: "Test \(duration)min",
+                        description: ""
+                    )
+                    if let refreshed = await refreshRouteWithGoogleOnly(route: walkingRoute, userLocation: location) {
+                        googleMin = refreshed.durationMinutes
+                    }
+                }
+            } catch {
+                genTimeSec = Date().timeIntervalSince(startTime)
+                errorMsg = error.localizedDescription
+                if !lastNoRouteReason.isEmpty {
+                    errorMsg += " [reason: \(lastNoRouteReason)]"
+                }
+                lastNoRouteReason = ""  // Reset for next iteration
+            }
+            
+            // Calculate Google Places API calls used for this bucket
+            let googleCallsAfter = getGooglePlacesCallCount().today
+            googleAPICalls = googleCallsAfter - googleCallsBefore
+            
+            if let p = progress {
+                let msg = success
+                    ? "\(duration) min: OK → \(routeMin)min in \(String(format: "%.1f", genTimeSec))s (\(index + 1)/\(totalCount))"
+                    : "\(duration) min: FAIL (\(index + 1)/\(totalCount))"
+                await MainActor.run { p(msg) }
+            }
+            
+            let accuracyRequested = success && duration > 0 ? Int(Double(routeMin) / Double(duration) * 100) : 0
+            let accuracyGoogle: Int
+            if let g = googleMin, g > 0, success {
+                accuracyGoogle = Int(Double(routeMin) / Double(g) * 100)  // how close our route min is to Google's
+            } else {
+                accuracyGoogle = 0
+            }
+            let googleStr = googleMin.map { "\($0)" } ?? ""
+            let accuracyGoogleStr = googleMin != nil ? "\(accuracyGoogle)" : ""
+            let poiEscaped = poiNames.replacingOccurrences(of: ",", with: ";")
+            lines.append("\(duration),\(success),\(String(format: "%.2f", genTimeSec)),\(routesAttempted),\(validRoutesFound),\(routeMin),\(googleStr),\(accuracyRequested),\(accuracyGoogleStr),\(waypoints),\(googleAPICalls),\"\(poiEscaped)\"")
+            if !errorMsg.isEmpty {
+                lines.append("  error: \(errorMsg)")
+            }
+            
+            allSuccess = allSuccess && success
+            print("  \(duration)min: \(success ? "OK" : "FAIL") gen=\(String(format: "%.2f", genTimeSec))s routes=\(routesAttempted)/\(validRoutesFound) actual=\(routeMin)min google_api=\(googleAPICalls)" + (googleMin.map { " google=\($0)min" } ?? ""))
+        }
+        
+        let avgGen = successCount > 0 ? totalGenTime / Double(successCount) : 0
+        let totalGoogleCalls = getGooglePlacesCallCount().today
+        lines.append("")
+        lines.append("--- Summary ---")
+        lines.append("success_rate=\(successCount)/\(totalCount) avg_gen_time_sec=\(String(format: "%.2f", avgGen)) total_google_api_calls=\(totalGoogleCalls)")
+        
+        let output = lines.joined(separator: "\n")
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let filename = "route_quality_test_\(postcodeLabel)_\(formatter.string(from: Date())).txt"
+        let fileURL = docs.appendingPathComponent(filename)
+        do {
+            try output.write(to: fileURL, atomically: true, encoding: .utf8)
+            print("")
+            print("═══════════════════════════════════════════════════════════════")
+            print("📄 ROUTE QUALITY TEST OUTPUT WRITTEN – paste file contents into Cursor")
+            print("   Path (Finder: Go > Go to Folder, then paste):")
+            print(fileURL.path)
+            print("   Or list container: xcrun simctl get_app_container booted com.nhs.WalkingWR data")
+            print("═══════════════════════════════════════════════════════════════")
+            return fileURL
+        } catch {
+            print("❌ Failed to write output file: \(error.localizedDescription)")
+            return nil
+        }
+    }
+    
     /// Batch test: Generates routes for ALL postcodes in the database
     /// Tests each postcode at 5-minute intervals (10-60 min)
     /// Prints comprehensive aggregate summary at the end
@@ -9117,9 +9314,10 @@ class GoogleMapsService: ObservableObject {
         targetDurationMinutes: Int,
         excludePlaceIds: Set<String>,
         excludePOIs: [PlaceResult],
-        budget: RoutingToggles.Budget? = nil  // SPRINT-5: Optional budget for hard-stop
+        budget: RoutingToggles.Budget? = nil,  // SPRINT-5: Optional budget for hard-stop
+        prefetchedPOIs: [PlaceResult]? = nil   // Pre-fetched POIs to skip redundant network calls
     ) async throws -> GeneratedRoute? {
-        print("🗺️ [TOPOLOGY-SAFE] Starting topology-safe route generation for \(targetDurationMinutes)min route")
+        print("🗺️ [TOPOLOGY-SAFE] Starting topology-safe route generation for \(targetDurationMinutes)min route\(prefetchedPOIs != nil ? " (with \(prefetchedPOIs!.count) prefetched POIs)" : "")")
         
         // SPRINT-5: Check budget before making any MapKit calls
         if let b = budget, !RoutingToggles.mustContinue(b, bestSoFar: nil, stage: "TOPO_SAFE_START") {
@@ -9130,8 +9328,9 @@ class GoogleMapsService: ObservableObject {
         let baseRoutes = try await generateNetworkConstrainedCandidates(
             from: location,
             targetMinutes: targetDurationMinutes,
-            attempts: 4,
-            budget: budget  // SPRINT-5: Pass budget
+            attempts: 6,  // Increased from 4→6 for better bearing coverage
+            budget: budget,  // SPRINT-5: Pass budget
+            nearbyPOIs: prefetchedPOIs ?? []  // Pass POIs to name route waypoints
         )
         
         // Early exit: if MapKit can't do this, POIs won't save you
@@ -9157,7 +9356,8 @@ class GoogleMapsService: ObservableObject {
             from: location,
             targetMinutes: targetDurationMinutes,
             excludePlaceIds: excludePlaceIds,
-            excludePOIs: excludePOIs
+            excludePOIs: excludePOIs,
+            prefetchedPOIs: prefetchedPOIs
         ) {
             print("🗺️ [TOPOLOGY-SAFE] ✅ Enhanced route with POIs: \(enhanced.durationSeconds / 60)min")
             return enhanced
@@ -9175,37 +9375,50 @@ class GoogleMapsService: ObservableObject {
         from location: CLLocationCoordinate2D,
         targetMinutes: Int,
         attempts: Int,
-        budget: RoutingToggles.Budget? = nil  // SPRINT-5: Optional budget for hard-stop
+        budget: RoutingToggles.Budget? = nil,  // SPRINT-5: Optional budget for hard-stop
+        nearbyPOIs: [PlaceResult] = []  // Optional: real POIs to name route waypoints
     ) async throws -> [GeneratedRoute] {
         let bearings = evenlySpacedBearings(count: attempts)
-        let targetDistance = Double(targetMinutes) * Double(adaptiveWalkingSpeed) * 0.9
+        let targetDistance = Double(targetMinutes) * Double(adaptiveWalkingSpeed) * 0.6  // Straight-line; MapKit adds ~30% winding → 0.6 * 1.3 ≈ 0.78x effective
+        let minAcceptable = Int(Double(targetMinutes) * 0.5)
+        let maxAcceptable = Int(Double(targetMinutes) * 1.8)
         
-        print("🗺️ [NETWORK-CONSTRAINED] Generating \(attempts) candidates at \(Int(targetDistance))m distance")
+        print("🗺️ [NETWORK-CONSTRAINED] Generating \(attempts) PARALLEL candidates at \(Int(targetDistance))m distance")
         
-        var routes: [GeneratedRoute] = []
-        
-        for (index, bearing) in bearings.enumerated() {
-            // SPRINT-5: Check budget before each MapKit call
-            if let b = budget, !RoutingToggles.mustContinue(b, bestSoFar: nil, stage: "NETWORK_CANDIDATE_\(index)") {
-                print("⛔ [HARD-STOP] Aborting network-constrained generation at candidate \(index) - budget exceeded")
-                break
-            }
-            if let route = try? await mapKitOutAndBack(
-                from: location,
-                distanceMeters: targetDistance,
-                bearing: bearing
-            ) {
-                let routeMinutes = route.durationSeconds / 60
-                let minAcceptable = Int(Double(targetMinutes) * 0.7)
-                let maxAcceptable = Int(Double(targetMinutes) * 1.3)
-                
-                if routeMinutes >= minAcceptable && routeMinutes <= maxAcceptable {
-                    print("🗺️ [NETWORK-CONSTRAINED] Candidate \(index + 1): \(routeMinutes)min (bearing: \(Int(bearing))°)")
-                    routes.append(route)
-                } else {
-                    print("🗺️ [NETWORK-CONSTRAINED] Candidate \(index + 1): \(routeMinutes)min (out of range \(minAcceptable)-\(maxAcceptable)min)")
+        // SPRINT-9: Run all MapKit calls in parallel for massive speed improvement
+        let routes = await withTaskGroup(of: (Int, GeneratedRoute?).self, returning: [GeneratedRoute].self) { group in
+            for (index, bearing) in bearings.enumerated() {
+                // Check budget before launching task
+                if let b = budget, !RoutingToggles.mustContinue(b, bestSoFar: nil, stage: "NETWORK_CANDIDATE_\(index)") {
+                    print("⛔ [HARD-STOP] Skipping candidate \(index) - budget exceeded")
+                    continue
+                }
+                group.addTask {
+                    if let route = try? await self.mapKitOutAndBack(
+                        from: location,
+                        distanceMeters: targetDistance,
+                        bearing: bearing,
+                        nearbyPOIs: nearbyPOIs
+                    ) {
+                        return (index, route)
+                    }
+                    return (index, nil)
                 }
             }
+            
+            var validRoutes: [GeneratedRoute] = []
+            for await (index, route) in group {
+                if let route = route {
+                    let routeMinutes = route.durationSeconds / 60
+                    if routeMinutes >= minAcceptable && routeMinutes <= maxAcceptable {
+                        print("🗺️ [NETWORK-CONSTRAINED] Candidate \(index + 1): \(routeMinutes)min (bearing: \(Int(bearings[index]))°)")
+                        validRoutes.append(route)
+                    } else {
+                        print("🗺️ [NETWORK-CONSTRAINED] Candidate \(index + 1): \(routeMinutes)min (out of range \(minAcceptable)-\(maxAcceptable)min)")
+                    }
+                }
+            }
+            return validRoutes
         }
         
         print("🗺️ [NETWORK-CONSTRAINED] Found \(routes.count)/\(attempts) valid candidates")
@@ -9216,7 +9429,8 @@ class GoogleMapsService: ObservableObject {
     private func mapKitOutAndBack(
         from location: CLLocationCoordinate2D,
         distanceMeters: Double,
-        bearing: Double
+        bearing: Double,
+        nearbyPOIs: [PlaceResult] = []  // Optional: real POIs to name the route waypoint
     ) async throws -> GeneratedRoute {
         // Calculate destination coordinate using bearing and distance
         let destination = coordinateAtDistance(
@@ -9249,20 +9463,77 @@ class GoogleMapsService: ObservableObject {
         let totalDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
         let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
         
-        // Create a placeholder POI for the destination (optional, for display)
-        let destinationPOI = PlaceResult(
-            placeId: "topology_\(Int(bearing))",
-            name: "Route Point",
-            vicinity: nil,
-            geometry: PlaceGeometry(
-                location: PlaceLocation(
-                    lat: destination.latitude,
-                    lng: destination.longitude
-                )
-            ),
-            types: ["point_of_interest"],
-            source: .osm
+        // Find nearest real POI to any point on the route (origin → destination → origin)
+        // Use midpoint between origin and destination as representative route point
+        let midpoint = CLLocationCoordinate2D(
+            latitude: (location.latitude + destination.latitude) / 2.0,
+            longitude: (location.longitude + destination.longitude) / 2.0
         )
+        let routeCheckPoints = [destination, midpoint, location]
+        
+        let destinationPOI: PlaceResult
+        // Filter out restricted/parking POIs before naming
+        let namingPOIs = nearbyPOIs.filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) }
+        if !namingPOIs.isEmpty {
+            // Find the POI closest to any route checkpoint
+            var bestPOI: PlaceResult? = nil
+            var bestDist = Double.infinity
+            for poi in namingPOIs {
+                for checkPoint in routeCheckPoints {
+                    let d = distanceBetween(checkPoint, poi.coordinate)
+                    if d < bestDist {
+                        bestDist = d
+                        bestPOI = poi
+                    }
+                }
+            }
+            // Accept if within a reasonable corridor of the route (scales with route distance, wider in sparse areas)
+            let corridorWidth = max(800.0, distanceMeters * 0.4)
+            if let best = bestPOI, bestDist < corridorWidth {
+                destinationPOI = best
+            } else {
+                // Descriptive fallback name based on direction and distance (works in all environments)
+                let directionName: String
+                let normalizedBearing = bearing.truncatingRemainder(dividingBy: 360)
+                switch normalizedBearing {
+                case 0..<45, 315..<360: directionName = "North"
+                case 45..<135: directionName = "East"
+                case 135..<225: directionName = "South"
+                default: directionName = "West"
+                }
+                let distKm = String(format: "%.1f", distanceMeters / 1000.0)
+                destinationPOI = PlaceResult(
+                    placeId: "topology_\(Int(bearing))",
+                    name: "\(directionName) Walk (\(distKm)km)",
+                    vicinity: nil,
+                    geometry: PlaceGeometry(
+                        location: PlaceLocation(lat: destination.latitude, lng: destination.longitude)
+                    ),
+                    types: ["point_of_interest"],
+                    source: .osm
+                )
+            }
+        } else {
+            let dirName: String
+            let nb = bearing.truncatingRemainder(dividingBy: 360)
+            switch nb {
+            case 0..<45, 315..<360: dirName = "North"
+            case 45..<135: dirName = "East"
+            case 135..<225: dirName = "South"
+            default: dirName = "West"
+            }
+            let dk = String(format: "%.1f", distanceMeters / 1000.0)
+            destinationPOI = PlaceResult(
+                placeId: "topology_\(Int(bearing))",
+                name: "\(dirName) Walk (\(dk)km)",
+                vicinity: nil,
+                geometry: PlaceGeometry(
+                    location: PlaceLocation(lat: destination.latitude, lng: destination.longitude)
+                ),
+                types: ["point_of_interest"],
+                source: .osm
+            )
+        }
         
         return GeneratedRoute(
             places: [destinationPOI],
@@ -9279,9 +9550,10 @@ class GoogleMapsService: ObservableObject {
         from location: CLLocationCoordinate2D,
         targetMinutes: Int,
         excludePlaceIds: Set<String>,
-        excludePOIs: [PlaceResult]
+        excludePOIs: [PlaceResult],
+        prefetchedPOIs: [PlaceResult]? = nil
     ) async throws -> GeneratedRoute? {
-        // Get POIs near the route corridor (150m buffer)
+        // Get POIs near the route corridor
         let routePoints = decodePolyline(baseRoute.polyline)
         guard !routePoints.isEmpty else { return nil }
         
@@ -9291,9 +9563,11 @@ class GoogleMapsService: ObservableObject {
         let minLng = routePoints.map { $0.longitude }.min() ?? location.longitude
         let maxLng = routePoints.map { $0.longitude }.max() ?? location.longitude
         
-        // Expand bounding box by 150m
-        let latBuffer = 150.0 / 111000.0  // ~1 degree lat = 111km
-        let lngBuffer = 150.0 / (111000.0 * cos(location.latitude * .pi / 180.0))
+        // Wider corridor for longer routes — scaled by route distance for better coverage
+        let maxRouteDist = routePoints.map { distanceBetween(location, $0) }.max() ?? 500.0
+        let corridorBuffer = max(300.0, maxRouteDist * 0.4)  // 40% of max route extent, minimum 300m
+        let latBuffer = corridorBuffer / 111000.0
+        let lngBuffer = corridorBuffer / (111000.0 * cos(location.latitude * .pi / 180.0))
         
         let expandedMinLat = minLat - latBuffer
         let expandedMaxLat = maxLat + latBuffer
@@ -9305,87 +9579,206 @@ class GoogleMapsService: ObservableObject {
         let centerLng = (expandedMinLng + expandedMaxLng) / 2
         let centerCoord = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLng)
         
-        // Calculate radius (diagonal of bounding box)
         let radiusMeters = Int(distanceBetween(
             CLLocationCoordinate2D(latitude: expandedMinLat, longitude: expandedMinLng),
             CLLocationCoordinate2D(latitude: expandedMaxLat, longitude: expandedMaxLng)
         ) / 2)
         
-        // Fetch POIs (try database first, then live sources)
+        // Use pre-fetched POIs if available (skip expensive network call)
+        let maxRouteDistance = routePoints.map { distanceBetween(location, $0) }.max() ?? 500
+        let poiSearchRadius = Int(maxRouteDistance + corridorBuffer + 200)
+        
         var pois: [PlaceResult] = []
-        if let dbPOIs = PrePopulatedPOIService.shared.getPrePopulatedPOIs(
-            near: centerCoord,
-            radiusMeters: Double(radiusMeters)
+        if let prefetched = prefetchedPOIs, !prefetched.isEmpty {
+            pois = prefetched
+            print("🗺️ [ENHANCE] Using \(pois.count) pre-fetched POIs (no network call)")
+        } else if let dbPOIs = PrePopulatedPOIService.shared.getPrePopulatedPOIs(
+            near: location,
+            radiusMeters: Double(poiSearchRadius)
         ) {
             pois = dbPOIs
+            print("🗺️ [ENHANCE] Using \(pois.count) DB POIs (radius=\(poiSearchRadius)m)")
         } else {
             pois = try await findNearbyPlaces(
-                location: centerCoord,
-                radiusMeters: radiusMeters,
-                skipGoogle: true  // Cost optimization
+                location: location,
+                radiusMeters: poiSearchRadius,
+                skipGoogle: true
             )
+            print("🗺️ [ENHANCE] Fetched \(pois.count) live POIs (origin-centered, radius=\(poiSearchRadius)m)")
         }
         
-        // Filter: restricted, excluded, and must be near route
+        // Filter: restricted, excluded, and must be near route corridor
         var candidatePOIs = pois.filter { poi in
-            // Skip restricted POIs
             if isRestrictedPOI(poi) { return false }
-            
-            // Skip excluded POIs
             if excludePlaceIds.contains(poi.placeId) { return false }
-            
-            // Check if near any excluded POI
             for excludedPOI in excludePOIs {
-                if isRouteDuplicate(poi, excludedPOI) {
-                    return false
-                }
+                if isRouteDuplicate(poi, excludedPOI) { return false }
             }
-            
-            // Must be within 150m of route
+            // Must be within corridor of route
             return routePoints.contains { routePoint in
-                distanceBetween(poi.coordinate, routePoint) < 150
+                distanceBetween(poi.coordinate, routePoint) < corridorBuffer
             }
         }
         
-        // Limit to top 20 candidates
-        candidatePOIs = Array(candidatePOIs.prefix(20))
+        // Score by walkability and sort (best first)
+        candidatePOIs.sort { walkabilityScore(for: $0) > walkabilityScore(for: $1) }
+        candidatePOIs = Array(candidatePOIs.prefix(30))
         
         guard !candidatePOIs.isEmpty else {
-            print("🗺️ [ENHANCE] No POIs found near route corridor")
+            print("🗺️ [ENHANCE] No POIs found near route corridor (\(corridorBuffer)m)")
             return nil
         }
         
-        print("🗺️ [ENHANCE] Found \(candidatePOIs.count) POIs near route, trying to insert 1-2...")
+        // Desired POI count by duration
+        let desiredPOICount: Int
+        switch targetMinutes {
+        case 0...15: desiredPOICount = 1
+        case 16...25: desiredPOICount = 2
+        case 26...40: desiredPOICount = 3
+        default: desiredPOICount = 4
+        }
         
-        // Try inserting 1-2 POIs max (no retries, no re-fetch, no failure propagation)
-        var bestEnhanced: GeneratedRoute? = nil
-        var bestScore = Int.max
+        print("🗺️ [ENHANCE] Found \(candidatePOIs.count) POIs (corridor=\(Int(corridorBuffer))m), want \(desiredPOICount) waypoints")
         
-        for poi in candidatePOIs.prefix(2) {
-            if let enhanced = try? await tryInsertPOI(
-                poi: poi,
-                into: baseRoute,
-                from: location,
-                targetMinutes: targetMinutes
-            ) {
-                let enhancedMinutes = enhanced.durationSeconds / 60
-                if enhancedMinutes <= Int(Double(targetMinutes) * 1.3) {
-                    let score = abs(enhancedMinutes - targetMinutes)
-                    if score < bestScore {
-                        bestScore = score
-                        bestEnhanced = enhanced
+        // --- Strategy 1: Multi-waypoint route along the corridor ---
+        // SPRINT-9: Try descending POI counts (e.g., 4→3→2) for more chances at multi-POI
+        if desiredPOICount >= 2 && candidatePOIs.count >= 2 {
+            let countsToTry = desiredPOICount > 2 ? [desiredPOICount, 2] : [desiredPOICount]
+            
+            for tryCount in countsToTry {
+                let selectedPOIs = selectDistributedPOIs(
+                    from: candidatePOIs,
+                    routePoints: routePoints,
+                    origin: location,
+                    count: tryCount,
+                    targetMinutes: targetMinutes
+                )
+                
+                if selectedPOIs.count >= 2 {
+                    let waypoints = selectedPOIs.map { $0.coordinate }
+                    let timeout = RoutingToggles.perCallTimeoutNormal
+                    let (directionsResult, didTimeout) = await directionsWithTimeout(
+                        origin: location,
+                        destination: location,
+                        waypoints: waypoints,
+                        timeout: timeout,
+                        targetDurationMinutes: targetMinutes,
+                        angularDiversityScore: nil,
+                        postcode: nil
+                    )
+                    
+                    if !didTimeout, let directions = directionsResult {
+                        let totalDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                        let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                        let durationMin = totalDuration / 60
+                        
+                        // SPRINT-9: Relaxed from 50-150% to 40-200% — multi-POI route is always better than single-POI
+                        if durationMin >= Int(Double(targetMinutes) * 0.4) && durationMin <= Int(Double(targetMinutes) * 2.0) {
+                            let multiRoute = GeneratedRoute(
+                                places: selectedPOIs,
+                                polyline: directions.overviewPolyline.points,
+                                distanceMeters: totalDistance,
+                                durationSeconds: totalDuration,
+                                legs: directions.legs
+                            )
+                            print("🗺️ [ENHANCE] ✅ Multi-waypoint route: \(durationMin)min with \(selectedPOIs.count) POIs: \(selectedPOIs.map { $0.name }.joined(separator: ", "))")
+                            let minDist = RoutingToggles.minWaypointDistance(durationMinutes: targetMinutes)
+                            return await removeCloseWaypoints(from: multiRoute, minDistance: minDist, origin: location)
+                        } else {
+                            print("🗺️ [ENHANCE] Multi-waypoint route (\(tryCount) POIs) \(durationMin)min out of range (40-200%) for \(targetMinutes)min target")
+                        }
                     }
                 }
             }
         }
         
-        // v2.1.7: Final distance check before returning (catches any waypoints that got too close)
-        if let enhanced = bestEnhanced {
-            let minDist = RoutingToggles.minWaypointDistance(durationMinutes: targetMinutes)
-            return await removeCloseWaypoints(from: enhanced, minDistance: minDist, origin: location)
+        // --- Strategy 2: Quick single POI insertion (1 attempt only for speed) ---
+        // SPRINT-9: Reduced from 2→1 attempt for speed. Better to return base route quickly than wait.
+        if let topPOI = candidatePOIs.first {
+            if let enhanced = try? await tryInsertPOI(
+                poi: topPOI,
+                into: baseRoute,
+                from: location,
+                targetMinutes: targetMinutes
+            ) {
+                let enhancedMinutes = enhanced.durationSeconds / 60
+                if enhancedMinutes <= Int(Double(targetMinutes) * 1.5) {
+                    print("🗺️ [ENHANCE] ✅ Single POI route: \(enhancedMinutes)min with '\(topPOI.name)'")
+                    let minDist = RoutingToggles.minWaypointDistance(durationMinutes: targetMinutes)
+                    return await removeCloseWaypoints(from: enhanced, minDistance: minDist, origin: location)
+                }
+            }
         }
         
-        return bestEnhanced
+        return nil
+    }
+    
+    /// Select well-distributed POIs along a route path
+    private func selectDistributedPOIs(
+        from candidates: [PlaceResult],
+        routePoints: [CLLocationCoordinate2D],
+        origin: CLLocationCoordinate2D,
+        count: Int,
+        targetMinutes: Int
+    ) -> [PlaceResult] {
+        guard !candidates.isEmpty, !routePoints.isEmpty else { return [] }
+        
+        // Project each POI onto the route to find its "position" along the path (0.0 = start, 1.0 = midpoint/turnaround)
+        struct POIWithProgress {
+            let poi: PlaceResult
+            let progress: Double  // 0.0 = near origin, 1.0 = near turnaround
+        }
+        
+        let totalRoutePoints = routePoints.count
+        let midIndex = totalRoutePoints / 2  // Approximate turnaround point for out-and-back
+        
+        var poisWithProgress: [POIWithProgress] = candidates.compactMap { poi in
+            // Find closest route point
+            var closestIdx = 0
+            var closestDist = Double.infinity
+            for (idx, rp) in routePoints.enumerated() {
+                let d = distanceBetween(poi.coordinate, rp)
+                if d < closestDist {
+                    closestDist = d
+                    closestIdx = idx
+                }
+            }
+            // Progress: how far along the outbound leg (0 = origin, 1 = turnaround)
+            let progress = midIndex > 0 ? min(1.0, Double(closestIdx) / Double(midIndex)) : 0.0
+            return POIWithProgress(poi: poi, progress: progress)
+        }
+        
+        // Sort by progress along route
+        poisWithProgress.sort { $0.progress < $1.progress }
+        
+        // Select evenly-spaced POIs along the route
+        // Target positions: for N POIs, place them at 1/(N+1), 2/(N+1), ..., N/(N+1) of the route
+        var selected: [PlaceResult] = []
+        // SPRINT-9: Halved minWPDist for selection — allows more POIs along corridor
+        let minWPDist = RoutingToggles.minWaypointDistance(durationMinutes: targetMinutes) * 0.5
+        
+        for i in 1...count {
+            let targetProgress = Double(i) / Double(count + 1)
+            
+            // Find closest candidate to this target progress that isn't too close to already-selected
+            if let best = poisWithProgress.min(by: { a, b in
+                // Skip if already selected or too close to an existing selection
+                let aUsed = selected.contains { s in s.placeId == a.poi.placeId || distanceBetween(s.coordinate, a.poi.coordinate) < minWPDist }
+                let bUsed = selected.contains { s in s.placeId == b.poi.placeId || distanceBetween(s.coordinate, b.poi.coordinate) < minWPDist }
+                if aUsed && !bUsed { return false }
+                if !aUsed && bUsed { return true }
+                return abs(a.progress - targetProgress) < abs(b.progress - targetProgress)
+            }), !selected.contains(where: { s in s.placeId == best.poi.placeId || distanceBetween(s.coordinate, best.poi.coordinate) < minWPDist }) {
+                selected.append(best.poi)
+            }
+        }
+        
+        // Sort selected POIs by their progress along route (for correct waypoint ordering)
+        let progressMap = Dictionary(uniqueKeysWithValues: poisWithProgress.map { ($0.poi.placeId, $0.progress) })
+        selected.sort { (progressMap[$0.placeId] ?? 0) < (progressMap[$1.placeId] ?? 0) }
+        
+        print("🗺️ [ENHANCE] Selected \(selected.count)/\(count) distributed POIs: \(selected.map { $0.name }.joined(separator: ", "))")
+        return selected
     }
     
     /// Try inserting a POI into a base route
@@ -9691,7 +10084,7 @@ class GoogleMapsService: ObservableObject {
                     difficulty: difficulty,
                     excludePlaceIds: excludePlaceIds,
                     excludePOIs: excludePOIs,  // v1.9.51: Pass actual POI objects for duplicate detection
-                    prefetchedPOIs: nil,
+                    prefetchedPOIs: prefetchedPOIs,  // Reuse POIs to avoid re-fetch in multi-duration fallback
                     useSystematicSelection: true,
                     expandedSearch: true
                 )
@@ -9719,6 +10112,8 @@ class GoogleMapsService: ObservableObject {
         
         // All stages failed
         await MainActor.run { retryStatus = nil }
+        lastNoRouteReason = "ALL_RETRY_STAGES_FAILED (inner=\(lastNoRouteReason))"
+        print("NO_ROUTE_REASON | duration=\(targetDurationMinutes) tag=\(lastNoRouteReason)")
         throw GoogleMapsError.noRouteFound
     }
     
@@ -11256,12 +11651,21 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// Print comprehensive route summary for debugging
-    private func printRouteSummary(route: GeneratedRoute, targetDuration: Int) {
+    /// - Parameters:
+    ///   - elapsedSec: If set, included in ROUTE_RESULT line (grep for "ROUTE_RESULT" to see all route outcomes).
+    ///   - mode: Optional hint e.g. "quick" / "systematic" / "fallback" for the one-liner.
+    private func printRouteSummary(route: GeneratedRoute, targetDuration: Int, elapsedSec: Double? = nil, mode: String? = nil) {
+        let actualMin = route.durationSeconds / 60
+        let ratioPct = targetDuration > 0 ? Int(round(Double(actualMin) / Double(targetDuration) * 100)) : 0
+        let inBand = (ratioPct >= 80 && ratioPct <= 120)
+        let elapsedStr = elapsedSec.map { String(format: "%.1f", $0) } ?? "—"
+        let modeStr = mode ?? "—"
+        print("ROUTE_RESULT target=\(targetDuration) actual=\(actualMin) ratio_pct=\(ratioPct) in_80_120=\(inBand ? "Y" : "n") waypoints=\(route.places.count) elapsed_sec=\(elapsedStr) mode=\(modeStr)")
         print("\n")
         print("╔══════════════════════════════════════════════════════════════╗")
         print("║              📋 ROUTE SUMMARY (COPY-PASTE READY)              ║")
         print("╠══════════════════════════════════════════════════════════════╣")
-        print("║ Target: \(targetDuration)min | Actual: \(route.durationSeconds / 60)min | Distance: \(String(format: "%.1f", Double(route.distanceMeters) / 1000.0))km | Waypoints: \(route.places.count)")
+        print("║ Target: \(targetDuration)min | Actual: \(actualMin)min | Distance: \(String(format: "%.1f", Double(route.distanceMeters) / 1000.0))km | Waypoints: \(route.places.count)")
         print("╠══════════════════════════════════════════════════════════════╣")
         
         // CRITICAL: Final duplicate check - this should NEVER find duplicates if deduplication worked
@@ -11718,12 +12122,662 @@ class GoogleMapsService: ObservableObject {
         // Calculate now so we can check throughout the function
         // ADS will be refined later, so use conservative estimate initially
         let initialADS = 3  // Conservative estimate until we calculate actual ADS
-        let hardWallSeconds = RoutingToggles.hardWallFor(duration: targetDurationMinutes, ads: initialADS, postcode: postcode)
-        let hardStopSec = RoutingToggles.hardStopSec  // PHASE A: Global hard-stop (18.0s)
+        let hardWallSeconds = isBatchTestMode ? 300.0 : RoutingToggles.hardWallFor(duration: targetDurationMinutes, ads: initialADS, postcode: postcode)
+        let hardStopSec = isBatchTestMode ? 300.0 : RoutingToggles.hardStopSec  // PHASE A: Global hard-stop (18.0s)
         print("⏱️ [ROUTE GEN] [\(timeString)]   Hard-wall: \(String(format: "%.0f", hardWallSeconds))s, Hard-stop: \(String(format: "%.0f", hardStopSec))s (dur=\(targetDurationMinutes), pc=\(postcode ?? "none"))")
         
         // SPRINT-4: Global hard-stop budget guard
-        let budget = RoutingToggles.Budget(t0: startTime.timeIntervalSince1970)
+        // Batch test mode: extend budget to 300s so we measure true algorithmic performance
+        let budget = isBatchTestMode
+            ? RoutingToggles.Budget(t0: startTime.timeIntervalSince1970, hard: 300.0)
+            : RoutingToggles.Budget(t0: startTime.timeIntervalSince1970)
+        
+        // === FAST-PATH: POI-first topology-safe route ===
+        // 1. Fetch POIs once (reused by main loop if fast-path fails)
+        // 2. Select well-distributed POIs for the target duration
+        // 3. Route through them via MapKit (topology-aware)
+        // 4. If good enough, return immediately
+        let fastPathStart = Date()
+        print("⚡ [FAST-PATH] Starting POI-first topology-safe for \(targetDurationMinutes)min")
+        
+        // Desired waypoint count by duration
+        let fpDesiredWP: Int
+        switch targetDurationMinutes {
+        case 0...12:  fpDesiredWP = 1
+        case 13...20: fpDesiredWP = 2
+        case 21...35: fpDesiredWP = 3
+        case 36...50: fpDesiredWP = 4
+        default:      fpDesiredWP = 5
+        }
+        
+        // SPRINT-9: Google Places API (New) + MapKit base routes IN PARALLEL
+        // Google Places: fast single HTTP call, returns high-quality POIs
+        // MapKit: parallel out-and-back candidates for base route
+        let walkingSpeedMPM = Double(adaptiveWalkingSpeed)
+        let fpSearchRadius = max(1000, Int(Double(targetDurationMinutes) * walkingSpeedMPM * 0.8))  // SPRINT-9: Wider radius for more POI variety
+        
+        // Check for instant sources first (DB, cache, prefetched)
+        var instantPOIs: [PlaceResult]? = nil
+        if let prefetched = prefetchedPOIs, !prefetched.isEmpty {
+            instantPOIs = prefetched.filter { !isRestrictedPOI($0) }
+        } else if let dbPOIs = PrePopulatedPOIService.shared.getPrePopulatedPOIs(
+            near: location,
+            radiusMeters: Double(fpSearchRadius)
+        ), !dbPOIs.isEmpty {
+            instantPOIs = dbPOIs.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) }
+            print("⚡ [FAST-PATH] Using \(instantPOIs!.count) DB POIs (instant)")
+        } else if let cached = POICacheService.shared.getCachedPOIs(near: location), !cached.isEmpty {
+            instantPOIs = cached.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) }
+            print("⚡ [FAST-PATH] Using \(instantPOIs!.count) cached POIs (instant)")
+        }
+        
+        // COST-BALANCED: Tiered POI sourcing — Apple Maps (FREE) first, Google Places (PAID) only as fallback
+        var fpPOIs: [PlaceResult] = instantPOIs ?? []
+        var fpBaseRoutes: [GeneratedRoute] = []
+        
+        // Pre-compute distance band for usability check (matches Strategy A formula for 2 WPs)
+        let fpTargetRadiusM = Double(targetDurationMinutes) * 24.75 / 1.3  // ~19 * duration
+        let fpMinRadius = fpTargetRadiusM * 0.15
+        let fpMaxRadius = fpTargetRadiusM * 3.0
+        
+        if let instantPOIs = instantPOIs, !instantPOIs.isEmpty {
+            // Tier 1 HIT — Have instant POIs, just generate base routes (parallel MapKit)
+            fpBaseRoutes = (try? await generateNetworkConstrainedCandidates(
+                from: location,
+                targetMinutes: targetDurationMinutes,
+                attempts: 6,
+                budget: budget,
+                nearbyPOIs: fpPOIs  // Pass instant POIs to name route waypoints
+            )) ?? []
+            print("⚡ [FAST-PATH] \(fpBaseRoutes.count) base routes in \(String(format: "%.1f", Date().timeIntervalSince(fastPathStart)))s (POIs were instant)")
+            
+            // POST-PROCESS: Ensure "Route Point" is replaced with real POI names (Tier 1)
+            if !fpPOIs.isEmpty && !fpBaseRoutes.isEmpty {
+                let namingCandidates = fpPOIs.filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) }
+                fpBaseRoutes = fpBaseRoutes.map { route in
+                    guard let routePoint = route.places.first, (routePoint.name == "Route Point" || routePoint.name.hasSuffix("km)")) else { return route }
+                    guard !namingCandidates.isEmpty else { return route }
+                    let dest = routePoint.coordinate
+                    let mid = CLLocationCoordinate2D(
+                        latitude: (location.latitude + dest.latitude) / 2.0,
+                        longitude: (location.longitude + dest.longitude) / 2.0
+                    )
+                    let checkPoints = [dest, mid, location]
+                    var bestPOI: PlaceResult? = nil
+                    var bestDist = Double.infinity
+                    for poi in namingCandidates {
+                        for cp in checkPoints {
+                            let d = distanceBetween(poi.coordinate, cp)
+                            if d < bestDist { bestDist = d; bestPOI = poi }
+                        }
+                    }
+                    let corridorWidth = max(800.0, route.distanceMeters > 0 ? Double(route.distanceMeters) * 0.25 : 800.0)
+                    if let best = bestPOI, bestDist < corridorWidth {
+                        print("⚡ [FAST-PATH] Renamed 'Route Point' → '\(best.name)' (\(Int(bestDist))m from route) [Tier 1]")
+                        return GeneratedRoute(
+                            places: [best],
+                            polyline: route.polyline,
+                            distanceMeters: route.distanceMeters,
+                            durationSeconds: route.durationSeconds,
+                            legs: route.legs
+                        )
+                    }
+                    return route
+                }
+            }
+        } else {
+            // Tier 1 MISS — No instant POIs
+            // Tier 2: Apple Maps (FREE) + MapKit base routes IN PARALLEL
+            print("⚡ [FAST-PATH] Tier 2: Apple Maps (FREE) + MapKit base routes in parallel")
+            let appleStart = Date()
+            
+            // Run Apple Maps + MapKit in parallel using task group (both FREE)
+            let parallelResults = await withTaskGroup(of: (appleResult: [PlaceResult]?, mapKitResult: [GeneratedRoute]?).self) { group -> (apple: [PlaceResult], mapKit: [GeneratedRoute]) in
+                var apple: [PlaceResult] = []
+                var mapKit: [GeneratedRoute] = []
+                
+                group.addTask { [self] in
+                    let pois = await self.searchAppleMapsForPOIsFast(location: location, radiusMeters: fpSearchRadius)
+                    return (appleResult: pois, mapKitResult: nil)
+                }
+                group.addTask { [self] in
+                    let routes = (try? await self.generateNetworkConstrainedCandidates(
+                        from: location,
+                        targetMinutes: targetDurationMinutes,
+                        attempts: 6,
+                        budget: budget
+                    )) ?? []
+                    return (appleResult: nil, mapKitResult: routes)
+                }
+                
+                for await result in group {
+                    if let a = result.appleResult { apple = a }
+                    if let m = result.mapKitResult { mapKit = m }
+                }
+                return (apple, mapKit)
+            }
+            
+            fpPOIs = parallelResults.apple.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) }
+            fpBaseRoutes = parallelResults.mapKit
+            print("⚡ [FAST-PATH] Apple Maps: \(fpPOIs.count) POIs + \(fpBaseRoutes.count) base routes in \(String(format: "%.1f", Date().timeIntervalSince(appleStart)))s")
+            
+            // POST-PROCESS: Rename "Route Point" in base routes using now-available Apple Maps POIs
+            // (Base routes were generated in parallel before POIs were available)
+            if !fpPOIs.isEmpty && !fpBaseRoutes.isEmpty {
+                let namingCandidates2 = fpPOIs.filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) }
+                fpBaseRoutes = fpBaseRoutes.map { route in
+                    guard let routePoint = route.places.first, (routePoint.name == "Route Point" || routePoint.name.hasSuffix("km)")) else { return route }
+                    guard !namingCandidates2.isEmpty else { return route }
+                    let dest = routePoint.coordinate
+                    let mid = CLLocationCoordinate2D(
+                        latitude: (location.latitude + dest.latitude) / 2.0,
+                        longitude: (location.longitude + dest.longitude) / 2.0
+                    )
+                    let checkPoints = [dest, mid, location]
+                    var bestPOI: PlaceResult? = nil
+                    var bestDist = Double.infinity
+                    for poi in namingCandidates2 {
+                        for cp in checkPoints {
+                            let d = distanceBetween(poi.coordinate, cp)
+                            if d < bestDist { bestDist = d; bestPOI = poi }
+                        }
+                    }
+                    // Accept if within corridor (scales with route length, wider for rural)
+                    let corridorWidth = max(800.0, route.distanceMeters > 0 ? Double(route.distanceMeters) * 0.25 : 800.0)
+                    if let best = bestPOI, bestDist < corridorWidth {
+                        print("⚡ [FAST-PATH] Renamed 'Route Point' → '\(best.name)' (\(Int(bestDist))m from route)")
+                        return GeneratedRoute(
+                            places: [best],
+                            polyline: route.polyline,
+                            distanceMeters: route.distanceMeters,
+                            durationSeconds: route.durationSeconds,
+                            legs: route.legs
+                        )
+                    }
+                    return route
+                }
+            }
+            
+            // Check how many Apple POIs fall in the usable distance band for the target duration
+            let usableApplePOIs = fpPOIs.filter { poi in
+                let dist = distanceBetween(location, poi.coordinate)
+                return dist >= fpMinRadius && dist <= fpMaxRadius
+            }
+            print("⚡ [FAST-PATH] Usable Apple POIs in distance band (\(Int(fpMinRadius))-\(Int(fpMaxRadius))m): \(usableApplePOIs.count)/\(fpPOIs.count)")
+            
+            // Tier 3: Google Places (PAID) — only if Apple didn't return enough usable POIs
+            if usableApplePOIs.count < 3 && canMakeGooglePlacesCall {
+                print("⚡ [FAST-PATH] Tier 3: Apple insufficient (\(usableApplePOIs.count) < 3 usable), falling back to Google Places (PAID)")
+                let googleStart = Date()
+                let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: fpSearchRadius)
+                let filtered = googlePOIs.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) }
+                fpPOIs.append(contentsOf: filtered)
+                print("⚡ [FAST-PATH] Google Places: +\(filtered.count) POIs in \(String(format: "%.1f", Date().timeIntervalSince(googleStart)))s (total now: \(fpPOIs.count))")
+            } else if usableApplePOIs.count >= 3 {
+                print("⚡ [FAST-PATH] ✅ Apple Maps sufficient (\(usableApplePOIs.count) usable POIs) — skipping Google Places (saved $0.032)")
+            }
+        }
+        
+        let fpPOIElapsed = Date().timeIntervalSince(fastPathStart)
+        print("⚡ [FAST-PATH] Ready: \(fpPOIs.count) POIs, \(fpBaseRoutes.count) base routes in \(String(format: "%.1f", fpPOIElapsed))s (radius=\(fpSearchRadius)m)")
+        
+        // SPRINT-9: Strategy A — Route directly THROUGH POIs as waypoints
+        // KEY INSIGHT: targetRadius scales with wpCount. Fixed formula works across all environments
+        // because the base route comparison (below) acts as safety net for outlier locations.
+        var bestStrategyARoute: GeneratedRoute? = nil
+        var bestStrategyAAccuracy: Double = .infinity  // Lower = better (0 = perfect)
+        
+        if !fpPOIs.isEmpty {
+            let scoredPOIs = fpPOIs
+                .filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) }  // Exclude parking, playgrounds, etc.
+                .filter { !$0.name.lowercased().contains("parking") && !$0.name.lowercased().contains("car park") }  // Extra parking name filter
+            
+            let bearingOffset = Double((targetDurationMinutes * 37) % 360)
+            
+            // Pre-compute all POIs with distance and bearing (one pass)
+            let allPOIsWithDist = scoredPOIs.map { poi -> (PlaceResult, Double, Double) in
+                let dist = distanceBetween(location, poi.coordinate)
+                let bearing = bearingBetween(location, poi.coordinate)
+                return (poi, dist, bearing)
+            }
+            
+            // Try descending waypoint counts, collect best route across all
+            let wpCounts = Array(Set([fpDesiredWP, min(fpDesiredWP, 2), 1])).sorted(by: >)
+            
+            for wpCount in wpCounts {
+                // Radius scales with waypoint count (fixed formula, no location-specific calibration)
+                // Base: duration * 24.75, divided by wpScaling
+                let baseRadius = Double(targetDurationMinutes) * 24.75
+                let wpScaling = 1.0 + 0.5 * Double(wpCount - 1)  // 1WP=1.0, 2WP=1.5, 3WP=2.0, 4WP=2.5, 5WP=3.0 — matches polygon walking geometry
+                let targetRadiusM = baseRadius / wpScaling
+                let minRadius = max(100.0, targetRadiusM * 0.15)  // Absolute min 100m but allow close POIs for multi-WP
+                let maxRadius = targetRadiusM * 3.0
+                
+                // Filter and score POIs for this waypoint count's ideal radius
+                // Distance fit is 85% of score — accuracy is the primary goal
+                let poisForWP = allPOIsWithDist
+                    .filter { $0.1 >= minRadius && $0.1 <= maxRadius }
+                    .sorted { a, b in
+                        let aDistScore = abs(a.1 - targetRadiusM) / max(targetRadiusM, 1.0)
+                        let bDistScore = abs(b.1 - targetRadiusM) / max(targetRadiusM, 1.0)
+                        let aBearingDelta = abs(fmod(a.2 - bearingOffset + 540, 360) - 180) / 180.0
+                        let bBearingDelta = abs(fmod(b.2 - bearingOffset + 540, 360) - 180) / 180.0
+                        return (aDistScore * 0.85 + aBearingDelta * 0.15) < (bDistScore * 0.85 + bBearingDelta * 0.15)
+                    }
+                
+                guard poisForWP.count >= wpCount else { continue }
+                
+                // Pick POIs spread by bearing
+                var selectedPOIs: [PlaceResult] = []
+                if wpCount == 1 {
+                    selectedPOIs = [poisForWP[0].0]
+                } else {
+                    let byBearing = poisForWP.sorted { a, b in
+                        fmod(a.2 - bearingOffset + 360, 360) < fmod(b.2 - bearingOffset + 360, 360)
+                    }
+                    let step = max(1, byBearing.count / wpCount)
+                    for i in 0..<wpCount {
+                        let idx = min(i * step, byBearing.count - 1)
+                        selectedPOIs.append(byBearing[idx].0)
+                    }
+                }
+                
+                // Route: origin → POIs → origin (circular walk)
+                let waypoints = selectedPOIs.map { $0.coordinate }
+                let timeout = RoutingToggles.perCallTimeoutNormal
+                let (directionsResult, didTimeout) = await directionsWithTimeout(
+                    origin: location,
+                    destination: location,
+                    waypoints: waypoints,
+                    timeout: timeout,
+                    targetDurationMinutes: targetDurationMinutes,
+                    angularDiversityScore: nil,
+                    postcode: nil
+                )
+                
+                if !didTimeout, let directions = directionsResult {
+                    let totalDuration = directions.legs.reduce(0) { $0 + $1.duration.value }
+                    let totalDistance = directions.legs.reduce(0) { $0 + $1.distance.value }
+                    let durationMin = totalDuration / 60
+                    let accuracy = abs(Double(durationMin) / Double(targetDurationMinutes) - 1.0)  // 0 = perfect
+                    
+                    // Accept range: 1-WP scales with duration (short walks have more relative error)
+                    // Multi-WP is wider (50-160/180%) since multi-POI routes are more engaging
+                    let singleWPMin: Double
+                    let singleWPMax: Double
+                    if targetDurationMinutes <= 15 {
+                        singleWPMin = 0.70; singleWPMax = 1.40  // ±30% for short walks (2-4 min error normal)
+                    } else if targetDurationMinutes <= 25 {
+                        singleWPMin = 0.75; singleWPMax = 1.35
+                    } else {
+                        singleWPMin = 0.80; singleWPMax = 1.30  // Tightest for longer walks
+                    }
+                    let acceptMin = wpCount == 1 ? singleWPMin : 0.50
+                    let acceptMax = wpCount >= 3 ? 1.8 : (wpCount == 1 ? singleWPMax : 1.6)
+                    if durationMin >= Int(Double(targetDurationMinutes) * acceptMin) && durationMin <= Int(Double(targetDurationMinutes) * acceptMax) {
+                        let route = GeneratedRoute(
+                            places: selectedPOIs,
+                            polyline: directions.overviewPolyline.points,
+                            distanceMeters: totalDistance,
+                            durationSeconds: totalDuration,
+                            legs: directions.legs
+                        )
+                        
+                        // Keep the best match: accuracy weighted by waypoint preference
+                        // 3% bonus per WP, capped at 10% total — prevents 5-WP routes from winning with poor accuracy
+                        let wpBonus = accuracy - min(Double(wpCount) * 0.03, 0.10)
+                        if wpBonus < bestStrategyAAccuracy {
+                            bestStrategyAAccuracy = wpBonus
+                            bestStrategyARoute = route
+                            print("⚡ [FAST-PATH] 📊 POI-direct candidate: \(durationMin)min (\(Int(Double(durationMin)/Double(targetDurationMinutes)*100))%) with \(wpCount) POIs (radius=\(Int(targetRadiusM))m)")
+                        }
+                        
+                        // If within 85-115% with 2+ WPs, return immediately (great accuracy + variety)
+                        // For 1-WP: collect but don't early-return — let higher WP counts have a chance
+                        if wpCount >= 2 && durationMin >= Int(Double(targetDurationMinutes) * 0.85) && durationMin <= Int(Double(targetDurationMinutes) * 1.15) {
+                            let elapsed = Date().timeIntervalSince(fastPathStart)
+                            print("⚡ [FAST-PATH] ✅ POI-direct route: \(durationMin)min with \(selectedPOIs.count) POIs (\(selectedPOIs.map { $0.name }.joined(separator: ", "))) in \(String(format: "%.1f", elapsed))s")
+                            routeCapture?.addRoute(route)
+                            routeCapture?.incrementAttempts()
+                            return route
+                        }
+                    } else {
+                        print("⚡ [FAST-PATH] POI-direct (\(wpCount) WP) = \(durationMin)min, out of 50-160% range for \(targetDurationMinutes)min target (radius=\(Int(targetRadiusM))m)")
+                    }
+                }
+            }
+            
+            // REFINEMENT: If best route is outside 80-120%, try to adjust it
+            if let bestA = bestStrategyARoute {
+                let durationMin = bestA.durationSeconds / 60
+                let ratio = Double(durationMin) / Double(targetDurationMinutes)
+                
+                if ratio < 0.75 && bestA.places.count >= 1 {
+                    // UNDERSHOOT: Route too short — try adding one more POI further out
+                    let existingIds = Set(bestA.places.map { $0.placeId })
+                    let furtherPOIs = allPOIsWithDist
+                        .filter { !existingIds.contains($0.0.placeId) && walkabilityScore(for: $0.0) > -1.0 }
+                        .sorted { $0.1 > $1.1 }  // Furthest first
+                    
+                    if let extraPOI = furtherPOIs.first {
+                        let stretchedPOIs = bestA.places + [extraPOI.0]
+                        let waypoints = stretchedPOIs.map { $0.coordinate }
+                        let (result, timedOut) = await directionsWithTimeout(
+                            origin: location, destination: location, waypoints: waypoints,
+                            timeout: RoutingToggles.perCallTimeoutNormal,
+                            targetDurationMinutes: targetDurationMinutes, angularDiversityScore: nil, postcode: nil
+                        )
+                        if !timedOut, let dirs = result {
+                            let stretchDur = dirs.legs.reduce(0) { $0 + $1.duration.value }
+                            let stretchDist = dirs.legs.reduce(0) { $0 + $1.distance.value }
+                            let stretchMin = stretchDur / 60
+                            let stretchRatio = Double(stretchMin) / Double(targetDurationMinutes)
+                            if stretchRatio >= 0.6 && stretchRatio <= 1.6 && abs(stretchRatio - 1.0) < abs(ratio - 1.0) {
+                                let stretched = GeneratedRoute(places: stretchedPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: stretchDist, durationSeconds: stretchDur, legs: dirs.legs)
+                                print("⚡ [FAST-PATH] 🔧 Stretched route: \(stretchMin)min (\(Int(stretchRatio*100))%) with +1 POI '\(extraPOI.0.name)'")
+                                bestStrategyARoute = stretched
+                            }
+                        }
+                    }
+                } else if ratio > 1.35 && bestA.places.count >= 2 {
+                    // OVERSHOOT: Route too long — try removing the furthest POI
+                    let poisWithOrigDist = bestA.places.map { ($0, distanceBetween(location, $0.coordinate)) }
+                    let sorted = poisWithOrigDist.sorted { $0.1 > $1.1 }  // Furthest first
+                    let trimmedPOIs = Array(sorted.dropFirst().map { $0.0 })  // Remove furthest
+                    
+                    if !trimmedPOIs.isEmpty {
+                        let waypoints = trimmedPOIs.map { $0.coordinate }
+                        let (result, timedOut) = await directionsWithTimeout(
+                            origin: location, destination: location, waypoints: waypoints,
+                            timeout: RoutingToggles.perCallTimeoutNormal,
+                            targetDurationMinutes: targetDurationMinutes, angularDiversityScore: nil, postcode: nil
+                        )
+                        if !timedOut, let dirs = result {
+                            let trimDur = dirs.legs.reduce(0) { $0 + $1.duration.value }
+                            let trimDist = dirs.legs.reduce(0) { $0 + $1.distance.value }
+                            let trimMin = trimDur / 60
+                            let trimRatio = Double(trimMin) / Double(targetDurationMinutes)
+                            if trimRatio >= 0.5 && trimRatio <= 1.6 && abs(trimRatio - 1.0) < abs(ratio - 1.0) {
+                                let trimmed = GeneratedRoute(places: trimmedPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: trimDist, durationSeconds: trimDur, legs: dirs.legs)
+                                print("⚡ [FAST-PATH] 🔧 Trimmed route: \(trimMin)min (\(Int(trimRatio*100))%) removed furthest POI")
+                                bestStrategyARoute = trimmed
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Compare Strategy A with best base route — return the more accurate one
+            // This is critical for rural areas where POIs cluster near town centre but base routes go to correct distance
+            if let bestA = bestStrategyARoute {
+                let aDurationMin = bestA.durationSeconds / 60
+                let aAccuracy = abs(Double(aDurationMin) / Double(targetDurationMinutes) - 1.0)
+                
+                // Check if any base route is more accurate
+                if let bestBase = fpBaseRoutes.min(by: { r1, r2 in
+                    abs(r1.durationSeconds / 60 - targetDurationMinutes) < abs(r2.durationSeconds / 60 - targetDurationMinutes)
+                }) {
+                    let bDurationMin = bestBase.durationSeconds / 60
+                    let bAccuracy = abs(Double(bDurationMin) / Double(targetDurationMinutes) - 1.0)
+                    
+                    // Prefer Strategy A (has POI waypoints) unless base route is significantly more accurate
+                    // Use fixed thresholds — the comparison itself is environment-adaptive
+                    if aAccuracy > 0.30 && bAccuracy + 0.15 < aAccuracy {
+                        let elapsed = Date().timeIntervalSince(fastPathStart)
+                        print("⚡ [FAST-PATH] 🔀 Base route more accurate: \(bDurationMin)min (\(Int(Double(bDurationMin)/Double(targetDurationMinutes)*100))%) vs POI-direct \(aDurationMin)min (\(Int(Double(aDurationMin)/Double(targetDurationMinutes)*100))%) — using base route")
+                        routeCapture?.addRoute(bestBase)
+                        routeCapture?.incrementAttempts()
+                        return bestBase
+                    }
+                }
+                
+                // If 1-WP route and target >= 25min, try to enhance with more POIs along the corridor
+                // This is a quick enhancement — if it fails, we still return the 1-WP route
+                if bestA.places.count <= 1 && targetDurationMinutes >= 25 && !fpPOIs.isEmpty {
+                    let enhanceStart = Date()
+                    if let enhanced = try? await enhanceRouteWithCuratedPOIs(
+                        baseRoute: bestA,
+                        from: location,
+                        targetMinutes: targetDurationMinutes,
+                        excludePlaceIds: excludePlaceIds,
+                        excludePOIs: [],
+                        prefetchedPOIs: fpPOIs
+                    ) {
+                        let enhancedMin = enhanced.durationSeconds / 60
+                        let enhancedAccuracy = abs(Double(enhancedMin) / Double(targetDurationMinutes) - 1.0)
+                        // Accept enhancement only if it improves or maintains accuracy
+                        if enhancedAccuracy <= aAccuracy + 0.10 && enhanced.places.count > bestA.places.count {
+                            let elapsed = Date().timeIntervalSince(fastPathStart)
+                            print("⚡ [FAST-PATH] ✅ Enhanced route: \(enhancedMin)min (\(Int(Double(enhancedMin)/Double(targetDurationMinutes)*100))%) with \(enhanced.places.count) POIs (\(enhanced.places.map { $0.name }.joined(separator: ", "))) in \(String(format: "%.1f", elapsed))s (enhanced from 1-WP in \(String(format: "%.1f", Date().timeIntervalSince(enhanceStart)))s)")
+                            routeCapture?.addRoute(enhanced)
+                            routeCapture?.incrementAttempts()
+                            return enhanced
+                        }
+                    }
+                }
+                
+                let elapsed = Date().timeIntervalSince(fastPathStart)
+                print("⚡ [FAST-PATH] ✅ Best POI-direct route: \(aDurationMin)min (\(Int(Double(aDurationMin)/Double(targetDurationMinutes)*100))%) with \(bestA.places.count) POIs (\(bestA.places.map { $0.name }.joined(separator: ", "))) in \(String(format: "%.1f", elapsed))s")
+                routeCapture?.addRoute(bestA)
+                routeCapture?.incrementAttempts()
+                return bestA
+            }
+            
+            print("⚡ [FAST-PATH] All POI-direct attempts failed, falling back to base route")
+        }
+        
+        // HARD FAST-PATH TIMEOUT: If Strategy A took too long and we have base routes, return immediately
+        let fastPathElapsedSoFar = Date().timeIntervalSince(fastPathStart)
+        let fastPathHardTimeout: TimeInterval = 12.0  // Max total time before returning best available
+        
+        // Strategy B — Enhance best base route with already-fetched Apple Maps POIs
+        if let bestBase = fpBaseRoutes.min(by: { route1, route2 in
+            let diff1 = abs(route1.durationSeconds / 60 - targetDurationMinutes)
+            let diff2 = abs(route2.durationSeconds / 60 - targetDurationMinutes)
+            return diff1 < diff2
+        }) {
+            // If we've already spent too long, just return the base route immediately (already has POI name from post-processing)
+            if fastPathElapsedSoFar > fastPathHardTimeout {
+                let routeMins = bestBase.durationSeconds / 60
+                print("⚡ [FAST-PATH] ⏱️ TIMEOUT (\(String(format: "%.1f", fastPathElapsedSoFar))s > \(Int(fastPathHardTimeout))s) — returning base route: \(routeMins)min '\(bestBase.places.first?.name ?? "?")'")
+                routeCapture?.addRoute(bestBase)
+                routeCapture?.incrementAttempts()
+                return bestBase
+            }
+            
+            // Try to enhance with Apple Maps POIs we already have (no extra network calls)
+            if !fpPOIs.isEmpty {
+                if let enhanced = try? await enhanceRouteWithCuratedPOIs(
+                    baseRoute: bestBase,
+                    from: location,
+                    targetMinutes: targetDurationMinutes,
+                    excludePlaceIds: excludePlaceIds,
+                    excludePOIs: excludePOIs,
+                    prefetchedPOIs: fpPOIs
+                ) {
+                    let elapsed = Date().timeIntervalSince(fastPathStart)
+                    let routeMins = enhanced.durationSeconds / 60
+                    print("⚡ [FAST-PATH] ✅ Enhanced base route: \(routeMins)min with \(enhanced.places.count) POIs (\(enhanced.places.map { $0.name }.joined(separator: ", "))) in \(String(format: "%.1f", elapsed))s")
+                    routeCapture?.addRoute(enhanced)
+                    routeCapture?.incrementAttempts()
+                    return enhanced
+                }
+            }
+            // Enhancement failed — try quick 2-WP approach: base route POI + nearest additional POI
+            if bestBase.places.count <= 1 && targetDurationMinutes >= 25 && fpPOIs.count >= 2 {
+                let existingIds = Set(bestBase.places.map { $0.placeId })
+                let extraPOIs = fpPOIs
+                    .filter { !existingIds.contains($0.placeId) && walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) }
+                    .filter { !$0.name.lowercased().contains("parking") && !$0.name.lowercased().contains("car park") }
+                
+                // Pick the POI at ~half the target radius in a different bearing from the existing POI
+                let existingBearing = bestBase.places.first.map { bearingBetween(location, $0.coordinate) } ?? 0
+                let bestExtra = extraPOIs
+                    .map { ($0, distanceBetween(location, $0.coordinate), bearingBetween(location, $0.coordinate)) }
+                    .filter { $0.1 >= 200 }  // At least 200m from origin
+                    .min(by: { a, b in
+                        // Prefer POIs in a DIFFERENT direction from the existing POI (for variety)
+                        let aBearingDiff = abs(fmod(a.2 - existingBearing + 540, 360) - 180)
+                        let bBearingDiff = abs(fmod(b.2 - existingBearing + 540, 360) - 180)
+                        return aBearingDiff > bBearingDiff  // More different bearing = better
+                    })
+                
+                if let extra = bestExtra {
+                    let combinedPOIs = bestBase.places + [extra.0]
+                    let waypoints = combinedPOIs.map { $0.coordinate }
+                    let (result, timedOut) = await directionsWithTimeout(
+                        origin: location, destination: location, waypoints: waypoints,
+                        timeout: RoutingToggles.perCallTimeoutNormal,
+                        targetDurationMinutes: targetDurationMinutes, angularDiversityScore: nil, postcode: nil
+                    )
+                    if !timedOut, let dirs = result {
+                        let dur = dirs.legs.reduce(0) { $0 + $1.duration.value }
+                        let dist = dirs.legs.reduce(0) { $0 + $1.distance.value }
+                        let durMin = dur / 60
+                        let ratio = Double(durMin) / Double(targetDurationMinutes)
+                        let baseRatioCheck = Double(bestBase.durationSeconds / 60) / Double(targetDurationMinutes)
+                        // Accept if within 60-150% AND better or similar accuracy to base
+                        if ratio >= 0.6 && ratio <= 1.5 && abs(ratio - 1.0) <= abs(baseRatioCheck - 1.0) + 0.15 {
+                            let combined = GeneratedRoute(places: combinedPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: dist, durationSeconds: dur, legs: dirs.legs)
+                            print("⚡ [FAST-PATH] ✅ Quick 2-WP enhancement: \(durMin)min with \(combinedPOIs.map { $0.name }.joined(separator: " | ")) (was \(bestBase.durationSeconds / 60)min 1-WP)")
+                            routeCapture?.addRoute(combined)
+                            routeCapture?.incrementAttempts()
+                            return combined
+                        }
+                    }
+                }
+            }
+            
+            // Check if base route accuracy is poor and retry with adjusted distance
+            let routeMins = bestBase.durationSeconds / 60
+            let baseRatio = Double(routeMins) / Double(targetDurationMinutes)
+            
+            let retryMinThreshold: Double = targetDurationMinutes <= 15 ? 0.70 : (targetDurationMinutes <= 25 ? 0.75 : 0.80)
+            if (baseRatio < retryMinThreshold || baseRatio > 1.30) && Date().timeIntervalSince(fastPathStart) < fastPathHardTimeout {
+                // RETRY: accuracy outside threshold (aligns with Strategy A's duration-adaptive acceptance)
+                let correctionFactor = 1.0 / baseRatio
+                let retryDist = Double(targetDurationMinutes) * Double(adaptiveWalkingSpeed) * 0.6 * correctionFactor
+                let retryBearings = [Double.random(in: 0...120), Double.random(in: 120...240), Double.random(in: 240...360)]
+                print("⚡ [FAST-PATH] 🔄 Retry: base route \(routeMins)min (\(Int(baseRatio*100))%) — retrying at \(Int(retryDist))m across 3 bearings (correction: \(String(format: "%.2f", correctionFactor))x)")
+                
+                var bestRetry: GeneratedRoute? = nil
+                var bestRetryRatio: Double = baseRatio
+                
+                for retryBearing in retryBearings {
+                    guard Date().timeIntervalSince(fastPathStart) < fastPathHardTimeout else { break }
+                    if let retry = try? await mapKitOutAndBack(from: location, distanceMeters: retryDist, bearing: retryBearing, nearbyPOIs: fpPOIs) {
+                        let retryMin = retry.durationSeconds / 60
+                        let retryRatio = Double(retryMin) / Double(targetDurationMinutes)
+                        if abs(retryRatio - 1.0) < abs(bestRetryRatio - 1.0) {
+                            bestRetry = retry
+                            bestRetryRatio = retryRatio
+                        }
+                    }
+                }
+                
+                if let best = bestRetry, abs(bestRetryRatio - 1.0) < abs(baseRatio - 1.0) {
+                    let bestMin = best.durationSeconds / 60
+                    print("⚡ [FAST-PATH] ✅ Retry improved: \(bestMin)min (\(Int(bestRetryRatio*100))%) vs original \(routeMins)min (\(Int(baseRatio*100))%)")
+                    routeCapture?.addRoute(best)
+                    routeCapture?.incrementAttempts()
+                    return best
+                }
+                
+                // LOOP FALLBACK: if out-and-back can't reach target (road network caps out),
+                // try routing through 2 POIs in different directions as a loop.
+                // Uses real POI locations (on accessible roads) instead of arbitrary coordinates.
+                if baseRatio < retryMinThreshold && Date().timeIntervalSince(fastPathStart) < fastPathHardTimeout && fpPOIs.count >= 2 {
+                    // Find 2 POIs in maximally different directions from origin
+                    let poisWithBearing = fpPOIs
+                        .filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) }
+                        .map { ($0, distanceBetween(location, $0.coordinate), bearingBetween(location, $0.coordinate)) }
+                        .filter { $0.1 >= 200 }  // At least 200m from origin
+                        .sorted { $0.1 > $1.1 }  // Furthest first (to extend the loop)
+                    
+                    if let poi1 = poisWithBearing.first {
+                        // Pick poi2 maximally different in bearing from poi1
+                        let poi2 = poisWithBearing.dropFirst().max(by: { a, b in
+                            let aDiff = abs(fmod(a.2 - poi1.2 + 540, 360) - 180)
+                            let bDiff = abs(fmod(b.2 - poi1.2 + 540, 360) - 180)
+                            return aDiff < bDiff  // Maximize bearing difference
+                        })
+                        
+                        if let poi2 = poi2 {
+                            let loopPOIs = [poi1.0, poi2.0]
+                            let waypoints = loopPOIs.map { $0.coordinate }
+                            let (loopResult, loopTimedOut) = await directionsWithTimeout(
+                                origin: location, destination: location,
+                                waypoints: waypoints,
+                                timeout: RoutingToggles.perCallTimeoutNormal,
+                                targetDurationMinutes: targetDurationMinutes,
+                                angularDiversityScore: nil, postcode: nil
+                            )
+                            
+                            if !loopTimedOut, let dirs = loopResult {
+                                let loopDur = dirs.legs.reduce(0) { $0 + $1.duration.value }
+                                let loopDist = dirs.legs.reduce(0) { $0 + $1.distance.value }
+                                let loopMin = loopDur / 60
+                                let loopRatio = Double(loopMin) / Double(targetDurationMinutes)
+                                
+                                if abs(loopRatio - 1.0) < abs(baseRatio - 1.0) {
+                                    let loopRoute = GeneratedRoute(places: loopPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: loopDist, durationSeconds: loopDur, legs: dirs.legs)
+                                    print("⚡ [FAST-PATH] ✅ Loop fallback: \(loopMin)min (\(Int(loopRatio*100))%) vs out-and-back \(routeMins)min (\(Int(baseRatio*100))%) — POI loop through \(loopPOIs.map { $0.name }.joined(separator: " + "))")
+                                    routeCapture?.addRoute(loopRoute)
+                                    routeCapture?.incrementAttempts()
+                                    return loopRoute
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            let elapsed = Date().timeIntervalSince(fastPathStart)
+            print("⚡ [FAST-PATH] ✅ Base route fallback (no enhancement): \(routeMins)min '\(bestBase.places.first?.name ?? "?")' in \(String(format: "%.1f", elapsed))s")
+            routeCapture?.addRoute(bestBase)
+            routeCapture?.incrementAttempts()
+            return bestBase
+        }
+        
+        // No base routes at all — GUARANTEED FALLBACK: try multiple bearings for MapKit out-and-back
+        print("⚡ [FAST-PATH] No base routes available, trying fallback out-and-back (4 bearings)")
+        let fallbackDist = Double(targetDurationMinutes) * walkingSpeedMPM * 0.45
+        let fallbackBearings = [Double.random(in: 0...90), Double.random(in: 90...180), Double.random(in: 180...270), Double.random(in: 270...360)]
+        var fallbackRoute: GeneratedRoute? = nil
+        for bearing in fallbackBearings {
+            if let fb = try? await mapKitOutAndBack(from: location, distanceMeters: fallbackDist, bearing: bearing, nearbyPOIs: fpPOIs) {
+                fallbackRoute = fb
+                break
+            }
+        }
+        if let fallback = fallbackRoute {
+                // Try to enhance the fallback with Apple Maps POIs we already have (only if we have time budget)
+                let fallbackElapsed = Date().timeIntervalSince(fastPathStart)
+                if fallbackElapsed < fastPathHardTimeout, !fpPOIs.isEmpty,
+                   let enhanced = try? await enhanceRouteWithCuratedPOIs(
+                    baseRoute: fallback,
+                    from: location,
+                    targetMinutes: targetDurationMinutes,
+                    excludePlaceIds: excludePlaceIds,
+                    excludePOIs: excludePOIs,
+                    prefetchedPOIs: fpPOIs
+                ) {
+                    let routeMins = enhanced.durationSeconds / 60
+                    print("⚡ [FAST-PATH] ✅ Enhanced fallback: \(routeMins)min with \(enhanced.places.count) POIs in \(String(format: "%.1f", Date().timeIntervalSince(fastPathStart)))s")
+                    routeCapture?.addRoute(enhanced)
+                    routeCapture?.incrementAttempts()
+                    return enhanced
+                }
+            // Enhancement failed or timed out — return bare fallback
+            let routeMins = fallback.durationSeconds / 60
+            print("⚡ [FAST-PATH] ✅ Fallback out-and-back: \(routeMins)min '\(fallback.places.first?.name ?? "?")' in \(String(format: "%.1f", Date().timeIntervalSince(fastPathStart)))s")
+            routeCapture?.addRoute(fallback)
+            routeCapture?.incrementAttempts()
+            return fallback
+        }
+        
+        // Only enter main loop if even a simple MapKit out-and-back failed (extremely rare)
+        print("⚡ [FAST-PATH] All fast-path strategies exhausted, entering main loop...")
         
         // Track if hard-wall was hit (used to force topology-safe)
         var hardWallExceeded = false
@@ -11830,14 +12884,14 @@ class GoogleMapsService: ObservableObject {
         let hardMaxPercent = 1.30
         
         if isQuickMode {
-            // QUICK mode: 70-130% to catch more routes on first try
-            // Better to show a slightly off route than keep searching
+            // QUICK mode: 80-120% (tighter band so first route is closer to requested time)
+            // Retry stages remain flexible (40-130%) so we don't increase no-route rate
             if isEdgeCase {
-                minPercent = 0.65  // Edge cases: more flexible (65-130%)
-                maxPercent = hardMaxPercent  // Was 1.40, now capped
+                minPercent = 0.75  // Edge cases: 75-125%
+                maxPercent = 1.25
             } else {
-                minPercent = 0.70  // Standard: 70-130%
-                maxPercent = hardMaxPercent
+                minPercent = 0.80  // Standard: 80-120%
+                maxPercent = 1.20
             }
         } else if expandedSearch {
             minPercent = 0.40  // Very flexible during retry
@@ -12042,7 +13096,9 @@ class GoogleMapsService: ObservableObject {
                 radiusMeters: searchRadius,
                 skipGoogle: true,  // Skip Google on first attempt
                 targetDurationMinutes: targetDurationMinutes,  // v2.0.3 Phase 2A: For diversity check
-                canonicalMaxTimeSeconds: 4.0  // Cap canonical dedup so first route is not blocked (~34s → ~4s)
+                canonicalMaxTimeSeconds: 4.0,  // Cap canonical dedup so first route is not blocked (~34s → ~4s)
+                minimumForEarlyReturn: 10,  // Return as soon as we have 10 POIs (faster first route)
+                maxWaitSecondsForFirstRoute: 6.0  // Return partial after 6s so first route can show sooner
             )
             
             let freeSourcesElapsed = Date().timeIntervalSince(freeSourcesStartTime)
@@ -12055,6 +13111,8 @@ class GoogleMapsService: ObservableObject {
                     print("⛔ [HARD-STOP] Budget exceeded after POI fetch - but we have \(places.count) POIs, continuing to build route")
                 } else {
                     print("⛔ [HARD-STOP] Budget exceeded after POI fetch - aborting (only \(places.count) POIs)")
+                    lastNoRouteReason = "HARD_STOP_AFTER_POI_FETCH places=\(places.count) elapsed=\(String(format: "%.1f", budget.elapsed))s"
+                    print("NO_ROUTE_REASON | duration=\(targetDurationMinutes) tag=\(lastNoRouteReason)")
                     throw GoogleMapsError.noRouteFound
                 }
             }
@@ -12069,15 +13127,18 @@ class GoogleMapsService: ObservableObject {
             if RoutingToggles.databaseOnlyMode && !usedDatabase {
                 print("🚫 [DATABASE-ONLY MODE] No database POIs found - NOT falling back to Google")
                 print("🚫 [DATABASE-ONLY MODE] places.count = \(places.count), usedDatabase = \(usedDatabase)")
+                lastNoRouteReason = "DATABASE_ONLY_NO_DB places=\(places.count)"
+                print("NO_ROUTE_REASON | duration=\(targetDurationMinutes) tag=\(lastNoRouteReason)")
                 throw GoogleMapsError.noRouteFound
             }
-            if places.count < 15 && !usedDatabase && !RoutingToggles.databaseOnlyMode {
+            // Use 10 as threshold so first-route fast path (10–14 POIs) doesn't trigger Google wait
+            if places.count < 10 && !usedDatabase && !RoutingToggles.databaseOnlyMode {
                 // SPRINT-5: Budget check before Google fallback - skip if already past soft-stop
                 if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "GOOGLE_FALLBACK_START") {
                     print("⛔ [HARD-STOP] Skipping Google fallback - budget exceeded")
                 } else {
                 let googleFallbackStartTime = Date()
-                print("🗺️ [FALLBACK] Only \(places.count) POIs from free sources (<15) - fetching Google POIs for better route quality...")
+                print("🗺️ [FALLBACK] Only \(places.count) POIs from free sources (<10) - fetching Google POIs for better route quality...")
                 print("⏱️ [TIMING] Google fallback fetch STARTED")
                 
                 let googlePOIs = try await findNearbyPlaces(
@@ -12373,7 +13434,18 @@ class GoogleMapsService: ObservableObject {
             } else {
                 halfDurationMinutes = targetDurationMinutes / 2
             }
-            let idealEndpointDistance = Double(halfDurationMinutes * walkingSpeedMeterPerMin) * 0.9
+            var idealEndpointDistance = Double(halfDurationMinutes * walkingSpeedMeterPerMin) * 0.9
+            // Area-aware: dense → slightly shorter (more turns); suburban → slightly longer (straighter)
+            if places.count >= 5 {
+                let avgLegLength = places.prefix(10).reduce(0.0) { $0 + distanceBetween(location, $1.coordinate) } / Double(min(10, places.count))
+                if avgLegLength < RoutingToggles.denseLegThresholdM {
+                    idealEndpointDistance *= 0.92
+                    print("🎯 Dense area: ideal endpoint \(Int(idealEndpointDistance))m (×0.92)")
+                } else if avgLegLength > RoutingToggles.suburbanLegThresholdM {
+                    idealEndpointDistance *= 1.05
+                    print("🎯 Suburban area: ideal endpoint \(Int(idealEndpointDistance))m (×1.05)")
+                }
+            }
             
             // ADAPTIVE RANGE: Wider for short routes (high road overhead makes close POIs too long)
             // Short routes need more flexibility to find ANY valid endpoint
@@ -12464,16 +13536,24 @@ class GoogleMapsService: ObservableObject {
                     // We want to REDUCE score for good distances, so subtract the bonus × weight
                     let shortWalkPenalty = -shortWalkBonus * 50  // Scale to match other scoring
                     
-                    let score = 0.7 * distanceScore + 0.3 * corridorPenalty + shortWalkPenalty
+                    // Rank by duration fit: prefer candidates whose estimated round-trip is close to target
+                    let estimatedRoundTripMins = (dist * 2.0 / Double(walkingSpeedMeterPerMin)) * roadFactor
+                    let durationFitPenalty = abs(estimatedRoundTripMins - Double(targetDurationMinutes)) * 2.0
+                    
+                    let score = 0.7 * distanceScore + 0.3 * corridorPenalty + shortWalkPenalty + durationFitPenalty
                     return (poi, dist, score)
                 }
                 .filter { $0.distance >= minEndpointDistance && $0.distance <= maxEndpointDistance }
-                .sorted { 
+                .sorted {
                     if useClosestFirst {
-                        // For short routes, sort by DISTANCE (closest first)
+                        // For short routes, sort by estimated duration fit first, then distance
+                        let est1 = ($0.distance * 2.0 / Double(walkingSpeedMeterPerMin)) * roadFactor
+                        let est2 = ($1.distance * 2.0 / Double(walkingSpeedMeterPerMin)) * roadFactor
+                        let d1 = abs(est1 - Double(targetDurationMinutes))
+                        let d2 = abs(est2 - Double(targetDurationMinutes))
+                        if d1 != d2 { return d1 < d2 }
                         return $0.distance < $1.distance
                     } else {
-                        // For longer routes, use score-based sorting
                         return $0.score < $1.score
                     }
                 }
@@ -12854,10 +13934,24 @@ class GoogleMapsService: ObservableObject {
                         )
                     }
                 }
+                // Optional one-step extend: if route is 85-98% of target in quick mode, try adding one near-path POI
+                if isQuickMode {
+                    let acc = Double(routeToReturn.durationSeconds) / Double(targetDurationMinutes * 60)
+                    if acc >= 0.85 && acc < 0.98 {
+                        if let extended = await tryExtendRoute(route: routeToReturn, origin: location, targetDurationMinutes: targetDurationMinutes, availablePOIs: places, excludePlaceIds: excludePlaceIds, angularDiversityScore: nil, postcode: postcode, checkHardStop: checkHardStop) {
+                            let extAcc = Double(extended.durationSeconds) / Double(targetDurationMinutes * 60)
+                            if extAcc >= 0.95 && extAcc <= 1.10 {
+                                routeToReturn = extended
+                                print("🎯 One-step extend: 85-98% route extended to \(extended.durationSeconds/60)min (\(Int(extAcc * 100))%)")
+                            }
+                        }
+                    }
+                }
                 // v2.0.3 Phase 1.5 Batch A: Use centralized finalization
                 let result = await finalizeAndReturnRoute(routeToReturn, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
                 if let finalized = result.route {
-                    printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    printRouteSummary(route: finalized, targetDuration: targetDurationMinutes, elapsedSec: elapsed, mode: isQuickMode ? "quick" : "endpoint")
                     return finalized
                 }
                 print("⛔ [GUARD] Route rejected by finalizeAndReturnRoute - falling through to fallback")
@@ -12913,10 +14007,24 @@ class GoogleMapsService: ObservableObject {
                         )
                     }
                 }
+                // Optional one-step extend: if route is 85-98% of target in quick mode, try adding one near-path POI
+                if isQuickMode {
+                    let acc = Double(routeToReturn.durationSeconds) / Double(targetDurationMinutes * 60)
+                    if acc >= 0.85 && acc < 0.98 {
+                        if let extended = await tryExtendRoute(route: routeToReturn, origin: location, targetDurationMinutes: targetDurationMinutes, availablePOIs: places, excludePlaceIds: excludePlaceIds, angularDiversityScore: nil, postcode: postcode, checkHardStop: checkHardStop) {
+                            let extAcc = Double(extended.durationSeconds) / Double(targetDurationMinutes * 60)
+                            if extAcc >= 0.95 && extAcc <= 1.10 {
+                                routeToReturn = extended
+                                print("🎯 One-step extend (firstValid): 85-98% route extended to \(extended.durationSeconds/60)min (\(Int(extAcc * 100))%)")
+                            }
+                        }
+                    }
+                }
                 // v2.0.3 Phase 1.5 Batch A: Use centralized finalization
                 let result = await finalizeAndReturnRoute(routeToReturn, targetDurationMinutes: targetDurationMinutes, postcode: postcode)
                 if let finalized = result.route {
-                    printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    printRouteSummary(route: finalized, targetDuration: targetDurationMinutes, elapsedSec: elapsed, mode: isQuickMode ? "quick" : "endpoint")
                     return finalized
                 }
                 print("⛔ [GUARD] firstValid route rejected - falling through to fallback")
@@ -13229,7 +14337,7 @@ class GoogleMapsService: ObservableObject {
                 
                 // Fetch live POIs from free sources
                 // v2.0.3: Skip Apple Maps in batch mode to avoid rate limiting
-                let livePOIs = await fetchLivePOIsForBlending(location: location, radiusMeters: searchRadius, skipAppleMaps: isBatchTestMode)
+                let livePOIs = await fetchLivePOIsForBlending(location: location, radiusMeters: searchRadius, skipAppleMaps: false)
                 let densityCheckElapsed = Date().timeIntervalSince(densityCheckStartTime)
                 
                 if !livePOIs.isEmpty {
@@ -13343,7 +14451,7 @@ class GoogleMapsService: ObservableObject {
         }()
         
         // v2.0.3 Phase 1.5: Hard-wall timer using centralized calculation
-        let hardWallTimer = RoutingToggles.hardWallFor(duration: targetDurationMinutes, ads: finalAngularDiversityScore, postcode: postcode)
+        let hardWallTimer = isBatchTestMode ? 300.0 : RoutingToggles.hardWallFor(duration: targetDurationMinutes, ads: finalAngularDiversityScore, postcode: postcode)
         print("⏱️ [HARDWALL] Budget: \(String(format: "%.0f", hardWallTimer))s (dur=\(targetDurationMinutes), ADS=\(finalAngularDiversityScore), pc=\(postcode ?? "none"))")
         
         // v2.0.3 Phase 1.5 Batch A: Early topology-safe check BEFORE entering loops
@@ -13353,6 +14461,7 @@ class GoogleMapsService: ObservableObject {
             // SPRINT-5: Budget check before topology-safe generation
             if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "TOPO_SAFE_BEFORE_LOOPS") {
                 print("⛔ [HARD-STOP] Skipping topology-safe before loops - budget exceeded")
+                lastNoRouteReason = "TOPO_SAFE_BEFORE_LOOPS_BUDGET elapsed=\(String(format: "%.1f", budget.elapsed))s"
                 throw GoogleMapsError.noRouteFound
             }
             if let topologyRoute = try? await generateRouteShortTopologySafe(
@@ -13399,6 +14508,7 @@ class GoogleMapsService: ObservableObject {
                 if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "TOPO_SAFE_HARDWALL") {
                     print("⛔ [HARD-STOP] Skipping hardwall topology-safe - budget exceeded")
                     if let best = bestFallbackRoute { return best }
+                    lastNoRouteReason = "HARDWALL_TOPO_SAFE_BUDGET elapsed=\(String(format: "%.1f", budget.elapsed))s"
                     throw GoogleMapsError.noRouteFound
                 }
                 // Try topology-safe one last time
@@ -13431,6 +14541,7 @@ class GoogleMapsService: ObservableObject {
                     if let best = bestFallbackRoute {
                         return best
                     }
+                    lastNoRouteReason = "OUT_AND_BACK_FALLBACK_BUDGET elapsed=\(String(format: "%.1f", budget.elapsed))s"
                     throw GoogleMapsError.noRouteFound
                 }
                 
@@ -13493,6 +14604,7 @@ class GoogleMapsService: ObservableObject {
                             return bestFallback
                         }
                         // If no best-so-far exists, throw error (upstream shows friendly message and retry CTA)
+                        lastNoRouteReason = "HARDWALL_FALLBACK_EXCEEDS_130PCT validRoutes=\(validRoutes.count)"
                         throw GoogleMapsError.noRouteFound
                     }
                 } else {
@@ -14620,8 +15732,9 @@ class GoogleMapsService: ObservableObject {
             print("📍 ROUTE GENERATED: \(finalMins)min | \(selected.places.count) waypoints | \(distanceKm)km")
             print("📍 POIs: \(poiNames)")
             
+            let elapsedToSummary = Date().timeIntervalSince(startTime)
             // 📋 COMPREHENSIVE ROUTE SUMMARY FOR DEBUGGING
-            printRouteSummary(route: selected, targetDuration: targetDurationMinutes)
+            printRouteSummary(route: selected, targetDuration: targetDurationMinutes, elapsedSec: elapsedToSummary, mode: isQuickMode ? "quick" : "loop")
             print("═══════════════════════════════════════════════════════════")
             
             // Mark POIs as recently used for variety in future routes
@@ -15018,6 +16131,7 @@ class GoogleMapsService: ObservableObject {
         
         if !qualityOk {
             print("🆘 [FALLBACK] ❌ Quality check failed: elapsed=\(String(format: "%.1f", elapsedSeconds))s, hasViable=\(hasViableCandidate) - rejecting fallback")
+            lastNoRouteReason = "QUALITY_CHECK_FAILED elapsed=\(String(format: "%.1f", elapsedSeconds))s hasViable=\(hasViableCandidate)"
             throw GoogleMapsError.noRouteFound  // Never accept fallback if quality check fails
         }
         
@@ -15032,6 +16146,7 @@ class GoogleMapsService: ObservableObject {
             if let best = bestFallbackRoute {
                 return best
             }
+            lastNoRouteReason = "GUARANTEED_FALLBACK_BUDGET elapsed=\(String(format: "%.1f", budget.elapsed))s"
             throw GoogleMapsError.noRouteFound
         }
         
@@ -15075,6 +16190,7 @@ class GoogleMapsService: ObservableObject {
                     return bestFallback
                 }
                 // If no best-so-far exists, throw error (upstream shows friendly message and retry CTA)
+                lastNoRouteReason = "FALLBACK_EXCEEDS_130PCT_A validRoutes=\(validRoutes.count)"
                 throw GoogleMapsError.noRouteFound  // Never accept >130% fallback
             }
             
@@ -15179,8 +16295,8 @@ class GoogleMapsService: ObservableObject {
                 // v2.0.3 Phase 1.5 Batch A: Use centralized finalization
                 let result = await finalizeAndReturnRoute(deduplicatedRoute, targetDurationMinutes: targetDurationMinutes, postcode: postcode, allowExtendedCapForFallback: true)
                 if let finalized = result.route {
-                    printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
                     let elapsed = Date().timeIntervalSince(startTime)
+                    printRouteSummary(route: finalized, targetDuration: targetDurationMinutes, elapsedSec: elapsed, mode: "fallback")
                     
                     // SPRINT-4: Emit structured fallback fired log
                     let finalWPCount = finalized.places.count
@@ -15223,6 +16339,7 @@ class GoogleMapsService: ObservableObject {
                         return bestFallback
                     }
                     // If no best-so-far exists, throw error (upstream shows friendly message and retry CTA)
+                    lastNoRouteReason = "FALLBACK_EXCEEDS_130PCT_B validRoutes=\(validRoutes.count)"
                     throw GoogleMapsError.noRouteFound
                 }
             }
@@ -15234,8 +16351,8 @@ class GoogleMapsService: ObservableObject {
             
             // FINAL SAFETY WRAPPER: Ensure deduplication on return
             let finalized = finalizeRouteDedup(guaranteedRoute, targetDurationMinutes: targetDurationMinutes)
-            printRouteSummary(route: finalized, targetDuration: targetDurationMinutes)
             let elapsed = Date().timeIntervalSince(startTime)
+            printRouteSummary(route: finalized, targetDuration: targetDurationMinutes, elapsedSec: elapsed, mode: "fallback")
             
             // SPRINT-4: Emit structured fallback fired log
             let finalWPCount = finalized.places.count
@@ -15251,6 +16368,7 @@ class GoogleMapsService: ObservableObject {
             return finalized
         }
         
+        lastNoRouteReason = "ALL_STRATEGIES_EXHAUSTED validRoutes=\(validRoutes.count) totalAttempts=\(totalAttempts) places=\(places.count) elapsed=\(String(format: "%.1f", Date().timeIntervalSince(startTime)))s"
         throw GoogleMapsError.noRouteFound
     }
     
@@ -18894,6 +20012,9 @@ struct GeneratedRoute {
     
     // v1.6.46: Track if polyline came from OSRM (driving profile - needs MapKit refresh)
     var usedOSRM: Bool = false
+    
+    /// When set (pre-pop routes), walk time from user to first waypoint. Preview shows route-only duration; pill uses durationSeconds + this.
+    var travelToStartSeconds: Int? = nil
     
     // Threshold for "limited" POIs (below this, variety is reduced)
     static let limitedPOIThreshold = 50

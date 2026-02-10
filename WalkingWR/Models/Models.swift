@@ -428,6 +428,8 @@ struct WalkingRoute: Identifiable, Hashable {
     let usedOSRMRouting: Bool  // v1.6.46: Track if polyline came from OSRM (driving profile)
     /// True when route came from pre-populated database; used for duration-adjust (add/drop waypoints) after Let's Go.
     let isFromPrePopulatedDatabase: Bool
+    /// When set (pre-pop), walk time to first waypoint. Preview shows durationMinutes (route only); pill uses durationMinutes + this.
+    let travelToStartMinutes: Int?
     
     /// Alias for encodedPolyline (used by route creation and map display)
     var trimmed: String? { encodedPolyline }
@@ -439,7 +441,8 @@ struct WalkingRoute: Identifiable, Hashable {
          routeType: RouteType = .curated, encodedPolyline: String? = nil, trimmed trimVal: String? = nil,
          walkingDirections: [WalkingDirection] = [],
          usedOSRMRouting: Bool = false,
-         isFromPrePopulatedDatabase: Bool = false) {
+         isFromPrePopulatedDatabase: Bool = false,
+         travelToStartMinutes: Int? = nil) {
         self.name = name
         self.description = description
         self.durationMinutes = durationMinutes
@@ -456,6 +459,7 @@ struct WalkingRoute: Identifiable, Hashable {
         self.walkingDirections = walkingDirections
         self.usedOSRMRouting = usedOSRMRouting
         self.isFromPrePopulatedDatabase = isFromPrePopulatedDatabase
+        self.travelToStartMinutes = travelToStartMinutes
     }
     
     /// Decoded route path coordinates for map display
