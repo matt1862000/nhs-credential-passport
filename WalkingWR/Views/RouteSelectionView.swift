@@ -37,6 +37,13 @@ private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async
 import MapKit
 import CoreLocation
 
+// #region agent log
+/// Path for debug instrumentation: app Documents (writable on device) so log can be retrieved via Xcode → Download Container → AppData/Documents/debug.log
+fileprivate func _agentLogPath() -> String {
+    FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first.map { $0.appendingPathComponent("debug.log").path } ?? "/Users/raihant/Documents/WalkingWR/.cursor/debug.log"
+}
+// #endregion agent log
+
 // MARK: - Refresh race state (MapKit started before Let's Go; Google on Let's Go; last route always Google)
 /// Shared state so MapKit task (started on preview) and Google task (started on Let's Go) can coordinate:
 /// If MapKit finishes first → show MapKit. If Google finishes first → show Google and never show MapKit.
@@ -1520,14 +1527,14 @@ struct LocalRoutePickerSheet: View {
                 // Safety timeout: if "Your route is ready" is shown but onAnimationComplete never fires
                 // (e.g. main thread blocked by polyline decode or other work), force transition after 8s
                 guard newValue else { return }
-                print("🏁 [SAFETY] routeGenerationComplete=true → scheduling 8s fallback (will force dismiss if still on loading screen)")
+                print("[ROUTE_GEN] 🏁 [SAFETY] routeGenerationComplete=true → scheduling 8s fallback (will force dismiss if still on loading screen)")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
                     if showLoadingScreen {
-                        print("🏁 [SAFETY] 8s timeout fired → forcing showLoadingScreen=false, showMapPreview=true (was stuck)")
+                        print("[ROUTE_GEN] 🏁 [SAFETY] 8s timeout fired → forcing showLoadingScreen=false, showMapPreview=true (was stuck)")
                         showLoadingScreen = false
                         showMapPreview = true
                     } else {
-                        print("🏁 [SAFETY] 8s timeout fired → showLoadingScreen already false, no-op")
+                        print("[ROUTE_GEN] 🏁 [SAFETY] 8s timeout fired → showLoadingScreen already false, no-op")
                     }
                 }
             }
@@ -2632,10 +2639,16 @@ struct LocalRoutePickerSheet: View {
                         print("⚠️ No pre-fetched POIs - will fetch during generation (slower)")
                     }
                     
-                    print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting route generation...")
+                    print("[ROUTE_GEN] ⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting route generation...")
                     print("ROUTE_PHASE phase=route_gen_call_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     let routeGenStartTime = Date()
                     let userLoc = userLocation.coordinate
+                    // #region agent log
+                    do {
+                        let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:route_gen_start", "message": "route_gen_start", "data": ["selectedDuration": selectedDuration], "hypothesisId": "H1"]
+                        if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                    } catch {}
+                    // #endregion agent log
                     
                     // Google fallback: trigger when MapKit is throttling (so we don't wait 30s) or after max 30s. Only show preview when result is within 10% of target; iterate with tighter/wider waypoints until sensible or max attempts.
                     let fallbackTask = Task {
@@ -2645,23 +2658,65 @@ struct LocalRoutePickerSheet: View {
                         var shouldRunFallback = false
                         while Date().timeIntervalSince(fallbackStart) < maxWaitSeconds {
                             let stillGenerating = await MainActor.run { showLoadingScreen && !routeGenerationComplete && isGenerating }
-                            guard stillGenerating else { return }
+                            guard stillGenerating else {
+                                // #region agent log
+                                do {
+                                    let elapsed = Date().timeIntervalSince(fallbackStart)
+                                    let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:fallback_exit", "message": "fallback_exit", "data": ["reason": "stillGenerating_false", "elapsed": String(format: "%.1f", elapsed)], "hypothesisId": "H2"]
+                                    if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                                } catch {}
+                                // #endregion agent log
+                                return
+                            }
                             let throttling = await mapsService.shouldPauseBackgroundGeneration()
                             let elapsed = Date().timeIntervalSince(fallbackStart)
+                            // #region agent log
+                            do {
+                                let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:fallback_poll", "message": "fallback_poll", "data": ["elapsed": String(format: "%.1f", elapsed), "throttling": throttling, "stillGenerating": true], "hypothesisId": "H2"]
+                                if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                            } catch {}
+                            // #endregion agent log
                             if throttling {
-                                print("⏱️ [FALLBACK] MapKit throttling detected at \(String(format: "%.1f", elapsed))s — triggering Google fallback")
+                                print("[ROUTE_GEN] ⏱️ [FALLBACK] MapKit throttling detected at \(String(format: "%.1f", elapsed))s — triggering Google fallback")
+                                // #region agent log
+                                do {
+                                    let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:fallback_exit", "message": "fallback_exit", "data": ["reason": "throttling", "elapsed": String(format: "%.1f", elapsed)], "hypothesisId": "H2"]
+                                    if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                                } catch {}
+                                // #endregion agent log
                                 shouldRunFallback = true
                                 break
                             }
                             if elapsed >= maxWaitSeconds - 0.5 {
-                                print("⏱️ [FALLBACK] Max wait \(Int(maxWaitSeconds))s reached — triggering Google fallback")
+                                print("[ROUTE_GEN] ⏱️ [FALLBACK] Max wait \(Int(maxWaitSeconds))s reached — triggering Google fallback")
+                                // #region agent log
+                                do {
+                                    let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:fallback_exit", "message": "fallback_exit", "data": ["reason": "max_wait_30s", "elapsed": String(format: "%.1f", elapsed)], "hypothesisId": "H2"]
+                                    if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                                } catch {}
+                                // #endregion agent log
                                 shouldRunFallback = true
                                 break
                             }
                             try? await Task.sleep(nanoseconds: pollInterval)
                         }
                         let shouldRun = await MainActor.run { showLoadingScreen && !routeGenerationComplete && isGenerating }
-                        guard shouldRun, shouldRunFallback, mapsService.hasAPIKey else { return }
+                        guard shouldRun, shouldRunFallback, mapsService.hasAPIKey else {
+                            // #region agent log
+                            do {
+                                let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:fallback_abort", "message": "fallback_abort", "data": ["shouldRun": shouldRun, "shouldRunFallback": shouldRunFallback, "hasAPIKey": mapsService.hasAPIKey], "hypothesisId": "H3"]
+                                if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                            } catch {}
+                            // #endregion agent log
+                            return
+                        }
+                        // #region agent log
+                        let fallbackDuration = await MainActor.run { selectedDuration }
+                        do {
+                            let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:fallback_google_start", "message": "fallback_google_start", "data": ["duration": fallbackDuration], "hypothesisId": "H3"]
+                            if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                        } catch {}
+                        // #endregion agent log
                         var places = await MainActor.run { prefetchedPOIs.isEmpty ? [] : prefetchedPOIs }
                         if places.isEmpty {
                             let duration = await MainActor.run { selectedDuration }
@@ -2677,7 +2732,7 @@ struct LocalRoutePickerSheet: View {
                                     )
                                 }
                             } catch {
-                                print("⏱️ [FALLBACK] POI fetch failed or timed out — skipping")
+                                print("[ROUTE_GEN] ⏱️ [FALLBACK] POI fetch failed or timed out — skipping")
                                 return
                             }
                         }
@@ -2690,12 +2745,16 @@ struct LocalRoutePickerSheet: View {
                         let wideBands: [(Double, Double)] = [(28, 999), (32, 999), (36, 999)]
                         var tightIndex = 0
                         var wideIndex = 0
+                        let fallbackLoopStart = Date()
                         for attempt in 0..<4 {
+                            let attemptElapsed = Date().timeIntervalSince(fallbackLoopStart)
+                            print("[ROUTE_GEN] ⏱️ [FALLBACK] Attempt \(attempt + 1) starting at +\(String(format: "%.1f", attemptElapsed))s (Google call)")
                             let minMult: Double
                             let maxMult: Double
                             if attempt == 0 {
+                                // Cap first attempt so we don't pick POIs that produce 88min (align with main out-of-band: maxMult 30)
                                 minMult = 24.0
-                                maxMult = 999.0
+                                maxMult = 30.0
                             } else if tightIndex > 0 {
                                 let band = tightBands[min(tightIndex - 1, tightBands.count - 1)]
                                 minMult = band.0
@@ -2777,6 +2836,8 @@ struct LocalRoutePickerSheet: View {
                                     GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity)
                                 }
                                 let fallbackDifficulty: RouteDifficulty = actualMin <= 10 ? .easy : (actualMin <= 20 ? .moderate : .challenging)
+                                let beforeGemini = Date().timeIntervalSince(fallbackLoopStart)
+                                print("[ROUTE_GEN] ⏱️ [FALLBACK] In-band at +\(String(format: "%.1f", beforeGemini))s — enriching done, calling Gemini for name/description")
                                 let routeContent = await GeminiService.shared.generateRouteContent(
                                     waypoints: waypointInfos,
                                     durationMinutes: actualMin,
@@ -2820,19 +2881,35 @@ struct LocalRoutePickerSheet: View {
                                     routeRefreshStatus = nil
                                     registerRouteSignature(places: generatedData.places, distanceMeters: refreshed.distanceMeters)
                                     showMapPreview = true
-                                    print("⏱️ [FALLBACK] Route within 10% (\(actualMin)min) — skip refresh on Let's Go")
+                                    print("[ROUTE_GEN] ⏱️ [FALLBACK] Route within 10% (\(actualMin)min) — skip refresh on Let's Go")
+                                    // #region agent log
+                                    do {
+                                        let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:fallback_preview", "message": "fallback_preview_shown", "data": ["actualMin": actualMin, "target": duration], "hypothesisId": "H4"]
+                                        if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                                    } catch {}
+                                    do {
+                                        let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:preview_route_shown", "message": "preview_route_shown", "data": ["source": "fallback", "targetDuration": duration, "actualDuration": actualMin, "inBand10pct": true], "hypothesisId": "H6"]
+                                        if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                                    } catch {}
+                                    // #endregion agent log
                                 }
                                 return
                             }
                             if actualMin > maxAcceptable {
                                 tightIndex += 1
-                                print("⏱️ [FALLBACK] Attempt \(attempt + 1): \(actualMin)min too long (target \(duration), 10% = \(minAcceptable)–\(maxAcceptable)) — tightening")
+                                print("[ROUTE_GEN] ⏱️ [FALLBACK] Attempt \(attempt + 1): \(actualMin)min too long (target \(duration), 10% = \(minAcceptable)–\(maxAcceptable)) — tightening")
                             } else {
                                 wideIndex += 1
-                                print("⏱️ [FALLBACK] Attempt \(attempt + 1): \(actualMin)min too short — widening next")
+                                print("[ROUTE_GEN] ⏱️ [FALLBACK] Attempt \(attempt + 1): \(actualMin)min too short — widening next")
                             }
                         }
-                        print("⏱️ [FALLBACK] No route within 10% after 4 attempts — not showing fallback")
+                        print("[ROUTE_GEN] ⏱️ [FALLBACK] No route within 10% after 4 attempts — not showing fallback")
+                        // #region agent log
+                        do {
+                            let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:fallback_preview", "message": "fallback_preview_skipped", "data": ["reason": "no_route_in_10pct_after_4"], "hypothesisId": "H4"]
+                            if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                        } catch {}
+                        // #endregion agent log
                     }
                     
                     // v1.9.51: Collect excluded POIs for duplicate detection (empty for first route)
@@ -2849,14 +2926,23 @@ struct LocalRoutePickerSheet: View {
                         prefetchedPOIs: poisToUse
                     )
                     
-                    if await MainActor.run(body: { currentRouteIsFromGoogle30sFallback }) {
-                        print("⏱️ [30s FALLBACK] Main generation finished late — keeping Google fallback route")
+                    let keptFallback = await MainActor.run(body: { currentRouteIsFromGoogle30sFallback })
+                    if keptFallback {
+                        print("[ROUTE_GEN] ⏱️ [30s FALLBACK] Main generation finished late — keeping Google fallback route")
+                        // #region agent log
+                        do {
+                            let routeGenTime = Date().timeIntervalSince(routeGenStartTime)
+                            let totalTime = Date().timeIntervalSince(generateStartTime)
+                            let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:main_route_done", "message": "main_route_done", "data": ["keptFallback": true, "routeGenTime": String(format: "%.1f", routeGenTime), "totalTime": String(format: "%.1f", totalTime)], "hypothesisId": "H5"]
+                            if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                        } catch {}
+                        // #endregion agent log
                         return
                     }
                     
                     let routeGenTime = Date().timeIntervalSince(routeGenStartTime)
                     let totalTime = Date().timeIntervalSince(generateStartTime)
-                    print("ROUTE_PHASE phase=route_ready_elapsed elapsed_sec=\(String(format: "%.2f", totalTime))")
+                    print("[ROUTE_GEN] ROUTE_PHASE phase=route_ready_elapsed elapsed_sec=\(String(format: "%.2f", totalTime))")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Route generated in \(String(format: "%.2f", routeGenTime))s")
                     print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
                     print("⏱️ [TIMING] ROUTE GENERATION SUMMARY")
@@ -2873,6 +2959,13 @@ struct LocalRoutePickerSheet: View {
                     }
                     print("⏱️ [TIMING] Route: \(result.durationSeconds / 60)min, \(result.places.count) waypoints")
                     print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                    // #region agent log
+                    do {
+                        let totalTime = Date().timeIntervalSince(generateStartTime)
+                        let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:main_route_done", "message": "main_route_done", "data": ["keptFallback": false, "routeGenTime": String(format: "%.1f", routeGenTime), "totalTime": String(format: "%.1f", totalTime), "resultMin": result.durationSeconds / 60], "hypothesisId": "H5"]
+                        if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                    } catch {}
+                    // #endregion agent log
                     
                     // Validate result
                     guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
@@ -3016,6 +3109,133 @@ struct LocalRoutePickerSheet: View {
                         return service.finalizeRouteDedupForView(tempRoute)
                     }
                     
+                    // When main result is outside acceptable band, try Google in background so we show route 1 immediately.
+                    var googleSecondRoute: (route: WalkingRoute, data: GeneratedRoute)? = nil
+                    let (minAcceptable, maxAcceptable) = Self.minMaxAcceptableMinutes(for: selectedDuration)
+                    let mainActualMin = deduplicatedResult.durationMinutes
+                    let mainInBand = mainActualMin >= minAcceptable && mainActualMin <= maxAcceptable
+                    print("[ROUTE_GEN] Main route: \(mainActualMin)min for \(selectedDuration)min target (band \(minAcceptable)–\(maxAcceptable)) inBand=\(mainInBand)")
+                    if !mainInBand && mapsService.hasAPIKey {
+                        let prefetched = await MainActor.run { prefetchedPOIs.isEmpty ? [] : prefetchedPOIs }
+                        let placesForOutOfBand: [PlaceResult] = poisToUse ?? prefetched
+                        if !placesForOutOfBand.isEmpty {
+                            print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Will try Google in background (main=\(mainActualMin)min, placesCount=\(placesForOutOfBand.count))")
+                            let duration = selectedDuration
+                            let coord = userLocation.coordinate
+                            let bands = Self.outOfBandWaypointBands(for: duration)
+                            Task {
+                                let sortedByDistance = placesForOutOfBand.sorted { distanceBetweenCoordinates(coord, $0.coordinate) < distanceBetweenCoordinates(coord, $1.coordinate) }
+                                for attempt in 0..<bands.count {
+                                    let (minMult, maxMult) = bands[attempt]
+                                    let minDist = Double(duration) * minMult
+                                    let maxDist = Double(duration) * maxMult
+                                    let pool = sortedByDistance.filter { d in
+                                        let dist = distanceBetweenCoordinates(coord, d.coordinate)
+                                        return dist >= minDist && dist <= maxDist
+                                    }
+                                    let candidatePool = pool.isEmpty ? sortedByDistance : pool
+                                    let count = duration <= 15 ? 1 : min(2, candidatePool.count)
+                                    let selected: [PlaceResult]
+                                    if count == 1 {
+                                        selected = Array(candidatePool.prefix(1))
+                                    } else {
+                                        let minSeparation = 400.0
+                                        let first = candidatePool.first
+                                        if let first = first, let second = candidatePool.first(where: { p in
+                                            p.placeId != first.placeId && distanceBetweenCoordinates(first.coordinate, p.coordinate) >= minSeparation
+                                        }) {
+                                            selected = [first, second]
+                                        } else {
+                                            selected = Array(candidatePool.prefix(2))
+                                        }
+                                    }
+                                    let markers = RouteConversionHelper.markersFromPlaces(selected, origin: coord)
+                                    let minimalRoute = WalkingRoute(
+                                        name: routeName,
+                                        description: description,
+                                        durationMinutes: 0,
+                                        distanceMeters: 0,
+                                        difficulty: routeDifficulty,
+                                        isIndoor: false,
+                                        isAccessible: true,
+                                        landmarks: ["Start"] + selected.map(\.name) + ["Return"],
+                                        icon: "location.fill",
+                                        color: .tealAccent,
+                                        qrMarkers: markers,
+                                        routeType: .local,
+                                        encodedPolyline: nil,
+                                        walkingDirections: [],
+                                        usedOSRMRouting: false,
+                                        isFromPrePopulatedDatabase: false,
+                                        travelToStartMinutes: nil
+                                    )
+                                    let refreshedOpt = await mapsService.refreshRouteWithGoogleOnly(route: minimalRoute, userLocation: coord)
+                                    if let refreshed = refreshedOpt, refreshed.durationMinutes >= minAcceptable && refreshed.durationMinutes <= maxAcceptable {
+                                        let placesForData = refreshed.qrMarkers.map { m in
+                                            PlaceResult(
+                                                placeId: m.id.uuidString,
+                                                name: m.name,
+                                                vicinity: m.location,
+                                                geometry: PlaceGeometry(location: PlaceLocation(lat: m.coordinate.latitude, lng: m.coordinate.longitude)),
+                                                types: ["point_of_interest"],
+                                                source: .unknown
+                                            )
+                                        }
+                                        let googleResult = GeneratedRoute(
+                                            places: placesForData,
+                                            polyline: refreshed.encodedPolyline ?? "",
+                                            distanceMeters: refreshed.distanceMeters,
+                                            durationSeconds: refreshed.durationMinutes * 60,
+                                            legs: []
+                                        )
+                                        let enrichedData = mapsService.addOnRoutePOIsIfNeeded(googleResult, origin: coord, candidatePOIs: placesForOutOfBand, durationMinutes: duration)
+                                        let enrichedMarkers = RouteConversionHelper.markersFromPlaces(enrichedData.places, origin: coord)
+                                        let googleRoute = WalkingRoute(
+                                            name: routeName,
+                                            description: description,
+                                            durationMinutes: refreshed.durationMinutes,
+                                            distanceMeters: refreshed.distanceMeters,
+                                            difficulty: refreshed.difficulty,
+                                            isIndoor: refreshed.isIndoor,
+                                            isAccessible: refreshed.isAccessible,
+                                            landmarks: ["Start"] + enrichedData.places.map(\.name) + ["Return"],
+                                            icon: refreshed.icon,
+                                            color: refreshed.color,
+                                            qrMarkers: enrichedMarkers,
+                                            routeType: refreshed.routeType,
+                                            encodedPolyline: refreshed.encodedPolyline,
+                                            walkingDirections: refreshed.walkingDirections,
+                                            usedOSRMRouting: false,
+                                            isFromPrePopulatedDatabase: false,
+                                            travelToStartMinutes: refreshed.travelToStartMinutes
+                                        )
+                                        print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Attempt \(attempt + 1): Google in-band \(refreshed.durationMinutes)min — adding as route 2 (background)")
+                                        await MainActor.run {
+                                            allRoutes.append((route: googleRoute, data: enrichedData, isDeadZoneFallback: false))
+                                            shownPlaceIdSets.append(Set(enrichedData.places.map { $0.placeId }))
+                                            registerRouteSignature(places: enrichedData.places, distanceMeters: refreshed.distanceMeters)
+                                            currentRouteIndex = 1
+                                            generatedRoute = googleRoute
+                                            generatedRouteData = enrichedData
+                                            if !viewedRouteIndices.contains(1) { viewedRouteIndices.insert(1) }
+                                            print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Route 2 added — switched preview to in-band \(refreshed.durationMinutes)min")
+                                        }
+                                        return
+                                    } else if let r = refreshedOpt {
+                                        print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Attempt \(attempt + 1): \(r.durationMinutes)min (outside \(minAcceptable)–\(maxAcceptable))")
+                                    } else {
+                                        print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Attempt \(attempt + 1): Google returned nil")
+                                    }
+                                }
+                                print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] No in-band route after \(bands.count) attempts (background)")
+                            }
+                        } else {
+                            print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Skipped (places.isEmpty)")
+                        }
+                    } else if !mainInBand {
+                        print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Skipped (hasAPIKey=\(mapsService.hasAPIKey))")
+                    }
+                    
                     await MainActor.run {
                         // #region agent log
                         if displayRoute.qrMarkers.count > 1 {
@@ -3051,6 +3271,12 @@ struct LocalRoutePickerSheet: View {
                         generatedRoute = displayRoute
                         generatedRouteData = deduplicatedResult
                         print("TIME_SOURCE | Fresh route shown: \(displayRoute.durationMinutes) min — FROM MAPKIT/OSRM (Google refresh will run after Let's Go)")
+                        // #region agent log
+                        do {
+                            let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "RouteSelectionView:preview_route_shown", "message": "preview_route_shown", "data": ["source": "main", "targetDuration": selectedDuration, "actualDuration": deduplicatedResult.durationMinutes, "inBand10pct": (deduplicatedResult.durationMinutes >= Int(Double(selectedDuration) * 0.9) && deduplicatedResult.durationMinutes <= Int(Double(selectedDuration) * 1.1))], "hypothesisId": "H6"]
+                            if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
+                        } catch {}
+                        // #endregion agent log
                         // Save as last valid for recycling on shuffle
                         lastValidRoute = displayRoute
                         lastValidRouteData = deduplicatedResult
@@ -3063,18 +3289,28 @@ struct LocalRoutePickerSheet: View {
                             print("⚠️ Initial route is short fallback (\(deduplicatedResult.durationMinutes)min < \(minAcceptableDuration)min target 50%)")
                         }
                         
-                        // Initialize route array with first route
-                        // v1.6.47: Include isDeadZoneFallback per-route
-                        allRoutes = [(route: displayRoute, data: deduplicatedResult, isDeadZoneFallback: isShortRoute)]
-                        currentRouteIndex = 0
+                        // Initialize route array: always route 1 = main; if Google produced in-band, add as route 2 and auto-switch to it
+                        var routesToShow: [(route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool)] = [(route: displayRoute, data: deduplicatedResult, isDeadZoneFallback: isShortRoute)]
+                        var placeIdSetsToShow: [Set<String>] = [Set(filteredResult.places.map { $0.placeId })]
+                        var initialRouteIndex = 0
+                        if let second = googleSecondRoute {
+                            routesToShow.append((route: second.route, data: second.data, isDeadZoneFallback: false))
+                            placeIdSetsToShow.append(Set(second.data.places.map { $0.placeId }))
+                            initialRouteIndex = 1  // Auto-switch to route 2 (Google) when available so user sees the better option
+                        }
+                        allRoutes = routesToShow
+                        currentRouteIndex = initialRouteIndex
                         preGenerationComplete = false
                         isRecycledRoute = false  // First route is never recycled
                         isDeadZoneFallback = isShortRoute  // v1.8.8: Mark if below 50%
                         rejectedShortRoutes = []  // v1.8.8: Clear any previous rejected routes
-                        viewedRouteIndices = [0]  // Mark first route as viewed
-                        // Track place IDs for this route (use filteredResult)
-                        let placeIds = Set(filteredResult.places.map { $0.placeId })
-                        shownPlaceIdSets = [placeIds]
+                        viewedRouteIndices = [initialRouteIndex]  // Mark the shown route as viewed
+                        shownPlaceIdSets = placeIdSetsToShow
+                        // When we auto-switch to route 2, update generatedRoute/generatedRouteData so preview shows the Google route
+                        if initialRouteIndex == 1, let second = googleSecondRoute {
+                            generatedRoute = second.route
+                            generatedRouteData = second.data
+                        }
                         
                         // v1.8.0: Register first route's signature to prevent duplicates! (use filteredResult)
                         registerRouteSignature(places: filteredResult.places, distanceMeters: filteredResult.distanceMeters)
@@ -3085,7 +3321,7 @@ struct LocalRoutePickerSheet: View {
                         let totalTime = Date().timeIntervalSince(generateStartTime)
                         print("ROUTE_FIRST_DISPLAYED time_to_first_route_sec=\(String(format: "%.2f", totalTime)) duration=\(selectedDuration) source=live")
                         print("═══════════════════════════════════════════════════════════")
-                        print("✅ ROUTE 1 READY - Total time: \(String(format: "%.2f", totalTime))s")
+                        print("[ROUTE_GEN] ✅ ROUTE 1 READY - Total time: \(String(format: "%.2f", totalTime))s")
                         print("   📍 \(filteredResult.places.count) POIs, \(filteredResult.durationMinutes)min, \(filteredResult.distanceMeters)m")
                         print("═══════════════════════════════════════════════════════════")
                         
@@ -3706,6 +3942,22 @@ struct LocalRoutePickerSheet: View {
         return (minAcceptable, maxAcceptable)
     }
     
+    /// Waypoint distance bands (minMult, maxMult) for main out-of-band Google attempts. Distances are duration * mult (meters). Tuned per bucket so short durations don't get tiny routes and long durations get long enough round-trips.
+    private static func outOfBandWaypointBands(for duration: Int) -> [(minMult: Double, maxMult: Double)] {
+        let rounded = RouteCacheService.roundToNearest5Minutes(duration)
+        switch rounded {
+        case 5, 10, 15:
+            // Short: larger mult so one-way distance isn't too small (avoid 3–5 min routes)
+            return [(24, 26), (26, 28), (22, 24)]
+        case 20, 25, 30:
+            // Mid: tuned for ~20–25 min in-band
+            return [(20, 22), (22, 24), (18, 21)]
+        default:
+            // Long (35–60): larger mult so round-trip reaches band (e.g. 48–72 min for 60)
+            return [(22, 25), (25, 28), (20, 23)]
+        }
+    }
+    
     /// For prepop: run MapKit for every route in allRoutes, update each route's preview time (and polyline/directions) to MapKit's result; then if user has only looked at route 1, reorder so MapKit-valid routes come first. Never removes routes.
     private func prepopMapKitValidateAndReorder(userLocation: CLLocationCoordinate2D, selectedDuration: Int) async {
         let (minAcceptable, maxAcceptable) = Self.minMaxAcceptableMinutes(for: selectedDuration)
@@ -4222,6 +4474,7 @@ struct LocalRoutePickerSheet: View {
         print("🚀 Starting background pre-generation of up to \(maxRoutesToGenerate) routes...")
         
         Task {
+            let preGenTaskStart = Date()
             var routesGenerated = allRoutes.count
             var consecutiveDuplicates = 0
             let maxConsecutiveDuplicates = 3  // Stop after 3 duplicates in a row - variety exhausted
@@ -4501,6 +4754,7 @@ struct LocalRoutePickerSheet: View {
                             )
                             
                             guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
+                                print("[ROUTE_GEN] 🌐 Google fallback attempt: invalid result (places=\(result.places.count) dist=\(result.distanceMeters) dur=\(result.durationSeconds))")
                                 googleFailures += 1
                                 continue
                             }
@@ -4509,6 +4763,7 @@ struct LocalRoutePickerSheet: View {
                             let isDuplicate = await MainActor.run { shownPlaceIdSets.contains(newPlaceIds) }
                             
                             if isDuplicate {
+                                print("[ROUTE_GEN] 🌐 Google fallback attempt: duplicate route")
                                 googleFailures += 1
                                 continue
                             }
@@ -4518,6 +4773,7 @@ struct LocalRoutePickerSheet: View {
                             }
                             
                             guard !markers.isEmpty else {
+                                print("[ROUTE_GEN] 🌐 Google fallback attempt: no markers")
                                 googleFailures += 1
                                 continue
                             }
@@ -4587,7 +4843,24 @@ struct LocalRoutePickerSheet: View {
                                 if routeDuration < minAcceptableDuration {
                                     // Store for potential use at end if we have ≤2 routes
                                     rejectedShortRoutes.append((route: route, data: result))
-                                    print("📦 Stored short Google route (\(routeDuration)min < \(minAcceptableDuration)min) - may use later")
+                                    print("[ROUTE_GEN] 🌐 Google fallback attempt: too short (\(routeDuration)min < \(minAcceptableDuration)min) - stored for later")
+                                    googleFailures += 1
+                                    return
+                                }
+                                
+                                // Only add if in-band OR improves on best (avoids adding 16+17 when both are short)
+                                let (minAcc, maxAcc) = Self.minMaxAcceptableMinutes(for: selectedDuration)
+                                let inBand = routeDuration >= minAcc && routeDuration <= maxAcc
+                                let bestCurrent = allRoutes.min(by: { a, b in
+                                    let aIn = a.route.durationMinutes >= minAcc && a.route.durationMinutes <= maxAcc
+                                    let bIn = b.route.durationMinutes >= minAcc && b.route.durationMinutes <= maxAcc
+                                    if aIn && !bIn { return true }; if !aIn && bIn { return false }
+                                    return abs(a.route.durationMinutes - selectedDuration) < abs(b.route.durationMinutes - selectedDuration)
+                                })?.route.durationMinutes ?? 0
+                                let maxAllowed = Int(Double(selectedDuration) * 1.2)
+                                let improves = routeDuration >= minAcc && routeDuration <= maxAllowed && routeDuration > bestCurrent
+                                if !inBand && !improves {
+                                    print("[ROUTE_GEN] 🌐 Google fallback attempt: skip (\(routeDuration)min not in-band and doesn't improve on best \(bestCurrent)min)")
                                     googleFailures += 1
                                     return
                                 }
@@ -4645,16 +4918,21 @@ struct LocalRoutePickerSheet: View {
                             }
                             
                         } catch {
+                            print("[ROUTE_GEN] 🌐 Google fallback attempt: error \(error.localizedDescription)")
                             googleFailures += 1
                         }
                         
                         try? await Task.sleep(nanoseconds: 500_000_000)
                     }
                     
-                    print("🌐 Google fallback complete: +\(googleRoutesGenerated) routes")
+                    let googleFallbackElapsed = Date().timeIntervalSince(preGenTaskStart)
+                    print("[ROUTE_GEN] 🌐 Google fallback loop exit: generated=\(googleRoutesGenerated) failures=\(googleFailures) (maxFailures=3)")
+                    print("[ROUTE_GEN] 🌐 Google fallback complete at +\(String(format: "%.2f", googleFallbackElapsed))s: +\(googleRoutesGenerated) routes")
                 } else {
-                    print("🌐 Google API returned no new POIs")
+                    print("[ROUTE_GEN] 🌐 Google API returned no new POIs")
                 }
+            } else {
+                print("[ROUTE_GEN] 🌐 Google fallback skipped: currentRouteCount=\(currentRouteCount) (need ≤2) or no API key")
             }
             
             await MainActor.run {

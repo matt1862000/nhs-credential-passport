@@ -7024,7 +7024,13 @@ class GoogleMapsService: ObservableObject {
                             usedDetailedPolyline = true
                         }
                         
-                        let durationMinutes = max(1, totalDuration / 60)
+                        var durationMinutes = max(1, totalDuration / 60)
+                        // Sanity: 1 min for a long distance is a parsing bug (e.g. only first leg summed). Recompute from distance at ~80 m/min walking.
+                        if durationMinutes == 1 && totalDistance > 400 {
+                            let plausibleMin = max(1, totalDistance / 80)
+                            print("🌐   ⚠️  Duration sanity: API gave 1min for \(totalDistance)m — using \(plausibleMin)min from distance")
+                            durationMinutes = plausibleMin
+                        }
                         let pointsPerKm = totalDistance > 0 ? Double(usedDetailedPolyline ? stepPolylinePointCount : polylinePointCount) / (Double(totalDistance) / 1000.0) : 0
                         
                         print("🌐   ✅ SUCCESS: Parsed Google route")
@@ -12336,7 +12342,18 @@ class GoogleMapsService: ObservableObject {
         // Check for instant sources first (DB, cache, prefetched)
         var instantPOIs: [PlaceResult]? = nil
         if let prefetched = prefetchedPOIs, !prefetched.isEmpty {
-            instantPOIs = prefetched.filter { !isRestrictedPOI($0) }
+            // Apply same exclusion as main funnel so post-gen Google fallback gets different routes
+            instantPOIs = prefetched.filter { poi in
+                guard !isRestrictedPOI(poi) else { return false }
+                if excludePlaceIds.contains(poi.placeId) { return false }
+                for excludedPOI in excludePOIs {
+                    if isRouteDuplicate(poi, excludedPOI) { return false }
+                }
+                return true
+            }
+            if (instantPOIs?.isEmpty ?? true) {
+                instantPOIs = nil
+            }
         } else if let dbPOIs = PrePopulatedPOIService.shared.getPrePopulatedPOIs(
             near: location,
             radiusMeters: Double(fpSearchRadius)
