@@ -2,8 +2,13 @@ import UIKit
 import FirebaseCore
 import FirebaseMessaging
 import UserNotifications
+import CoreLocation
 
 class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNotificationCenterDelegate {
+    
+    /// When Documents/diagnostic_trigger.txt exists, run 20 & 25 min route generation and write results to Documents/diagnostic_routes.json (for automated testing).
+    private static let diagnosticTriggerFilename = "diagnostic_trigger.txt"
+    private static let diagnosticOutputFilename = "diagnostic_routes.json"
     
     // Notification action identifiers (must match NotificationService)
     static let delayNotificationCategory = "DELAY_NOTIFICATION"  // Updated to match NotificationService
@@ -37,7 +42,116 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
             application.registerForRemoteNotifications()
         }
         
+        // Diagnostic route run: on physical device (Debug) run automatically; on simulator when trigger file exists. Results printed to console for capture.
+        Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            #if DEBUG
+            #if targetEnvironment(simulator)
+            let triggerExists = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent(Self.diagnosticTriggerFilename).path) } ?? false
+            if triggerExists { await runDiagnosticRouteGeneration() }
+            #else
+            await runDiagnosticRouteGeneration()
+            #endif
+            #else
+            await runDiagnosticRouteGenerationIfTriggered()
+            #endif
+        }
+        
         return true
+    }
+    
+    private func runDiagnosticRouteGenerationIfTriggered() async {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let triggerURL = docs.appendingPathComponent(Self.diagnosticTriggerFilename)
+        guard FileManager.default.fileExists(atPath: triggerURL.path) else { return }
+        await runDiagnosticRouteGeneration()
+    }
+    
+    private func runDiagnosticRouteGeneration() async {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("[DIAGNOSTIC] No Documents directory"); return
+        }
+        let triggerURL = docs.appendingPathComponent(Self.diagnosticTriggerFilename)
+        let triggeredByFile = FileManager.default.fileExists(atPath: triggerURL.path)
+        if triggeredByFile { print("[DIAGNOSTIC] Trigger file found — running 20 & 25 min route generation") }
+        else { print("[DIAGNOSTIC] Running 20 & 25 min route generation (device auto)") }
+        let outputURL = docs.appendingPathComponent(Self.diagnosticOutputFilename)
+        // Write "started" so we can confirm diagnostic ran
+        try? "[DIAGNOSTIC_STARTED]".write(to: outputURL.appendingPathExtension("started"), atomically: true, encoding: .utf8)
+        // Fixed test location (generalisable; not postcode-specific)
+        let testLocation = CLLocationCoordinate2D(latitude: 53.6825, longitude: -1.4915)
+        var results: [[String: Any]] = []
+        let generationStart = Date()
+        
+        for duration in [20, 25] {
+            do {
+                let route = try await GoogleMapsService.shared.generateRouteTopologySafe(
+                    from: testLocation,
+                    targetDurationMinutes: duration,
+                    prefetchedPOIs: nil
+                )
+                let waypoints = route.places.map { ["name": $0.name, "lat": $0.coordinate.latitude, "lng": $0.coordinate.longitude] }
+                let durationMin = route.durationSeconds / 60
+                let distanceImpliedMin = route.distanceMeters > 0 ? max(1, route.distanceMeters / 80) : 0
+                let tempRoute = WalkingRoute(
+                    name: "Diagnostic",
+                    description: "",
+                    durationMinutes: durationMin,
+                    distanceMeters: route.distanceMeters,
+                    difficulty: .moderate,
+                    isIndoor: false,
+                    isAccessible: true,
+                    landmarks: [],
+                    icon: "",
+                    color: .blue,
+                    qrMarkers: [],
+                    routeType: .local,
+                    trimmed: nil,
+                    walkingDirections: [],
+                    usedOSRMRouting: false,
+                    isFromPrePopulatedDatabase: false,
+                    travelToStartMinutes: nil
+                )
+                let capped = tempRoute.withDurationSanityCap(targetDurationMinutes: duration)
+                results.append([
+                    "targetDurationMinutes": duration,
+                    "actualDurationMinutes": durationMin,
+                    "cappedDisplayMinutes": capped.durationMinutes,
+                    "distanceMeters": route.distanceMeters,
+                    "distanceImpliedMin": distanceImpliedMin,
+                    "waypoints": waypoints,
+                    "waypointNames": route.places.map { $0.name },
+                ])
+                print("[DIAGNOSTIC] \(duration)min target → \(durationMin)min actual, \(route.distanceMeters)m, display capped: \(capped.durationMinutes)min, waypoints: \(route.places.map { $0.name }.joined(separator: " → "))")
+            } catch {
+                results.append([
+                    "targetDurationMinutes": duration,
+                    "error": error.localizedDescription,
+                ])
+                print("[DIAGNOSTIC] \(duration)min target → ERROR: \(error.localizedDescription)")
+            }
+        }
+        
+        let generationTimeSeconds = Date().timeIntervalSince(generationStart)
+        let output: [String: Any] = [
+            "timestamp": ISO8601DateFormatter().string(from: Date()),
+            "generationTimeSeconds": round(generationTimeSeconds * 100) / 100,
+            "location": ["lat": testLocation.latitude, "lng": testLocation.longitude],
+            "routes": results,
+        ]
+        
+        do {
+            let data = try JSONSerialization.data(withJSONObject: output, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: outputURL)
+            try? FileManager.default.removeItem(at: triggerURL)
+            print("[DIAGNOSTIC] Wrote \(outputURL.path) (generation took \(String(format: "%.2f", generationTimeSeconds))s)")
+            // Print JSON to console for capture from device log (single line for easier parsing)
+            if let jsonLine = String(data: try JSONSerialization.data(withJSONObject: output), encoding: .utf8) {
+                print("[DIAGNOSTIC_JSON_START]\(jsonLine)[DIAGNOSTIC_JSON_END]")
+            }
+        } catch {
+            print("[DIAGNOSTIC] Failed to write output: \(error.localizedDescription)")
+        }
     }
     
     private func registerNotificationCategories() {
