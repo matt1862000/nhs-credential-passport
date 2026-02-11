@@ -5879,16 +5879,42 @@ struct LocalRoutePickerSheet: View {
                 isPreGeneratingRoutes = false
                 preGenerationComplete = true
                 
-                // v1.8.8: Add ONE short fallback if we have ≤2 acceptable routes
-                if allRoutes.count <= 2 && !rejectedShortRoutes.isEmpty {
-                    // Pick the longest rejected route (closest to target)
-                    let bestFallback = rejectedShortRoutes.max(by: { $0.data.durationMinutes < $1.data.durationMinutes })
-                    if let fallback = bestFallback {
-                        // v1.6.47: Mark this specific route as a dead zone fallback. Cap duration for display (all buckets).
-                        let cappedFallbackRoute = fallback.route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
-                        allRoutes.append((route: cappedFallbackRoute, data: fallback.data, isDeadZoneFallback: true, isFromGoogle: false))
-                        isDeadZoneFallback = true  // Also update global state for current display
-                        print("⚠️ Added 1 short fallback (\(fallback.data.durationMinutes)min) - only \(allRoutes.count - 1) acceptable routes available")
+                // SAFETY NET: If we have fewer than targetInBandRoutes routes showing,
+                // pull the closest-to-target routes from cross-bucket pool so the user isn't stuck with 1 route
+                if allRoutes.count < targetInBandRoutes {
+                    let needed = targetInBandRoutes - allRoutes.count
+                    print("[ROUTE_GEN] ⚠️ Only \(allRoutes.count) route(s) shown — pulling up to \(needed) best out-of-band route(s) as fallback")
+                    
+                    // Gather all cross-bucket routes across all buckets, sorted by closeness to target
+                    var fallbackCandidates: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
+                    for (_, pooledRoutes) in crossBucketRoutePool {
+                        for entry in pooledRoutes {
+                            // Skip duplicates already in allRoutes
+                            let sig = Set(entry.data.places.map { $0.placeId })
+                            let isDup = allRoutes.contains { Set($0.data.places.map { $0.placeId }) == sig }
+                            if !isDup {
+                                fallbackCandidates.append(entry)
+                            }
+                        }
+                    }
+                    // Sort by closeness to requested duration
+                    fallbackCandidates.sort { a, b in
+                        abs(a.route.durationMinutes - selectedDuration) < abs(b.route.durationMinutes - selectedDuration)
+                    }
+                    for candidate in fallbackCandidates.prefix(needed) {
+                        let cappedFallback = candidate.route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
+                        allRoutes.append((route: cappedFallback, data: candidate.data, isDeadZoneFallback: true, isFromGoogle: candidate.isFromGoogle))
+                        print("[ROUTE_GEN] ⚠️ Fallback: added '\(cappedFallback.name)' (\(cappedFallback.durationMinutes)min) from cross-bucket pool")
+                    }
+                    if fallbackCandidates.isEmpty && !rejectedShortRoutes.isEmpty {
+                        // Last resort: use rejected short routes
+                        let bestShort = rejectedShortRoutes.max(by: { $0.data.durationMinutes < $1.data.durationMinutes })
+                        if let fallback = bestShort {
+                            let cappedFallbackRoute = fallback.route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
+                            allRoutes.append((route: cappedFallbackRoute, data: fallback.data, isDeadZoneFallback: true, isFromGoogle: false))
+                            isDeadZoneFallback = true
+                            print("[ROUTE_GEN] ⚠️ Last-resort fallback: added short route (\(fallback.data.durationMinutes)min)")
+                        }
                     }
                 }
                 rejectedShortRoutes.removeAll()  // Clear the rejected list
