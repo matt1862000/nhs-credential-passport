@@ -15,7 +15,7 @@ import CoreLocation
 class RouteCacheService {
     static let shared = RouteCacheService()
     
-    private let cacheKey = "cachedRoutes_v42"  // v42: On-route POIs only within max distance of main destination (duration-believable)
+    private let cacheKey = "cachedRoutes_v41"  // v41: Filter restricted POIs from cached routes (v1.9.16)
     private let maxCachedRouteSets = 50
     private let maxRoutesPerDuration = 10  // v1.6.46: Limit routes per location/duration to prevent unbounded growth
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
@@ -106,20 +106,13 @@ class RouteCacheService {
         
         /// v1.6.46: Calculate quality score for route comparison
         /// Higher score = better route. Factors:
-        /// - Duration accuracy (closer to target = better; 90-110% gets bonus)
+        /// - Duration accuracy (closer to target = better)
         /// - POI variety (more diverse types = better)
         /// - Skip count (lower = better, users don't like this route)
         func qualityScore(targetDurationMinutes: Int) -> Double {
             // Duration accuracy: 0-40 points (perfect match = 40, 10min off = 0)
             let durationDiff = abs(durationMinutes - targetDurationMinutes)
-            var durationScore = max(0, 40 - (durationDiff * 4))
-            // Bonus for routes in 90-110% of target (prefer "closer to requested time")
-            if targetDurationMinutes > 0 {
-                let ratio = Double(durationMinutes) / Double(targetDurationMinutes)
-                if ratio >= 0.90 && ratio <= 1.10 {
-                    durationScore += 20
-                }
-            }
+            let durationScore = max(0, 40 - (durationDiff * 4))
             
             // POI variety: 0-30 points (unique type categories)
             let uniqueTypes = Set(places.flatMap { $0.types }).count
@@ -237,11 +230,9 @@ class RouteCacheService {
             if restrictedFilteredCount > 0 {
                 print("📦 🏫 Filtered \(restrictedFilteredCount) pre-populated route(s) containing restricted POIs")
             }
-            print("📦 🏫 PREPOP_RESTRICTED_SUMMARY before=\(prePopulatedRoutes.count) after_restricted_filter=\(filteredRoutes.count) filtered_out=\(restrictedFilteredCount) (restricted = playcare/daycare/nursery/playground etc)")
             
             // Only return if we still have valid routes after filtering
             if !filteredRoutes.isEmpty {
-                print("ROUTES_SOURCE | source=prepop_database count=\(filteredRoutes.count) duration=\(durationMinutes) (pre-populated DB)")
                 return filteredRoutes
             } else {
                 print("📦 ⚠️ All pre-populated routes contained restricted POIs - falling back to regular cache")
@@ -330,27 +321,19 @@ class RouteCacheService {
                     }
                     
                     if !validRoutes.isEmpty {
-                        // Prefer routes closer to requested duration (90-110% best); sort by duration accuracy first
-                        let sortedValid = validRoutes.sorted { r1, r2 in
-                            let d1 = abs(r1.route.durationMinutes - roundedDuration)
-                            let d2 = abs(r2.route.durationMinutes - roundedDuration)
-                            if d1 != d2 { return d1 < d2 }
-                            return r1.route.durationMinutes >= r2.route.durationMinutes
-                        }
                         if checkDuration == roundedDuration {
                             // Exact match
-                            if sortedValid.count < allRoutes.count {
-                                print("📦 Route Cache HIT! Found \(sortedValid.count)/\(allRoutes.count) valid routes cached \(Int(distance))m away for \(roundedDuration)min (filtered \(allRoutes.count - sortedValid.count) out-of-tolerance)")
+                            if validRoutes.count < allRoutes.count {
+                                print("📦 Route Cache HIT! Found \(validRoutes.count)/\(allRoutes.count) valid routes cached \(Int(distance))m away for \(roundedDuration)min (filtered \(allRoutes.count - validRoutes.count) out-of-tolerance)")
                             } else {
-                                print("📦 Route Cache HIT! Found \(sortedValid.count) routes cached \(Int(distance))m away for \(roundedDuration)min (requested \(durationMinutes)min)")
+                                print("📦 Route Cache HIT! Found \(validRoutes.count) routes cached \(Int(distance))m away for \(roundedDuration)min (requested \(durationMinutes)min)")
                             }
                         } else {
                             // Fallback from adjacent slot
-                            let actualDurations = sortedValid.map { "\($0.route.durationMinutes)min" }.joined(separator: ", ")
+                            let actualDurations = validRoutes.map { "\($0.route.durationMinutes)min" }.joined(separator: ", ")
                             print("📦 Route Cache FALLBACK! Using \(checkDuration)min slot for \(roundedDuration)min request → [\(actualDurations)] (within \(isEdgeCase ? "75-125%" : "80-120%") tolerance)")
                         }
-                        print("ROUTES_SOURCE | source=memory_cache count=\(sortedValid.count) duration=\(durationMinutes) (in-memory/disk cache)")
-                        return sortedValid
+                        return validRoutes
                     }
                     
                     // v1.6.39: DEAD ZONE ESCAPE HATCH
@@ -382,11 +365,9 @@ class RouteCacheService {
             let bestFallback = sorted.first!
             let accuracy = Double(bestFallback.route.durationMinutes) / Double(roundedDuration) * 100
             print("📦 🆘 DEAD ZONE ESCAPE! No routes ≥75%, returning closest available: \(bestFallback.route.durationMinutes)min (\(Int(accuracy))% of \(roundedDuration)min target)")
-            print("ROUTES_SOURCE | source=memory_cache count=1 dead_zone_fallback duration=\(durationMinutes)")
             return [sorted.first!]  // Return best single route
         }
         
-        print("ROUTES_SOURCE | source=none cache_miss duration=\(durationMinutes)")
         return nil
     }
     

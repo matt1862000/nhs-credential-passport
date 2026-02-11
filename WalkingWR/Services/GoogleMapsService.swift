@@ -11,14 +11,10 @@ import MapKit
 import Combine
 
 // #region agent log
-/// Debug log path: app Documents (writable on device/simulator) so logs appear in downloaded container; fallback to workspace path.
-fileprivate func _debugLogPathGM() -> String {
-    FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent("debug.log").path ?? "/Users/raihant/Documents/WalkingWR/.cursor/debug.log"
-}
 /// Filter Xcode console by this tag to see waypoint-direction debug logs only.
 fileprivate let WAYPOINT_DIR_TAG = "WAYPOINT_DIR"
 fileprivate func _agentLogGM(_ loc: String, _ msg: String, _ data: [String: Any] = [:], _ hid: String = "C") {
-    let path = _debugLogPathGM()
+    let path = "/Users/raihant/Documents/WalkingWR/.cursor/debug.log"
     var d: [String: Any] = ["location": loc, "message": msg, "timestamp": Int(Date().timeIntervalSince1970 * 1000), "sessionId": "debug-session", "hypothesisId": hid]
     if !data.isEmpty { d["data"] = data }
     guard let j = try? JSONSerialization.data(withJSONObject: d), let s = String(data: j, encoding: .utf8) else { return }
@@ -896,9 +892,9 @@ class GoogleMapsService: ObservableObject {
     
     // MARK: - Google Places Daily Call Cap (v1.9.52)
     // Track daily usage to cap costs per user
-    // Conservative limit: 10 calls/day = ~£0.24/day max per user (~£7.20/month)
-    // Adjust based on your budget: 5 = £0.12/day, 20 = £0.48/day
-    private let googlePlacesDailyCap = 10  // Production: ~$0.32/day max per user (batch test mode bypasses this)
+    // 100 calls/day allows sufficient POI discovery for heavy users
+    // Adjust based on your budget: 50 = moderate, 200 = generous
+    private let googlePlacesDailyCap = 100
     private var googlePlacesCallsToday = 0
     private let googlePlacesCountKey = "googlePlacesCount"
     private let googlePlacesDateKey = "googlePlacesDate"
@@ -5283,19 +5279,18 @@ class GoogleMapsService: ObservableObject {
     /// Check if we should use OSRM instead of MapKit (when approaching rate limit)
     private func shouldUseOSRM() async -> Bool {
         let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
-        // Use OSRM at 80% of rate limit (40+ requests) for speed
+        // Use OSRM at 80% of rate limit (36+ of 45 requests) to avoid hitting MapKit cap
         // OSRM durations are corrected via osrmCalibrationFactor
-        return status.currentCount >= 40
+        return status.currentCount >= 36
     }
     
     /// Check if background pre-generation should pause (to reserve quota for user requests)
     /// Returns true if rate limit is too high for background work
     func shouldPauseBackgroundGeneration() async -> Bool {
         let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
-        // Pause background work at 80% of limit (40+ requests)
-        // This reserves 10 requests for user-initiated actions
-        // More generous than before - allows more pre-generation
-        let shouldPause = status.currentCount >= 40
+        // Pause background work at 80% of limit (36+ of 45 requests)
+        // This reserves 9 requests for user-initiated actions
+        let shouldPause = status.currentCount >= 36
         if shouldPause {
             print("⏸️ Background paused briefly (MapKit: \(status.currentCount)/50)")
         }
@@ -14833,9 +14828,9 @@ class GoogleMapsService: ObservableObject {
                 let gracePeriod: TimeInterval = 1.0
                 let elapsedSinceFirst = Date().timeIntervalSince(firstValidTime)
                 if elapsedSinceFirst > gracePeriod {
-                    // Check if we have any in-tolerance route (80-130%)
+                    // Check if we have any in-tolerance route (80-100%)
                     let toleranceMin = Int(Double(targetDurationMinutes) * 0.80)
-                    let toleranceMax = Int(Double(targetDurationMinutes) * 1.30)
+                    let toleranceMax = targetDurationMinutes
                     if let inToleranceRoute = validRoutes.first(where: { route in
                         let routeMins = route.durationSeconds / 60
                         return routeMins >= toleranceMin && routeMins <= toleranceMax
@@ -19875,42 +19870,16 @@ class GoogleMapsService: ObservableObject {
     
     // MARK: - Google Directions API Fallback (PAID - Use Sparingly!)
     
-    /// Uses Google Directions API for accurate round-trip timing and distance.
-    /// Request is: current GPS → waypoints → current GPS. Returned duration and distance
-    /// are the full round-trip and should be used for preview so timing matches reality.
-    /// This is a PAID API - use for re-measure when we have key and waypoints.
-    /// Returns nil if Google fails or API key is missing.
+    /// Uses Google Directions API as fallback when MapKit route is outside tolerance
+    /// This is a PAID API - only use when MapKit fails to find acceptable route
+    /// Returns nil if Google also fails or API key is missing
     func getGoogleDirectionsRoute(
         origin: CLLocationCoordinate2D,
         waypoints: [PlaceResult],
         targetDurationMinutes: Int
     ) async -> GeneratedRoute? {
-        // #region agent log
-        let _logPath = _debugLogPathGM()
-        let _waypointNames = waypoints.map { $0.name }
-        let _entry: [String: Any] = [
-            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-            "location": "GoogleMapsService:getGoogleDirectionsRoute:entry",
-            "message": "Google Directions request",
-            "runId": "run1",
-            "hypothesisId": "H1_H5",
-            "data": [
-                "origin_lat": origin.latitude,
-                "origin_lng": origin.longitude,
-                "waypointCount": waypoints.count,
-                "waypointNames": _waypointNames,
-                "targetDurationMinutes": targetDurationMinutes
-            ]
-        ]
-        if let _d = try? JSONSerialization.data(withJSONObject: _entry), let _s = String(data: _d, encoding: .utf8) { _s.appendLine(toFile: _logPath) }
-        // #endregion agent log
-        
         guard !apiKey.isEmpty else {
             print("🌐 Google Directions: No API key available")
-            // #region agent log
-            let _fail: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "GoogleMapsService:getGoogleDirectionsRoute:fail", "message": "no_api_key", "runId": "run1", "hypothesisId": "H4", "data": ["waypointNames": _waypointNames]]
-            if let _fd = try? JSONSerialization.data(withJSONObject: _fail), let _fs = String(data: _fd, encoding: .utf8) { _fs.appendLine(toFile: _logPath) }
-            // #endregion agent log
             return nil
         }
         
@@ -19937,14 +19906,6 @@ class GoogleMapsService: ObservableObject {
         urlString += "&waypoints=\(waypointsParam)"  // v1.9.30: Locally optimized, no optimize:true to stay in Essentials SKU
         urlString += "&mode=walking"
         urlString += "&key=\(apiKey)"
-        
-        // 🔍 DIAGNOSTIC: Log the full URL (minus API key) and coordinates for debugging duration accuracy
-        let diagnosticURL = urlString.components(separatedBy: "&key=").first ?? urlString
-        print("[ROUTE_DEBUG] 🔍 Google Directions URL: \(diagnosticURL)")
-        print("[ROUTE_DEBUG] 🔍 Origin: (\(String(format: "%.6f", origin.latitude)), \(String(format: "%.6f", origin.longitude)))")
-        for (i, wp) in waypoints.enumerated() {
-            print("[ROUTE_DEBUG] 🔍 Waypoint \(i+1): '\(wp.name)' at (\(String(format: "%.6f", wp.coordinate.latitude)), \(String(format: "%.6f", wp.coordinate.longitude)))")
-        }
         
         guard let url = URL(string: urlString) else {
             print("🌐 Google Directions: Invalid URL")
@@ -19977,26 +19938,13 @@ class GoogleMapsService: ObservableObject {
                   let polylinePoints = overviewPolyline["points"] as? String else {
                 let errorStatus = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["status"] as? String ?? "unknown"
                 print("🌐 Google Directions: Failed - status: \(errorStatus)")
-                // #region agent log
-                let _parseFail: [String: Any] = [
-                    "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-                    "location": "GoogleMapsService:getGoogleDirectionsRoute:fail",
-                    "message": "parse_failed",
-                    "runId": "run1",
-                    "hypothesisId": "H4",
-                    "data": ["status": errorStatus, "waypointNames": waypoints.map { $0.name }]
-                ]
-                if let _pd = try? JSONSerialization.data(withJSONObject: _parseFail), let _ps = String(data: _pd, encoding: .utf8) { _ps.appendLine(toFile: _debugLogPathGM()) }
-                // #endregion agent log
                 return nil
             }
             
-            // Total distance and duration = full round-trip (GPS → waypoints → GPS)
+            // Calculate total distance and duration
             var totalDistance = 0
             var totalDuration = 0
             var directionsLegs: [DirectionsLeg] = []
-            var _legDurations: [Int] = []
-            var _legDistances: [Int] = []
             
             for leg in legs {
                 guard let distance = leg["distance"] as? [String: Any],
@@ -20007,8 +19955,7 @@ class GoogleMapsService: ObservableObject {
                       let durationText = duration["text"] as? String else {
                     continue
                 }
-                _legDurations.append(durationValue)
-                _legDistances.append(distanceValue)
+                
                 totalDistance += distanceValue
                 totalDuration += durationValue
                 
@@ -20048,31 +19995,7 @@ class GoogleMapsService: ObservableObject {
             let targetMin = Int(Double(targetDurationMinutes) * 0.80)
             let targetMax = targetDurationMinutes
             
-            // #region agent log
-            let _success: [String: Any] = [
-                "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-                "location": "GoogleMapsService:getGoogleDirectionsRoute:success",
-                "message": "Google Directions response",
-                "runId": "run1",
-                "hypothesisId": "H2_H3",
-                "data": [
-                    "legsCount": legs.count,
-                    "totalDurationSec": totalDuration,
-                    "totalDistanceM": totalDistance,
-                    "legDurationsSec": _legDurations,
-                    "legDistancesM": _legDistances,
-                    "waypointNames": waypoints.map { $0.name }
-                ]
-            ]
-            if let _sd = try? JSONSerialization.data(withJSONObject: _success), let _ss = String(data: _sd, encoding: .utf8) { _ss.appendLine(toFile: _debugLogPathGM()) }
-            // #endregion agent log
-            
             print("🌐 Google Directions: Route found - \(durationMinutes)min, \(totalDistance)m")
-            // 🔍 DIAGNOSTIC: Raw Google response breakdown per leg
-            print("[ROUTE_DEBUG] 🔍 Google raw response: totalDuration=\(totalDuration)s (\(durationMinutes)min), totalDistance=\(totalDistance)m (\(String(format: "%.2f", Double(totalDistance)/1000))km)")
-            for (i, (dur, dist)) in zip(_legDurations, _legDistances).enumerated() {
-                print("[ROUTE_DEBUG]   Leg \(i+1): \(dur)s (\(dur/60)min), \(dist)m")
-            }
             
             // Check if Google route is within 80-100% tolerance
             if durationMinutes >= targetMin && durationMinutes <= targetMax {
@@ -20098,17 +20021,6 @@ class GoogleMapsService: ObservableObject {
             
         } catch {
             print("🌐 Google Directions: Error - \(error.localizedDescription)")
-            // #region agent log
-            let _err: [String: Any] = [
-                "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-                "location": "GoogleMapsService:getGoogleDirectionsRoute:fail",
-                "message": "throw",
-                "runId": "run1",
-                "hypothesisId": "H4",
-                "data": ["error": error.localizedDescription, "waypointNames": waypoints.map { $0.name }]
-            ]
-            if let _ed = try? JSONSerialization.data(withJSONObject: _err), let _es = String(data: _ed, encoding: .utf8) { _es.appendLine(toFile: _debugLogPathGM()) }
-            // #endregion agent log
             return nil
         }
     }

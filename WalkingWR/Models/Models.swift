@@ -520,10 +520,7 @@ struct WalkingRoute: Identifiable, Hashable {
         hasher.combine(id)
     }
     
-    /// Cap displayed duration when unreasonably high for distance (e.g. 25 min for 1 km).
-    /// v2.1.8: Removed target-based cap (was `min(distanceCap, target*1.25)`) because it hid
-    /// genuinely long routes — e.g. a 53 min route was displayed as 25 min.
-    /// Now only uses distance-based plausibility: maxPlausible = distance / 80 m/min * 1.15.
+    /// Cap displayed duration when unreasonably high for distance (e.g. 25 min for 1 km). Distance-based only: assumes ~80 m/min walking speed with 15% buffer. Used by preview and by diagnostic.
     func withDurationSanityCap(targetDurationMinutes: Int? = nil) -> WalkingRoute {
         guard distanceMeters > 200 else { return self }
         let maxPlausible = max(1, Int(Double(distanceMeters) / 80.0 * 1.15))
