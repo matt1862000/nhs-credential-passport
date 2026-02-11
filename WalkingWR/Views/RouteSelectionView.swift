@@ -1103,6 +1103,7 @@ struct LocalRoutePickerSheet: View {
     
     let durationOptions = [10, 15, 20, 25, 30]
     let maxRoutesToGenerate = 10  // Back to 10 - directions now use free Apple MapKit!
+    let targetInBandRoutes = 2   // Stop generation once we have 2 routes within 80-120% of target
     
     // v2.0.1: Check if delay is too short for a walk
     // Need at least 15 minutes (10 min walk + 5 min buffer) to recommend a walk
@@ -2729,15 +2730,39 @@ struct LocalRoutePickerSheet: View {
                                 }
                                 // #endregion
                                 
-                                allRoutes.append(contentsOf: backgroundRoutes)
-                                shownPlaceIdSets.append(contentsOf: backgroundPlaceIdSets)
-                                
-                                // v2.1.9: Store any out-of-band routes in cross-bucket pool for reuse at their actual duration
-                                for bgRoute in backgroundRoutes {
-                                    if bgRoute.isFromGoogle && !Self.isRouteInBand(bgRoute.route, selectedDuration: selectedDuration) {
-                                        storeCrossBucketRoute(route: bgRoute.route, data: bgRoute.data, isFromGoogle: bgRoute.isFromGoogle)
-                                    }
+                                // Prioritise in-band routes: sort so in-band come first, then only append enough to reach targetInBandRoutes
+                                let currentInBand = inBandRouteCount()
+                                let sortedBg = backgroundRoutes.enumerated().sorted { a, b in
+                                    let aInBand = Self.isRouteInBand(a.element.route, selectedDuration: selectedDuration)
+                                    let bInBand = Self.isRouteInBand(b.element.route, selectedDuration: selectedDuration)
+                                    if aInBand != bInBand { return aInBand }
+                                    return a.offset < b.offset
                                 }
+                                var addedInBand = currentInBand
+                                for item in sortedBg {
+                                    let isInBand = Self.isRouteInBand(item.element.route, selectedDuration: selectedDuration)
+                                    if isInBand {
+                                        if addedInBand >= targetInBandRoutes {
+                                            // Already have enough in-band routes — store excess in cross-bucket pool
+                                            if item.element.isFromGoogle {
+                                                storeCrossBucketRoute(route: item.element.route, data: item.element.data, isFromGoogle: item.element.isFromGoogle)
+                                            }
+                                            print("[ROUTE_GEN] ⏹️ Skipping in-band route '\(item.element.route.name)' — already have \(addedInBand)/\(targetInBandRoutes) in-band")
+                                            continue
+                                        }
+                                        addedInBand += 1
+                                    } else {
+                                        // Out-of-band route — store in cross-bucket pool, don't show
+                                        if item.element.isFromGoogle {
+                                            storeCrossBucketRoute(route: item.element.route, data: item.element.data, isFromGoogle: item.element.isFromGoogle)
+                                        }
+                                        print("[ROUTE_GEN] ⏹️ Skipping out-of-band route '\(item.element.route.name)' — only showing in-band routes")
+                                        continue
+                                    }
+                                    allRoutes.append(item.element)
+                                    shownPlaceIdSets.append(backgroundPlaceIdSets[item.offset])
+                                }
+                                print("[ROUTE_GEN] ⏹️ In-band routes after cache load: \(inBandRouteCount())/\(targetInBandRoutes) target")
                                 
                                 // If we auto-advanced to route 2, make sure it's set
                                 if currentRouteIndex == 1 && allRoutes.count > 1 {
@@ -2756,7 +2781,13 @@ struct LocalRoutePickerSheet: View {
                             }
                         }
                         // v2.1.11: Safety-net sweep — Google-remeasure any routes still showing synthetic values
-                        await googleRemeasureSweep(userLocation: userLocation.coordinate, selectedDuration: selectedDuration)
+                        // Skip if we already have enough in-band routes (saves API calls)
+                        let inBandBeforeSweep = await MainActor.run { inBandRouteCount() }
+                        if inBandBeforeSweep < targetInBandRoutes {
+                            await googleRemeasureSweep(userLocation: userLocation.coordinate, selectedDuration: selectedDuration)
+                        } else {
+                            print("[ROUTE_GEN] ⏹️ SWEEP skipped — already have \(inBandBeforeSweep)/\(targetInBandRoutes) in-band routes")
+                        }
                         
                         // PREPOP ONLY: MapKit validate-and-reorder now that all routes are in allRoutes
                         if firstCached.isFromPrePopulatedDatabase, !allRoutes.isEmpty {
@@ -2813,8 +2844,9 @@ struct LocalRoutePickerSheet: View {
                     // Refresh happens in background and updates route when ready
                     routeGenerationComplete = true
                     
-                    // Lower-bucket + extend: add extra route options (short base extended to target) when prepop and we have room. Does not replace normal routes.
-                    if firstCached.isFromPrePopulatedDatabase, cachedRoutes.count < maxRoutesToGenerate {
+                    // Lower-bucket + extend: add extra route options (short base extended to target) when prepop and we have room. Skip if we already have enough in-band routes.
+                    let inBandBeforeExtend = await MainActor.run { inBandRouteCount() }
+                    if firstCached.isFromPrePopulatedDatabase, cachedRoutes.count < maxRoutesToGenerate, inBandBeforeExtend < targetInBandRoutes {
                         print("[ROUTE_DEBUG] 📦 LOWER_BUCKET: Launching extend task (isPrepop=true, cachedRoutes=\(cachedRoutes.count) < max=\(maxRoutesToGenerate))")
                         Task {
                             guard let (lowerRoutes, candidatePOIs) = PrePopulatedPOIService.shared.getLowerBucketRoutesForExtend(near: userLocation.coordinate, extendToDuration: selectedDuration) else {
@@ -2887,9 +2919,12 @@ struct LocalRoutePickerSheet: View {
                         }
                     }
                     
-                    // Only pre-generate more if we don't have enough
-                    if cachedRoutes.count < maxRoutesToGenerate {
-                        print("📦 Only \(cachedRoutes.count)/\(maxRoutesToGenerate) routes cached - will pre-generate more")
+                    // Only pre-generate more if we don't have enough in-band routes
+                    let inBandAfterCache = await MainActor.run { inBandRouteCount() }
+                    if inBandAfterCache >= targetInBandRoutes {
+                        print("[ROUTE_GEN] ⏹️ Already have \(inBandAfterCache)/\(targetInBandRoutes) in-band routes from cache — skipping pre-generation")
+                    } else if cachedRoutes.count < maxRoutesToGenerate {
+                        print("📦 Only \(inBandAfterCache)/\(targetInBandRoutes) in-band routes — will pre-generate more")
                         preGenerateRemainingRoutes()
                     } else {
                         print("📦 All \(cachedRoutes.count) routes loaded from cache")
@@ -3813,8 +3848,12 @@ struct LocalRoutePickerSheet: View {
                         // v1.9.28: Clear any status messages - routes are ready
                         routeRefreshStatus = nil
                         
-                        // Start pre-generating more routes in background
-                        preGenerateRemainingRoutes()
+                        // Start pre-generating more routes in background (only if we need more in-band routes)
+                        if !hasEnoughInBandRoutes() {
+                            preGenerateRemainingRoutes()
+                        } else {
+                            print("[ROUTE_GEN] ⏹️ First route is in-band — skipping pre-generation (have \(inBandRouteCount())/\(targetInBandRoutes))")
+                        }
                     }
                     
                     // MapKit started before Let's Go (live path) — same race: last route always Google
@@ -4443,6 +4482,16 @@ struct LocalRoutePickerSheet: View {
         let minDist = minDistanceMetersForInBand(for: selectedDuration)
         let distanceOk = route.distanceMeters >= minDist
         return durationOk && distanceOk
+    }
+    
+    /// Count how many routes currently in allRoutes are in-band (80-120% of target duration + min distance).
+    private func inBandRouteCount() -> Int {
+        allRoutes.filter { Self.isRouteInBand($0.route, selectedDuration: selectedDuration) }.count
+    }
+    
+    /// True if we already have enough in-band routes and should stop generating more.
+    private func hasEnoughInBandRoutes() -> Bool {
+        inBandRouteCount() >= targetInBandRoutes
     }
     
     /// Log all displayed routes in a single, copy-paste-friendly block so you can share exactly what the app shows (1 of N … N of N).
@@ -5269,7 +5318,16 @@ struct LocalRoutePickerSheet: View {
             }
         }
         
-        print("🚀 Starting background pre-generation of up to \(maxRoutesToGenerate) routes...")
+        // Check if cross-bucket injection already satisfied our in-band target
+        if hasEnoughInBandRoutes() {
+            print("[ROUTE_GEN] ⏹️ Cross-bucket injection gave us \(inBandRouteCount())/\(targetInBandRoutes) in-band routes — skipping pre-generation")
+            isPreGeneratingRoutes = false
+            preGenerationComplete = true
+            logRoutePreviewSummary()
+            return
+        }
+        
+        print("🚀 Starting background pre-generation (need \(targetInBandRoutes - inBandRouteCount()) more in-band routes)...")
         
         Task {
             let preGenTaskStart = Date()
@@ -5283,6 +5341,12 @@ struct LocalRoutePickerSheet: View {
             let poisToUse = await MainActor.run { prefetchedPOIs.isEmpty ? nil : prefetchedPOIs }
             
             while routesGenerated < maxRoutesToGenerate && consecutiveFailures < maxConsecutiveFailures && consecutiveDuplicates < maxConsecutiveDuplicates {
+                // Check if we've reached the in-band target
+                let currentInBand = await MainActor.run { inBandRouteCount() }
+                if currentInBand >= targetInBandRoutes {
+                    print("[ROUTE_GEN] ⏹️ Reached \(currentInBand)/\(targetInBandRoutes) in-band routes — stopping pre-generation")
+                    break
+                }
                 // v1.9.22: Check if user action cancelled background work
                 let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
                 if shouldCancel {
@@ -5552,10 +5616,12 @@ struct LocalRoutePickerSheet: View {
             }
             
             // Check if we only found 1-2 routes - if so, try Google API for more POIs
+            // But skip if we already have enough in-band routes
             let currentRouteCount = await MainActor.run { allRoutes.count }
+            let inBandBeforeFallback = await MainActor.run { inBandRouteCount() }
             var updatedPOIs = poisToUse
             
-            if currentRouteCount <= 2 && mapsService.hasAPIKey {
+            if currentRouteCount <= 2 && mapsService.hasAPIKey && inBandBeforeFallback < targetInBandRoutes {
                 print("⚠️ Only \(currentRouteCount) routes found - calling Google API for more POIs...")
                 
                 let existingPOIs = poisToUse ?? []
@@ -5791,7 +5857,13 @@ struct LocalRoutePickerSheet: View {
             }
             
             // v2.1.11: Final safety-net sweep — Google-remeasure any routes still showing synthetic/MapKit values
-            await googleRemeasureSweep(userLocation: userLocation.coordinate, selectedDuration: selectedDuration)
+            // Skip if we already have enough in-band routes (saves API calls)
+            let inBandBeforeFinalSweep = await MainActor.run { inBandRouteCount() }
+            if inBandBeforeFinalSweep < targetInBandRoutes {
+                await googleRemeasureSweep(userLocation: userLocation.coordinate, selectedDuration: selectedDuration)
+            } else {
+                print("[ROUTE_GEN] ⏹️ Final SWEEP skipped — already have \(inBandBeforeFinalSweep)/\(targetInBandRoutes) in-band routes")
+            }
             
             await MainActor.run {
                 isPreGeneratingRoutes = false
