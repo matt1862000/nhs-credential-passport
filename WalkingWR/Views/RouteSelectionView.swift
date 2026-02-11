@@ -3209,14 +3209,20 @@ struct LocalRoutePickerSheet: View {
                                         let isDuplicate = shownPlaceIdSets.contains(newPlaceIds)
                                         if !isDuplicate {
                                             let cappedFallback = displayRoute.withDurationSanityCap(targetDurationMinutes: selectedDuration)
-                                            allRoutes.append((route: cappedFallback, data: generatedData, isDeadZoneFallback: false, isFromGoogle: true))
-                                            shownPlaceIdSets.append(newPlaceIds)
-                                            registerRouteSignature(places: generatedData.places, distanceMeters: refreshed.distanceMeters)
-                                            let fallbackWaypoints = generatedData.places.map { $0.name }.joined(separator: " → ")
-                                            let fallbackDistKm = String(format: "%.1f", Double(cappedFallback.distanceMeters) / 1000)
-                                            print("[ROUTE_GEN] ROUTE_PREVIEW \(cappedFallback.name), \(fallbackWaypoints). \(cappedFallback.durationMinutes) min \(fallbackDistKm)km, google")
-                                            print("[ROUTE_GEN] ⏱️ [FALLBACK] Route within 10% (\(actualMin)min) — added as route 2 (main already shown)")
-                                            logRoutePreviewSummary()
+                                            // Only add if in-band; otherwise store in cross-bucket pool
+                                            if Self.isRouteInBand(cappedFallback, selectedDuration: selectedDuration) {
+                                                allRoutes.append((route: cappedFallback, data: generatedData, isDeadZoneFallback: false, isFromGoogle: true))
+                                                shownPlaceIdSets.append(newPlaceIds)
+                                                registerRouteSignature(places: generatedData.places, distanceMeters: refreshed.distanceMeters)
+                                                let fallbackWaypoints = generatedData.places.map { $0.name }.joined(separator: " → ")
+                                                let fallbackDistKm = String(format: "%.1f", Double(cappedFallback.distanceMeters) / 1000)
+                                                print("[ROUTE_GEN] ROUTE_PREVIEW \(cappedFallback.name), \(fallbackWaypoints). \(cappedFallback.durationMinutes) min \(fallbackDistKm)km, google")
+                                                print("[ROUTE_GEN] ⏱️ [FALLBACK] In-band route (\(actualMin)min) — added as route 2")
+                                                logRoutePreviewSummary()
+                                            } else {
+                                                storeCrossBucketRoute(route: cappedFallback, data: generatedData, isFromGoogle: true)
+                                                print("[ROUTE_GEN] ⏹️ [FALLBACK] Route (\(actualMin)min) out-of-band — stored in cross-bucket pool, not shown")
+                                            }
                                         } else {
                                             print("[ROUTE_GEN] ⏱️ [FALLBACK] Route within 10% (\(actualMin)min) — duplicate, not replacing main")
                                         }
@@ -3573,16 +3579,22 @@ struct LocalRoutePickerSheet: View {
                                     let waypointsStr = enrichedData.places.map { $0.name }.joined(separator: " → ")
                                     let distKm = String(format: "%.1f", Double(cappedGoogleRoute.distanceMeters) / 1000)
                                     await MainActor.run {
-                                        allRoutes.append((route: cappedGoogleRoute, data: enrichedData, isDeadZoneFallback: false, isFromGoogle: true))
-                                        shownPlaceIdSets.append(Set(enrichedData.places.map { $0.placeId }))
-                                        registerRouteSignature(places: enrichedData.places, distanceMeters: refreshed.distanceMeters)
-                                        currentRouteIndex = 1
-                                        generatedRoute = cappedGoogleRoute
-                                        generatedRouteData = enrichedData
-                                        if !viewedRouteIndices.contains(1) { viewedRouteIndices.insert(1) }
-                                        print("[ROUTE_GEN] ROUTE_PREVIEW \(cappedGoogleRoute.name), \(waypointsStr). \(cappedGoogleRoute.durationMinutes) min \(distKm)km, google")
-                                        print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Route 2 added — switched preview to in-band \(refreshed.durationMinutes)min")
-                                        logRoutePreviewSummary()
+                                        // Only add if actually in-band; otherwise store in cross-bucket pool
+                                        if Self.isRouteInBand(cappedGoogleRoute, selectedDuration: selectedDuration) {
+                                            allRoutes.append((route: cappedGoogleRoute, data: enrichedData, isDeadZoneFallback: false, isFromGoogle: true))
+                                            shownPlaceIdSets.append(Set(enrichedData.places.map { $0.placeId }))
+                                            registerRouteSignature(places: enrichedData.places, distanceMeters: refreshed.distanceMeters)
+                                            currentRouteIndex = 1
+                                            generatedRoute = cappedGoogleRoute
+                                            generatedRouteData = enrichedData
+                                            if !viewedRouteIndices.contains(1) { viewedRouteIndices.insert(1) }
+                                            print("[ROUTE_GEN] ROUTE_PREVIEW \(cappedGoogleRoute.name), \(waypointsStr). \(cappedGoogleRoute.durationMinutes) min \(distKm)km, google")
+                                            print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Route 2 added — in-band \(cappedGoogleRoute.durationMinutes)min")
+                                            logRoutePreviewSummary()
+                                        } else {
+                                            storeCrossBucketRoute(route: cappedGoogleRoute, data: enrichedData, isFromGoogle: true)
+                                            print("[ROUTE_GEN] ⏹️ [MAIN OUT-OF-BAND] Route '\(cappedGoogleRoute.name)' still out-of-band (\(cappedGoogleRoute.durationMinutes)min) — stored in cross-bucket pool")
+                                        }
                                     }
                                 }
                                 func buildEnrichedAndRoute(refreshed: WalkingRoute, selected: [PlaceResult]) -> (WalkingRoute, GeneratedRoute) {
@@ -5548,13 +5560,20 @@ struct LocalRoutePickerSheet: View {
                         // FINAL SAFETY CHECK: Deduplicate before storing
                         let deduplicatedResult = mapsService.finalizeRouteDedupForView(result)
                         
-                        // v1.6.47: Freshly generated routes are not dead zone fallbacks. Re-measured with Google when possible to fix wrong display (e.g. 9.1 km → ~0.3 km).
+                        // Only show in-band routes; out-of-band routes go to cross-bucket pool
                         let cappedRoute = Self.applyDurationSanityCap(route, targetDurationMinutes: selectedDuration)
-                        allRoutes.append((route: cappedRoute, data: deduplicatedResult, isDeadZoneFallback: false, isFromGoogle: isFromGoogle))
+                        let routeIsInBand = Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration)
                         
-                        // v2.1.9: If route is out-of-band, also store in cross-bucket pool for its actual duration
-                        if isFromGoogle && !Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) {
-                            storeCrossBucketRoute(route: route, data: deduplicatedResult, isFromGoogle: isFromGoogle)
+                        if routeIsInBand {
+                            allRoutes.append((route: cappedRoute, data: deduplicatedResult, isDeadZoneFallback: false, isFromGoogle: isFromGoogle))
+                        } else {
+                            // Out-of-band: store for reuse at its actual duration, don't show
+                            if isFromGoogle {
+                                storeCrossBucketRoute(route: route, data: deduplicatedResult, isFromGoogle: isFromGoogle)
+                            }
+                            print("[ROUTE_GEN] ⏹️ Pre-gen route '\(cappedRoute.name)' is out-of-band (\(cappedRoute.durationMinutes)min) — stored in cross-bucket pool, not shown")
+                            consecutiveFailures += 1
+                            return
                         }
                         
                         // v1.6.25: Register route signature for deduplication
@@ -5765,21 +5784,12 @@ struct LocalRoutePickerSheet: View {
                                     return
                                 }
                                 
-                                // Only add if in-band (duration + min distance for bucket) OR improves on best. Applies to all buckets.
-                                let (minAcc, maxAcc) = Self.minMaxAcceptableMinutes(for: selectedDuration)
+                                // Only add if in-band (80-120% of target + min distance)
                                 let inBand = Self.isRouteInBand(route, selectedDuration: selectedDuration)
-                                let bestCurrent = allRoutes.min(by: { a, b in
-                                    let aIn = Self.isRouteInBand(a.route, selectedDuration: selectedDuration)
-                                    let bIn = Self.isRouteInBand(b.route, selectedDuration: selectedDuration)
-                                    if aIn && !bIn { return true }; if !aIn && bIn { return false }
-                                    return abs(a.route.durationMinutes - selectedDuration) < abs(b.route.durationMinutes - selectedDuration)
-                                })?.route.durationMinutes ?? 0
-                                let maxAllowed = Int(Double(selectedDuration) * 1.2)
-                                let improves = routeDuration >= minAcc && routeDuration <= maxAllowed && routeDuration > bestCurrent
-                                if !inBand && !improves {
-                                    // v2.1.9: Store in cross-bucket pool instead of discarding
+                                if !inBand {
+                                    // Out-of-band: store in cross-bucket pool, don't show
                                     storeCrossBucketRoute(route: route, data: result, isFromGoogle: true)
-                                    print("[ROUTE_GEN] 🌐 Google fallback attempt: skip (\(routeDuration)min not in-band and doesn't improve on best \(bestCurrent)min)")
+                                    print("[ROUTE_GEN] ⏹️ Google fallback: out-of-band (\(routeDuration)min) — stored in cross-bucket pool, not shown")
                                     googleFailures += 1
                                     return
                                 }
@@ -5787,7 +5797,7 @@ struct LocalRoutePickerSheet: View {
                                 // FINAL SAFETY CHECK: Deduplicate before storing
                                 let deduplicatedResult = mapsService.finalizeRouteDedupForView(result)
                                 
-                                // v1.6.47: Google fallback routes are not dead zone fallbacks. Cap duration for display (all buckets).
+                                // In-band Google fallback route — add to preview
                                 let cappedRoute = route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
                                 allRoutes.append((route: cappedRoute, data: deduplicatedResult, isDeadZoneFallback: false, isFromGoogle: true))
                                 
