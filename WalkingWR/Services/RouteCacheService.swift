@@ -411,9 +411,9 @@ class RouteCacheService {
     func mergeRoutes(_ routes: [GeneratedRoute], at location: CLLocationCoordinate2D, durationMinutes: Int, names: [String?] = [], descriptions: [String?] = [], directions: [[WalkingDirection]] = []) -> (added: Int, replaced: Int) {
         // Session-only: store so same location + duration reuses routes this session (no disk persist for ToS)
         let rounded = RouteCacheService.roundToNearest5Minutes(durationMinutes)
-        let meta = zip(zip(routes, names), zip(descriptions, directions)).map { arg in
+        let meta: [CachedRouteWithMetadata] = zip(zip(routes, names), zip(descriptions, directions)).map { arg in
             let ((r, name), (desc, dirs)) = arg
-            CachedRouteWithMetadata(
+            return CachedRouteWithMetadata(
                 route: r,
                 name: name,
                 description: desc,
@@ -423,7 +423,7 @@ class RouteCacheService {
             )
         }
         if !meta.isEmpty {
-            sessionOnlyCache = (location.latitude, location.longitude, rounded, meta)
+            sessionOnlyCache = (latitude: location.latitude, longitude: location.longitude, durationMinutes: rounded, routes: meta)
             print("📦 Session cache updated: \(meta.count) route(s) for \(rounded)min (this session only)")
         }
         return (0, 0)
@@ -433,7 +433,7 @@ class RouteCacheService {
     func setSessionRoutes(_ routes: [CachedRouteWithMetadata], at location: CLLocationCoordinate2D, durationMinutes: Int) {
         guard !routes.isEmpty else { return }
         let rounded = RouteCacheService.roundToNearest5Minutes(durationMinutes)
-        sessionOnlyCache = (location.latitude, location.longitude, rounded, routes)
+        sessionOnlyCache = (latitude: location.latitude, longitude: location.longitude, durationMinutes: rounded, routes: routes)
         print("📦 Session cache set: \(routes.count) route(s) for \(rounded)min (this session only)")
     }
     
