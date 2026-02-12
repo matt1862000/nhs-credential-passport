@@ -10392,10 +10392,10 @@ class GoogleMapsService: ObservableObject {
             
             if googleWithinTolerance {
                 print("🌐 ✅ Google route within tolerance: \(googleMins)min - using Google")
-                return googleRoute
+                return googleRoute  // already tagged usedGoogleDirections=true by getGoogleDirectionsRoute
             } else if abs(googleMins - targetDurationMinutes) < abs(mins - targetDurationMinutes) {
                 print("🌐 ✓ Google route closer to target: \(googleMins)min vs MapKit \(mins)min")
-                return googleRoute
+                return googleRoute  // already tagged usedGoogleDirections=true by getGoogleDirectionsRoute
             } else {
                 print("🌐 ✗ Google not better, using MapKit: \(mins)min")
             }
@@ -20011,13 +20011,15 @@ class GoogleMapsService: ObservableObject {
                 print("🌐 Google optimized waypoint order: \(waypointOrder)")
             }
             
-            return GeneratedRoute(
+            var route = GeneratedRoute(
                 places: orderedPlaces,
                 polyline: polylinePoints,
                 distanceMeters: totalDistance,
                 durationSeconds: totalDuration,
                 legs: directionsLegs
             )
+            route.usedGoogleDirections = true
+            return route
             
         } catch {
             print("🌐 Google Directions: Error - \(error.localizedDescription)")
@@ -20223,6 +20225,10 @@ struct GeneratedRoute {
     
     // v1.6.46: Track if polyline came from OSRM (driving profile - needs MapKit refresh)
     var usedOSRM: Bool = false
+    
+    // v2.1.12: Track if duration/distance came from Google Directions API (not MapKit/synthetic).
+    // When true, callers can skip redundant Google re-measure calls.
+    var usedGoogleDirections: Bool = false
     
     /// When set (pre-pop routes), walk time from user to first waypoint. Preview shows route-only duration; pill uses durationSeconds + this.
     var travelToStartSeconds: Int? = nil

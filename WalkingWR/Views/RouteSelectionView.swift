@@ -2731,36 +2731,23 @@ struct LocalRoutePickerSheet: View {
                                 // #endregion
                                 
                                 // Prioritise in-band routes: sort so in-band come first, then only append enough to reach targetInBandRoutes
-                                let currentInBand = inBandRouteCount()
                                 let sortedBg = backgroundRoutes.enumerated().sorted { a, b in
                                     let aInBand = Self.isRouteInBand(a.element.route, selectedDuration: selectedDuration)
                                     let bInBand = Self.isRouteInBand(b.element.route, selectedDuration: selectedDuration)
                                     if aInBand != bInBand { return aInBand }
                                     return a.offset < b.offset
                                 }
-                                var addedInBand = currentInBand
                                 for item in sortedBg {
-                                    let isInBand = Self.isRouteInBand(item.element.route, selectedDuration: selectedDuration)
-                                    if isInBand {
-                                        if addedInBand >= targetInBandRoutes {
-                                            // Already have enough in-band routes — store excess in cross-bucket pool
-                                            if item.element.isFromGoogle {
-                                                storeCrossBucketRoute(route: item.element.route, data: item.element.data, isFromGoogle: item.element.isFromGoogle)
-                                            }
-                                            print("[ROUTE_GEN] ⏹️ Skipping in-band route '\(item.element.route.name)' — already have \(addedInBand)/\(targetInBandRoutes) in-band")
-                                            continue
-                                        }
-                                        addedInBand += 1
-                                    } else {
-                                        // Out-of-band route — store in cross-bucket pool, don't show
-                                        if item.element.isFromGoogle {
-                                            storeCrossBucketRoute(route: item.element.route, data: item.element.data, isFromGoogle: item.element.isFromGoogle)
-                                        }
-                                        print("[ROUTE_GEN] ⏹️ Skipping out-of-band route '\(item.element.route.name)' — only showing in-band routes")
-                                        continue
+                                    let added = appendRouteIfAllowed(
+                                        route: item.element.route,
+                                        data: item.element.data,
+                                        isDeadZoneFallback: item.element.isDeadZoneFallback,
+                                        isFromGoogle: item.element.isFromGoogle,
+                                        source: "cache-load"
+                                    )
+                                    if added {
+                                        shownPlaceIdSets.append(backgroundPlaceIdSets[item.offset])
                                     }
-                                    allRoutes.append(item.element)
-                                    shownPlaceIdSets.append(backgroundPlaceIdSets[item.offset])
                                 }
                                 print("[ROUTE_GEN] ⏹️ In-band routes after cache load: \(inBandRouteCount())/\(targetInBandRoutes) target")
                                 
@@ -2904,14 +2891,14 @@ struct LocalRoutePickerSheet: View {
                                 
                                 let cappedRoute = Self.applyDurationSanityCap(displayRoute, targetDurationMinutes: selectedDuration)
                                 await MainActor.run {
-                                    if allRoutes.count < maxRoutesToGenerate {
-                                        allRoutes.append((route: cappedRoute, data: routeData, isDeadZoneFallback: false, isFromGoogle: isFromGoogle))
+                                    let added = appendRouteIfAllowed(
+                                        route: cappedRoute,
+                                        data: routeData,
+                                        isFromGoogle: isFromGoogle,
+                                        source: "lower-bucket-extend"
+                                    )
+                                    if added {
                                         registerRouteSignature(places: routeData.places, distanceMeters: routeData.distanceMeters)
-                                        print("[ROUTE_DEBUG] 📦 Lower-bucket extended route added: \(cappedRoute.name) (\(cappedRoute.durationMinutes)min, \(cappedRoute.distanceMeters)m, isFromGoogle=\(isFromGoogle)) — total routes: \(allRoutes.count)")
-                                        // v2.1.9: Store out-of-band routes in cross-bucket pool
-                                        if isFromGoogle && !Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) {
-                                            storeCrossBucketRoute(route: cappedRoute, data: routeData, isFromGoogle: isFromGoogle)
-                                        }
                                         logRoutePreviewSummary()
                                     }
                                 }
@@ -3209,19 +3196,16 @@ struct LocalRoutePickerSheet: View {
                                         let isDuplicate = shownPlaceIdSets.contains(newPlaceIds)
                                         if !isDuplicate {
                                             let cappedFallback = displayRoute.withDurationSanityCap(targetDurationMinutes: selectedDuration)
-                                            // Only add if in-band; otherwise store in cross-bucket pool
-                                            if Self.isRouteInBand(cappedFallback, selectedDuration: selectedDuration) {
-                                                allRoutes.append((route: cappedFallback, data: generatedData, isDeadZoneFallback: false, isFromGoogle: true))
+                                            let added = appendRouteIfAllowed(
+                                                route: cappedFallback,
+                                                data: generatedData,
+                                                isFromGoogle: true,
+                                                source: "google-30s-fallback"
+                                            )
+                                            if added {
                                                 shownPlaceIdSets.append(newPlaceIds)
                                                 registerRouteSignature(places: generatedData.places, distanceMeters: refreshed.distanceMeters)
-                                                let fallbackWaypoints = generatedData.places.map { $0.name }.joined(separator: " → ")
-                                                let fallbackDistKm = String(format: "%.1f", Double(cappedFallback.distanceMeters) / 1000)
-                                                print("[ROUTE_GEN] ROUTE_PREVIEW \(cappedFallback.name), \(fallbackWaypoints). \(cappedFallback.durationMinutes) min \(fallbackDistKm)km, google")
-                                                print("[ROUTE_GEN] ⏱️ [FALLBACK] In-band route (\(actualMin)min) — added as route 2")
                                                 logRoutePreviewSummary()
-                                            } else {
-                                                storeCrossBucketRoute(route: cappedFallback, data: generatedData, isFromGoogle: true)
-                                                print("[ROUTE_GEN] ⏹️ [FALLBACK] Route (\(actualMin)min) out-of-band — stored in cross-bucket pool, not shown")
                                             }
                                         } else {
                                             print("[ROUTE_GEN] ⏱️ [FALLBACK] Route within 10% (\(actualMin)min) — duplicate, not replacing main")
@@ -3579,21 +3563,20 @@ struct LocalRoutePickerSheet: View {
                                     let waypointsStr = enrichedData.places.map { $0.name }.joined(separator: " → ")
                                     let distKm = String(format: "%.1f", Double(cappedGoogleRoute.distanceMeters) / 1000)
                                     await MainActor.run {
-                                        // Only add if actually in-band; otherwise store in cross-bucket pool
-                                        if Self.isRouteInBand(cappedGoogleRoute, selectedDuration: selectedDuration) {
-                                            allRoutes.append((route: cappedGoogleRoute, data: enrichedData, isDeadZoneFallback: false, isFromGoogle: true))
+                                        let added = appendRouteIfAllowed(
+                                            route: cappedGoogleRoute,
+                                            data: enrichedData,
+                                            isFromGoogle: true,
+                                            source: "main-out-of-band"
+                                        )
+                                        if added {
                                             shownPlaceIdSets.append(Set(enrichedData.places.map { $0.placeId }))
                                             registerRouteSignature(places: enrichedData.places, distanceMeters: refreshed.distanceMeters)
-                                            currentRouteIndex = 1
+                                            currentRouteIndex = allRoutes.count - 1
                                             generatedRoute = cappedGoogleRoute
                                             generatedRouteData = enrichedData
-                                            if !viewedRouteIndices.contains(1) { viewedRouteIndices.insert(1) }
-                                            print("[ROUTE_GEN] ROUTE_PREVIEW \(cappedGoogleRoute.name), \(waypointsStr). \(cappedGoogleRoute.durationMinutes) min \(distKm)km, google")
-                                            print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Route 2 added — in-band \(cappedGoogleRoute.durationMinutes)min")
+                                            if !viewedRouteIndices.contains(currentRouteIndex) { viewedRouteIndices.insert(currentRouteIndex) }
                                             logRoutePreviewSummary()
-                                        } else {
-                                            storeCrossBucketRoute(route: cappedGoogleRoute, data: enrichedData, isFromGoogle: true)
-                                            print("[ROUTE_GEN] ⏹️ [MAIN OUT-OF-BAND] Route '\(cappedGoogleRoute.name)' still out-of-band (\(cappedGoogleRoute.durationMinutes)min) — stored in cross-bucket pool")
                                         }
                                     }
                                 }
@@ -4506,6 +4489,43 @@ struct LocalRoutePickerSheet: View {
         inBandRouteCount() >= targetInBandRoutes
     }
     
+    /// Centralized gate: append a route to allRoutes only if we haven't reached the in-band target.
+    /// Out-of-band routes are always redirected to the cross-bucket pool.
+    /// Returns true if the route was appended to allRoutes, false if it was redirected/rejected.
+    @discardableResult
+    private func appendRouteIfAllowed(
+        route: WalkingRoute,
+        data: GeneratedRoute,
+        isDeadZoneFallback: Bool = false,
+        isFromGoogle: Bool,
+        source: String
+    ) -> Bool {
+        let isInBand = Self.isRouteInBand(route, selectedDuration: selectedDuration)
+        
+        // Out-of-band routes never shown — store in cross-bucket pool
+        if !isInBand {
+            if isFromGoogle {
+                storeCrossBucketRoute(route: route, data: data, isFromGoogle: isFromGoogle)
+            }
+            print("[ROUTE_GEN] ⏹️ [\(source)] '\(route.name)' out-of-band (\(route.durationMinutes)min) — cross-bucket pool")
+            return false
+        }
+        
+        // Already have enough in-band routes — redirect excess
+        if hasEnoughInBandRoutes() {
+            if isFromGoogle {
+                storeCrossBucketRoute(route: route, data: data, isFromGoogle: isFromGoogle)
+            }
+            print("[ROUTE_GEN] ⏹️ [\(source)] '\(route.name)' in-band but already have \(inBandRouteCount())/\(targetInBandRoutes) — skipped")
+            return false
+        }
+        
+        // Append
+        allRoutes.append((route: route, data: data, isDeadZoneFallback: isDeadZoneFallback, isFromGoogle: isFromGoogle))
+        print("[ROUTE_GEN] ✅ [\(source)] '\(route.name)' \(route.durationMinutes)min \(String(format: "%.1f", Double(route.distanceMeters)/1000))km — route \(allRoutes.count) (inBand: \(inBandRouteCount())/\(targetInBandRoutes))")
+        return true
+    }
+    
     /// Log all displayed routes in a single, copy-paste-friendly block so you can share exactly what the app shows (1 of N … N of N).
     /// Search logs for "DISPLAYED ROUTES" to find this block.
     private func logRoutePreviewSummary() {
@@ -5319,10 +5339,18 @@ struct LocalRoutePickerSheet: View {
                     print("[ROUTE_DEBUG] 🔄 Skipping duplicate during injection: '\(injected.route.name)'")
                     continue
                 }
-                allRoutes.append(injected)
-                registerRouteSignature(places: injected.data.places, distanceMeters: injected.data.distanceMeters)
-                shownPlaceIdSets.append(Set(injected.data.places.map { $0.placeId }))
-                injectedCount += 1
+                let added = appendRouteIfAllowed(
+                    route: injected.route,
+                    data: injected.data,
+                    isDeadZoneFallback: injected.isDeadZoneFallback,
+                    isFromGoogle: injected.isFromGoogle,
+                    source: "cross-bucket-inject"
+                )
+                if added {
+                    registerRouteSignature(places: injected.data.places, distanceMeters: injected.data.distanceMeters)
+                    shownPlaceIdSets.append(Set(injected.data.places.map { $0.placeId }))
+                    injectedCount += 1
+                }
             }
             if injectedCount > 0 {
                 print("[ROUTE_DEBUG] 🔄 Injected \(injectedCount) route(s) from previous duration searches")
@@ -5497,13 +5525,16 @@ struct LocalRoutePickerSheet: View {
                         walkingDirections: directions,
                         usedOSRMRouting: result.usedOSRM  // v1.7.1: Track OSRM usage
                     )
-                    var isFromGoogle = false
-                    // 🔍 DIAGNOSTIC: Log values BEFORE Google re-measure
-                    let preGoogleDur = route.durationMinutes
-                    let preGoogleDist = route.distanceMeters
-                    let preGoogleWaypoints = result.places.map { "'\($0.name)' (\(String(format: "%.5f", $0.coordinate.latitude)),\(String(format: "%.5f", $0.coordinate.longitude)))" }.joined(separator: ", ")
-                    print("[ROUTE_DEBUG] 🔍 PRE-GEN route '\(route.name)': BEFORE Google: \(preGoogleDur) min, \(preGoogleDist) m, waypoints=[\(preGoogleWaypoints)]")
-                    if mapsService.hasAPIKey && !result.places.isEmpty {
+                    var isFromGoogle = result.usedGoogleDirections
+                    // v2.1.12: Skip explicit re-measure if generateLocalRoute already used Google Directions
+                    if isFromGoogle {
+                        print("[ROUTE_DEBUG] 🔍 PRE-GEN route '\(route.name)': already Google-measured (\(route.durationMinutes)min, \(route.distanceMeters)m) — skipping redundant re-measure")
+                    } else if mapsService.hasAPIKey && !result.places.isEmpty {
+                        // 🔍 DIAGNOSTIC: Log values BEFORE Google re-measure
+                        let preGoogleDur = route.durationMinutes
+                        let preGoogleDist = route.distanceMeters
+                        let preGoogleWaypoints = result.places.map { "'\($0.name)' (\(String(format: "%.5f", $0.coordinate.latitude)),\(String(format: "%.5f", $0.coordinate.longitude)))" }.joined(separator: ", ")
+                        print("[ROUTE_DEBUG] 🔍 PRE-GEN route '\(route.name)': BEFORE Google: \(preGoogleDur) min, \(preGoogleDist) m, waypoints=[\(preGoogleWaypoints)]")
                         if let googleResult = await mapsService.getGoogleDirectionsRoute(origin: userLocation.coordinate, waypoints: result.places, targetDurationMinutes: selectedDuration) {
                             // 🔍 DIAGNOSTIC: Log Google re-measure result
                             print("[ROUTE_DEBUG] 🔍 PRE-GEN route '\(route.name)': Google re-measure: \(googleResult.durationSeconds)s (\(googleResult.durationSeconds/60)min), \(googleResult.distanceMeters)m")
@@ -5562,16 +5593,15 @@ struct LocalRoutePickerSheet: View {
                         
                         // Only show in-band routes; out-of-band routes go to cross-bucket pool
                         let cappedRoute = Self.applyDurationSanityCap(route, targetDurationMinutes: selectedDuration)
-                        let routeIsInBand = Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration)
                         
-                        if routeIsInBand {
-                            allRoutes.append((route: cappedRoute, data: deduplicatedResult, isDeadZoneFallback: false, isFromGoogle: isFromGoogle))
-                        } else {
-                            // Out-of-band: store for reuse at its actual duration, don't show
-                            if isFromGoogle {
-                                storeCrossBucketRoute(route: route, data: deduplicatedResult, isFromGoogle: isFromGoogle)
-                            }
-                            print("[ROUTE_GEN] ⏹️ Pre-gen route '\(cappedRoute.name)' is out-of-band (\(cappedRoute.durationMinutes)min) — stored in cross-bucket pool, not shown")
+                        let added = appendRouteIfAllowed(
+                            route: cappedRoute,
+                            data: deduplicatedResult,
+                            isFromGoogle: isFromGoogle,
+                            source: "pre-gen-loop"
+                        )
+                        
+                        if !added {
                             consecutiveFailures += 1
                             return
                         }
@@ -5596,13 +5626,20 @@ struct LocalRoutePickerSheet: View {
                         }
                         
                         // v1.6.26: Try waypoint permutation for 2+ waypoint routes (cap duration for display, all buckets)
-                        if result.places.count >= 2 {
+                        if result.places.count >= 2 && !hasEnoughInBandRoutes() {
                             if let permuted = createPermutedRoute(from: cappedRoute, data: result, isDeadZoneFallback: false, isFromGoogle: isFromGoogle) {
-                                let cappedP = (route: permuted.route.withDurationSanityCap(targetDurationMinutes: selectedDuration), data: permuted.data, isDeadZoneFallback: permuted.isDeadZoneFallback, isFromGoogle: permuted.isFromGoogle)
-                                allRoutes.append(cappedP)
-                                registerRouteSignature(places: permuted.data.places, distanceMeters: permuted.data.distanceMeters)
-                                routesGenerated = allRoutes.count
-                                print("🔄 Added permuted route (reversed waypoints) - now \(routesGenerated) routes")
+                                let cappedP = permuted.route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
+                                let permAdded = appendRouteIfAllowed(
+                                    route: cappedP,
+                                    data: permuted.data,
+                                    isDeadZoneFallback: permuted.isDeadZoneFallback,
+                                    isFromGoogle: permuted.isFromGoogle,
+                                    source: "pre-gen-permuted"
+                                )
+                                if permAdded {
+                                    registerRouteSignature(places: permuted.data.places, distanceMeters: permuted.data.distanceMeters)
+                                    routesGenerated = allRoutes.count
+                                }
                             }
                         }
                         
@@ -5666,8 +5703,16 @@ struct LocalRoutePickerSheet: View {
                     var googleRoutesGenerated = 0
                     let maxGoogleRoutes = 5  // Try to get up to 5 more routes from Google
                     var googleFailures = 0
+                    let googleFallbackStart = Date()
+                    let googleFallbackTimeout: TimeInterval = 60  // Stop after 60s — no point burning API calls
                     
                     while googleRoutesGenerated < maxGoogleRoutes && googleFailures < 3 {
+                        // Time gate: bail after 1 minute
+                        let elapsed = Date().timeIntervalSince(googleFallbackStart)
+                        if elapsed >= googleFallbackTimeout {
+                            print("[ROUTE_GEN] 🌐 Google fallback timeout after \(String(format: "%.1f", elapsed))s — stopping")
+                            break
+                        }
                         do {
                             let excludedPlaceIds = await MainActor.run {
                                 shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
@@ -5678,7 +5723,7 @@ struct LocalRoutePickerSheet: View {
                                 allRoutes.flatMap { $0.data.places }
                             }
                             
-                            let result = try await mapsService.generateLocalRoute(
+                            var result = try await mapsService.generateLocalRoute(
                                 from: userLocation.coordinate,
                                 targetDurationMinutes: selectedDuration,
                                 difficulty: nil,
@@ -5751,7 +5796,7 @@ struct LocalRoutePickerSheet: View {
                             // Get route name (should be ready or nearly ready by now)
                             let aiContent = await namingTask.value
                             
-                            let route = WalkingRoute(
+                            var route = WalkingRoute(
                                 name: aiContent.name,
                                 description: aiContent.description,
                                 durationMinutes: max(1, result.durationMinutes),
@@ -5768,28 +5813,61 @@ struct LocalRoutePickerSheet: View {
                                 walkingDirections: directions
                             )
                             
+                            // v2.1.12: Skip explicit re-measure if generateLocalRoute already used Google Directions
+                            var isActuallyFromGoogle = result.usedGoogleDirections
+                            if isActuallyFromGoogle {
+                                print("[ROUTE_DEBUG] 🔍 GOOGLE-POI route '\(route.name)': already Google-measured (\(route.durationMinutes)min, \(route.distanceMeters)m) — skipping redundant re-measure")
+                            } else if mapsService.hasAPIKey && !result.places.isEmpty {
+                                let preGoogleDur = route.durationMinutes
+                                let preGoogleDist = route.distanceMeters
+                                print("[ROUTE_DEBUG] 🔍 GOOGLE-POI route '\(route.name)': BEFORE Google: \(preGoogleDur)min, \(preGoogleDist)m")
+                                if let googleResult = await mapsService.getGoogleDirectionsRoute(origin: userLocation.coordinate, waypoints: result.places, targetDurationMinutes: selectedDuration) {
+                                    let googleDurMin = max(1, googleResult.durationSeconds / 60)
+                                    print("[ROUTE_DEBUG] 🔍 GOOGLE-POI route '\(route.name)': Google re-measure: \(googleResult.durationSeconds)s (\(googleDurMin)min), \(googleResult.distanceMeters)m")
+                                    route = WalkingRoute(
+                                        name: route.name,
+                                        description: route.description,
+                                        durationMinutes: googleDurMin,
+                                        distanceMeters: googleResult.distanceMeters,
+                                        difficulty: route.difficulty,
+                                        isIndoor: route.isIndoor,
+                                        isAccessible: route.isAccessible,
+                                        landmarks: route.landmarks,
+                                        icon: route.icon,
+                                        color: route.color,
+                                        qrMarkers: route.qrMarkers,
+                                        routeType: route.routeType,
+                                        trimmed: route.trimmed,
+                                        walkingDirections: route.walkingDirections
+                                    )
+                                    isActuallyFromGoogle = true
+                                    // Update GeneratedRoute with Google values so data matches route
+                                    result = GeneratedRoute(
+                                        places: result.places,
+                                        polyline: result.polyline,
+                                        distanceMeters: googleResult.distanceMeters,
+                                        durationSeconds: googleResult.durationSeconds,
+                                        legs: result.legs
+                                    )
+                                } else {
+                                    print("[ROUTE_DEBUG] 🔍 GOOGLE-POI route '\(route.name)': Google re-measure FAILED — keeping MapKit \(preGoogleDur)min / \(preGoogleDist)m")
+                                }
+                            }
+                            
                             await MainActor.run {
                                 // v1.8.8: Check if route is too short (< 50% of target)
                                 let minAcceptablePercent = 0.50
                                 let minAcceptableDuration = Int(Double(selectedDuration) * minAcceptablePercent)
-                                let routeDuration = result.durationMinutes
+                                let routeDuration = route.durationMinutes
                                 
                                 if routeDuration < minAcceptableDuration {
                                     // Store for potential use at end if we have ≤2 routes
                                     rejectedShortRoutes.append((route: route, data: result))
                                     // v2.1.9: Also store in cross-bucket pool for its actual duration
-                                    storeCrossBucketRoute(route: route, data: result, isFromGoogle: true)
+                                    if isActuallyFromGoogle {
+                                        storeCrossBucketRoute(route: route, data: result, isFromGoogle: true)
+                                    }
                                     print("[ROUTE_GEN] 🌐 Google fallback attempt: too short (\(routeDuration)min < \(minAcceptableDuration)min) - stored for later")
-                                    googleFailures += 1
-                                    return
-                                }
-                                
-                                // Only add if in-band (80-120% of target + min distance)
-                                let inBand = Self.isRouteInBand(route, selectedDuration: selectedDuration)
-                                if !inBand {
-                                    // Out-of-band: store in cross-bucket pool, don't show
-                                    storeCrossBucketRoute(route: route, data: result, isFromGoogle: true)
-                                    print("[ROUTE_GEN] ⏹️ Google fallback: out-of-band (\(routeDuration)min) — stored in cross-bucket pool, not shown")
                                     googleFailures += 1
                                     return
                                 }
@@ -5797,9 +5875,19 @@ struct LocalRoutePickerSheet: View {
                                 // FINAL SAFETY CHECK: Deduplicate before storing
                                 let deduplicatedResult = mapsService.finalizeRouteDedupForView(result)
                                 
-                                // In-band Google fallback route — add to preview
+                                // In-band Google fallback route — add to preview (gate checks in-band + target count)
                                 let cappedRoute = route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
-                                allRoutes.append((route: cappedRoute, data: deduplicatedResult, isDeadZoneFallback: false, isFromGoogle: true))
+                                let added = appendRouteIfAllowed(
+                                    route: cappedRoute,
+                                    data: deduplicatedResult,
+                                    isFromGoogle: isActuallyFromGoogle,
+                                    source: "google-poi-fallback"
+                                )
+                                
+                                if !added {
+                                    googleFailures += 1
+                                    return
+                                }
                                 
                                 // v1.6.25: Register route signature for deduplication
                                 registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
@@ -5820,12 +5908,19 @@ struct LocalRoutePickerSheet: View {
                                 }
                                 
                                 // v1.6.26: Try waypoint permutation for 2+ waypoint routes (cap duration for display)
-                                if result.places.count >= 2 {
-                                    if let permuted = createPermutedRoute(from: cappedRoute, data: result, isDeadZoneFallback: false, isFromGoogle: true) {
-                                        let cappedPermuted = (route: permuted.route.withDurationSanityCap(targetDurationMinutes: selectedDuration), data: permuted.data, isDeadZoneFallback: permuted.isDeadZoneFallback, isFromGoogle: permuted.isFromGoogle)
-                                        allRoutes.append(cappedPermuted)
-                                        registerRouteSignature(places: permuted.data.places, distanceMeters: permuted.data.distanceMeters)
-                                        print("🔄 Added permuted Google route - now \(allRoutes.count) routes")
+                                if result.places.count >= 2 && !hasEnoughInBandRoutes() {
+                                    if let permuted = createPermutedRoute(from: cappedRoute, data: result, isDeadZoneFallback: false, isFromGoogle: isActuallyFromGoogle) {
+                                        let cappedPermuted = permuted.route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
+                                        let permAdded = appendRouteIfAllowed(
+                                            route: cappedPermuted,
+                                            data: permuted.data,
+                                            isDeadZoneFallback: permuted.isDeadZoneFallback,
+                                            isFromGoogle: permuted.isFromGoogle,
+                                            source: "google-poi-permuted"
+                                        )
+                                        if permAdded {
+                                            registerRouteSignature(places: permuted.data.places, distanceMeters: permuted.data.distanceMeters)
+                                        }
                                     }
                                 }
                                 
@@ -5866,21 +5961,9 @@ struct LocalRoutePickerSheet: View {
                 print("[ROUTE_GEN] 🌐 Google fallback skipped: currentRouteCount=\(currentRouteCount) (need ≤2) or no API key")
             }
             
-            // v2.1.11: Final safety-net sweep — Google-remeasure any routes still showing synthetic/MapKit values
-            // Skip if we already have enough in-band routes (saves API calls)
-            let inBandBeforeFinalSweep = await MainActor.run { inBandRouteCount() }
-            if inBandBeforeFinalSweep < targetInBandRoutes {
-                await googleRemeasureSweep(userLocation: userLocation.coordinate, selectedDuration: selectedDuration)
-            } else {
-                print("[ROUTE_GEN] ⏹️ Final SWEEP skipped — already have \(inBandBeforeFinalSweep)/\(targetInBandRoutes) in-band routes")
-            }
-            
+            // SAFETY NET: Pull fallback routes BEFORE the Google re-measure sweep
+            // so that the sweep covers them too and they get accurate durations.
             await MainActor.run {
-                isPreGeneratingRoutes = false
-                preGenerationComplete = true
-                
-                // SAFETY NET: If we have fewer than targetInBandRoutes routes showing,
-                // pull the closest-to-target routes from cross-bucket pool so the user isn't stuck with 1 route
                 if allRoutes.count < targetInBandRoutes {
                     let needed = targetInBandRoutes - allRoutes.count
                     print("[ROUTE_GEN] ⚠️ Only \(allRoutes.count) route(s) shown — pulling up to \(needed) best out-of-band route(s) as fallback")
@@ -5903,21 +5986,55 @@ struct LocalRoutePickerSheet: View {
                     }
                     for candidate in fallbackCandidates.prefix(needed) {
                         let cappedFallback = candidate.route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
-                        allRoutes.append((route: cappedFallback, data: candidate.data, isDeadZoneFallback: true, isFromGoogle: candidate.isFromGoogle))
-                        print("[ROUTE_GEN] ⚠️ Fallback: added '\(cappedFallback.name)' (\(cappedFallback.durationMinutes)min) from cross-bucket pool")
+                        // Mark isFromGoogle as false so the sweep will re-measure them
+                        allRoutes.append((route: cappedFallback, data: candidate.data, isDeadZoneFallback: true, isFromGoogle: false))
+                        print("[ROUTE_GEN] ⚠️ Fallback: added '\(cappedFallback.name)' (\(cappedFallback.durationMinutes)min) from cross-bucket pool — pending Google re-measure")
                     }
                     if fallbackCandidates.isEmpty && !rejectedShortRoutes.isEmpty {
                         // Last resort: use rejected short routes
                         let bestShort = rejectedShortRoutes.max(by: { $0.data.durationMinutes < $1.data.durationMinutes })
                         if let fallback = bestShort {
                             let cappedFallbackRoute = fallback.route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
+                            // Mark isFromGoogle as false so the sweep will re-measure
                             allRoutes.append((route: cappedFallbackRoute, data: fallback.data, isDeadZoneFallback: true, isFromGoogle: false))
                             isDeadZoneFallback = true
-                            print("[ROUTE_GEN] ⚠️ Last-resort fallback: added short route (\(fallback.data.durationMinutes)min)")
+                            print("[ROUTE_GEN] ⚠️ Last-resort fallback: added short route (\(fallback.data.durationMinutes)min) — pending Google re-measure")
                         }
                     }
                 }
-                rejectedShortRoutes.removeAll()  // Clear the rejected list
+                rejectedShortRoutes.removeAll()
+            }
+            
+            // v2.1.11: Final safety-net sweep — Google-remeasure ALL routes not yet Google-measured
+            // This now covers both original routes AND any fallback routes just pulled from the pool
+            await googleRemeasureSweep(userLocation: userLocation.coordinate, selectedDuration: selectedDuration)
+            
+            // After the sweep, remove any fallback routes that turned out to be wildly off-target
+            // (e.g. Google says 45min for a 20min request) — keep them if they're the only option
+            await MainActor.run {
+                let routeCountBeforePrune = allRoutes.count
+                if routeCountBeforePrune > 1 {
+                    // Only prune dead-zone fallbacks that are way off (> 150% or < 50% of target)
+                    let pruneMin = Int(Double(selectedDuration) * 0.50)
+                    let pruneMax = Int(Double(selectedDuration) * 1.50)
+                    var prunedIndices: [Int] = []
+                    for (idx, entry) in allRoutes.enumerated() {
+                        if entry.isDeadZoneFallback && (entry.route.durationMinutes < pruneMin || entry.route.durationMinutes > pruneMax) {
+                            prunedIndices.append(idx)
+                        }
+                    }
+                    // Don't prune if it would leave us with zero routes
+                    if prunedIndices.count < routeCountBeforePrune {
+                        for idx in prunedIndices.reversed() {
+                            let pruned = allRoutes[idx]
+                            print("[ROUTE_GEN] ✂️ Pruned fallback '\(pruned.route.name)' (\(pruned.route.durationMinutes)min) — too far from \(selectedDuration)min target after Google re-measure")
+                            allRoutes.remove(at: idx)
+                        }
+                    }
+                }
+                
+                isPreGeneratingRoutes = false
+                preGenerationComplete = true
                 
                 // v1.6.25: Log variety status
                 let uniqueCount = routeSignatures.count
