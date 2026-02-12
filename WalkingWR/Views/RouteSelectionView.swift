@@ -1090,7 +1090,7 @@ struct LocalRoutePickerSheet: View {
     // v2.1.9: Cross-bucket route pool — routes generated for one duration whose actual
     // Google-measured duration fits a different bucket. Keyed by rounded 5-min duration.
     // Persists across duration switches within a session so routes aren't "wasted".
-    @State private var crossBucketRoutePool: [Int: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)]] = [:]
+    // Cross-bucket pool is now session-level in RouteCacheService so it survives Cancel (e.g. 20min run → Cancel → 15min reuses 15min route)
     
     // Pre-fetched POIs for faster route generation
     @State private var prefetchedPOIs: [PlaceResult] = []
@@ -1104,6 +1104,11 @@ struct LocalRoutePickerSheet: View {
     let durationOptions = [10, 15, 20, 25, 30]
     let maxRoutesToGenerate = 10  // Back to 10 - directions now use free Apple MapKit!
     let targetInBandRoutes = 2   // Stop generation once we have 2 routes within 80-120% of target
+    
+    // RUN_SUMMARY: for 10 vs 20 min (or any) comparison — set during generation, logged when done
+    @State private var runSummaryStartTime: Date?
+    @State private var runSummarySource: String = ""
+    @State private var runSummaryTimeToFirstRouteSec: TimeInterval?
     
     // v2.0.1: Check if delay is too short for a walk
     // Need at least 15 minutes (10 min walk + 5 min buffer) to recommend a walk
@@ -1858,6 +1863,9 @@ struct LocalRoutePickerSheet: View {
     
     func generateRoute() {
         let generateStartTime = Date()
+        runSummaryStartTime = generateStartTime
+        runSummarySource = ""
+        runSummaryTimeToFirstRouteSec = nil
         
         // Immediate logging to detect button tap
         print("")
@@ -1966,13 +1974,10 @@ struct LocalRoutePickerSheet: View {
                     print("   preGeneratedAtLocation exists, distanceMoved: \(Int(distanceMoved))m")
                     if !shouldUseCache {
                         print("📍 User moved \(Int(distanceMoved))m (>\(Int(movementThresholdMeters))m) - skipping cache, regenerating fresh")
-                        // v2.1.9: Clear cross-bucket pool when user moves significantly (routes are location-specific)
+                        // v2.1.9: Clear session cache (same-duration + cross-bucket pool) when user moves significantly (routes are location-specific)
                         await MainActor.run {
-                            if !crossBucketRoutePool.isEmpty {
-                                let poolCount = crossBucketRoutePool.values.reduce(0) { $0 + $1.count }
-                                crossBucketRoutePool.removeAll()
-                                print("[ROUTE_DEBUG] 🔄 Cleared pool (\(poolCount) routes) — user moved \(Int(distanceMoved))m")
-                            }
+                            RouteCacheService.shared.clearSessionCache()
+                            print("[ROUTE_DEBUG] 🔄 Cleared session cache (same-duration + cross-bucket pool) — user moved \(Int(distanceMoved))m")
                         }
                     }
                 } else {
@@ -1986,6 +1991,7 @@ struct LocalRoutePickerSheet: View {
                 if shouldUseCache, let cachedRoutes = RouteCacheService.shared.getCachedRoutes(near: userLocation.coordinate, durationMinutes: selectedDuration), !cachedRoutes.isEmpty {
                     let cacheCheckElapsed = Date().timeIntervalSince(cacheCheckStartTime)
                     let sourceLabel = cachedRoutes.first?.isFromPrePopulatedDatabase == true ? "prepop_database" : "memory_cache"
+                    await MainActor.run { runSummarySource = sourceLabel }
                     let firstActual = cachedRoutes.first?.route.durationSeconds ?? 0
                     let firstActualMin = firstActual / 60
                     let ratioPct = selectedDuration > 0 ? Int(round(Double(firstActualMin) / Double(selectedDuration) * 100)) : 0
@@ -2253,6 +2259,8 @@ struct LocalRoutePickerSheet: View {
                         isGenerating = false
                         routeGenerationComplete = true  // Mark complete so user can see first route
                         allRoutes = loadedRoutes
+                        let timeToFirst = Date().timeIntervalSince(generateStartTime)
+                        runSummaryTimeToFirstRouteSec = timeToFirst
                         logRoutePreviewSummary()
                         
                         // Auto-advance to route 2 if available (skip template Route 1)
@@ -2910,11 +2918,13 @@ struct LocalRoutePickerSheet: View {
                     let inBandAfterCache = await MainActor.run { inBandRouteCount() }
                     if inBandAfterCache >= targetInBandRoutes {
                         print("[ROUTE_GEN] ⏹️ Already have \(inBandAfterCache)/\(targetInBandRoutes) in-band routes from cache — skipping pre-generation")
+                        await MainActor.run { logRunSummary() }
                     } else if cachedRoutes.count < maxRoutesToGenerate {
                         print("📦 Only \(inBandAfterCache)/\(targetInBandRoutes) in-band routes — will pre-generate more")
                         preGenerateRemainingRoutes()
                     } else {
                         print("📦 All \(cachedRoutes.count) routes loaded from cache")
+                        await MainActor.run { logRunSummary() }
                         // v1.6.46: Background refresh - search for potentially better routes
                         backgroundRefreshRoutes(at: userLocation.coordinate, duration: selectedDuration)
                     }
@@ -2925,6 +2935,7 @@ struct LocalRoutePickerSheet: View {
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE MISS - generating fresh route...")
                 print("ROUTE_PHASE phase=cache_miss_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                 print("ROUTES_SOURCE | source=live_generation duration=\(selectedDuration) (no database/cache hit, generating routes now)")
+                await MainActor.run { runSummarySource = "live_generation" }
                 
                 // 🔧 DEBUG: Database-only mode - don't generate routes if database doesn't have them
                 if RoutingToggles.databaseOnlyMode {
@@ -3763,6 +3774,7 @@ struct LocalRoutePickerSheet: View {
                         
                         isGenerating = false
                         routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
+                        runSummaryTimeToFirstRouteSec = runSummaryStartTime.map { Date().timeIntervalSince($0) }
                         let cappedDisplay = Self.applyDurationSanityCap(displayRoute, targetDurationMinutes: selectedDuration)
                         generatedRoute = cappedDisplay
                         generatedRouteData = deduplicatedResult
@@ -3802,6 +3814,18 @@ struct LocalRoutePickerSheet: View {
                         rejectedShortRoutes = []  // v1.8.8: Clear any previous rejected routes
                         viewedRouteIndices = [initialRouteIndex]  // Mark the shown route as viewed
                         shownPlaceIdSets = placeIdSetsToShow
+                        // Session cache: so Cancel → Generate again is instant (even before pre-gen completes)
+                        let liveSessionMeta = routesToShow.map { e in
+                            RouteCacheService.CachedRouteWithMetadata(
+                                route: e.data,
+                                name: e.route.name,
+                                description: e.route.description,
+                                directions: e.route.walkingDirections,
+                                isDeadZoneFallback: e.isDeadZoneFallback,
+                                isFromPrePopulatedDatabase: false
+                            )
+                        }
+                        RouteCacheService.shared.setSessionRoutes(liveSessionMeta, at: userLocation.coordinate, durationMinutes: selectedDuration)
                         // When we auto-switch to route 2, update generatedRoute/generatedRouteData so preview shows the Google route (capped)
                         if initialRouteIndex == 1, routesToShow.count > 1 {
                             generatedRoute = routesToShow[1].route
@@ -4554,12 +4578,32 @@ struct LocalRoutePickerSheet: View {
             print("[ROUTE_DEBUG] 📊 Raw GeneratedRoute: \(e.data.durationSeconds)s / \(e.data.distanceMeters)m | WalkingRoute: \(e.route.durationMinutes)min / \(e.route.distanceMeters)m | places_in_data=\(e.data.places.count) | isFromGoogle=\(e.isFromGoogle)")
         }
         print("[ROUTE_GEN] ========== END DISPLAYED ROUTES ==========")
-        // v2.1.9: Log cross-bucket pool status
-        let poolTotal = crossBucketRoutePool.values.reduce(0) { $0 + $1.count }
-        if poolTotal > 0 {
-            let bucketSummary = crossBucketRoutePool.sorted(by: { $0.key < $1.key }).map { "\($0.key)min: \($0.value.count)" }.joined(separator: ", ")
-            print("[ROUTE_DEBUG] 🔄 Cross-bucket pool: \(poolTotal) route(s) — [\(bucketSummary)]")
+        // v2.1.9: Log session cross-bucket pool status
+        let bucketSummary = RouteCacheService.shared.sessionCrossBucketPoolSummary()
+        if !bucketSummary.isEmpty {
+            print("[ROUTE_DEBUG] 🔄 Cross-bucket pool (session): \(bucketSummary)")
         }
+    }
+    
+    /// One-block summary for comparing runs (e.g. 10 min vs 20 min). Paste two blocks to compare.
+    /// Search for "[RUN_SUMMARY]" to find this in console.
+    private func logRunSummary() {
+        let source = runSummarySource.isEmpty ? "unknown" : runSummarySource
+        let timeToFirst = runSummaryTimeToFirstRouteSec.map { String(format: "%.2f", $0) } ?? "—"
+        let total = allRoutes.count
+        let inBand = inBandRouteCount()
+        let totalElapsed = runSummaryStartTime.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "—"
+        print("")
+        print("[RUN_SUMMARY] ═══════════════════════════════════════════════════════════")
+        print("[RUN_SUMMARY] target_min=\(selectedDuration) source=\(source) time_to_first_route_sec=\(timeToFirst) total_elapsed_sec=\(totalElapsed) total_routes=\(total) in_band=\(inBand)")
+        for (i, e) in allRoutes.enumerated() {
+            let wpCount = e.data.places.count
+            let distKm = String(format: "%.1f", Double(e.route.distanceMeters) / 1000)
+            let src = e.isFromGoogle ? "google" : (e.route.isFromPrePopulatedDatabase ? "prepop" : "live")
+            print("[RUN_SUMMARY]   \(i + 1). \(e.route.name) | \(e.route.durationMinutes) min | \(distKm) km | \(wpCount) waypoints | \(src)")
+        }
+        print("[RUN_SUMMARY] ═══════════════════════════════════════════════════════════")
+        print("")
     }
     
     // MARK: - v2.1.11: Google Re-measure Sweep
@@ -4653,75 +4697,20 @@ struct LocalRoutePickerSheet: View {
     /// Store an out-of-band route in the cross-bucket pool for potential reuse at its actual duration.
     /// Only stores Google-verified routes whose actual duration lands in a different 5-min bucket than the current request.
     private func storeCrossBucketRoute(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool) {
-        let actualDuration = route.durationMinutes
-        let bucket = RouteCacheService.roundToNearest5Minutes(actualDuration)
         let currentBucket = RouteCacheService.roundToNearest5Minutes(selectedDuration)
-        
-        // Don't store if it's the current bucket (already in allRoutes or will be)
-        guard bucket != currentBucket else { return }
-        
-        // Only store reasonable durations (5–60 min range)
-        guard bucket >= 5 && bucket <= 60 else {
-            print("[ROUTE_DEBUG] 🔄 Skipping '\(route.name)' (\(actualDuration)min) — outside 5–60 min range")
-            return
-        }
-        
-        // Deduplicate by waypoint signature
-        let newSig = Set(data.places.map { $0.placeId })
-        if let existing = crossBucketRoutePool[bucket] {
-            let isDuplicate = existing.contains { entry in
-                Set(entry.data.places.map { $0.placeId }) == newSig
-            }
-            if isDuplicate {
-                print("[ROUTE_DEBUG] 🔄 Skipping duplicate '\(route.name)' for \(bucket)min bucket")
-                return
-            }
-            // Cap at 5 routes per bucket
-            if existing.count >= 5 {
-                print("[ROUTE_DEBUG] 🔄 Bucket \(bucket)min full (5 routes) — skipping '\(route.name)'")
-                return
-            }
-        }
-        
-        crossBucketRoutePool[bucket, default: []].append((route: route, data: data, isFromGoogle: isFromGoogle))
-        let totalPooled = crossBucketRoutePool.values.reduce(0) { $0 + $1.count }
-        print("[ROUTE_DEBUG] 🔄 Stored '\(route.name)' (\(actualDuration)min actual) → \(bucket)min bucket (pool: \(totalPooled) routes across \(crossBucketRoutePool.count) buckets)")
+        RouteCacheService.shared.addToSessionCrossBucket(route: route, data: data, isFromGoogle: isFromGoogle, currentBucket: currentBucket)
     }
     
-    /// Retrieve and remove routes from the cross-bucket pool that are in-band for the given duration.
+    /// Retrieve and remove routes from the session cross-bucket pool that are in-band for the given duration.
     /// Returns routes ready to be added to allRoutes. Removes them from the pool once consumed.
     private func consumeCrossBucketRoutes(for targetDuration: Int) -> [(route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool, isFromGoogle: Bool)] {
-        var result: [(route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool, isFromGoogle: Bool)] = []
-        let targetBucket = RouteCacheService.roundToNearest5Minutes(targetDuration)
-        
-        // Check the target bucket and adjacent buckets (±5 min) for in-band routes
-        let bucketsToCheck = [targetBucket, targetBucket - 5, targetBucket + 5].filter { $0 >= 5 && $0 <= 60 }
-        
-        for bucket in bucketsToCheck {
-            guard var pooled = crossBucketRoutePool[bucket], !pooled.isEmpty else { continue }
-            
-            var consumed: [Int] = []
-            for (i, entry) in pooled.enumerated() {
-                if Self.isRouteInBand(entry.route, selectedDuration: targetDuration) {
-                    let cappedRoute = Self.applyDurationSanityCap(entry.route, targetDurationMinutes: targetDuration)
-                    result.append((route: cappedRoute, data: entry.data, isDeadZoneFallback: false, isFromGoogle: entry.isFromGoogle))
-                    consumed.append(i)
-                    print("[ROUTE_DEBUG] 🔄 Consuming '\(entry.route.name)' (\(entry.route.durationMinutes)min) from \(bucket)min bucket for \(targetDuration)min request")
-                }
-            }
-            
-            // Remove consumed routes (reverse order to preserve indices)
-            for i in consumed.reversed() {
-                pooled.remove(at: i)
-            }
-            crossBucketRoutePool[bucket] = pooled.isEmpty ? nil : pooled
+        let entries = RouteCacheService.shared.consumeSessionCrossBucket(for: targetDuration) { route, sel in
+            Self.isRouteInBand(route, selectedDuration: sel)
         }
-        
-        if !result.isEmpty {
-            print("[ROUTE_DEBUG] 🔄 Injecting \(result.count) previously-generated route(s) for \(targetDuration)min target")
+        return entries.map { entry in
+            let cappedRoute = Self.applyDurationSanityCap(entry.route, targetDurationMinutes: targetDuration)
+            return (route: cappedRoute, data: entry.data, isDeadZoneFallback: false, isFromGoogle: entry.isFromGoogle)
         }
-        
-        return result
     }
     
     /// Waypoint distance bands (minMult, maxMult) for main out-of-band Google attempts. Distances are duration * mult (meters). Per-bucket so short durations don't get tiny routes and long durations get long enough round-trips. Applies to all buckets (5–60 min).
@@ -5364,6 +5353,21 @@ struct LocalRoutePickerSheet: View {
             isPreGeneratingRoutes = false
             preGenerationComplete = true
             logRoutePreviewSummary()
+            logRunSummary()
+            // Session cache: so Cancel → Generate again is instant when we had enough from cross-bucket
+            let sessionMeta = allRoutes.map { e in
+                RouteCacheService.CachedRouteWithMetadata(
+                    route: e.data,
+                    name: e.route.name,
+                    description: e.route.description,
+                    directions: e.route.walkingDirections,
+                    isDeadZoneFallback: e.isDeadZoneFallback,
+                    isFromPrePopulatedDatabase: false
+                )
+            }
+            if let coord = locationService.currentLocation?.coordinate {
+                RouteCacheService.shared.setSessionRoutes(sessionMeta, at: coord, durationMinutes: selectedDuration)
+            }
             return
         }
         
@@ -5968,23 +5972,11 @@ struct LocalRoutePickerSheet: View {
                     let needed = targetInBandRoutes - allRoutes.count
                     print("[ROUTE_GEN] ⚠️ Only \(allRoutes.count) route(s) shown — pulling up to \(needed) best out-of-band route(s) as fallback")
                     
-                    // Gather all cross-bucket routes across all buckets, sorted by closeness to target
-                    var fallbackCandidates: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
-                    for (_, pooledRoutes) in crossBucketRoutePool {
-                        for entry in pooledRoutes {
-                            // Skip duplicates already in allRoutes
-                            let sig = Set(entry.data.places.map { $0.placeId })
-                            let isDup = allRoutes.contains { Set($0.data.places.map { $0.placeId }) == sig }
-                            if !isDup {
-                                fallbackCandidates.append(entry)
-                            }
-                        }
-                    }
-                    // Sort by closeness to requested duration
-                    fallbackCandidates.sort { a, b in
-                        abs(a.route.durationMinutes - selectedDuration) < abs(b.route.durationMinutes - selectedDuration)
-                    }
-                    for candidate in fallbackCandidates.prefix(needed) {
+                    let fallbackCandidates = RouteCacheService.shared.takeSessionCrossBucketFallbackCandidates(needed: needed, selectedDuration: selectedDuration)
+                    let existingSigs = Set(allRoutes.map { Set($0.data.places.map { $0.placeId }) })
+                    for candidate in fallbackCandidates {
+                        let sig = Set(candidate.data.places.map { $0.placeId })
+                        if existingSigs.contains(sig) { continue }
                         let cappedFallback = candidate.route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
                         // Mark isFromGoogle as false so the sweep will re-measure them
                         allRoutes.append((route: cappedFallback, data: candidate.data, isDeadZoneFallback: true, isFromGoogle: false))
@@ -6044,6 +6036,20 @@ struct LocalRoutePickerSheet: View {
                     print("🏁 Pre-generation complete for \(selectedDuration)min! \(allRoutes.count) routes generated")
                 }
                 logRoutePreviewSummary()
+                logRunSummary()
+                
+                // Session-only cache: so Cancel → Generate again (same location, same duration) is instant
+                let sessionMeta = allRoutes.map { e in
+                    RouteCacheService.CachedRouteWithMetadata(
+                        route: e.data,
+                        name: e.route.name,
+                        description: e.route.description,
+                        directions: e.route.walkingDirections,
+                        isDeadZoneFallback: e.isDeadZoneFallback,
+                        isFromPrePopulatedDatabase: false
+                    )
+                }
+                RouteCacheService.shared.setSessionRoutes(sessionMeta, at: userLocation.coordinate, durationMinutes: selectedDuration)
                 
                 // Print simple route summary
                 print("\n═══════════════════════════════════════════════════════════")

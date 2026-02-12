@@ -21,6 +21,12 @@ class RouteCacheService {
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
     private let cacheExpiryHours: Double = 24 // Routes expire after 24 hours
     
+    /// Session-only cache for live-generated routes (not persisted; ToS). Reused when user taps Generate again without moving.
+    private var sessionOnlyCache: (latitude: Double, longitude: Double, durationMinutes: Int, routes: [CachedRouteWithMetadata])?
+    
+    /// Session-only cross-bucket pool: out-of-band routes keyed by duration bucket (e.g. 15, 25). Survives Cancel so 15 min route from a 20 min run can be used when user comes back and selects 15 min.
+    private var sessionCrossBucketPool: [Int: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)]] = [:]
+    
     private init() {}
     
     // MARK: - Duration Rounding
@@ -239,13 +245,21 @@ class RouteCacheService {
             }
         }
         
+        // 🎯 PRIORITY 0.5: Session-only cache (live-generated routes this session; not persisted for ToS)
+        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
+        if let session = sessionOnlyCache {
+            let sessionCoord = CLLocationCoordinate2D(latitude: session.latitude, longitude: session.longitude)
+            let distance = distanceBetween(sessionCoord, location)
+            if distance <= matchRadiusMeters && session.durationMinutes == roundedDuration && !session.routes.isEmpty {
+                print("📦 SESSION CACHE HIT! \(session.routes.count) route(s) for \(durationMinutes)min at this location (instant reuse)")
+                return session.routes
+            }
+        }
+        
         // 🎯 PRIORITY 1: Check regular cache
         let cached = loadCache()
         
-        // Round to nearest 5 minutes for consistent caching (e.g., 42min → 40min)
-        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
-        
-        // Calculate tolerance for the REQUESTED duration
+        // Calculate tolerance for the REQUESTED duration (roundedDuration already set above)
         let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
         let minPercent = isEdgeCase ? 0.75 : 0.80
         let maxPercent = isEdgeCase ? 1.25 : 1.20
@@ -393,14 +407,118 @@ class RouteCacheService {
     }
     
     /// Merge new routes into existing cache (smart quality-based update)
-    /// v2.1.0: DISABLED for ToS compliance - dynamically generated routes use MapKit polylines
-    /// which cannot be cached per Apple's Terms of Service.
-    /// Returns: (added: 0, replaced: 0) - no caching performed
+    /// v2.1.0: Persist disabled for ToS; we still update session-only cache so Cancel → Generate again is instant.
     func mergeRoutes(_ routes: [GeneratedRoute], at location: CLLocationCoordinate2D, durationMinutes: Int, names: [String?] = [], descriptions: [String?] = [], directions: [[WalkingDirection]] = []) -> (added: Int, replaced: Int) {
-        // v2.1.0: Route caching disabled for ToS compliance
-        print("📦 Route Merge: Skipping cache (ToS compliance - routes use MapKit polylines)")
-        print("📦 Route Merge: \(routes.count) routes available for this session only")
+        // Session-only: store so same location + duration reuses routes this session (no disk persist for ToS)
+        let rounded = RouteCacheService.roundToNearest5Minutes(durationMinutes)
+        let meta = zip(zip(routes, names), zip(descriptions, directions)).map { arg in
+            let ((r, name), (desc, dirs)) = arg
+            CachedRouteWithMetadata(
+                route: r,
+                name: name,
+                description: desc,
+                directions: dirs.isEmpty ? nil : dirs,
+                isDeadZoneFallback: false,
+                isFromPrePopulatedDatabase: false
+            )
+        }
+        if !meta.isEmpty {
+            sessionOnlyCache = (location.latitude, location.longitude, rounded, meta)
+            print("📦 Session cache updated: \(meta.count) route(s) for \(rounded)min (this session only)")
+        }
         return (0, 0)
+    }
+    
+    /// Save live-generated routes to session-only cache (full set). Called when generation completes so Cancel → Generate reuses them.
+    func setSessionRoutes(_ routes: [CachedRouteWithMetadata], at location: CLLocationCoordinate2D, durationMinutes: Int) {
+        guard !routes.isEmpty else { return }
+        let rounded = RouteCacheService.roundToNearest5Minutes(durationMinutes)
+        sessionOnlyCache = (location.latitude, location.longitude, rounded, routes)
+        print("📦 Session cache set: \(routes.count) route(s) for \(rounded)min (this session only)")
+    }
+    
+    /// Clear session-only cache and cross-bucket pool (e.g. when user moves >50m so we don't serve stale routes).
+    func clearSessionCache() {
+        let hadSession = sessionOnlyCache != nil
+        let hadPool = !sessionCrossBucketPool.isEmpty
+        sessionOnlyCache = nil
+        sessionCrossBucketPool.removeAll()
+        if hadSession || hadPool {
+            print("📦 Session cache cleared (same-duration + cross-bucket pool)")
+        }
+    }
+    
+    // MARK: - Session cross-bucket pool (other durations)
+    
+    /// Store an out-of-band route in the session cross-bucket pool so it can be used when user later selects that duration (even after Cancel).
+    func addToSessionCrossBucket(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool, currentBucket: Int) {
+        let actualDuration = route.durationMinutes
+        let bucket = RouteCacheService.roundToNearest5Minutes(actualDuration)
+        guard bucket != currentBucket else { return }
+        guard bucket >= 5 && bucket <= 60 else { return }
+        
+        let newSig = Set(data.places.map { $0.placeId })
+        if let existing = sessionCrossBucketPool[bucket] {
+            if existing.contains(where: { Set($0.data.places.map { $0.placeId }) == newSig }) { return }
+            if existing.count >= 5 { return }
+        }
+        
+        sessionCrossBucketPool[bucket, default: []].append((route: route, data: data, isFromGoogle: isFromGoogle))
+        let total = sessionCrossBucketPool.values.reduce(0) { $0 + $1.count }
+        print("[ROUTE_DEBUG] 🔄 Session cross-bucket: stored '\(route.name)' (\(actualDuration)min) → \(bucket)min bucket (pool: \(total) routes)")
+    }
+    
+    /// Take in-band routes from the session cross-bucket pool for the given target duration (target bucket ±5). Only in-band entries are removed from the pool.
+    func consumeSessionCrossBucket(for targetDuration: Int, isInBand: (WalkingRoute, Int) -> Bool) -> [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] {
+        let targetBucket = RouteCacheService.roundToNearest5Minutes(targetDuration)
+        let bucketsToCheck = [targetBucket, targetBucket - 5, targetBucket + 5].filter { $0 >= 5 && $0 <= 60 }
+        var result: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
+        
+        for bucket in bucketsToCheck {
+            guard var pooled = sessionCrossBucketPool[bucket], !pooled.isEmpty else { continue }
+            var kept: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
+            for entry in pooled {
+                if isInBand(entry.route, targetDuration) {
+                    result.append(entry)
+                } else {
+                    kept.append(entry)
+                }
+            }
+            sessionCrossBucketPool[bucket] = kept.isEmpty ? nil : kept
+        }
+        
+        if !result.isEmpty {
+            print("[ROUTE_DEBUG] 🔄 Session cross-bucket: consumed \(result.count) route(s) for \(targetDuration)min")
+        }
+        return result
+    }
+    
+    /// For safety net: get the N routes from the pool closest to selectedDuration (for fallback when we have fewer than targetInBandRoutes). Removes them from the pool.
+    func takeSessionCrossBucketFallbackCandidates(needed: Int, selectedDuration: Int) -> [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] {
+        var all: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
+        for (_, pooled) in sessionCrossBucketPool {
+            all.append(contentsOf: pooled)
+        }
+        guard !all.isEmpty else { return [] }
+        all.sort { abs($0.route.durationMinutes - selectedDuration) < abs($1.route.durationMinutes - selectedDuration) }
+        let taken = Array(all.prefix(needed))
+        let takenSigs = Set(taken.map { Set($0.data.places.map { $0.placeId }) })
+        for bucket in sessionCrossBucketPool.keys {
+            sessionCrossBucketPool[bucket] = sessionCrossBucketPool[bucket]?.filter { entry in
+                !takenSigs.contains(Set(entry.data.places.map { $0.placeId }))
+            }
+            if sessionCrossBucketPool[bucket]?.isEmpty == true { sessionCrossBucketPool[bucket] = nil }
+        }
+        if !taken.isEmpty {
+            print("[ROUTE_DEBUG] 🔄 Session cross-bucket: took \(taken.count) fallback candidate(s) for \(selectedDuration)min")
+        }
+        return taken
+    }
+    
+    /// Pool size for logging (e.g. "15min: 2, 25min: 1").
+    func sessionCrossBucketPoolSummary() -> String {
+        guard !sessionCrossBucketPool.isEmpty else { return "" }
+        return sessionCrossBucketPool.sorted(by: { $0.key < $1.key }).map { "\($0.key)min: \($0.value.count)" }.joined(separator: ", ")
     }
     
     /// v1.6.46: Increment skip count for a route (user shuffled past it)
