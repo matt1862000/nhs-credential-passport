@@ -1967,6 +1967,9 @@ struct LocalRoutePickerSheet: View {
                 
                 // CHECK CACHE FIRST (with movement detection)
                 print("🔍 Checking for cached routes...")
+                // v2.1.10: If session cache is from a different location (e.g. Cancel at WF2 → open at S66), wipe it
+                RouteCacheService.shared.clearSessionCacheIfLocationChanged(from: userLocation.coordinate, threshold: 50)
+                
                 let shouldUseCache: Bool
                 if let preGenLocation = preGeneratedAtLocation {
                     let distanceMoved = distanceBetweenCoordinates(userLocation.coordinate, preGenLocation)

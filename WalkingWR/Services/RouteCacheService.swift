@@ -27,6 +27,9 @@ class RouteCacheService {
     /// Session-only cross-bucket pool: out-of-band routes keyed by duration bucket (e.g. 15, 25). Survives Cancel so 15 min route from a 20 min run can be used when user comes back and selects 15 min.
     private var sessionCrossBucketPool: [Int: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)]] = [:]
     
+    /// Location where session routes were generated (used to detect stale cache after Cancel + move).
+    private var sessionLocation: CLLocationCoordinate2D?
+    
     private init() {}
     
     // MARK: - Duration Rounding
@@ -424,6 +427,7 @@ class RouteCacheService {
         }
         if !meta.isEmpty {
             sessionOnlyCache = (latitude: location.latitude, longitude: location.longitude, durationMinutes: rounded, routes: meta)
+            sessionLocation = location
             print("📦 Session cache updated: \(meta.count) route(s) for \(rounded)min (this session only)")
         }
         return (0, 0)
@@ -434,6 +438,7 @@ class RouteCacheService {
         guard !routes.isEmpty else { return }
         let rounded = RouteCacheService.roundToNearest5Minutes(durationMinutes)
         sessionOnlyCache = (latitude: location.latitude, longitude: location.longitude, durationMinutes: rounded, routes: routes)
+        sessionLocation = location
         print("📦 Session cache set: \(routes.count) route(s) for \(rounded)min (this session only)")
     }
     
@@ -443,9 +448,24 @@ class RouteCacheService {
         let hadPool = !sessionCrossBucketPool.isEmpty
         sessionOnlyCache = nil
         sessionCrossBucketPool.removeAll()
+        sessionLocation = nil
         if hadSession || hadPool {
             print("📦 Session cache cleared (same-duration + cross-bucket pool)")
         }
+    }
+    
+    /// If the session cache was created far from the given location, clear it and return true. Otherwise return false.
+    /// Call this before checking the cache so stale routes from a different location aren't served.
+    @discardableResult
+    func clearSessionCacheIfLocationChanged(from currentLocation: CLLocationCoordinate2D, threshold: Double = 50) -> Bool {
+        guard let stored = sessionLocation else { return false }
+        let distance = distanceBetween(stored, currentLocation)
+        if distance > threshold {
+            print("📦 Session cache is \(Int(distance))m from current location (>\(Int(threshold))m) — clearing stale session cache")
+            clearSessionCache()
+            return true
+        }
+        return false
     }
     
     // MARK: - Session cross-bucket pool (other durations)

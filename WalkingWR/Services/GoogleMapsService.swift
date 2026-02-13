@@ -2832,10 +2832,14 @@ class GoogleMapsService: ObservableObject {
         // Convert to PlaceResult format
         // Note: vicinity and types are nil because we're using Essentials SKU (cost optimization)
         // v1.9.48: Tag with .google source for tracking
-        return newPlacesResponse.places?.map { place in
-            PlaceResult(
+        return newPlacesResponse.places?.compactMap { place in
+            // Skip places with no display name or junk names (e.g. "Unknown", "West Walk (0.6km)")
+            guard let displayName = place.displayName?.text, !GoogleMapsService.isJunkPOIName(displayName) else {
+                return nil
+            }
+            return PlaceResult(
                 placeId: place.id ?? "unknown",
-                name: place.displayName?.text ?? "Unknown",
+                name: displayName,
                 vicinity: nil, // Not requested (Pro SKU - displayName required for good names)
                 geometry: PlaceGeometry(
                     location: PlaceLocation(
@@ -3011,7 +3015,7 @@ class GoogleMapsService: ObservableObject {
                 let response = try await search.start()
                 
                 for item in response.mapItems {
-                    guard let name = item.name, !seenNames.contains(name) else { continue }
+                    guard let name = item.name, !GoogleMapsService.isJunkPOIName(name), !seenNames.contains(name) else { continue }
                     
                     let itemCoord = item.placemark.coordinate
                     let distance = distanceBetween(location, itemCoord)
@@ -3112,7 +3116,7 @@ class GoogleMapsService: ObservableObject {
                     let response = try await search.start()
                     
                     for item in response.mapItems {
-                        guard let name = item.name, !seenNames.contains(name) else { continue }
+                        guard let name = item.name, !GoogleMapsService.isJunkPOIName(name), !seenNames.contains(name) else { continue }
                         
                         let itemCoord = item.placemark.coordinate
                         let distance = distanceBetween(location, itemCoord)
@@ -3466,8 +3470,8 @@ class GoogleMapsService: ObservableObject {
                             for element in elements {
                                 guard let tags = element["tags"] as? [String: String] else { continue }
                                 
-                                // Get name - skip if no name
-                                guard let name = tags["name"] else { continue }
+                                // Get name - skip if no name or junk name
+                                guard let name = tags["name"], !GoogleMapsService.isJunkPOIName(name) else { continue }
                                 
                                 // Get coordinates (handle both nodes and ways with center)
                                 var lat: Double?
@@ -3724,9 +3728,9 @@ class GoogleMapsService: ObservableObject {
             else if let t = item["caption"] as? String { title = t }
             else if let t = item["subject"] as? String { title = t }
             
-            guard let finalTitle = title, !finalTitle.isEmpty else {
+            guard let finalTitle = title, !GoogleMapsService.isJunkPOIName(finalTitle) else {
                 if index < 3 { // Log first few failures
-                    print("📸 \(label): Item \(index) missing title/name - keys: \(item.keys.joined(separator: ", "))")
+                    print("📸 \(label): Item \(index) missing/junk title - keys: \(item.keys.joined(separator: ", "))")
                 }
                 continue
             }
@@ -19517,6 +19521,20 @@ class GoogleMapsService: ObservableObject {
     /// Clean POI name for display - removes grid references and location suffixes
     /// Preserves capitalization and formatting
     /// Example: "SE2922: Lindale Methodist Church, Kirkhamgate" -> "Lindale Methodist Church"
+    /// Returns true if the POI name is a placeholder or trail-distance label that shouldn't be a waypoint.
+    /// Examples: "Unnamed", "Unknown", "West Walk (0.6km)", "Footpath (1.2mi)"
+    static func isJunkPOIName(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return true }
+        if trimmed.caseInsensitiveCompare("Unnamed") == .orderedSame { return true }
+        if trimmed.caseInsensitiveCompare("Unknown") == .orderedSame { return true }
+        // Trail/path labels ending in a distance like "(0.6km)" or "(1.2 mi)"
+        if trimmed.range(of: #"\(\s*\d+(\.\d+)?\s*(km|mi|m|miles)\s*\)\s*$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return true
+        }
+        return false
+    }
+    
     static func cleanPOIDisplayName(_ name: String) -> String {
         var cleaned = name
         

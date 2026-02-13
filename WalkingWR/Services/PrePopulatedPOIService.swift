@@ -306,6 +306,9 @@ class PrePopulatedPOIService {
                     let distanceToPOI = distanceBetween(location, poiCoord)
                     
                     if distanceToPOI <= radiusMeters {
+                        // Skip POIs with junk names (e.g. "Unnamed" grit bins, "West Walk (0.6km)")
+                        if GoogleMapsService.isJunkPOIName(poi.name) { continue }
+                        
                         // Convert to PlaceResult
                         let placeResult = PlaceResult(
                             placeId: poi.placeId,
@@ -583,7 +586,8 @@ class PrePopulatedPOIService {
                                 let candidates = area.pois
                                     .filter { !existingIds.contains($0.placeId) }
                                     .filter { poi in
-                                        self.distanceBetween(location, CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)) <= maxDistFromOrigin
+                                        guard !GoogleMapsService.isJunkPOIName(poi.name) else { return false }
+                                        return self.distanceBetween(location, CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)) <= maxDistFromOrigin
                                     }
                                     .map { RouteGeometryHelper.Candidate(id: $0.placeId, coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)) }
                                 let existingCoords = filteredPOIs.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
@@ -982,6 +986,8 @@ class PrePopulatedPOIService {
         guard !places.isEmpty else { return nil }
         var kept: [PrePopulatedPOIDatabase.PrePopulatedPOI] = []
         for poi in places {
+            // Skip POIs with junk names (e.g. "Unnamed" grit bins, "West Walk (0.6km)")
+            if GoogleMapsService.isJunkPOIName(poi.name) { continue }
             let coord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
             let tooClose = kept.contains { other in
                 distanceBetween(coord, CLLocationCoordinate2D(latitude: other.latitude, longitude: other.longitude)) < minDistance
