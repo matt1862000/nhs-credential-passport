@@ -4370,6 +4370,10 @@ struct LocalRoutePickerSheet: View {
     
     /// v2.1.10: Generate one additional route on demand (+1 button). Appends to allRoutes instead of replacing.
     private func handleGenerateAdditionalRoute() {
+        guard !varietyExhausted else {
+            print("[+1] Variety exhausted — ignoring")
+            return
+        }
         guard additionalRoutesGenerated < maxAdditionalRoutes else {
             print("[+1] Cap reached (\(maxAdditionalRoutes)) — ignoring")
             return
@@ -4389,125 +4393,167 @@ struct LocalRoutePickerSheet: View {
         print("[+1] Generating additional route (\(additionalRoutesGenerated)/\(maxAdditionalRoutes), \(remaining) remaining)")
         
         Task {
-            do {
-                let excludedPlaceIds = await MainActor.run {
-                    shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
-                }
-                let excludedPOIs = await MainActor.run {
-                    allRoutes.flatMap { $0.data.places }
-                }
-                let poisToUse = await MainActor.run {
-                    prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
-                }
+            let deadline = Date().addingTimeInterval(10) // 10-second hard timeout
+            var attempt = 0
+            var added = false
+            
+            while Date() < deadline {
+                attempt += 1
+                print("[+1] Attempt \(attempt) (remaining: \(String(format: "%.1f", deadline.timeIntervalSinceNow))s)")
                 
-                let result = try await mapsService.generateLocalRoute(
-                    from: userLocation.coordinate,
-                    targetDurationMinutes: selectedDuration,
-                    difficulty: nil,
-                    excludePlaceIds: excludedPlaceIds,
-                    excludePOIs: excludedPOIs,
-                    prefetchedPOIs: poisToUse
-                )
-                
-                guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
-                    await MainActor.run {
-                        isGeneratingAdditionalRoute = false
-                        print("[+1] Generation returned empty result")
+                do {
+                    let excludedPlaceIds = await MainActor.run {
+                        shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) }
                     }
-                    return
-                }
-                
-                let markers = await MainActor.run {
-                    createMarkersFromPlaces(result.places, origin: userLocation.coordinate)
-                }
-                guard !markers.isEmpty else {
-                    await MainActor.run {
-                        isGeneratingAdditionalRoute = false
-                        print("[+1] No markers created")
+                    let excludedPOIs = await MainActor.run {
+                        allRoutes.flatMap { $0.data.places }
                     }
-                    return
-                }
-                
-                var directions = await MainActor.run {
-                    extractWalkingDirections(from: result.legs, waypoints: result.places)
-                }
-                
-                // Name the route in parallel with directions
-                let waypointInfos = result.places.map { place in
-                    GeminiService.WaypointInfo(
-                        name: place.name,
-                        types: place.types ?? [],
-                        vicinity: place.vicinity
-                    )
-                }
-                let namingTask = Task {
-                    await GeminiService.shared.generateRouteContent(
-                        waypoints: waypointInfos,
-                        durationMinutes: result.durationMinutes,
-                        distanceMeters: result.distanceMeters,
-                        difficulty: nil
-                    )
-                }
-                
-                if directions.isEmpty && !result.places.isEmpty {
-                    let waypointCoords = result.places.map { $0.coordinate }
-                    let waypointNames = result.places.map { $0.name }
-                    directions = await mapsService.getMapKitDirectionsForRoute(
-                        origin: userLocation.coordinate,
-                        waypoints: waypointCoords,
-                        destination: userLocation.coordinate,
-                        waypointNames: waypointNames
-                    )
-                }
-                
-                let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
-                let aiContent = await namingTask.value
-                
-                await MainActor.run {
-                    let route = WalkingRoute(
-                        name: aiContent.name,
-                        description: aiContent.description,
-                        durationMinutes: max(1, result.durationMinutes),
-                        distanceMeters: result.distanceMeters,
-                        difficulty: routeDifficulty,
-                        isIndoor: false,
-                        isAccessible: true,
-                        landmarks: ["Start"] + result.places.map { $0.name } + ["Return"],
-                        icon: "location.fill",
-                        color: .tealAccent,
-                        qrMarkers: markers,
-                        routeType: .local,
-                        trimmed: result.polyline,
-                        walkingDirections: directions,
-                        usedOSRMRouting: result.usedOSRM
-                    )
-                    
-                    let newPlaceIds = Set(result.places.map { $0.placeId })
-                    if !shownPlaceIdSets.contains(newPlaceIds) {
-                        shownPlaceIdSets.append(newPlaceIds)
+                    let poisToUse = await MainActor.run {
+                        prefetchedPOIs.isEmpty ? nil : prefetchedPOIs
                     }
                     
-                    // Append to allRoutes (not replace current view)
-                    let added = appendRouteIfAllowed(
-                        route: route,
-                        data: result,
-                        isDeadZoneFallback: false,
-                        isFromGoogle: false,
-                        source: "+1_button"
+                    let result = try await mapsService.generateLocalRoute(
+                        from: userLocation.coordinate,
+                        targetDurationMinutes: selectedDuration,
+                        difficulty: nil,
+                        excludePlaceIds: excludedPlaceIds,
+                        excludePOIs: excludedPOIs,
+                        prefetchedPOIs: poisToUse
                     )
                     
-                    isGeneratingAdditionalRoute = false
-                    
-                    if added {
-                        print("[+1] ✅ Added '\(route.name)' — now \(allRoutes.count) route(s)")
-                    } else {
-                        print("[+1] Route generated but not added (out-of-band or cap)")
+                    // Check timeout after generation returns
+                    guard Date() < deadline else {
+                        print("[+1] ⏱️ Timeout after generation returned (attempt \(attempt))")
+                        break
                     }
+                    
+                    guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
+                        print("[+1] Attempt \(attempt): empty result — retrying")
+                        continue
+                    }
+                    
+                    // Quick in-band check before doing expensive naming/directions work
+                    let durationMin = max(1, result.durationMinutes)
+                    let wouldBeInBand = await MainActor.run {
+                        let minBand = Int(Double(selectedDuration) * 0.80)
+                        let maxBand = Int(Double(selectedDuration) * 1.20)
+                        return durationMin >= minBand && durationMin <= maxBand
+                    }
+                    if !wouldBeInBand {
+                        print("[+1] Attempt \(attempt): out-of-band (\(durationMin)min) — retrying")
+                        // Store in cross-bucket pool before retrying
+                        await MainActor.run {
+                            storeCrossBucketRoute(route: WalkingRoute(
+                                name: "pending", description: "", durationMinutes: durationMin,
+                                distanceMeters: result.distanceMeters, difficulty: .easy,
+                                isIndoor: false, isAccessible: true, landmarks: [],
+                                icon: "location.fill", color: .tealAccent, qrMarkers: [],
+                                routeType: .local, trimmed: result.polyline,
+                                walkingDirections: [], usedOSRMRouting: result.usedOSRM
+                            ), data: result, isFromGoogle: false)
+                        }
+                        continue
+                    }
+                    
+                    let markers = await MainActor.run {
+                        createMarkersFromPlaces(result.places, origin: userLocation.coordinate)
+                    }
+                    guard !markers.isEmpty else {
+                        print("[+1] Attempt \(attempt): no markers — retrying")
+                        continue
+                    }
+                    
+                    var directions = await MainActor.run {
+                        extractWalkingDirections(from: result.legs, waypoints: result.places)
+                    }
+                    
+                    // Name the route in parallel with directions
+                    let waypointInfos = result.places.map { place in
+                        GeminiService.WaypointInfo(
+                            name: place.name,
+                            types: place.types ?? [],
+                            vicinity: place.vicinity
+                        )
+                    }
+                    let namingTask = Task {
+                        await GeminiService.shared.generateRouteContent(
+                            waypoints: waypointInfos,
+                            durationMinutes: result.durationMinutes,
+                            distanceMeters: result.distanceMeters,
+                            difficulty: nil
+                        )
+                    }
+                    
+                    if directions.isEmpty && !result.places.isEmpty {
+                        let waypointCoords = result.places.map { $0.coordinate }
+                        let waypointNames = result.places.map { $0.name }
+                        directions = await mapsService.getMapKitDirectionsForRoute(
+                            origin: userLocation.coordinate,
+                            waypoints: waypointCoords,
+                            destination: userLocation.coordinate,
+                            waypointNames: waypointNames
+                        )
+                    }
+                    
+                    let routeDifficulty: RouteDifficulty = durationMin <= 10 ? .easy : (durationMin <= 20 ? .moderate : .challenging)
+                    let aiContent = await namingTask.value
+                    
+                    added = await MainActor.run {
+                        let route = WalkingRoute(
+                            name: aiContent.name,
+                            description: aiContent.description,
+                            durationMinutes: durationMin,
+                            distanceMeters: result.distanceMeters,
+                            difficulty: routeDifficulty,
+                            isIndoor: false,
+                            isAccessible: true,
+                            landmarks: ["Start"] + result.places.map { $0.name } + ["Return"],
+                            icon: "location.fill",
+                            color: .tealAccent,
+                            qrMarkers: markers,
+                            routeType: .local,
+                            trimmed: result.polyline,
+                            walkingDirections: directions,
+                            usedOSRMRouting: result.usedOSRM
+                        )
+                        
+                        let newPlaceIds = Set(result.places.map { $0.placeId })
+                        if !shownPlaceIdSets.contains(newPlaceIds) {
+                            shownPlaceIdSets.append(newPlaceIds)
+                        }
+                        
+                        // Append to allRoutes — bypass in-band cap since user explicitly requested +1
+                        let didAdd = appendRouteIfAllowed(
+                            route: route,
+                            data: result,
+                            isDeadZoneFallback: false,
+                            isFromGoogle: false,
+                            source: "+1_button",
+                            bypassInBandCap: true
+                        )
+                        
+                        if didAdd {
+                            print("[+1] ✅ Added '\(route.name)' — now \(allRoutes.count) route(s)")
+                            logRoutePreviewSummary()
+                        }
+                        return didAdd
+                    }
+                    
+                    if added { break }
+                    print("[+1] Attempt \(attempt): appendRouteIfAllowed rejected — retrying")
+                    
+                } catch {
+                    print("[+1] Attempt \(attempt): error \(error.localizedDescription) — retrying")
                 }
-            } catch {
-                await MainActor.run {
-                    isGeneratingAdditionalRoute = false
-                    print("[+1] ❌ Generation failed: \(error.localizedDescription)")
+            }
+            
+            // Finished: either added a route or timed out
+            await MainActor.run {
+                isGeneratingAdditionalRoute = false
+                if !added {
+                    // No valid route found within 10s — mark variety exhausted
+                    varietyExhausted = true
+                    print("[+1] ❌ No valid in-band route found after \(attempt) attempt(s) / 10s — variety exhausted")
                 }
             }
         }
@@ -4679,7 +4725,8 @@ struct LocalRoutePickerSheet: View {
         data: GeneratedRoute,
         isDeadZoneFallback: Bool = false,
         isFromGoogle: Bool,
-        source: String
+        source: String,
+        bypassInBandCap: Bool = false
     ) -> Bool {
         let isInBand = Self.isRouteInBand(route, selectedDuration: selectedDuration)
         
@@ -4692,8 +4739,8 @@ struct LocalRoutePickerSheet: View {
             return false
         }
         
-        // Already have enough in-band routes — redirect excess
-        if hasEnoughInBandRoutes() {
+        // Already have enough in-band routes — redirect excess (unless bypassed by +1 button)
+        if !bypassInBandCap && hasEnoughInBandRoutes() {
             if isFromGoogle {
                 storeCrossBucketRoute(route: route, data: data, isFromGoogle: isFromGoogle)
             }
@@ -4703,7 +4750,17 @@ struct LocalRoutePickerSheet: View {
         
         // Append
         allRoutes.append((route: route, data: data, isDeadZoneFallback: isDeadZoneFallback, isFromGoogle: isFromGoogle))
-        print("[ROUTE_GEN] ✅ [\(source)] '\(route.name)' \(route.durationMinutes)min \(String(format: "%.1f", Double(route.distanceMeters)/1000))km — route \(allRoutes.count) (inBand: \(inBandRouteCount())/\(targetInBandRoutes))")
+        let currentInBand = inBandRouteCount()
+        print("[ROUTE_GEN] ✅ [\(source)] '\(route.name)' \(route.durationMinutes)min \(String(format: "%.1f", Double(route.distanceMeters)/1000))km — route \(allRoutes.count) (inBand: \(currentInBand)/\(targetInBandRoutes))")
+        
+        // Immediately dismiss loading indicator once we have enough in-band routes
+        // (post-loop sweep/fallback work continues silently in background)
+        if currentInBand >= targetInBandRoutes && isPreGeneratingRoutes {
+            isPreGeneratingRoutes = false
+            preGenerationComplete = true
+            print("[ROUTE_GEN] ✅ Loading indicator dismissed (\(currentInBand)/\(targetInBandRoutes) in-band reached via \(source))")
+        }
+        
         return true
     }
     
@@ -5546,6 +5603,14 @@ struct LocalRoutePickerSheet: View {
                 let currentInBand = await MainActor.run { inBandRouteCount() }
                 if currentInBand >= targetInBandRoutes {
                     print("[ROUTE_GEN] ⏹️ Reached \(currentInBand)/\(targetInBandRoutes) in-band routes — stopping pre-generation")
+                    // Immediately dismiss the loading indicator — post-loop work (sweep, fallback) continues silently
+                    await MainActor.run {
+                        if isPreGeneratingRoutes {
+                            isPreGeneratingRoutes = false
+                            preGenerationComplete = true
+                            print("[ROUTE_GEN] ✅ Loading indicator dismissed (2/2 in-band reached)")
+                        }
+                    }
                     break
                 }
                 // v1.9.22: Check if user action cancelled background work
@@ -6948,6 +7013,11 @@ struct LocalRouteMapPreview: View {
     // Permissions are now requested DURING the walk (optional step tracking)
     // and AFTER the walk (HealthKit sync option)
     
+    /// +1 button is enabled only when: not currently generating, still has remaining presses, and variety is not exhausted
+    var canGenerateAdditional: Bool {
+        additionalRoutesRemaining > 0 && !isGeneratingAdditional && !varietyExhausted
+    }
+    
     var primaryButtonText: String {
         // Always show "Let's Go!" - spinner will appear at end if loading
         return "Let's Go!"
@@ -7452,45 +7522,46 @@ struct LocalRouteMapPreview: View {
                 
                 // Action buttons
                 HStack(spacing: 10) {
-                    // v1.6.45: Only show Next button if there's more than 1 route
+                    // v1.6.45: Only show Next and +1 buttons once we have 2+ routes
                     if totalRoutes > 1 {
-                    Button(action: onShuffle) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "shuffle")
-                                .font(.title3)
-                                .fontWeight(.medium)
+                        // Next button — lavenderMist
+                        Button(action: onShuffle) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "shuffle")
+                                    .font(.title3)
+                                    .fontWeight(.medium)
                                 Text("Next")
                                     .font(.subheadline)
                                     .fontWeight(.medium)
-                        }
-                        .foregroundColor(.tealAccent)
-                            .padding(.horizontal, 16)
-                        .frame(height: 48)
-                        .background(Color.tealAccent.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    }
-                    
-                    // v2.1.10: +1 button — generate one additional route on demand
-                    Button(action: onGenerateAdditional) {
-                        Group {
-                            if isGeneratingAdditional {
-                                ProgressView()
-                                    .tint(.tealAccent)
-                            } else {
-                                Text("+1")
-                                    .font(.title3)
-                                    .fontWeight(.bold)
                             }
+                            .foregroundColor(.lavenderMist)
+                            .padding(.horizontal, 16)
+                            .frame(height: 48)
+                            .background(Color.lavenderMist.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-                        .foregroundColor(additionalRoutesRemaining > 0 && !isGeneratingAdditional ? .tealAccent : .gray)
-                        .frame(width: 48, height: 48)
-                        .background((additionalRoutesRemaining > 0 && !isGeneratingAdditional ? Color.tealAccent : Color.gray).opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .buttonStyle(.plain)
+                        
+                        // v2.1.10: +1 button — softAmber, generate one additional route on demand
+                        Button(action: onGenerateAdditional) {
+                            Group {
+                                if isGeneratingAdditional {
+                                    ProgressView()
+                                        .tint(.softAmber)
+                                } else {
+                                    Text("+1")
+                                        .font(.title3)
+                                        .fontWeight(.bold)
+                                }
+                            }
+                            .foregroundColor(canGenerateAdditional ? .softAmber : .gray)
+                            .frame(width: 48, height: 48)
+                            .background((canGenerateAdditional ? Color.softAmber : Color.gray).opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!canGenerateAdditional)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(additionalRoutesRemaining <= 0 || isGeneratingAdditional)
                     
                     // v1.6.28: Simplified - start walk immediately (no permission gates)
                     Button {
