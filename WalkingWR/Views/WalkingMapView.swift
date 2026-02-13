@@ -57,15 +57,28 @@ struct WalkingMapView: View {
                     }
                     
                     // Discovery markers along the route
+                    // Name rendered as part of view so it's always visible
                     ForEach(viewModel.selectedRoute?.qrMarkers ?? [], id: \.id) { marker in
-                        Annotation(marker.name, coordinate: marker.coordinate) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.mintGreen)
-                                    .frame(width: 32, height: 32)
-                                Image(systemName: "mappin")
-                                    .font(.caption)
-                                    .foregroundColor(.white)
+                        Annotation("", coordinate: marker.coordinate) {
+                            VStack(spacing: 2) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.mintGreen)
+                                        .frame(width: 32, height: 32)
+                                    Image(systemName: "mappin")
+                                        .font(.caption)
+                                        .foregroundColor(.white)
+                                }
+                                Text(marker.name)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(.ultraThinMaterial)
+                                    )
                             }
                             .id(marker.id)
                         }
@@ -426,8 +439,11 @@ struct EmbeddedWalkMapView: View {
         // When user tapped "Head Home", the return path is drawn via returnSegment (blue); skip main polyline
         if viewModel.isHeadingBack { return [] }
         
-        // Once MapKit/Google refresh has run, never draw straight-line fallback (avoids stale or empty-polyline route)
-        if viewModel.hasReceivedGoogleRefreshForPill && (currentRoute.encodedPolyline ?? "").isEmpty {
+        // IMPORTANT: Never show straight-line fallback — only show real polylines.
+        // When walk starts instantly before Google/MapKit refresh, the route has no encoded polyline.
+        // Drawing straight lines between markers looks broken. Instead, show nothing until
+        // the background refresh delivers a real polyline (map still shows markers + user position).
+        if !currentRoute.hasPolyline {
             return []
         }
         
@@ -583,26 +599,40 @@ struct EmbeddedWalkMapView: View {
                 }
             }
             
-            // Active Route Polyline
+            // Active Route Polyline — only when a real polyline exists (not straight-line fallback)
             if let currentRoute = viewModel.walkSession.currentRoute,
-               currentRoute.routePath.count >= 2,
+               currentRoute.hasPolyline,
+               !polylineToShow.isEmpty,
                !isShowingReturnRoute {
                 MapPolyline(coordinates: polylineToShow)
                     .stroke(currentRoute.color, lineWidth: 4)
             }
             
             // Waypoints (stable id per marker avoids invalid reuse)
+            // Name rendered as part of view so it's always visible
             if !markers.isEmpty {
                 ForEach(Array(markers.enumerated()), id: \.element.id) { index, marker in
                     let isVisited = visitedIds.contains(marker.id)
                     let isNext = !isVisited && !markers.prefix(index).contains(where: { !visitedIds.contains($0.id) })
-                    Annotation(marker.name, coordinate: marker.coordinate) {
-                        WaypointMarkerView(
-                            name: marker.name,
-                            index: index + 1,
-                            isNext: isNext,
-                            isVisited: isVisited
-                        )
+                    Annotation("", coordinate: marker.coordinate) {
+                        VStack(spacing: 2) {
+                            WaypointMarkerView(
+                                name: marker.name,
+                                index: index + 1,
+                                isNext: isNext,
+                                isVisited: isVisited
+                            )
+                            Text(marker.name)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule()
+                                        .fill(.ultraThinMaterial)
+                                )
+                        }
                         .id(marker.id)
                     }
                 }
@@ -614,9 +644,10 @@ struct EmbeddedWalkMapView: View {
                     .stroke(Color.blue, lineWidth: 5)
             }
             
-            // Cached Route Preview (passive)
+            // Cached Route Preview (passive) — only when a real polyline exists
             if let previewRoute = cachedRoute,
                viewModel.walkSession.currentRoute == nil,
+               previewRoute.hasPolyline,
                !previewRoute.routePath.isEmpty {
                 MapPolyline(coordinates: previewRoute.routePath)
                     .stroke(previewRoute.color, lineWidth: 4)

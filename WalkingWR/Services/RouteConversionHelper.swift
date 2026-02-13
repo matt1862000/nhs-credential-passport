@@ -42,7 +42,7 @@ enum RouteConversionHelper {
     }
 
     static func markersFromPlaces(_ places: [PlaceResult], origin: CLLocationCoordinate2D) -> [QRMarker] {
-        let realPlaces = places.filter { $0.name != "Route Point" }
+        let realPlaces = places.filter { $0.name != "Route Point" && !GoogleMapsService.isJunkPOIName($0.name) }
         return realPlaces.enumerated().map { index, place in
             let content = WellbeingContent.breathingExercises.randomElement() ?? WellbeingContent.breathingExercises[0]
             return QRMarker(

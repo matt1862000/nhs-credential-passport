@@ -6584,11 +6584,30 @@ struct LocalRoutePickerSheet: View {
             trimmed: nil
         )
         
+        // Build GeneratedRoute from markers so "Places along your route:" chips always show
+        let fallbackPlaces = markers.map { m in
+            PlaceResult(
+                placeId: m.id.uuidString,
+                name: m.name,
+                vicinity: m.location,
+                geometry: PlaceGeometry(location: PlaceLocation(lat: m.coordinate.latitude, lng: m.coordinate.longitude)),
+                types: ["point_of_interest"],
+                source: .unknown
+            )
+        }
+        let fallbackData = GeneratedRoute(
+            places: fallbackPlaces,
+            polyline: "",
+            distanceMeters: distanceM,
+            durationSeconds: displayDuration * 60,
+            legs: []
+        )
+        
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             isGenerating = false
             routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
             generatedRoute = localRoute
-            generatedRouteData = nil
+            generatedRouteData = fallbackData
             print("TIME_SOURCE | Route shown (fallback path): \(localRoute.durationMinutes) min — FROM MAPKIT/OSRM (Google refresh will run after Let's Go)")
             // v1.8.13: Don't show map preview immediately - let stage animations complete first
             // showMapPreview = true  // REMOVED - this was causing stages to be skipped
@@ -7227,15 +7246,28 @@ struct LocalRouteMapPreview: View {
                 }
                 
                 // Discovery markers (POIs) — stable id per marker
+                // Name rendered as part of the view (not MapKit title) so it's always visible
                 ForEach(route.qrMarkers) { marker in
-                    Annotation(marker.name, coordinate: marker.coordinate) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.mintGreen)
-                                .frame(width: 32, height: 32)
-                            Image(systemName: "mappin")
-                                .font(.caption)
-                                .foregroundColor(.white)
+                    Annotation("", coordinate: marker.coordinate) {
+                        VStack(spacing: 2) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.mintGreen)
+                                    .frame(width: 32, height: 32)
+                                Image(systemName: "mappin")
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                            }
+                            Text(marker.name)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule()
+                                        .fill(.ultraThinMaterial)
+                                )
                         }
                         .id(marker.id)
                     }
@@ -7382,7 +7414,8 @@ struct LocalRouteMapPreview: View {
                 }
                 
                 // Places found (if using smart routing)
-                if let data = generatedData, !data.places.isEmpty {
+                if let data = generatedData, !data.places.filter({ !GoogleMapsService.isJunkPOIName($0.name) }).isEmpty {
+                    let displayPlaces = data.places.filter { !GoogleMapsService.isJunkPOIName($0.name) }
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Places along your route:")
                             .font(.caption)
@@ -7390,7 +7423,7 @@ struct LocalRouteMapPreview: View {
                         
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
-                                ForEach(data.places) { place in
+                                ForEach(displayPlaces) { place in
                                     HStack(spacing: 4) {
                                         Image(systemName: "mappin.circle.fill")
                                             .font(.caption)
@@ -8073,15 +8106,28 @@ struct RouteMapPreviewSheet: View {
                     }
                     
                     // Discovery markers — stable id per marker
+                    // Name rendered as part of view so it's always visible
                     ForEach(route.qrMarkers) { marker in
-                        Annotation(marker.name, coordinate: marker.coordinate) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.mintGreen)
-                                    .frame(width: 32, height: 32)
-                                Image(systemName: "mappin")
-                                    .font(.caption)
-                                    .foregroundColor(.white)
+                        Annotation("", coordinate: marker.coordinate) {
+                            VStack(spacing: 2) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.mintGreen)
+                                        .frame(width: 32, height: 32)
+                                    Image(systemName: "mappin")
+                                        .font(.caption)
+                                        .foregroundColor(.white)
+                                }
+                                Text(marker.name)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(.ultraThinMaterial)
+                                    )
                             }
                             .id(marker.id)
                         }

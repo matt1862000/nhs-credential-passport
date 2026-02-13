@@ -5895,9 +5895,14 @@ class GoogleMapsService: ObservableObject {
                             endAddress: nil,
                             steps: nil
                         )
+                        // Encode a basic polyline from the known route shape (origin → waypoints → destination)
+                        // so routes have an interim polyline before Google refresh provides the real one.
+                        // This is a rough approximation but shows the user which direction the route goes.
+                        let syntheticCoords = [origin] + waypoints + [destination]
+                        let syntheticPolyline = self.encodePolyline(syntheticCoords)
                         let syntheticResult = DirectionsResult(
                             legs: [syntheticLeg],
-                            overviewPolyline: OverviewPolyline(points: ""),  // Empty polyline - will be filled later
+                            overviewPolyline: OverviewPolyline(points: syntheticPolyline),
                             summary: nil,
                             warnings: nil,
                             waypointOrder: nil
@@ -12636,13 +12641,19 @@ class GoogleMapsService: ObservableObject {
                             legs: directions.legs
                         )
                         
-                        // Keep the best match: accuracy weighted by waypoint preference
+                        // Keep the best match: accuracy weighted by waypoint preference + travel-to-start penalty
                         // 3% bonus per WP, capped at 10% total — prevents 5-WP routes from winning with poor accuracy
+                        // Travel-to-start penalty: 5% per 10% of walk time spent just reaching the first waypoint
                         let wpBonus = accuracy - min(Double(wpCount) * 0.03, 0.10)
-                        if wpBonus < bestStrategyAAccuracy {
-                            bestStrategyAAccuracy = wpBonus
+                        let firstWPDist = selectedPOIs.first.map { distanceBetween(location, $0.coordinate) } ?? 0
+                        let travelToStartMin = firstWPDist / Double(adaptiveWalkingSpeed)
+                        let travelPct = durationMin > 0 ? travelToStartMin / Double(durationMin) : 0
+                        let travelPenalty = max(0, (travelPct - 0.15)) * 0.5  // No penalty under 15%, then 5% score per 10% travel
+                        let adjustedScore = wpBonus + travelPenalty
+                        if adjustedScore < bestStrategyAAccuracy {
+                            bestStrategyAAccuracy = adjustedScore
                             bestStrategyARoute = route
-                            print("⚡ [FAST-PATH] 📊 POI-direct candidate: \(durationMin)min (\(Int(Double(durationMin)/Double(targetDurationMinutes)*100))%) with \(wpCount) POIs (radius=\(Int(targetRadiusM))m)")
+                            print("⚡ [FAST-PATH] 📊 POI-direct candidate: \(durationMin)min (\(Int(Double(durationMin)/Double(targetDurationMinutes)*100))%) with \(wpCount) POIs (radius=\(Int(targetRadiusM))m, travel=\(Int(travelPct*100))%)")
                         }
                         
                         // If within 85-115% with 2+ WPs, return immediately (great accuracy + variety)
@@ -12725,6 +12736,10 @@ class GoogleMapsService: ObservableObject {
             if let bestA = bestStrategyARoute {
                 let aDurationMin = bestA.durationSeconds / 60
                 let aAccuracy = abs(Double(aDurationMin) / Double(targetDurationMinutes) - 1.0)
+                // Travel-to-start for Strategy A
+                let aFirstDist = bestA.places.first.map { distanceBetween(location, $0.coordinate) } ?? 0
+                let aTravelPct = aDurationMin > 0 ? (aFirstDist / Double(adaptiveWalkingSpeed)) / Double(aDurationMin) : 0
+                let aTravelPen = max(0, (aTravelPct - 0.15)) * 0.5
                 
                 // Check if any base route is more accurate
                 if let bestBase = fpBaseRoutes.min(by: { r1, r2 in
@@ -12732,10 +12747,15 @@ class GoogleMapsService: ObservableObject {
                 }) {
                     let bDurationMin = bestBase.durationSeconds / 60
                     let bAccuracy = abs(Double(bDurationMin) / Double(targetDurationMinutes) - 1.0)
+                    // Travel-to-start for base route
+                    let bFirstDist = bestBase.places.first.map { distanceBetween(location, $0.coordinate) } ?? 0
+                    let bTravelPct = bDurationMin > 0 ? (bFirstDist / Double(adaptiveWalkingSpeed)) / Double(bDurationMin) : 0
+                    let bTravelPen = max(0, (bTravelPct - 0.15)) * 0.5
                     
                     // Prefer Strategy A (has POI waypoints) unless base route is significantly more accurate
                     // Use fixed thresholds — the comparison itself is environment-adaptive
-                    if aAccuracy > 0.30 && bAccuracy + 0.15 < aAccuracy {
+                    // Include travel penalty in comparison
+                    if (aAccuracy + aTravelPen) > 0.30 && (bAccuracy + bTravelPen) + 0.15 < (aAccuracy + aTravelPen) {
                         let elapsed = Date().timeIntervalSince(fastPathStart)
                         print("⚡ [FAST-PATH] 🔀 Base route more accurate: \(bDurationMin)min (\(Int(Double(bDurationMin)/Double(targetDurationMinutes)*100))%) vs POI-direct \(aDurationMin)min (\(Int(Double(aDurationMin)/Double(targetDurationMinutes)*100))%) — using base route")
                         routeCapture?.addRoute(bestBase)

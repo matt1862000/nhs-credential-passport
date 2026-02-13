@@ -462,6 +462,12 @@ struct WalkingRoute: Identifiable, Hashable {
         self.travelToStartMinutes = travelToStartMinutes
     }
     
+    /// True when route has a real encoded polyline (not just straight lines between markers)
+    var hasPolyline: Bool {
+        if let polyline = encodedPolyline, !polyline.isEmpty { return true }
+        return false
+    }
+    
     /// Decoded route path coordinates for map display
     /// Uses Google's encoded polyline if available, otherwise falls back to marker coordinates
     var routePath: [CLLocationCoordinate2D] {
