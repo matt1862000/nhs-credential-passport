@@ -2759,13 +2759,17 @@ struct LocalRoutePickerSheet: View {
                                     if aInBand != bInBand { return aInBand }
                                     return a.offset < b.offset
                                 }
+                                // Bypass in-band cap for cached/session routes — these were already
+                                // accepted previously (e.g. +1 routes). The cap should only limit
+                                // NEW generation, not restoring what the user already had.
                                 for item in sortedBg {
                                     let added = appendRouteIfAllowed(
                                         route: item.element.route,
                                         data: item.element.data,
                                         isDeadZoneFallback: item.element.isDeadZoneFallback,
                                         isFromGoogle: item.element.isFromGoogle,
-                                        source: "cache-load"
+                                        source: "cache-load",
+                                        bypassInBandCap: true
                                     )
                                     if added {
                                         shownPlaceIdSets.append(backgroundPlaceIdSets[item.offset])
@@ -4556,7 +4560,23 @@ struct LocalRoutePickerSheet: View {
             // Finished: either added a route or timed out
             await MainActor.run {
                 isGeneratingAdditionalRoute = false
-                if !added {
+                if added {
+                    // Update session cache so Cancel → Generate reuses all routes including this new one
+                    if let coord = locationService.currentLocation?.coordinate {
+                        let sessionMeta = allRoutes.map { e in
+                            RouteCacheService.CachedRouteWithMetadata(
+                                route: e.data,
+                                name: e.route.name,
+                                description: e.route.description,
+                                directions: e.route.walkingDirections,
+                                isDeadZoneFallback: e.isDeadZoneFallback,
+                                isFromPrePopulatedDatabase: false
+                            )
+                        }
+                        RouteCacheService.shared.setSessionRoutes(sessionMeta, at: coord, durationMinutes: selectedDuration)
+                        print("[+1] 💾 Session cache updated with \(allRoutes.count) route(s)")
+                    }
+                } else {
                     // No valid route found within 10s — mark variety exhausted
                     varietyExhausted = true
                     print("[+1] ❌ No valid in-band route found after \(attempt) attempt(s) / 10s — variety exhausted")

@@ -216,7 +216,19 @@ class RouteCacheService {
     /// NEW: If exact duration not found, checks adjacent slots (±5, ±10, ±15 min) for valid routes
     /// PRIORITY 0: Checks pre-populated database first (fastest, no API calls)
     func getCachedRoutes(near location: CLLocationCoordinate2D, durationMinutes: Int) -> [CachedRouteWithMetadata]? {
-        // 🎯 PRIORITY 0: Check pre-populated database first
+        // 🎯 PRIORITY 0: Session-only cache FIRST (user's actual routes this session, including +1 additions)
+        // Session cache represents what the user just saw — takes priority over prepop DB.
+        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
+        if let session = sessionOnlyCache {
+            let sessionCoord = CLLocationCoordinate2D(latitude: session.latitude, longitude: session.longitude)
+            let distance = distanceBetween(sessionCoord, location)
+            if distance <= matchRadiusMeters && session.durationMinutes == roundedDuration && !session.routes.isEmpty {
+                print("📦 SESSION CACHE HIT! \(session.routes.count) route(s) for \(durationMinutes)min at this location (instant reuse)")
+                return session.routes
+            }
+        }
+        
+        // 🎯 PRIORITY 1: Check pre-populated database (fastest for first-time generation, no API calls)
         if let prePopulatedRoutes = PrePopulatedPOIService.shared.getPrePopulatedRoutes(near: location, durationMinutes: durationMinutes) {
             print("📦 PRE-POPULATED ROUTES HIT! Found \(prePopulatedRoutes.count) routes from pre-populated database")
             
@@ -245,17 +257,6 @@ class RouteCacheService {
                 return filteredRoutes
             } else {
                 print("📦 ⚠️ All pre-populated routes contained restricted POIs - falling back to regular cache")
-            }
-        }
-        
-        // 🎯 PRIORITY 0.5: Session-only cache (live-generated routes this session; not persisted for ToS)
-        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
-        if let session = sessionOnlyCache {
-            let sessionCoord = CLLocationCoordinate2D(latitude: session.latitude, longitude: session.longitude)
-            let distance = distanceBetween(sessionCoord, location)
-            if distance <= matchRadiusMeters && session.durationMinutes == roundedDuration && !session.routes.isEmpty {
-                print("📦 SESSION CACHE HIT! \(session.routes.count) route(s) for \(durationMinutes)min at this location (instant reuse)")
-                return session.routes
             }
         }
         
