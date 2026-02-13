@@ -7265,6 +7265,12 @@ struct LocalRouteMapPreview: View {
                     }
                 }
                 
+                // Route polyline — show MapKit/Google polyline but not OSRM (driving profile, inaccurate for walking)
+                if route.hasPolyline && !route.usedOSRMRouting {
+                    MapPolyline(coordinates: route.routePath)
+                        .stroke(route.color, lineWidth: 4)
+                }
+                
                 // Discovery markers (POIs) — stable id per marker
                 // Name rendered as part of the view (not MapKit title) so it's always visible
                 ForEach(route.qrMarkers) { marker in
@@ -8123,6 +8129,12 @@ struct RouteMapPreviewSheet: View {
                                 .foregroundColor(.white)
                         }
                         .id("startEnd")
+                    }
+                    
+                    // Route polyline — show MapKit/Google polyline but not OSRM
+                    if route.hasPolyline && !route.usedOSRMRouting {
+                        MapPolyline(coordinates: route.routePath)
+                            .stroke(route.color, lineWidth: 4)
                     }
                     
                     // Discovery markers — stable id per marker
