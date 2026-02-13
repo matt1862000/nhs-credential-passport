@@ -3470,7 +3470,7 @@ class GoogleMapsService: ObservableObject {
                             for element in elements {
                                 guard let tags = element["tags"] as? [String: String] else { continue }
                                 
-                                // Get name - skip if no name or junk name
+                                // Get name - skip if no name or junk name (e.g. "Unnamed", "West Walk (0.6km)")
                                 guard let name = tags["name"], !GoogleMapsService.isJunkPOIName(name) else { continue }
                                 
                                 // Get coordinates (handle both nodes and ways with center)
@@ -9595,8 +9595,8 @@ class GoogleMapsService: ObservableObject {
         let routeCheckPoints = [destination, midpoint, location]
         
         let destinationPOI: PlaceResult
-        // Filter out restricted/parking POIs before naming
-        let namingPOIs = nearbyPOIs.filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) }
+        // Filter out restricted/parking/junk-named POIs before naming
+        let namingPOIs = nearbyPOIs.filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) && !GoogleMapsService.isJunkPOIName($0.name) }
         if !namingPOIs.isEmpty {
             // Find the POI closest to any route checkpoint
             var bestPOI: PlaceResult? = nil
@@ -9615,7 +9615,7 @@ class GoogleMapsService: ObservableObject {
             if let best = bestPOI, bestDist < corridorWidth {
                 destinationPOI = best
             } else {
-                // Descriptive fallback name based on direction and distance (works in all environments)
+                // Descriptive fallback name based on direction (no distance suffix - would be filtered as junk)
                 let directionName: String
                 let normalizedBearing = bearing.truncatingRemainder(dividingBy: 360)
                 switch normalizedBearing {
@@ -9624,10 +9624,9 @@ class GoogleMapsService: ObservableObject {
                 case 135..<225: directionName = "South"
                 default: directionName = "West"
                 }
-                let distKm = String(format: "%.1f", distanceMeters / 1000.0)
                 destinationPOI = PlaceResult(
                     placeId: "topology_\(Int(bearing))",
-                    name: "\(directionName) Walk (\(distKm)km)",
+                    name: "Scenic \(directionName) Walk",
                     vicinity: nil,
                     geometry: PlaceGeometry(
                         location: PlaceLocation(lat: destination.latitude, lng: destination.longitude)
@@ -9645,10 +9644,9 @@ class GoogleMapsService: ObservableObject {
             case 135..<225: dirName = "South"
             default: dirName = "West"
             }
-            let dk = String(format: "%.1f", distanceMeters / 1000.0)
             destinationPOI = PlaceResult(
                 placeId: "topology_\(Int(bearing))",
-                name: "\(dirName) Walk (\(dk)km)",
+                name: "Scenic \(dirName) Walk",
                 vicinity: nil,
                 geometry: PlaceGeometry(
                     location: PlaceLocation(lat: destination.latitude, lng: destination.longitude)
@@ -12379,10 +12377,10 @@ class GoogleMapsService: ObservableObject {
             near: location,
             radiusMeters: Double(fpSearchRadius)
         ), !dbPOIs.isEmpty {
-            instantPOIs = dbPOIs.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) }
+            instantPOIs = dbPOIs.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) && !GoogleMapsService.isJunkPOIName($0.name) }
             print("⚡ [FAST-PATH] Using \(instantPOIs!.count) DB POIs (instant)")
         } else if let cached = POICacheService.shared.getCachedPOIs(near: location), !cached.isEmpty {
-            instantPOIs = cached.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) }
+            instantPOIs = cached.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) && !GoogleMapsService.isJunkPOIName($0.name) }
             print("⚡ [FAST-PATH] Using \(instantPOIs!.count) cached POIs (instant)")
         }
         
@@ -12408,9 +12406,9 @@ class GoogleMapsService: ObservableObject {
             
             // POST-PROCESS: Ensure "Route Point" is replaced with real POI names (Tier 1)
             if !fpPOIs.isEmpty && !fpBaseRoutes.isEmpty {
-                let namingCandidates = fpPOIs.filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) }
+                let namingCandidates = fpPOIs.filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) && !GoogleMapsService.isJunkPOIName($0.name) }
                 fpBaseRoutes = fpBaseRoutes.map { route in
-                    guard let routePoint = route.places.first, (routePoint.name == "Route Point" || routePoint.name.hasSuffix("km)")) else { return route }
+                    guard let routePoint = route.places.first, (routePoint.name == "Route Point" || GoogleMapsService.isJunkPOIName(routePoint.name)) else { return route }
                     guard !namingCandidates.isEmpty else { return route }
                     let dest = routePoint.coordinate
                     let mid = CLLocationCoordinate2D(
@@ -12472,16 +12470,16 @@ class GoogleMapsService: ObservableObject {
                 return (apple, mapKit)
             }
             
-            fpPOIs = parallelResults.apple.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) }
+            fpPOIs = parallelResults.apple.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) && !GoogleMapsService.isJunkPOIName($0.name) }
             fpBaseRoutes = parallelResults.mapKit
             print("⚡ [FAST-PATH] Apple Maps: \(fpPOIs.count) POIs + \(fpBaseRoutes.count) base routes in \(String(format: "%.1f", Date().timeIntervalSince(appleStart)))s")
             
             // POST-PROCESS: Rename "Route Point" in base routes using now-available Apple Maps POIs
             // (Base routes were generated in parallel before POIs were available)
             if !fpPOIs.isEmpty && !fpBaseRoutes.isEmpty {
-                let namingCandidates2 = fpPOIs.filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) }
+                let namingCandidates2 = fpPOIs.filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) && !GoogleMapsService.isJunkPOIName($0.name) }
                 fpBaseRoutes = fpBaseRoutes.map { route in
-                    guard let routePoint = route.places.first, (routePoint.name == "Route Point" || routePoint.name.hasSuffix("km)")) else { return route }
+                    guard let routePoint = route.places.first, (routePoint.name == "Route Point" || GoogleMapsService.isJunkPOIName(routePoint.name)) else { return route }
                     guard !namingCandidates2.isEmpty else { return route }
                     let dest = routePoint.coordinate
                     let mid = CLLocationCoordinate2D(
@@ -12525,7 +12523,7 @@ class GoogleMapsService: ObservableObject {
                 print("⚡ [FAST-PATH] Tier 3: Apple insufficient (\(usableApplePOIs.count) < 3 usable), falling back to Google Places (PAID)")
                 let googleStart = Date()
                 let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: fpSearchRadius)
-                let filtered = googlePOIs.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) }
+                let filtered = googlePOIs.filter { !isRestrictedPOI($0) && !excludePlaceIds.contains($0.placeId) && !GoogleMapsService.isJunkPOIName($0.name) }
                 fpPOIs.append(contentsOf: filtered)
                 print("⚡ [FAST-PATH] Google Places: +\(filtered.count) POIs in \(String(format: "%.1f", Date().timeIntervalSince(googleStart)))s (total now: \(fpPOIs.count))")
             } else if usableApplePOIs.count >= 3 {
@@ -12544,7 +12542,7 @@ class GoogleMapsService: ObservableObject {
         
         if !fpPOIs.isEmpty {
             let scoredPOIs = fpPOIs
-                .filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) }  // Exclude parking, playgrounds, etc.
+                .filter { walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) && !GoogleMapsService.isJunkPOIName($0.name) }  // Exclude parking, playgrounds, junk names, etc.
                 .filter { !$0.name.lowercased().contains("parking") && !$0.name.lowercased().contains("car park") }  // Extra parking name filter
             
             let bearingOffset = Double((targetDurationMinutes * 37) % 360)
@@ -12822,7 +12820,7 @@ class GoogleMapsService: ObservableObject {
             if bestBase.places.count <= 1 && targetDurationMinutes >= 25 && fpPOIs.count >= 2 {
                 let existingIds = Set(bestBase.places.map { $0.placeId })
                 let extraPOIs = fpPOIs
-                    .filter { !existingIds.contains($0.placeId) && walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) }
+                    .filter { !existingIds.contains($0.placeId) && walkabilityScore(for: $0) > -1.0 && !isRestrictedPOI($0) && !GoogleMapsService.isJunkPOIName($0.name) }
                     .filter { !$0.name.lowercased().contains("parking") && !$0.name.lowercased().contains("car park") }
                 
                 // Pick the POI at ~half the target radius in a different bearing from the existing POI
@@ -19518,23 +19516,25 @@ class GoogleMapsService: ObservableObject {
         return false
     }
     
-    /// Clean POI name for display - removes grid references and location suffixes
-    /// Preserves capitalization and formatting
-    /// Example: "SE2922: Lindale Methodist Church, Kirkhamgate" -> "Lindale Methodist Church"
     /// Returns true if the POI name is a placeholder or trail-distance label that shouldn't be a waypoint.
-    /// Examples: "Unnamed", "Unknown", "West Walk (0.6km)", "Footpath (1.2mi)"
+    /// Examples: "Unnamed", "Unknown", "West Walk (0.6km)", "Footpath (1.2mi)", "Route Point"
     static func isJunkPOIName(_ name: String) -> Bool {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty { return true }
         if trimmed.caseInsensitiveCompare("Unnamed") == .orderedSame { return true }
         if trimmed.caseInsensitiveCompare("Unknown") == .orderedSame { return true }
-        // Trail/path labels ending in a distance like "(0.6km)" or "(1.2 mi)"
-        if trimmed.range(of: #"\(\s*\d+(\.\d+)?\s*(km|mi|m|miles)\s*\)\s*$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+        if trimmed.caseInsensitiveCompare("Route Point") == .orderedSame { return true }
+        if trimmed.caseInsensitiveCompare("Point of Interest") == .orderedSame { return true }
+        // Trail/path labels ending in a distance like "(0.6km)" or "(1.2 mi)" or "(500m)"
+        if let _ = trimmed.range(of: #"\(\s*\d+(\.\d+)?\s*(km|mi|m|miles)\s*\)\s*$"#, options: .regularExpression, range: trimmed.startIndex..<trimmed.endIndex) {
             return true
         }
         return false
     }
     
+    /// Clean POI name for display - removes grid references and location suffixes
+    /// Preserves capitalization and formatting
+    /// Example: "SE2922: Lindale Methodist Church, Kirkhamgate" -> "Lindale Methodist Church"
     static func cleanPOIDisplayName(_ name: String) -> String {
         var cleaned = name
         
