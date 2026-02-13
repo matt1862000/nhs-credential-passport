@@ -2166,7 +2166,10 @@ struct LocalRoutePickerSheet: View {
                         if let googleResult = await mapsService.getGoogleDirectionsRoute(origin: userLocation.coordinate, waypoints: firstRouteData.places, targetDurationMinutes: selectedDuration) {
                             // 🔍 DIAGNOSTIC: Log Google re-measure result
                             print("[ROUTE_DEBUG] 🔍 FIRST route: Google re-measure: \(googleResult.durationSeconds)s (\(googleResult.durationSeconds/60)min), \(googleResult.distanceMeters)m (was \(firstPreGoogleDur)min/\(firstPreGoogleDist)m)")
-                            firstRoutePreviewSource = "google"
+                            // v2.1.11: Mark as "google_duration" not "google" — getGoogleDirectionsRoute only re-measures
+                            // duration/distance, it does NOT update polyline or directions. The full refreshRouteWithGoogleOnly()
+                            // must still run on Let's Go so the walking map gets a Google-snapped polyline.
+                            firstRoutePreviewSource = "google_duration"
                             let correctedRoute = WalkingRoute(
                                 name: cappedFirst.name,
                                 description: cappedFirst.description,
@@ -2223,10 +2226,11 @@ struct LocalRoutePickerSheet: View {
                     loadedPlaceIdSets.append(Set(firstRouteData.places.map { $0.placeId }))
                     
                     // v2.1.9: Store first cached route in cross-bucket pool if out-of-band after Google re-measure
-                    if firstIsFromGoogle {
+                    // v2.1.11: Check google_duration — duration is accurate even though full refresh hasn't run
+                    if firstRoutePreviewSource.hasPrefix("google") {
                         await MainActor.run {
                             if !Self.isRouteInBand(cappedFirst, selectedDuration: selectedDuration) {
-                                storeCrossBucketRoute(route: cappedFirst, data: firstRouteData, isFromGoogle: true)
+                                storeCrossBucketRoute(route: cappedFirst, data: firstRouteData, isFromGoogle: false)
                             }
                         }
                     }
@@ -2624,7 +2628,9 @@ struct LocalRoutePickerSheet: View {
                                             print("[ROUTE_DEBUG] 🔍 CACHE route '\(_routeName)': Google re-measure: \(googleResult.durationSeconds)s (\(googleResult.durationSeconds/60)min), \(googleResult.distanceMeters)m (was \(preGoogleDurSec/60)min/\(preGoogleDistM)m)")
                                             durationToUse = googleResult.durationSeconds
                                             distanceToUse = googleResult.distanceMeters
-                                            isFromGoogle = true
+                                            // v2.1.11: Keep isFromGoogle = false — getGoogleDirectionsRoute only re-measures
+                                            // duration/distance, NOT polyline/directions. The full refreshRouteWithGoogleOnly()
+                                            // must still run on Let's Go so the walking map gets a Google-snapped polyline.
                                             // v2.1.8: Update GeneratedRoute with Google values so e.data matches e.route
                                             routeData = GeneratedRoute(
                                                 places: routeData.places,
@@ -2897,7 +2903,8 @@ struct LocalRoutePickerSheet: View {
                                             usedOSRM: routeData.usedOSRM,
                                             travelToStartSeconds: routeData.travelToStartSeconds
                                         )
-                                        isFromGoogle = true
+                                        // v2.1.11: Keep isFromGoogle = false — duration-only re-measure,
+                                        // full refreshRouteWithGoogleOnly() still needed on Let's Go
                                     } else {
                                         print("[ROUTE_DEBUG] 🔍 Extended route '\(displayRoute.name)': Google re-measure FAILED — keeping synthetic \(displayRoute.durationMinutes)min / \(displayRoute.distanceMeters)m")
                                     }
@@ -4171,15 +4178,14 @@ struct LocalRoutePickerSheet: View {
         let instantElapsed = Date().timeIntervalSince(startTime)
         print("⏱️ [LET'S GO] [\(timeString)] ✅ Instant start: \(String(format: "%.3f", instantElapsed))s")
         
-        // v2.1.1: Google refresh on Let's Go — skip only when the route being started came from Google (so fast route 1 of 2 is still refreshed even if route 2 is from Google)
+        // v2.1.11: ALWAYS run Google refresh on Let's Go — even if route was duration-remeasured
+        // with getGoogleDirectionsRoute during cache load, the full refreshRouteWithGoogleOnly()
+        // is needed to provide Google-snapped polyline and walking directions for the active walk.
         Task {
-            let skipRefresh = await MainActor.run {
+            let wasFromGoogle = await MainActor.run {
                 currentRouteIndex < allRoutes.count && allRoutes[currentRouteIndex].isFromGoogle
             }
-            if skipRefresh {
-                print("DIRECTIONS | Route is from Google — skipping refresh on Let's Go")
-                return
-            }
+            print("DIRECTIONS | Let's Go Google refresh — wasFromGoogle=\(wasFromGoogle) (always refreshing)")
             let taskTimeString = formatter.string(from: Date())
             let routeSource: String
             if route.usedOSRMRouting {
