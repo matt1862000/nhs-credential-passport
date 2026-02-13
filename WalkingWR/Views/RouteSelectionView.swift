@@ -7534,10 +7534,10 @@ struct LocalRouteMapPreview: View {
                                     .font(.subheadline)
                                     .fontWeight(.medium)
                             }
-                            .foregroundColor(.lavenderMist)
+                            .foregroundColor(.mintGreen)
                             .padding(.horizontal, 16)
                             .frame(height: 48)
-                            .background(Color.lavenderMist.opacity(0.15))
+                            .background(Color.mintGreen.opacity(0.15))
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .buttonStyle(.plain)
