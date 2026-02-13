@@ -2170,6 +2170,8 @@ struct LocalRoutePickerSheet: View {
                             // duration/distance, it does NOT update polyline or directions. The full refreshRouteWithGoogleOnly()
                             // must still run on Let's Go so the walking map gets a Google-snapped polyline.
                             firstRoutePreviewSource = "google_duration"
+                            // v2.1.11: Carry Google polyline — it's a real road-following polyline, no extra API call needed
+                            let googlePolyline = googleResult.polyline.isEmpty ? cappedFirst.trimmed : googleResult.polyline
                             let correctedRoute = WalkingRoute(
                                 name: cappedFirst.name,
                                 description: cappedFirst.description,
@@ -2183,9 +2185,9 @@ struct LocalRoutePickerSheet: View {
                                 color: cappedFirst.color,
                                 qrMarkers: cappedFirst.qrMarkers,
                                 routeType: cappedFirst.routeType,
-                                trimmed: cappedFirst.trimmed,
+                                trimmed: googlePolyline,
                                 walkingDirections: cappedFirst.walkingDirections,
-                                usedOSRMRouting: cappedFirst.usedOSRMRouting,
+                                usedOSRMRouting: false,
                                 isFromPrePopulatedDatabase: cappedFirst.isFromPrePopulatedDatabase,
                                 travelToStartMinutes: cappedFirst.travelToStartMinutes
                             )
@@ -2195,11 +2197,11 @@ struct LocalRoutePickerSheet: View {
                             let _oldDist = firstRouteData.distanceMeters
                             firstRouteData = GeneratedRoute(
                                 places: firstRouteData.places,
-                                polyline: firstRouteData.polyline,
+                                polyline: googlePolyline ?? firstRouteData.polyline,
                                 distanceMeters: googleResult.distanceMeters,
                                 durationSeconds: googleResult.durationSeconds,
-                                legs: firstRouteData.legs,
-                                usedOSRM: firstRouteData.usedOSRM,
+                                legs: googleResult.legs ?? firstRouteData.legs,
+                                usedOSRM: false,
                                 travelToStartSeconds: firstRouteData.travelToStartSeconds
                             )
                             print("[ROUTE_DEBUG] 🔍 FIRST route: data updated → \(firstRouteData.durationSeconds)s / \(firstRouteData.distanceMeters)m (was \(_oldDur)s / \(_oldDist)m), isFromGoogle=\(firstRoutePreviewSource == "google"), route=\(cappedFirst.durationMinutes)min / \(cappedFirst.distanceMeters)m")
@@ -2628,17 +2630,18 @@ struct LocalRoutePickerSheet: View {
                                             print("[ROUTE_DEBUG] 🔍 CACHE route '\(_routeName)': Google re-measure: \(googleResult.durationSeconds)s (\(googleResult.durationSeconds/60)min), \(googleResult.distanceMeters)m (was \(preGoogleDurSec/60)min/\(preGoogleDistM)m)")
                                             durationToUse = googleResult.durationSeconds
                                             distanceToUse = googleResult.distanceMeters
-                                            // v2.1.11: Keep isFromGoogle = false — getGoogleDirectionsRoute only re-measures
-                                            // duration/distance, NOT polyline/directions. The full refreshRouteWithGoogleOnly()
-                                            // must still run on Let's Go so the walking map gets a Google-snapped polyline.
+                                            // v2.1.11: Carry Google polyline for preview display (real road-following polyline, no extra API call)
+                                            if !googleResult.polyline.isEmpty {
+                                                polylineToUse = googleResult.polyline
+                                            }
                                             // v2.1.8: Update GeneratedRoute with Google values so e.data matches e.route
                                             routeData = GeneratedRoute(
                                                 places: routeData.places,
-                                                polyline: routeData.polyline,
+                                                polyline: !googleResult.polyline.isEmpty ? googleResult.polyline : routeData.polyline,
                                                 distanceMeters: googleResult.distanceMeters,
                                                 durationSeconds: googleResult.durationSeconds,
-                                                legs: routeData.legs,
-                                                usedOSRM: routeData.usedOSRM,
+                                                legs: googleResult.legs ?? routeData.legs,
+                                                usedOSRM: false,
                                                 travelToStartSeconds: routeData.travelToStartSeconds
                                             )
                                         } else {
@@ -2879,6 +2882,8 @@ struct LocalRoutePickerSheet: View {
                                 if mapsService.hasAPIKey && !routeData.places.isEmpty {
                                     if let googleResult = await mapsService.getGoogleDirectionsRoute(origin: userLocation.coordinate, waypoints: routeData.places, targetDurationMinutes: selectedDuration) {
                                         print("[ROUTE_DEBUG] 🔍 Extended route '\(displayRoute.name)': Google re-measure: \(googleResult.durationSeconds)s (\(googleResult.durationSeconds/60)min), \(googleResult.distanceMeters)m (was \(displayRoute.durationMinutes)min/\(displayRoute.distanceMeters)m)")
+                                        // v2.1.11: Carry Google polyline for preview display
+                                        let extGooglePoly = googleResult.polyline.isEmpty ? displayRoute.trimmed : googleResult.polyline
                                         displayRoute = WalkingRoute(
                                             name: displayRoute.name,
                                             description: displayRoute.description,
@@ -2892,23 +2897,21 @@ struct LocalRoutePickerSheet: View {
                                             color: displayRoute.color,
                                             qrMarkers: displayRoute.qrMarkers,
                                             routeType: displayRoute.routeType,
-                                            trimmed: displayRoute.trimmed,
+                                            trimmed: extGooglePoly,
                                             walkingDirections: displayRoute.walkingDirections,
-                                            usedOSRMRouting: displayRoute.usedOSRMRouting,
+                                            usedOSRMRouting: false,
                                             isFromPrePopulatedDatabase: displayRoute.isFromPrePopulatedDatabase,
                                             travelToStartMinutes: displayRoute.travelToStartMinutes
                                         )
                                         routeData = GeneratedRoute(
                                             places: routeData.places,
-                                            polyline: routeData.polyline,
+                                            polyline: extGooglePoly ?? routeData.polyline,
                                             distanceMeters: googleResult.distanceMeters,
                                             durationSeconds: googleResult.durationSeconds,
-                                            legs: routeData.legs,
-                                            usedOSRM: routeData.usedOSRM,
+                                            legs: googleResult.legs ?? routeData.legs,
+                                            usedOSRM: false,
                                             travelToStartSeconds: routeData.travelToStartSeconds
                                         )
-                                        // v2.1.11: Keep isFromGoogle = false — duration-only re-measure,
-                                        // full refreshRouteWithGoogleOnly() still needed on Let's Go
                                     } else {
                                         print("[ROUTE_DEBUG] 🔍 Extended route '\(displayRoute.name)': Google re-measure FAILED — keeping synthetic \(displayRoute.durationMinutes)min / \(displayRoute.distanceMeters)m")
                                     }
@@ -5489,6 +5492,9 @@ struct LocalRoutePickerSheet: View {
             // v1.6.47: Use per-route flag instead of calculating (more accurate)
             isDeadZoneFallback = nextRoute.isDeadZoneFallback
             
+            // v2.1.11: Request MapKit polyline for preview if route only has synthetic straight lines
+            refreshPreviewPolylineIfNeeded(at: currentRouteIndex)
+            
             print("🔀 Showing route \(displayed.firstIndex(of: currentRouteIndex)! + 1) of \(displayed.count) (recycled: \(isRecycledRoute), fallback: \(isDeadZoneFallback))")
         } else {
             // v1.6.45: At last displayed route - cycle back to first displayed (no dialog)
@@ -5534,7 +5540,42 @@ struct LocalRoutePickerSheet: View {
             // v1.6.47: Use per-route flag instead of calculating
             isDeadZoneFallback = firstRoute.isDeadZoneFallback
             
+            // v2.1.11: Request MapKit polyline for preview if needed
+            refreshPreviewPolylineIfNeeded(at: currentRouteIndex)
+            
             print("🔄 Cycling back to route 1 of \(displayed.count)")
+        }
+    }
+    
+    /// Trigger MapKit polyline refresh for a route at the given index if it only has a synthetic polyline.
+    /// Synthetic polylines from the soft-cap estimator have <10 points (straight lines between waypoints).
+    /// Real walking polylines from MapKit have 20+ points that follow actual roads.
+    private func refreshPreviewPolylineIfNeeded(at index: Int) {
+        guard allRoutes.indices.contains(index) else { return }
+        let route = allRoutes[index].route
+        // Already has a real polyline (10+ points) or uses OSRM — skip
+        if route.routePath.count >= 10 || route.usedOSRMRouting { return }
+        // No waypoints to route through — skip
+        guard !route.qrMarkers.isEmpty else { return }
+        guard let userLoc = locationService.currentLocation?.coordinate else { return }
+        
+        print("🗺️ [POLYLINE-PREVIEW] Route '\(route.name)' has \(route.routePath.count) polyline points — requesting MapKit refresh")
+        Task {
+            let refreshed = await mapsService.refreshRouteWithMapKit(route: route, userLocation: userLoc)
+            await MainActor.run {
+                guard allRoutes.indices.contains(index),
+                      allRoutes[index].route.name == route.name else { return }
+                // Only update if MapKit gave us a real polyline
+                if refreshed.routePath.count >= 10 {
+                    allRoutes[index].route = refreshed
+                    if currentRouteIndex == index {
+                        generatedRoute = refreshed
+                    }
+                    print("🗺️ [POLYLINE-PREVIEW] ✅ '\(route.name)' updated with \(refreshed.routePath.count)-point MapKit polyline")
+                } else {
+                    print("🗺️ [POLYLINE-PREVIEW] ⚠️ MapKit returned \(refreshed.routePath.count) points for '\(route.name)' — keeping as-is")
+                }
+            }
         }
     }
     
@@ -7265,8 +7306,10 @@ struct LocalRouteMapPreview: View {
                     }
                 }
                 
-                // Route polyline — show MapKit/Google polyline but not OSRM (driving profile, inaccurate for walking)
-                if route.hasPolyline && !route.usedOSRMRouting {
+                // Route polyline — show only real walking polylines (MapKit/Google), not OSRM or synthetic
+                // Synthetic polylines from the soft-cap estimator have 3-5 points (straight lines between waypoints).
+                // Real road-following polylines from MapKit/Google have 20+ points.
+                if route.hasPolyline && !route.usedOSRMRouting && route.routePath.count >= 10 {
                     MapPolyline(coordinates: route.routePath)
                         .stroke(route.color, lineWidth: 4)
                 }
@@ -8131,8 +8174,8 @@ struct RouteMapPreviewSheet: View {
                         .id("startEnd")
                     }
                     
-                    // Route polyline — show MapKit/Google polyline but not OSRM
-                    if route.hasPolyline && !route.usedOSRMRouting {
+                    // Route polyline — show only real walking polylines, not OSRM or synthetic
+                    if route.hasPolyline && !route.usedOSRMRouting && route.routePath.count >= 10 {
                         MapPolyline(coordinates: route.routePath)
                             .stroke(route.color, lineWidth: 4)
                     }
