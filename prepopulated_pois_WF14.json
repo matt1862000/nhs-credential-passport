@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "lastUpdated": "2026-02-14T00:03:15.894268Z",
+  "lastUpdated": "2026-02-14T17:35:10.000526Z",
   "postcodeAreas": [
     {
       "postcode": "WF14",
@@ -6847,18 +6847,6 @@
               "name": "Kitson Hill Crescent, Mirfield",
               "latitude": 53.685176,
               "longitude": -1.702135,
-              "types": [
-                "geograph"
-              ],
-              "vicinity": null,
-              "source": "geograph",
-              "rating": null
-            },
-            {
-              "placeId": "geograph_3781911",
-              "name": "Stonehurst Road - Water Royd Avenue",
-              "latitude": 53.682192,
-              "longitude": -1.695192,
               "types": [
                 "geograph"
               ],

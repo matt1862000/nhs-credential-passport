@@ -17,6 +17,7 @@ Output format (version 2):
   }]
 }
 
+Uses canonical WF districts (WF1–WF17, WF90) and fetches sector list per district from https://www.streetlist.co.uk/wf/wfX .
 Usage:
   python3 scripts/generate_sector_pois.py                     # All WF districts
   python3 scripts/generate_sector_pois.py --district WF1      # Single district
@@ -35,10 +36,15 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
 
 # --- Config ---
-ALL_WF_DISTRICTS = [f"WF{i}" for i in range(1, 18)]
+# Canonical WF districts from https://www.streetlist.co.uk/wf/ (Wakefield area: WF1–WF17, WF90)
+KNOWN_WF_DISTRICTS = [f"WF{i}" for i in range(1, 18)] + ["WF90"]
+ALL_WF_DISTRICTS = KNOWN_WF_DISTRICTS
 SECTORS_TO_TRY = list(range(0, 10))
+KNOWN_SECTORS_BY_DISTRICT = {}  # Optional override; else fetched from streetlist per district
+STREETLIST_BASE_URL = "https://www.streetlist.co.uk/wf/"
 RADIUS_METERS = 2500
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 GEOGRAPH_API_KEY = "df200a5f61"
@@ -89,39 +95,69 @@ def haversine_m(lat1, lon1, lat2, lon2):
 # Phase 1: Discover sectors via geocoding
 # ============================================================
 
-def geocode_sector(district: str, sector_digit: int) -> tuple:
-    """Geocode e.g. 'WF1 1AA' → (lat, lon) or None. Validates result is in West Yorkshire."""
-    postcode = f"{district} {sector_digit}AA"
-    params = urllib.parse.urlencode({
-        "q": postcode,
-        "format": "json",
-        "limit": 1,
-        "countrycodes": "gb",
-    })
-    url = f"{NOMINATIM_URL}?{params}"
+INWARD_SUFFIXES = ["AA", "AB", "FG", "EH", "BL", "AD", "PQ"]
+
+
+def fetch_sectors_from_streetlist(district: str) -> Optional[List[int]]:
+    """Fetch geographic sector list from https://www.streetlist.co.uk/wf/wfX (e.g. /wf/wf1).
+    Parses Postcode Sectors and excludes any sector marked 'non-geographic'. Returns sorted list of sector digits, or None on failure."""
+    url = f"{STREETLIST_BASE_URL}{district.lower()}"
     req = urllib.request.Request(url)
     req.add_header("User-Agent", "WalkingWR-POI-Fetch/1.0")
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.load(resp)
-        if data:
-            lat = float(data[0]["lat"])
-            lon = float(data[0]["lon"])
-            # Validate: must be in roughly the WF area (West Yorkshire)
-            # WF area is approximately lat 53.5–53.8, lon -1.2 to -1.7
-            if 53.3 <= lat <= 53.9 and -1.8 <= lon <= -1.1:
-                return (lat, lon)
-            else:
-                return None  # Wrong location (e.g. Birmingham)
-    except Exception:
-        pass
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        print(f"  ⚠️  Could not fetch {url}: {e}")
+        return None
+    escaped = re.escape(district)
+    sector_matches = set()
+    for m in re.finditer(rf"\b{escaped}\s+(\d)\b", html, re.IGNORECASE):
+        d = int(m.group(1))
+        if 0 <= d <= 9:
+            sector_matches.add(d)
+    non_geo = set()
+    for m in re.finditer(rf"\b{escaped}\s+(\d)\s+is\s+non-geographic", html, re.IGNORECASE):
+        non_geo.add(int(m.group(1)))
+    sector_matches -= non_geo
+    if not sector_matches:
+        return None
+    return sorted(sector_matches)
+
+
+def geocode_sector(district: str, sector_digit: int) -> tuple:
+    """Geocode e.g. 'WF1 1FG' → (lat, lon) or None. Tries multiple inward suffixes. Validates result is in West Yorkshire."""
+    for suffix in INWARD_SUFFIXES:
+        postcode = f"{district} {sector_digit}{suffix}"
+        params = urllib.parse.urlencode({
+            "q": postcode,
+            "format": "json",
+            "limit": 1,
+            "countrycodes": "gb",
+        })
+        url = f"{NOMINATIM_URL}?{params}"
+        req = urllib.request.Request(url)
+        req.add_header("User-Agent", "WalkingWR-POI-Fetch/1.0")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.load(resp)
+            if data:
+                lat = float(data[0]["lat"])
+                lon = float(data[0]["lon"])
+                if 53.3 <= lat <= 53.9 and -1.8 <= lon <= -1.1:
+                    return (lat, lon)
+        except Exception:
+            pass
+        time.sleep(1.1)  # Nominatim: max 1 req/sec per request
     return None
 
 
-def discover_sectors(district: str) -> list:
-    """Returns list of (sector_label, lat, lon) for valid sectors in the district."""
+def discover_sectors(district: str, sector_digits: Optional[List[int]] = None) -> list:
+    """Returns list of (sector_label, lat, lon) for valid sectors. sector_digits: if provided use it; else KNOWN_SECTORS_BY_DISTRICT or 0–9."""
+    if sector_digits is None:
+        sector_digits = KNOWN_SECTORS_BY_DISTRICT.get(district, SECTORS_TO_TRY)
     sectors = []
-    for s in SECTORS_TO_TRY:
+    for s in sector_digits:
         result = geocode_sector(district, s)
         time.sleep(1.1)  # Nominatim: max 1 req/sec
         label = f"{district} {s}"
@@ -379,9 +415,20 @@ def process_district(district: str) -> dict:
     print(f"{'='*60}")
     sys.stdout.flush()
 
-    # Discover sectors
-    print(f"\n  Discovering sectors...")
-    sectors = discover_sectors(district)
+    # Get sector list: override from KNOWN_SECTORS_BY_DISTRICT, else fetch from streetlist.co.uk/wf/wfX.
+    if district in KNOWN_SECTORS_BY_DISTRICT:
+        sector_digits = KNOWN_SECTORS_BY_DISTRICT[district]
+        print(f"\n  Discovering sectors {district} {sector_digits} (from config)...")
+    else:
+        print(f"\n  Fetching sector list from https://www.streetlist.co.uk/wf/{district.lower()} ...")
+        sector_digits = fetch_sectors_from_streetlist(district)
+        if sector_digits is not None:
+            print(f"  → Geographic sectors: {sector_digits}")
+        else:
+            sector_digits = SECTORS_TO_TRY
+            print(f"  → Using 0–9 (fetch failed or no sectors parsed)")
+        time.sleep(1.0)  # be nice to streetlist
+    sectors = discover_sectors(district, sector_digits)
     if not sectors:
         print(f"  ⚠️  No valid sectors found for {district}")
         return None
@@ -434,23 +481,30 @@ def process_district(district: str) -> dict:
 def main():
     parser = argparse.ArgumentParser(description="Generate sector-indexed POI files for WalkingWR.")
     parser.add_argument("--district", type=str, default=None,
-                        help="Process only this district (e.g. WF1). Default: all WF1–WF17.")
+                        help="Process only this district (e.g. WF1). Default: all WF1–WF17, WF90 (streetlist.co.uk).")
     args = parser.parse_args()
 
-    districts = [args.district.upper()] if args.district else ALL_WF_DISTRICTS
+    districts = [args.district.upper()] if args.district else KNOWN_WF_DISTRICTS
 
     print("=" * 60)
-    print("  SECTOR-INDEXED POI GENERATOR")
-    print(f"  Districts: {', '.join(districts)}")
-    print(f"  Sectors per district: 0–9 (valid ones kept)")
+    print("  WAKEFIELD (WF) SECTOR-INDEXED POI GENERATOR")
+    print(f"  Districts: {len(districts)} (streetlist.co.uk/wf/)")
+    print(f"  Sectors: from streetlist per district (or 0–9 fallback)")
     print(f"  Radius: {RADIUS_METERS}m per sector")
     print(f"  Sources: OSM (Overpass) + Geograph")
     print("=" * 60)
     sys.stdout.flush()
 
-    for district in districts:
+    generated = []
+    total = len(districts)
+    for idx, district in enumerate(districts, 1):
+        ts = datetime.utcnow().strftime("%H:%M:%S")
+        print(f"\n  --- [{ts}] {district} ({idx}/{total}) | Generated so far: {len(generated)} ---")
+        sys.stdout.flush()
         result = process_district(district)
         if result is None:
+            print(f"  → {district} skipped (no valid sectors)")
+            sys.stdout.flush()
             continue
 
         # Write one file per district
@@ -465,14 +519,16 @@ def main():
 
         size_kb = out_file.stat().st_size / 1024
         total_pois = sum(len(s["pois"]) for s in result["sectors"])
-        print(f"\n  📄 Wrote {out_file.name} ({size_kb:.0f} KB, {len(result['sectors'])} sectors, {total_pois} POIs)")
+        print(f"  📄 Wrote {out_file.name} ({size_kb:.0f} KB, {len(result['sectors'])} sectors, {total_pois} POIs)")
+        generated.append(district)
+        print(f"  → {district} done. Total generated: {len(generated)}")
         sys.stdout.flush()
 
     # Final summary
     print(f"\n{'='*60}")
-    print(f"  ALL DONE")
+    print(f"  ALL DONE — {len(generated)} districts generated")
     print(f"{'='*60}")
-    for district in districts:
+    for district in generated:
         f = OUTPUT_DIR / f"prepopulated_pois_{district}.json"
         if f.exists():
             size = f.stat().st_size / 1024

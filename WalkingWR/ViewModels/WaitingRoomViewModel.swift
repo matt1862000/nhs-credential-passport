@@ -452,7 +452,9 @@ class WaitingRoomViewModel: ObservableObject {
         for firebaseData in firebaseClinicians {
             let clinician = createClinicianFromFirebase(firebaseData)
             result.append(clinician)
+            #if DEBUG
             print("✅ Built clinician from Firebase: \(clinician.fullTitle) - \(clinician.currentWaitMinutes)min")
+            #endif
         }
         
         availableClinicians = result
@@ -520,7 +522,9 @@ class WaitingRoomViewModel: ObservableObject {
                 let isWalking = walkSession.isActive
                 
                 // Check for delay changes and notify
+                #if DEBUG
                 print("🔍 Firebase update: previous=\(previousDelay), new=\(newDelay), isFirst=\(isFirstFirebaseUpdate), suppress=\(AppDelegate.suppressInAppAlertsFlag), pending=\(AppDelegate.pendingNotification != nil)")
+                #endif
                 
                 // Skip first Firebase update (it's just syncing on app launch, not a real-time change)
                 if isFirstFirebaseUpdate {
@@ -614,13 +618,17 @@ class WaitingRoomViewModel: ObservableObject {
                     DispatchQueue.global(qos: .utility).async {
                         Messaging.messaging().subscribe(toTopic: topic) { error in
                             if error == nil {
+                                #if DEBUG
                                 print("🔔 Confirmed subscription to: \(topic)")
+                                #endif
                             }
                         }
                     }
                 }
                 
+                #if DEBUG
                 print("🔄 Updated selected clinician: \(updatedData.fullName) - all fields refreshed")
+                #endif
             } else {
                 // Selected clinician is NOT in Firebase anymore - clinic has ended
                 isClinicEnded = true
@@ -1016,7 +1024,9 @@ class WaitingRoomViewModel: ObservableObject {
         if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) {
             line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
         }
+        #if DEBUG
         print("WAYPOINT_DIR WaitingRoomViewModel:startWalk:cachedDirs | directions cached for display | count=\(dirs.count) samples=\(destinationOrWaypoint.prefix(5).map { String($0.instruction.prefix(70)) })")
+        #endif
         // #endregion
         // #region agent log — waypoint directions diagnostic (filter Xcode by WAYPOINT_DIAG)
         let waypointNames = route.qrMarkers.map { $0.name }
@@ -1169,6 +1179,7 @@ class WaitingRoomViewModel: ObservableObject {
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: timestamp)
         
+        #if DEBUG
         print("🔍 [MOTION DEBUG] [\(timeString)] 🏁 endWalk(completed: \(completed)) CALLED")
         print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(stepTrackingWasEnabled)")
         print("🔍 [MOTION DEBUG] [\(timeString)]   Current Motion auth status: \(healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
@@ -1176,6 +1187,7 @@ class WaitingRoomViewModel: ObservableObject {
         Thread.callStackSymbols.prefix(10).enumerated().forEach { index, symbol in
             print("🔍 [MOTION DEBUG] [\(timeString)]     [\(index)] \(symbol)")
         }
+        #endif
         
         walkSession.isActive = false
         
@@ -1200,7 +1212,9 @@ class WaitingRoomViewModel: ObservableObject {
         userProgress.recordSteps(walkSession.stepsThisSession)
         
         // Stop tracking
+        #if DEBUG
         print("🔍 [MOTION DEBUG] [\(timeString)]   🛑 About to call healthKitService.stopObserving()")
+        #endif
         healthKitService.stopObserving()
         locationService.stopTracking()
         notificationService.cancelAllWalkingNotifications()
@@ -1209,10 +1223,14 @@ class WaitingRoomViewModel: ObservableObject {
         // Prompt for post-walk wellbeing score
         // v1.9.34: Motion permission is now requested AFTER anxiety check dismisses (in RouteSelectionView onDismiss)
         if completed && userProgress.anxietyLevelBefore != nil {
+            #if DEBUG
             print("🔍 [MOTION DEBUG] [\(timeString)]   📋 Setting showPostWalkWellbeing = true")
+            #endif
             showPostWalkWellbeing = true
         } else {
+            #if DEBUG
             print("🔍 [MOTION DEBUG] [\(timeString)]   📋 NOT showing post-walk wellbeing (completed: \(completed), anxietyLevelBefore: \(userProgress.anxietyLevelBefore != nil))")
+            #endif
         }
         
         // Reset session
@@ -1249,7 +1267,9 @@ class WaitingRoomViewModel: ObservableObject {
         // Note: We don't reset it here because we need it for the post-walk flow
         // It will be reset at the start of the next walk
         
+        #if DEBUG
         print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ endWalk() completed")
+        #endif
     }
     
     // v2.1.0: Pre-calculation of return route DISABLED for ToS compliance

@@ -1549,11 +1549,13 @@ struct LocalRoutePickerSheet: View {
                 formatter.dateFormat = "HH:mm:ss.SSS"
                 let timeString = formatter.string(from: timestamp)
                 if !newValue && oldValue {
+                    #if DEBUG
                     print("🔍 [MOTION DEBUG] [\(timeString)] 🚪 showActiveWalk changed: true → false (fullscreen dismissed)")
                     print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
                     print("🔍 [MOTION DEBUG] [\(timeString)]   showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
                     print("🔍 [MOTION DEBUG] [\(timeString)]   showPostWalkWellbeing: \(viewModel.showPostWalkWellbeing)")
                     print("🔍 [MOTION DEBUG] [\(timeString)]   Motion auth status: \(viewModel.healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
+                    #endif
                 }
             }
             .onAppear {
@@ -1561,11 +1563,13 @@ struct LocalRoutePickerSheet: View {
                 let formatter = DateFormatter()
                 formatter.dateFormat = "HH:mm:ss.SSS"
                 let timeString = formatter.string(from: timestamp)
+                #if DEBUG
                 print("🔍 [MOTION DEBUG] [\(timeString)] 📱 RouteSelectionView.onAppear()")
                 print("🔍 [MOTION DEBUG] [\(timeString)]   showPreWalkWellbeing: \(viewModel.showPreWalkWellbeing)")
                 print("🔍 [MOTION DEBUG] [\(timeString)]   showPostWalkWellbeing: \(viewModel.showPostWalkWellbeing)")
                 print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
                 print("🔍 [MOTION DEBUG] [\(timeString)]   Motion auth status: \(viewModel.healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
+                #endif
                 
                 // Only request location if we don't have one or it's stale (>30s) - avoid re-fetching seconds after a lock
                 let locationAge = locationService.currentLocation.map { Date().timeIntervalSince($0.timestamp) } ?? .infinity
@@ -2178,6 +2182,8 @@ struct LocalRoutePickerSheet: View {
                             firstRoutePreviewSource = "google_duration"
                             // v2.1.11: Carry Google polyline — it's a real road-following polyline, no extra API call needed
                             let googlePolyline = googleResult.polyline.isEmpty ? cappedFirst.trimmed : googleResult.polyline
+                            // v2.1.14: Use Google directions for main map so turn-by-turn matches polyline
+                            let googleDirections = await MainActor.run { extractWalkingDirections(from: googleResult.legs, waypoints: firstRouteData.places) }
                             let correctedRoute = WalkingRoute(
                                 name: cappedFirst.name,
                                 description: cappedFirst.description,
@@ -2192,7 +2198,7 @@ struct LocalRoutePickerSheet: View {
                                 qrMarkers: cappedFirst.qrMarkers,
                                 routeType: cappedFirst.routeType,
                                 trimmed: googlePolyline,
-                                walkingDirections: cappedFirst.walkingDirections,
+                                walkingDirections: googleDirections.isEmpty ? cappedFirst.walkingDirections : googleDirections,
                                 usedOSRMRouting: false,
                                 isFromPrePopulatedDatabase: cappedFirst.isFromPrePopulatedDatabase,
                                 travelToStartMinutes: cappedFirst.travelToStartMinutes
@@ -2652,6 +2658,9 @@ struct LocalRoutePickerSheet: View {
                                                 usedOSRM: false,
                                                 travelToStartSeconds: routeData.travelToStartSeconds
                                             )
+                                            // v2.1.14: Use Google directions for main map so turn-by-turn matches polyline
+                                            let googleDirs = await MainActor.run { extractWalkingDirections(from: googleResult.legs, waypoints: routeData.places) }
+                                            directions = directionsFromGpsToFirst + googleDirs + directionsFromLastToGps
                                         } else {
                                             print("[ROUTE_DEBUG] 🔍 CACHE route '\(_routeName)': Google re-measure FAILED — keeping prepop values: \(preGoogleDurSec/60)min, \(preGoogleDistM)m")
                                             // #region agent log
@@ -2892,6 +2901,8 @@ struct LocalRoutePickerSheet: View {
                                         print("[ROUTE_DEBUG] 🔍 Extended route '\(displayRoute.name)': Google re-measure: \(googleResult.durationSeconds)s (\(googleResult.durationSeconds/60)min), \(googleResult.distanceMeters)m (was \(displayRoute.durationMinutes)min/\(displayRoute.distanceMeters)m)")
                                         // v2.1.11: Carry Google polyline for preview display
                                         let extGooglePoly = googleResult.polyline.isEmpty ? displayRoute.trimmed : googleResult.polyline
+                                        // v2.1.14: Use Google directions for main map so turn-by-turn matches polyline
+                                        let extGoogleDirs = await MainActor.run { extractWalkingDirections(from: googleResult.legs, waypoints: routeData.places) }
                                         displayRoute = WalkingRoute(
                                             name: displayRoute.name,
                                             description: displayRoute.description,
@@ -2906,7 +2917,7 @@ struct LocalRoutePickerSheet: View {
                                             qrMarkers: displayRoute.qrMarkers,
                                             routeType: displayRoute.routeType,
                                             trimmed: extGooglePoly,
-                                            walkingDirections: displayRoute.walkingDirections,
+                                            walkingDirections: extGoogleDirs.isEmpty ? displayRoute.walkingDirections : extGoogleDirs,
                                             usedOSRMRouting: false,
                                             isFromPrePopulatedDatabase: displayRoute.isFromPrePopulatedDatabase,
                                             travelToStartMinutes: displayRoute.travelToStartMinutes
@@ -3557,6 +3568,9 @@ struct LocalRoutePickerSheet: View {
                         if let googleResult = await mapsService.getGoogleDirectionsRoute(origin: userLocation.coordinate, waypoints: filteredResult.places, targetDurationMinutes: selectedDuration) {
                             mainRoutePreviewSource = "google"
                             let googleDurationMin = googleResult.durationSeconds / 60
+                            // v2.1.14: Use Google directions and polyline for main map so turn-by-turn matches
+                            let googleDirs = await MainActor.run { extractWalkingDirections(from: googleResult.legs, waypoints: filteredResult.places) }
+                            let googleTrimmed = googleResult.polyline.isEmpty ? displayRoute.trimmed : googleResult.polyline
                             displayRoute = WalkingRoute(
                                 name: displayRoute.name,
                                 description: displayRoute.description,
@@ -3570,8 +3584,8 @@ struct LocalRoutePickerSheet: View {
                                 color: displayRoute.color,
                                 qrMarkers: displayRoute.qrMarkers,
                                 routeType: displayRoute.routeType,
-                                trimmed: displayRoute.trimmed,
-                                walkingDirections: displayRoute.walkingDirections,
+                                trimmed: googleTrimmed,
+                                walkingDirections: googleDirs.isEmpty ? displayRoute.walkingDirections : googleDirs,
                                 usedOSRMRouting: displayRoute.usedOSRMRouting,
                                 isFromPrePopulatedDatabase: displayRoute.isFromPrePopulatedDatabase,
                                 travelToStartMinutes: displayRoute.travelToStartMinutes
@@ -4235,6 +4249,8 @@ struct LocalRoutePickerSheet: View {
         // v2.1.11: ALWAYS run Google refresh on Let's Go — even if route was duration-remeasured
         // with getGoogleDirectionsRoute during cache load, the full refreshRouteWithGoogleOnly()
         // is needed to provide Google-snapped polyline and walking directions for the active walk.
+        // Policy: Show Google directions and polyline whenever the API returns success; only fall back
+        // to preview (or service's MapKit fallback) when there is an API rejection (quota, denied, invalid, etc.).
         Task {
             let wasFromGoogle = await MainActor.run {
                 currentRouteIndex < allRoutes.count && allRoutes[currentRouteIndex].isFromGoogle
@@ -4267,19 +4283,29 @@ struct LocalRoutePickerSheet: View {
                 return
             }
             
-            // Google only — MapKit was already started on preview; race: show MapKit if it finishes first, else show Google; last is always Google
+            // Google only — show Google directions and polyline when available; fall back only on API rejection
             guard mapsService.hasAPIKey else {
-                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_skipped reason=no_api_key")
+                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_skipped reason=no_api_key (using preview route)")
                 return
             }
             
             let googleStart = Date()
             print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_start (Google refresh on Let's Go)")
             print("DIRECTIONS | [\(taskTimeString)] 🌐 Google refresh starting...")
-            if let refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
+            var refreshedRoute: WalkingRoute? = await mapsService.refreshRouteWithGoogleOnly(
                 route: route,
                 userLocation: userLocation
-            ) {
+            )
+            // One retry on transient failure (e.g. network) so we always show Google when we can; skip retry when API rejected
+            if refreshedRoute == nil && !mapsService.isLastGoogleDirectionsFailureAPIRefusal {
+                print("DIRECTIONS | [\(taskTimeString)] 🔄 Transient failure (no API rejection) — retrying Google once...")
+                try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s
+                refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(route: route, userLocation: userLocation)
+            }
+            if refreshedRoute == nil && mapsService.isLastGoogleDirectionsFailureAPIRefusal {
+                print("DIRECTIONS | [\(taskTimeString)] ⚠️ Using preview route (API rejection: \(mapsService.lastGoogleDirectionsErrorStatus ?? "unknown"))")
+            }
+            if let refreshedRoute = refreshedRoute {
                 let googleElapsed = Date().timeIntervalSince(googleStart)
                 print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_done elapsed=\(String(format: "%.2f", googleElapsed))s")
                 // Cap refreshed duration so it matches preview: avoid showing 45 min when preview was 8 min (same sanity cap as elsewhere, using preview duration as target)
@@ -4288,6 +4314,8 @@ struct LocalRoutePickerSheet: View {
                 if cappedRefreshedRoute.durationMinutes != refreshedRoute.durationMinutes {
                     print("DIRECTIONS | [\(formatter.string(from: Date()))] Duration capped for display: Google=\(refreshedRoute.durationMinutes)min → \(cappedRefreshedRoute.durationMinutes)min (preview was \(previewTargetMin)min)")
                 }
+                // v2.1.14: Apply CAPPED route to map/pill so "X mins left" matches preview (Google-checked) time; raw Google duration was only for logging/offer-adjust
+                let routeToApply = cappedRefreshedRoute
                 let targetMin = await MainActor.run { selectedDuration }
                 // Only offer adjust when route is at least 10% over requested time (e.g. 11+ min for 10 min, 17+ for 15 min).
                 let overThreshold = max(1, Int(ceil(Double(targetMin) * 0.10)))
@@ -4336,9 +4364,9 @@ struct LocalRoutePickerSheet: View {
                 }
                 await MainActor.run {
                     refreshRaceState.googleApplied = true
-                    viewModel.updateCurrentRoute(refreshedRoute, sourceIsGoogle: true)
+                    viewModel.updateCurrentRoute(routeToApply, sourceIsGoogle: true)
                     isRouteRefreshed = true
-                    print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ Google route applied (last route is always Google)")
+                    print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ Google route applied (capped to preview \(routeToApply.durationMinutes)min; raw Google was \(refreshedRoute.durationMinutes)min)")
                 }
                 
                 if mapsService.lastRouteHadRestrictedRoads {
@@ -4351,8 +4379,8 @@ struct LocalRoutePickerSheet: View {
                     }
                 }
             } else {
-                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_failed (keeping current route; MapKit may apply if it finishes)")
-                print("DIRECTIONS | [\(formatter.string(from: Date()))] ⚠️ Google refresh failed")
+                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_failed (using preview route — Google unavailable or API rejection)")
+                print("DIRECTIONS | [\(formatter.string(from: Date()))] ⚠️ Google refresh failed — showing preview directions/polyline")
             }
             print("DIRECTIONS | ========== direction refresh finished ==========")
         }
@@ -4667,6 +4695,8 @@ struct LocalRoutePickerSheet: View {
                             if !googleResult.polyline.isEmpty {
                                 finalPolyline = googleResult.polyline
                             }
+                            // v2.1.14: Use Google directions for main map so turn-by-turn matches polyline
+                            directions = await MainActor.run { extractWalkingDirections(from: googleResult.legs, waypoints: result.places) }
                             isFromGoogle = true
                         } else {
                             print("[DIAGNOSTIC +1] Google re-measure FAILED — keeping MapKit values (\(durationMin)min)")
@@ -4927,6 +4957,18 @@ struct LocalRoutePickerSheet: View {
         return durationOk && distanceOk
     }
     
+    /// Wider band used for +1 and pre-gen when we need a second route: 65–125% for short targets (≤10 min), else same as isRouteInBand. Same min distance. So 7 min is accepted for 10 min target in pre-gen.
+    private static func isRouteInWideBand(_ route: WalkingRoute, selectedDuration: Int) -> Bool {
+        let rounded = RouteCacheService.roundToNearest5Minutes(selectedDuration)
+        let (minPct, maxPct): (Double, Double) = rounded <= 10 ? (0.65, 1.25) : (0.80, 1.20)
+        let minAcc = Int(Double(rounded) * minPct)
+        let maxAcc = Int(Double(rounded) * maxPct)
+        let durationOk = route.durationMinutes >= minAcc && route.durationMinutes <= maxAcc
+        let minDist = minDistanceMetersForInBand(for: selectedDuration)
+        let distanceOk = route.distanceMeters >= minDist
+        return durationOk && distanceOk
+    }
+    
     /// Count how many routes currently in allRoutes are in-band (80-120% of target duration + min distance).
     private func inBandRouteCount() -> Int {
         allRoutes.filter { Self.isRouteInBand($0.route, selectedDuration: selectedDuration) }.count
@@ -5093,19 +5135,22 @@ struct LocalRoutePickerSheet: View {
             
             if let googleResult = await mapsService.getGoogleDirectionsRoute(origin: userLocation, waypoints: target.data.places, targetDurationMinutes: selectedDuration) {
                 let googleDurMin = max(1, googleResult.durationSeconds / 60)
+                // v2.1.14: Use Google legs and polyline so main map has matching directions
+                let sweepGoogleDirs = await MainActor.run { extractWalkingDirections(from: googleResult.legs, waypoints: target.data.places) }
                 let correctedData = GeneratedRoute(
                     places: target.data.places,
-                    polyline: target.data.polyline,
+                    polyline: googleResult.polyline.isEmpty ? target.data.polyline : googleResult.polyline,
                     distanceMeters: googleResult.distanceMeters,
                     durationSeconds: googleResult.durationSeconds,
-                    legs: target.data.legs,
-                    usedOSRM: target.data.usedOSRM,
+                    legs: googleResult.legs,
+                    usedOSRM: false,
                     travelToStartSeconds: target.data.travelToStartSeconds
                 )
                 
                 await MainActor.run {
                     guard let idx = allRoutes.firstIndex(where: { $0.route.name == target.name }) else { return }
                     let existing = allRoutes[idx]
+                    let sweepTrimmed = googleResult.polyline.isEmpty ? existing.route.trimmed : googleResult.polyline
                     let correctedRoute = WalkingRoute(
                         name: existing.route.name,
                         description: existing.route.description,
@@ -5119,8 +5164,8 @@ struct LocalRoutePickerSheet: View {
                         color: existing.route.color,
                         qrMarkers: existing.route.qrMarkers,
                         routeType: existing.route.routeType,
-                        trimmed: existing.route.trimmed,
-                        walkingDirections: existing.route.walkingDirections,
+                        trimmed: sweepTrimmed,
+                        walkingDirections: sweepGoogleDirs.isEmpty ? existing.route.walkingDirections : sweepGoogleDirs,
                         usedOSRMRouting: existing.route.usedOSRMRouting,
                         isFromPrePopulatedDatabase: existing.route.isFromPrePopulatedDatabase,
                         travelToStartMinutes: existing.route.travelToStartMinutes
@@ -5227,6 +5272,9 @@ struct LocalRoutePickerSheet: View {
                 if let googleResult = await mapsService.getGoogleDirectionsRoute(origin: userLocation, waypoints: data.places, targetDurationMinutes: selectedDuration) {
                     let googleDurMin = max(1, googleResult.durationSeconds / 60)
                     let isValid = googleDurMin >= minAcceptable && googleDurMin <= maxAcceptable
+                    // v2.1.14: Use Google directions and polyline for main map
+                    let prepopValidateDirs = await MainActor.run { extractWalkingDirections(from: googleResult.legs, waypoints: data.places) }
+                    let prepopValidatePoly = googleResult.polyline.isEmpty ? route.trimmed : googleResult.polyline
                     let updatedRoute = WalkingRoute(
                         name: route.name,
                         description: route.description,
@@ -5240,19 +5288,19 @@ struct LocalRoutePickerSheet: View {
                         color: route.color,
                         qrMarkers: route.qrMarkers,
                         routeType: route.routeType,
-                        trimmed: route.trimmed,
-                        walkingDirections: route.walkingDirections,
+                        trimmed: prepopValidatePoly,
+                        walkingDirections: prepopValidateDirs.isEmpty ? route.walkingDirections : prepopValidateDirs,
                         usedOSRMRouting: route.usedOSRMRouting,
                         isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase,
                         travelToStartMinutes: route.travelToStartMinutes
                     )
                     let updatedData = GeneratedRoute(
                         places: data.places,
-                        polyline: data.polyline,
+                        polyline: googleResult.polyline.isEmpty ? data.polyline : googleResult.polyline,
                         distanceMeters: googleResult.distanceMeters,
                         durationSeconds: googleResult.durationSeconds,
-                        legs: data.legs,
-                        usedOSRM: data.usedOSRM,
+                        legs: googleResult.legs,
+                        usedOSRM: false,
                         travelToStartSeconds: data.travelToStartSeconds
                     )
                     isValidByRouteName[route.name] = isValid
@@ -6053,6 +6101,9 @@ struct LocalRoutePickerSheet: View {
                         if let googleResult = await mapsService.getGoogleDirectionsRoute(origin: userLocation.coordinate, waypoints: result.places, targetDurationMinutes: selectedDuration) {
                             // 🔍 DIAGNOSTIC: Log Google re-measure result
                             print("[ROUTE_DEBUG] 🔍 PRE-GEN route '\(route.name)': Google re-measure: \(googleResult.durationSeconds)s (\(googleResult.durationSeconds/60)min), \(googleResult.distanceMeters)m")
+                            // v2.1.14: Use Google directions and polyline for main map so turn-by-turn matches
+                            let pregenGoogleDirs = await MainActor.run { extractWalkingDirections(from: googleResult.legs, waypoints: result.places) }
+                            let pregenGooglePoly = googleResult.polyline.isEmpty ? route.trimmed : googleResult.polyline
                             route = WalkingRoute(
                                 name: route.name,
                                 description: route.description,
@@ -6066,8 +6117,8 @@ struct LocalRoutePickerSheet: View {
                                 color: route.color,
                                 qrMarkers: route.qrMarkers,
                                 routeType: route.routeType,
-                                trimmed: route.trimmed,
-                                walkingDirections: route.walkingDirections,
+                                trimmed: pregenGooglePoly,
+                                walkingDirections: pregenGoogleDirs.isEmpty ? route.walkingDirections : pregenGoogleDirs,
                                 usedOSRMRouting: route.usedOSRMRouting,
                                 isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase,
                                 travelToStartMinutes: route.travelToStartMinutes
@@ -6076,10 +6127,12 @@ struct LocalRoutePickerSheet: View {
                             // v2.1.8: Update GeneratedRoute with Google values so e.data matches e.route
                             result = GeneratedRoute(
                                 places: result.places,
-                                polyline: result.polyline,
+                                polyline: googleResult.polyline.isEmpty ? result.polyline : googleResult.polyline,
                                 distanceMeters: googleResult.distanceMeters,
                                 durationSeconds: googleResult.durationSeconds,
-                                legs: result.legs
+                                legs: googleResult.legs,
+                                usedOSRM: false,
+                                travelToStartSeconds: result.travelToStartSeconds
                             )
                         }
                     }
@@ -6108,12 +6161,15 @@ struct LocalRoutePickerSheet: View {
                         
                         // Only show in-band routes; out-of-band routes go to cross-bucket pool
                         let cappedRoute = Self.applyDurationSanityCap(route, targetDurationMinutes: selectedDuration)
+                        // v2.1.14: When we still need more routes, accept wide-band (65–125% for short targets) so e.g. 7 min is shown for 10 min — same as +1 flow
+                        let useWideBandBypass = !hasEnoughInBandRoutes() && !Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) && Self.isRouteInWideBand(cappedRoute, selectedDuration: selectedDuration)
                         
                         let added = appendRouteIfAllowed(
                             route: cappedRoute,
                             data: deduplicatedResult,
                             isFromGoogle: isFromGoogle,
-                            source: "pre-gen-loop"
+                            source: "pre-gen-loop",
+                            bypassInBandCap: useWideBandBypass
                         )
                         
                         if !added {
@@ -6144,12 +6200,14 @@ struct LocalRoutePickerSheet: View {
                         if result.places.count >= 2 && !hasEnoughInBandRoutes() {
                             if let permuted = createPermutedRoute(from: cappedRoute, data: result, isDeadZoneFallback: false, isFromGoogle: isFromGoogle) {
                                 let cappedP = permuted.route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
+                                let permWideBypass = !Self.isRouteInBand(cappedP, selectedDuration: selectedDuration) && Self.isRouteInWideBand(cappedP, selectedDuration: selectedDuration)
                                 let permAdded = appendRouteIfAllowed(
                                     route: cappedP,
                                     data: permuted.data,
                                     isDeadZoneFallback: permuted.isDeadZoneFallback,
                                     isFromGoogle: permuted.isFromGoogle,
-                                    source: "pre-gen-permuted"
+                                    source: "pre-gen-permuted",
+                                    bypassInBandCap: permWideBypass
                                 )
                                 if permAdded {
                                     registerRouteSignature(places: permuted.data.places, distanceMeters: permuted.data.distanceMeters)
@@ -6339,6 +6397,9 @@ struct LocalRoutePickerSheet: View {
                                 if let googleResult = await mapsService.getGoogleDirectionsRoute(origin: userLocation.coordinate, waypoints: result.places, targetDurationMinutes: selectedDuration) {
                                     let googleDurMin = max(1, googleResult.durationSeconds / 60)
                                     print("[ROUTE_DEBUG] 🔍 GOOGLE-POI route '\(route.name)': Google re-measure: \(googleResult.durationSeconds)s (\(googleDurMin)min), \(googleResult.distanceMeters)m")
+                                    // v2.1.14: Use Google directions and polyline for main map
+                                    let googlePoiDirs = await MainActor.run { extractWalkingDirections(from: googleResult.legs, waypoints: result.places) }
+                                    let googlePoiPoly = googleResult.polyline.isEmpty ? route.trimmed : googleResult.polyline
                                     route = WalkingRoute(
                                         name: route.name,
                                         description: route.description,
@@ -6352,17 +6413,17 @@ struct LocalRoutePickerSheet: View {
                                         color: route.color,
                                         qrMarkers: route.qrMarkers,
                                         routeType: route.routeType,
-                                        trimmed: route.trimmed,
-                                        walkingDirections: route.walkingDirections
+                                        trimmed: googlePoiPoly,
+                                        walkingDirections: googlePoiDirs.isEmpty ? route.walkingDirections : googlePoiDirs
                                     )
                                     isActuallyFromGoogle = true
                                     // Update GeneratedRoute with Google values so data matches route
                                     result = GeneratedRoute(
                                         places: result.places,
-                                        polyline: result.polyline,
+                                        polyline: googleResult.polyline.isEmpty ? result.polyline : googleResult.polyline,
                                         distanceMeters: googleResult.distanceMeters,
                                         durationSeconds: googleResult.durationSeconds,
-                                        legs: result.legs
+                                        legs: googleResult.legs
                                     )
                                 } else {
                                     print("[ROUTE_DEBUG] 🔍 GOOGLE-POI route '\(route.name)': Google re-measure FAILED — keeping MapKit \(preGoogleDur)min / \(preGoogleDist)m")

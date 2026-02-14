@@ -897,6 +897,7 @@ struct EmbeddedWalkMapView: View {
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm:ss.SSS"
             let timeString = formatter.string(from: timestamp)
+            #if DEBUG
             print("🔍 [MOTION DEBUG] [\(timeString)] 🟢 EmbeddedWalkMapView: showMotionExplainer changed from \(oldValue) to \(newValue)")
             if newValue {
                 print("🔍 [MOTION DEBUG] [\(timeString)]   ⚠️ Attempting to present MotionPermissionExplainerSheet")
@@ -907,6 +908,7 @@ struct EmbeddedWalkMapView: View {
                     print("🔍 [MOTION DEBUG] [\(timeString)]     [\(index)] \(symbol)")
                 }
             }
+            #endif
         }
         .onAppear {
             let appearTime = Date()
@@ -3605,16 +3607,22 @@ private struct CompactStatusPillContent: View {
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm:ss.SSS"
             let timeString = formatter.string(from: timestamp)
+            #if DEBUG
             print("🔍 [MOTION DEBUG] [\(timeString)] 🔵 stepsPillView tapped - Motion authorized: \(healthKitService.isMotionAuthorized)")
+            #endif
             
             // If Motion is already authorized, enable steps directly (this will trigger HealthKit permission)
             if healthKitService.isMotionAuthorized {
+                #if DEBUG
                 print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ Motion already authorized - enabling steps directly (will trigger HealthKit permission)")
+                #endif
                 DispatchQueue.main.async {
                     onEnableSteps()
                 }
             } else {
+                #if DEBUG
                 print("🔍 [MOTION DEBUG] [\(timeString)]   ⚠️ Motion not authorized - showing explainer sheet")
+                #endif
                 // Force binding update on next run loop to avoid conflicts with Timer/animations
                 DispatchQueue.main.async {
                     showMotionExplainer = true
@@ -4341,7 +4349,9 @@ struct MotionPermissionExplainer: View {
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm:ss.SSS"
             let timeString = formatter.string(from: timestamp)
+            #if DEBUG
             print("🔍 [MOTION DEBUG] [\(timeString)] 📋 MotionPermissionExplainerSheet.onAppear()")
+            #endif
         }
     }
 }

@@ -232,7 +232,10 @@ class ClinicLocationService: ObservableObject {
     /// Sort clinicians by their distance from the user
     /// Clinicians with unknown locations go to the end
     func sortByProximity(clinicians: [Clinician], userLocation: CLLocation) -> [Clinician] {
+        #if DEBUG
+        // Log only in debug to avoid log spam when Firebase/location updates trigger frequent re-sorts
         print("📍 Sorting \(clinicians.count) clinicians by proximity to \(userLocation.coordinate)")
+        #endif
         
         let sorted = clinicians.sorted { c1, c2 in
             let dist1 = distance(from: userLocation, to: c1.location)
@@ -255,12 +258,14 @@ class ClinicLocationService: ObservableObject {
             return c1.name < c2.name
         }
         
-        // Debug log the result
+        #if DEBUG
+        // Debug log the result (omit in release to avoid log spam from frequent re-sorts)
         for (index, clinician) in sorted.enumerated() {
             let dist = distance(from: userLocation, to: clinician.location)
             let distStr = dist.map { String(format: "%.0fm", $0) } ?? "unknown"
             print("📍 [\(index + 1)] \(clinician.name) @ \(clinician.location) → \(distStr)")
         }
+        #endif
         
         return sorted
     }

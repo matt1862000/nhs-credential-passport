@@ -20,7 +20,9 @@ fileprivate func _agentLogGM(_ loc: String, _ msg: String, _ data: [String: Any]
     guard let j = try? JSONSerialization.data(withJSONObject: d), let s = String(data: j, encoding: .utf8) else { return }
     if !FileManager.default.fileExists(atPath: path) { try? Data().write(to: URL(fileURLWithPath: path)) }
     if let h = try? FileHandle(forUpdating: URL(fileURLWithPath: path)) { h.seekToEndOfFile(); h.write((s + "\n").data(using: .utf8)!); h.closeFile() }
+    #if DEBUG
     print("\(WAYPOINT_DIR_TAG) \(loc) | \(msg) | \(data)")
+    #endif
 }
 // #endregion
 
@@ -2469,15 +2471,19 @@ class GoogleMapsService: ObservableObject {
         // ═══════════════════════════════════════════════════════════════
         let beforeCanonical = allResults.count
         let canonicalStartTime = Date()
+        #if DEBUG
         print("🎯 [CANONICAL] Starting canonical POI deduplication...")
+        #endif
         allResults = canonicalizePOIs(allResults, origin: location, maxTimeSeconds: canonicalMaxTimeSeconds)
         let canonicalElapsed = Date().timeIntervalSince(canonicalStartTime)
         let canonicalRemoved = beforeCanonical - allResults.count
+        #if DEBUG
         if canonicalRemoved > 0 {
             print("🎯 [CANONICAL] Removed \(canonicalRemoved) duplicates (had \(beforeCanonical), now \(allResults.count)) in \(String(format: "%.3f", canonicalElapsed))s")
         } else {
             print("🎯 [CANONICAL] No duplicates found (all \(allResults.count) POIs are unique)")
         }
+        #endif
         
         // v1.9.99: OPTIMISTIC FILTERING - Fast path first, expensive filtering in background
         // Fast name/type filter already applied (isRestrictedPOI) - catches 95% of issues instantly
@@ -4909,6 +4915,10 @@ class GoogleMapsService: ObservableObject {
         // Remove trailing commas and clean up
         cleaned = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: ", "))
         
+        // Ignore placeholders / non-road strings (e.g. "POI" from marker.location when no address)
+        let ignored = ["POI", "UNKNOWN", "ADDRESS", "LOCATION", "N/A"]
+        if ignored.contains(cleaned.uppercased()) { return nil }
+        
         // Return if we have a meaningful road name (at least 3 characters)
         return cleaned.count >= 3 ? cleaned : nil
     }
@@ -5220,6 +5230,40 @@ class GoogleMapsService: ObservableObject {
         
         print("🛤️ ❌ All Overpass mirrors failed to find nearest main road")
         return nil
+    }
+    
+    /// v2.1.x: Batch snap path to roads using Google Roads API (Snap to Roads).
+    /// Used as fallback when Overpass fails for one or more waypoints. One API call per route (up to 100 points).
+    /// Requires Roads API enabled for the same API key. Returns nil if key missing, network error, or invalid response.
+    private func snapPathToRoadsGoogle(path: [CLLocationCoordinate2D]) async -> [CLLocationCoordinate2D]? {
+        guard path.count <= 100, !path.isEmpty, !apiKey.isEmpty else { return nil }
+        let pathParam = path.map { "\($0.latitude),\($0.longitude)" }.joined(separator: "|")
+        guard let encoded = pathParam.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://roads.googleapis.com/v1/snapToRoads?path=\(encoded)&key=\(apiKey)") else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let snappedPoints = json["snappedPoints"] as? [[String: Any]], !snappedPoints.isEmpty else { return nil }
+            var coords: [(index: Int, coord: CLLocationCoordinate2D)] = []
+            for (i, point) in snappedPoints.enumerated() {
+                guard let loc = point["location"] as? [String: Any],
+                      let lat = loc["latitude"] as? Double,
+                      let lon = loc["longitude"] as? Double else { continue }
+                let idx = point["originalIndex"] as? Int ?? i
+                coords.append((index: idx, coord: CLLocationCoordinate2D(latitude: lat, longitude: lon)))
+            }
+            coords.sort { $0.index < $1.index }
+            let result = coords.map { $0.coord }
+            guard result.count == path.count else { return nil }
+            print("🛤️ [ROAD SNAP] Google Snap to Roads: \(result.count) waypoints (batch fallback)")
+            return result
+        } catch {
+            print("🛤️ ❌ Google Snap to Roads failed: \(error.localizedDescription)")
+            return nil
+        }
     }
     
     /// Fallback filter when Overpass is unavailable - filter by suspicious names/types
@@ -7366,13 +7410,14 @@ class GoogleMapsService: ObservableObject {
         }
     }
     
-    // MARK: - Optimistic hybrid: OSM snap only + refinement check
-    /// Runs OSM road snapping only (no Google call). Returns snapped waypoints in same order as route.qrMarkers.
-    /// Existing 10m "already on road" logic is unchanged. Returns empty array if route has no waypoints.
+    // MARK: - Optimistic hybrid: Overpass first, Google batch fallback
+    /// Snaps waypoints to roads: Overpass first (per-waypoint); if any waypoint fails, one batched Google Snap to Roads call.
+    /// Returns snapped waypoints in same order as route.qrMarkers. Empty array if route has no waypoints.
     func snapWaypointsToRoads(route: WalkingRoute) async -> [CLLocationCoordinate2D] {
         let rawWaypoints = route.qrMarkers.map { $0.coordinate }
         guard !rawWaypoints.isEmpty else { return [] }
-        let snapped = await withTaskGroup(of: (Int, CLLocationCoordinate2D).self) { group in
+        typealias SnapResult = (index: Int, coord: CLLocationCoordinate2D, overpassSucceeded: Bool)
+        let overpassResults = await withTaskGroup(of: SnapResult.self) { group in
             for (index, waypoint) in rawWaypoints.enumerated() {
                 group.addTask {
                     let marker = route.qrMarkers[index]
@@ -7385,18 +7430,30 @@ class GoogleMapsService: ObservableObject {
                             .distance(from: CLLocation(latitude: nearestRoad.latitude, longitude: nearestRoad.longitude))
                         if distance > 10 {
                             print("🛤️ [ROAD SNAP] Waypoint \(index+1) snapped to road (\(Int(distance))m)")
-                            return (index, nearestRoad)
                         }
+                        return (index, nearestRoad, true)
                     }
-                    return (index, waypoint)
+                    return (index, waypoint, false)
                 }
             }
-            var results = [(Int, CLLocationCoordinate2D)]()
+            var results: [SnapResult] = []
             for await result in group { results.append(result) }
-            return results.sorted { $0.0 < $1.0 }.map { $0.1 }
+            return results.sorted { $0.index < $1.index }
         }
-        print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(snapped.count) waypoints)")
-        return snapped
+        let allOverpassSucceeded = overpassResults.allSatisfy { $0.overpassSucceeded }
+        if allOverpassSucceeded {
+            print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(overpassResults.count) waypoints) — Overpass")
+            return overpassResults.map { $0.coord }
+        }
+        let failedCount = overpassResults.filter { !$0.overpassSucceeded }.count
+        print("🛤️ [ROAD SNAP] Overpass failed for \(failedCount) waypoint(s) — trying Google Snap to Roads (batch)...")
+        if let googleSnapped = await snapPathToRoadsGoogle(path: rawWaypoints) {
+            print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(googleSnapped.count) waypoints) — Google batch fallback")
+            return googleSnapped
+        }
+        let fallback = overpassResults.map { $0.coord }
+        print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(fallback.count) waypoints) — Overpass (some unchanged, Google failed)")
+        return fallback
     }
     
     /// Returns the same route with qrMarkers updated to use road-snapped coordinates.
@@ -7473,7 +7530,14 @@ class GoogleMapsService: ObservableObject {
         let session = URLSession(configuration: config)
         do {
             let (data, response) = try await session.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return nil }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                lastGoogleDirectionsErrorStatus = "NO_HTTP_RESPONSE"
+                return nil
+            }
+            guard httpResponse.statusCode == 200 else {
+                lastGoogleDirectionsErrorStatus = "HTTP_\(httpResponse.statusCode)"
+                return nil
+            }
             recordGoogleDirectionsCall()
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let status = json["status"] as? String,
@@ -7622,6 +7686,7 @@ class GoogleMapsService: ObservableObject {
                 walkingDirections: directionsToUse
             )
         } catch {
+            lastGoogleDirectionsErrorStatus = "NETWORK_ERROR"
             return nil
         }
     }
@@ -7662,11 +7727,13 @@ class GoogleMapsService: ObservableObject {
         
         // Check if we can use Google Directions
         guard canUseGoogleDirectionsRefresh else {
+            lastGoogleDirectionsErrorStatus = "QUOTA_EXHAUSTED"
             print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Google quota exhausted - returning nil")
             return nil
         }
         
         guard hasAPIKey else {
+            lastGoogleDirectionsErrorStatus = "NO_API_KEY"
             print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ No API key - returning nil")
             return nil
         }
@@ -7674,6 +7741,7 @@ class GoogleMapsService: ObservableObject {
         // Extract waypoint coordinates from QR markers
         let rawWaypoints = route.qrMarkers.map { $0.coordinate }
         guard !rawWaypoints.isEmpty else {
+            lastGoogleDirectionsErrorStatus = "NO_WAYPOINTS"
             print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ No waypoints - returning nil")
             return nil
         }
@@ -7699,9 +7767,11 @@ class GoogleMapsService: ObservableObject {
         // Log why Google failed so we can diagnose when MapKit fallback is used
         let googleStatus = lastGoogleDirectionsErrorStatus ?? "unknown"
         print("REFRESH_FALLBACK | Google returned nil — status=\(googleStatus) (filter Xcode by REFRESH_FALLBACK to see when MapKit is used)")
-        // v2.1.3: Fall back to MapKit only when Google quota exceeded or request denied
-        if googleStatus == "OVER_QUERY_LIMIT" || googleStatus == "REQUEST_DENIED" {
-            print("REFRESH_FALLBACK | Using MapKit fallback — reason: \(googleStatus == "OVER_QUERY_LIMIT" ? "quota exceeded" : "request denied")")
+        // v2.1.3: Fall back to MapKit when Google quota/denied, or network/SSL/unknown failure
+        let useMapKitFallback = googleStatus == "OVER_QUERY_LIMIT" || googleStatus == "REQUEST_DENIED"
+            || googleStatus == "NETWORK_ERROR" || googleStatus == "unknown"
+        if useMapKitFallback {
+            print("REFRESH_FALLBACK | Using MapKit fallback — reason: \(googleStatus == "OVER_QUERY_LIMIT" ? "quota exceeded" : googleStatus == "REQUEST_DENIED" ? "request denied" : googleStatus == "NETWORK_ERROR" ? "network/SSL error" : "unknown")")
             print("🍎 [MAPKIT FALLBACK] Google quota/access issue - falling back to MapKit with snapped waypoints")
             if let mapKitRoute = await refreshRouteWithMapKitUsingSnappedWaypoints(
                 route: route,
@@ -7714,10 +7784,23 @@ class GoogleMapsService: ObservableObject {
                 return mapKitRoute
             }
         } else {
-            print("REFRESH_FALLBACK | Not using MapKit — Google failed with status '\(googleStatus)' (fallback only for OVER_QUERY_LIMIT or REQUEST_DENIED)")
+            print("REFRESH_FALLBACK | Not using MapKit — Google failed with status '\(googleStatus)' (fallback only for quota/denied/network/unknown)")
         }
         print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Returning nil - no fallback available")
         return nil
+    }
+    
+    /// True when the last refreshRouteWithGoogleOnly/fetchGoogleDirections failure was an API rejection (quota, denied, invalid, etc.).
+    /// Caller should use preview/fallback route only in this case; for transient failures (e.g. nil status) retry is appropriate.
+    var isLastGoogleDirectionsFailureAPIRefusal: Bool {
+        guard let status = lastGoogleDirectionsErrorStatus, !status.isEmpty else { return false }
+        let rejectionStatuses: Set<String> = [
+            "OVER_QUERY_LIMIT", "REQUEST_DENIED", "INVALID_REQUEST", "NOT_FOUND", "ZERO_RESULTS", "UNKNOWN_ERROR",
+            "QUOTA_EXHAUSTED", "NO_API_KEY", "NO_WAYPOINTS", "NO_HTTP_RESPONSE"
+        ]
+        if rejectionStatuses.contains(status) { return true }
+        if status.hasPrefix("HTTP_") { return true }
+        return false
     }
     
     /// Extend a short route (e.g. from lower bucket) to target duration by adding 1–2 detour waypoints.
@@ -18727,8 +18810,10 @@ class GoogleMapsService: ObservableObject {
     /// Decode a Google Maps encoded polyline string into coordinates
     func decodePolyline(_ encodedPath: String) -> [CLLocationCoordinate2D] {
         // #region agent log
+        #if DEBUG
         _agentLogGM("GoogleMapsService.decodePolyline", "entry", ["encodedLength": encodedPath.utf8.count, "prefix": String(encodedPath.prefix(64))], "H1")
         print("[POLYLINE] GoogleMapsService.decodePolyline entry length=\(encodedPath.utf8.count)")
+        #endif
         // #endregion
         var coordinates: [CLLocationCoordinate2D] = []
         var index = encodedPath.startIndex
@@ -19293,7 +19378,9 @@ class GoogleMapsService: ObservableObject {
                            (distance <= 15 && typesCompatible) ||
                            (sameCoarseGroup && distance <= 20 && nameSimilarity >= 0.80)
                 }) {
+                    #if DEBUG
                     print("🔄 Dedup: Removed '\(poi.name)' (source: \(poi.source.rawValue)) - duplicate of '\(existing.name)' (source: \(existing.source.rawValue))")
+                    #endif
                 }
             }
         }
@@ -19329,9 +19416,11 @@ class GoogleMapsService: ObservableObject {
         guard !pois.isEmpty else { return pois }
         
         let canonicalStartTime = Date()
+        #if DEBUG
         print("🎯 [CANONICAL] Processing \(pois.count) POIs with type-aware merge rules:")
         print("   • Requires: (1) proximity ≤150m (or ≤400m with same grid ref/OSM ID), (2) compatible types, (3) name similarity ≥0.85 OR shared source signal")
         print("   • Never merges incompatible types (e.g., pub vs postbox)")
+        #endif
         
         var canonical: [PlaceResult] = []
         var processed = Set<String>()
@@ -19359,7 +19448,9 @@ class GoogleMapsService: ObservableObject {
                     canonical.append(other)
                     processed.insert(other.placeId)
                 }
+                #if DEBUG
                 print("🎯 [CANONICAL] Time cap (\(String(format: "%.1f", cap))s) reached - returning \(canonical.count) POIs (\(unprocessed.count) unmerged)")
+                #endif
                 return canonical
             }
             
@@ -19448,7 +19539,9 @@ class GoogleMapsService: ObservableObject {
                     } else {
                         gridRefInfo = "none"
                     }
+                    #if DEBUG
                     print("   🔍 Checking: '\(poi.name)' vs '\(otherPOI.name)' - \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity)), gridRef: \(gridRefInfo), types: \(poiCategory)/\(otherCategory)")
+                    #endif
                 }
                 
                 // RULE 1: Hard spatial merge (≤20m) - requires compatible types, ignores names
@@ -19458,7 +19551,9 @@ class GoogleMapsService: ObservableObject {
                     // Types already checked above
                     cluster.append(otherPOI)
                     processed.insert(otherPOI.placeId)
+                    #if DEBUG
                     print("   🔗 Hard spatial merge: \(String(format: "%.1f", distance))m apart (ignoring name mismatch)")
+                    #endif
                     continue
                 }
                 
@@ -19473,10 +19568,14 @@ class GoogleMapsService: ObservableObject {
                         cluster.append(otherPOI)
                         processed.insert(otherPOI.placeId)
                         let rangeType = withinStandardRange ? "standard" : "extended (name similarity)"
+                        #if DEBUG
                         print("   🔗 Same grid ref: \(poiGridRef ?? "") - \(String(format: "%.1f", distance))m apart (\(rangeType) merge)")
+                        #endif
                         continue
                     } else {
+                        #if DEBUG
                         print("   ⚠️ Same grid ref but insufficient name similarity: '\(poi.name)' vs '\(otherPOI.name)' - \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity)) (needs ≥0.92)")
+                        #endif
                         continue
                     }
                 }
@@ -19495,11 +19594,14 @@ class GoogleMapsService: ObservableObject {
                         processed.insert(otherPOI.placeId)
                         let gridRefPOI = poiGridRef != nil ? poi.name : otherPOI.name
                         let rangeType = withinStandardRange ? "standard" : "extended (very high similarity)"
+                        #if DEBUG
                         print("   🔗 Grid ref match (one-sided): '\(gridRefPOI)' - \(String(format: "%.1f", distance))m apart, similarity: \(String(format: "%.2f", nameSimilarity)) (\(rangeType))")
+                        #endif
                         continue
                     } else if distance <= 500.0 {
-                        // Debug: why didn't it match?
+                        #if DEBUG
                         print("   ⚠️ Grid ref one-sided but no merge: '\(poi.name)' vs '\(otherPOI.name)' - \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity)) (needs ≥0.92)")
+                        #endif
                     }
                 }
                 
@@ -19515,10 +19617,14 @@ class GoogleMapsService: ObservableObject {
                             cluster.append(otherPOI)
                             processed.insert(otherPOI.placeId)
                             let rangeType = withinStandardRange ? "standard" : "extended (name similarity)"
+                            #if DEBUG
                             print("   🔗 Same OSM ID: \(poiOSMId ?? "") - \(String(format: "%.1f", distance))m apart (\(rangeType) merge)")
+                            #endif
                             continue
                         } else {
+                            #if DEBUG
                             print("   ❌ Type mismatch (same OSM ID): '\(poi.name)' (\(poiCategory)) vs '\(otherPOI.name)' (\(otherCategory)) - \(String(format: "%.1f", distance))m apart")
+                            #endif
                             continue
                         }
                     }
@@ -19530,7 +19636,9 @@ class GoogleMapsService: ObservableObject {
                     // Types already checked above
                     cluster.append(otherPOI)
                     processed.insert(otherPOI.placeId)
+                    #if DEBUG
                     print("   🔗 Medium name match: \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity))")
+                    #endif
                     continue
                 }
                 
@@ -19540,7 +19648,9 @@ class GoogleMapsService: ObservableObject {
                     // Types already checked above
                     cluster.append(otherPOI)
                     processed.insert(otherPOI.placeId)
+                    #if DEBUG
                     print("   🔗 Wide name match: \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity))")
+                    #endif
                     continue
                 }
                 
@@ -19550,7 +19660,9 @@ class GoogleMapsService: ObservableObject {
                     // Types already checked above
                     cluster.append(otherPOI)
                     processed.insert(otherPOI.placeId)
+                    #if DEBUG
                     print("   🔗 Very high similarity: \(String(format: "%.1f", distance))m, similarity: \(String(format: "%.2f", nameSimilarity))")
+                    #endif
                     continue
                 }
             }
@@ -19569,15 +19681,19 @@ class GoogleMapsService: ObservableObject {
                     .map { $0.name }
                 if !mergedNames.isEmpty {
                     mergeLog.append((canonical: best.poi.name, merged: mergedNames))
+                    #if DEBUG
                     print("🎯 [CANONICAL] Cluster: '\(best.poi.name)' (source: \(best.poi.source.rawValue))")
                     print("   📋 Merged: \(mergedNames.joined(separator: ", "))")
+                    #endif
                 }
             }
         }
         
+        #if DEBUG
         if !mergeLog.isEmpty {
             print("🎯 [CANONICAL] Total clusters merged: \(mergeLog.count)")
         }
+        #endif
         
         return canonical
     }

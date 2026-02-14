@@ -55,7 +55,9 @@ class FirebaseService: ObservableObject {
         listener = db.collection("clinicians").addSnapshotListener { [weak self] snapshot, error in
             guard let self = self else { return }
             
+            #if DEBUG
             print("📡 Firebase snapshot received!")
+            #endif
             
             if let error = error {
                 print("❌ Firebase error: \(error.localizedDescription)")
@@ -67,7 +69,9 @@ class FirebaseService: ObservableObject {
                 return
             }
             
+            #if DEBUG
             print("📦 Found \(documents.count) documents in Firebase")
+            #endif
             
             var delays: [String: Int] = [:]
             var names: Set<String> = []
@@ -75,7 +79,9 @@ class FirebaseService: ObservableObject {
             
             for document in documents {
                 let data = document.data()
+                #if DEBUG
                 print("📄 Firebase doc: \(data)")
+                #endif
                 
                 // Required fields
                 guard let name = data["name"] as? String else {
@@ -130,11 +136,15 @@ class FirebaseService: ObservableObject {
                 names.insert(fullName)
                 names.insert(name)
                 
+                #if DEBUG
                 print("✅ Loaded: '\(fullName)' - \(delay) min delay")
+                #endif
             }
             
+            #if DEBUG
             print("📊 All loaded delays: \(delays)")
             print("👥 Available clinicians from Firebase: \(clinicianList.map { $0.fullName })")
+            #endif
             
             DispatchQueue.main.async {
                 self.clinicianDelays = delays
