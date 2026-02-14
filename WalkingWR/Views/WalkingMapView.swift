@@ -1127,9 +1127,26 @@ struct EmbeddedWalkMapView: View {
             let region = regionForRouteWithPadding(currentRoute, paddingFactor: 1.5)
             let verySlowAnimation = Animation.easeInOut(duration: 2.5)
             guard let firstWaypoint = currentRoute.qrMarkers.first?.coordinate else {
+                // No waypoints — show full route briefly, then switch to auto-follow
                 introPhase = .showingFullRoute
                 withAnimation(verySlowAnimation) { cameraPosition = .region(region) }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    // v2.2: Enable auto-follow for 0-waypoint routes too
+                    introPhase = .followingUser
+                    viewModel.mapStayCenteredOnRoute = false
+                    if let loc = viewModel.locationService.currentLocation {
+                        let heading: CLLocationDirection = viewModel.locationService.heading?.trueHeading ?? 0
+                        let cam = MapCamera(centerCoordinate: loc.coordinate, distance: 150.0, heading: heading, pitch: 0)
+                        currentZoomLevel = 150.0
+                        currentZoom = 150.0
+                        currentCameraState = cam
+                        currentCamera = cam
+                        lastLocation = loc.coordinate
+                        lastCameraUpdateLocation = loc.coordinate
+                        isProgrammaticCameraUpdate = true
+                        lastProgrammaticUpdateTime = Date()
+                        withAnimation(.easeInOut(duration: 2.0)) { cameraPosition = .camera(cam) }
+                    }
                     withAnimation(.easeOut(duration: 0.5)) { showingIntroOverlay = false }
                     calculateRoute()
                 }
@@ -1146,15 +1163,24 @@ struct EmbeddedWalkMapView: View {
                 introPhase = .showingFullRoute
                 withAnimation(verySlowAnimation) { cameraPosition = .region(region) }
             }
-            // Phase 3: Your location (after 8 seconds)
+            // Phase 3: Your location (after 8 seconds) — enable continuous auto-follow
             DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
                 guard !userInteractedWithMap else { return }
                 introPhase = .followingUser
+                // v2.2: Clear mapStayCenteredOnRoute so handleLocation/handleHeading/reorientMapToDirectionOfTravel
+                // can continuously track the user. Without this, the camera only gets set once and never follows.
+                viewModel.mapStayCenteredOnRoute = false
                 if let loc = viewModel.locationService.currentLocation {
                     let heading: CLLocationDirection = viewModel.locationService.heading?.trueHeading ?? 0
                     let cam = MapCamera(centerCoordinate: loc.coordinate, distance: 150.0, heading: heading, pitch: 0)
                     currentZoomLevel = 150.0
+                    currentZoom = 150.0
                     currentCameraState = cam
+                    currentCamera = cam
+                    lastLocation = loc.coordinate
+                    lastCameraUpdateLocation = loc.coordinate
+                    isProgrammaticCameraUpdate = true
+                    lastProgrammaticUpdateTime = Date()
                     withAnimation(verySlowAnimation) { cameraPosition = .camera(cam) }
                 }
             }

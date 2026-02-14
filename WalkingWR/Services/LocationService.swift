@@ -59,7 +59,12 @@ class LocationService: NSObject, ObservableObject {
     }
     @Published var isMonitoringDirections: Bool = false
     @Published var isSignificantlyOffRoute: Bool = false  // v1.9.15: Track if user has deviated significantly
-    private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String, polylineIndex: Int)] = []
+    // v2.2: Each waypoint now includes bearing info for corner-aware advancement.
+    // - preBearing:  heading (°) of the polyline segment *arriving* at this waypoint (nil if first step)
+    // - postBearing: heading (°) of the polyline segment *leaving* this waypoint (nil if last step)
+    // - turnAngle:   absolute bearing change at this waypoint (0° = straight, 180° = U-turn). Nil if either bearing is unknown.
+    // - isTurnPoint: true when turnAngle >= 25° — the step represents a real corner where bearing confirmation is required before advancing.
+    private var directionWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String, polylineIndex: Int, preBearing: Double?, postBearing: Double?, turnAngle: Double?, isTurnPoint: Bool)] = []
     /// Max valid direction index (prevents crash when ViewModel sets index from cachedOriginalDirections which can have extra items e.g. arrival).
     var safeMaxDirectionIndex: Int { directionWaypoints.isEmpty ? 0 : directionWaypoints.count - 1 }
     private var notifiedDirectionIndices: Set<Int> = []
@@ -105,6 +110,96 @@ class LocationService: NSObject, ObservableObject {
     private var returnJourneyStartIndex: Int? = nil  // v1.9.93: Direction index where return journey starts
     private var isLastMarkerVisited: (() -> Bool)? = nil
     private var canAdvanceFromDirectionIndex: ((Int) -> Bool)? = nil  // When set, only advance from step N if this returns true (waypoint at N activated)
+    
+    // v2.2: Corner-aware direction advancement
+    /// Minimum turn angle (degrees) at a waypoint to treat it as a "corner" requiring bearing confirmation before advancing.
+    private let cornerTurnAngleThreshold: Double = 25.0
+    /// Maximum user course error (degrees) from the post-turn bearing to count as "heading confirmed". Wider to allow GPS course wobble.
+    private let bearingConfirmationTolerance: Double = 55.0
+    /// Minimum speed (m/s) for CLLocation.course to be considered reliable. Below this, course is noise.
+    private let minSpeedForReliableCourse: Double = 0.5
+    
+    /// Compute the initial bearing (degrees, 0-360) from point A to point B using the forward azimuth formula.
+    private func bearing(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> Double {
+        let lat1 = from.latitude * .pi / 180
+        let lat2 = to.latitude * .pi / 180
+        let dLon = (to.longitude - from.longitude) * .pi / 180
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        let bearing = atan2(y, x) * 180 / .pi
+        return (bearing + 360).truncatingRemainder(dividingBy: 360)
+    }
+    
+    /// Absolute angular difference between two bearings (0–180°).
+    private func angleDifference(_ a: Double, _ b: Double) -> Double {
+        let diff = abs(a - b).truncatingRemainder(dividingBy: 360)
+        return diff > 180 ? 360 - diff : diff
+    }
+    
+    /// Compute the average bearing of a few polyline segments around a given index.
+    /// `direction`: -1 for segments arriving (before index), +1 for segments leaving (after index).
+    /// Uses up to `sampleDistance` meters of polyline to average out micro-jitter.
+    private func averageBearingAroundIndex(_ idx: Int, direction: Int, polyline: [CLLocationCoordinate2D], sampleDistance: Double = 30.0) -> Double? {
+        guard polyline.count >= 2 else { return nil }
+        var totalBearing: Double = 0
+        var totalWeight: Double = 0
+        var accumulated: Double = 0
+        
+        if direction > 0 {
+            // Segments leaving this point: idx→idx+1, idx+1→idx+2, ...
+            var i = idx
+            while i < polyline.count - 1 && accumulated < sampleDistance {
+                let segBearing = bearing(from: polyline[i], to: polyline[i + 1])
+                let segLen = CLLocation(latitude: polyline[i].latitude, longitude: polyline[i].longitude)
+                    .distance(from: CLLocation(latitude: polyline[i + 1].latitude, longitude: polyline[i + 1].longitude))
+                if segLen > 0.5 { // Ignore degenerate segments
+                    totalBearing += segBearing * segLen
+                    totalWeight += segLen
+                }
+                accumulated += segLen
+                i += 1
+            }
+        } else {
+            // Segments arriving at this point: idx-1→idx, idx-2→idx-1, ...
+            var i = idx
+            while i > 0 && accumulated < sampleDistance {
+                let segBearing = bearing(from: polyline[i - 1], to: polyline[i])
+                let segLen = CLLocation(latitude: polyline[i - 1].latitude, longitude: polyline[i - 1].longitude)
+                    .distance(from: CLLocation(latitude: polyline[i].latitude, longitude: polyline[i].longitude))
+                if segLen > 0.5 {
+                    totalBearing += segBearing * segLen
+                    totalWeight += segLen
+                }
+                accumulated += segLen
+                i -= 1
+            }
+        }
+        guard totalWeight > 0 else { return nil }
+        let avgBearing = totalBearing / totalWeight
+        return (avgBearing + 360).truncatingRemainder(dividingBy: 360)
+    }
+    
+    /// Check if the user's current course (CLLocation.course) confirms they are heading in the post-turn direction.
+    /// Returns true if: (a) this is not a turn point, (b) user is moving too slowly for reliable course, or (c) course matches post-turn bearing within tolerance.
+    private func isBearingConfirmed(waypointIndex: Int, userLocation: CLLocation) -> Bool {
+        guard waypointIndex < directionWaypoints.count else { return true }
+        let wp = directionWaypoints[waypointIndex]
+        
+        // Not a turn point → no bearing gate needed
+        guard wp.isTurnPoint else { return true }
+        
+        // User moving too slowly for reliable course → skip bearing gate (allow distance-based logic to handle)
+        guard userLocation.speed >= minSpeedForReliableCourse else { return true }
+        
+        // Course not available (< 0 means invalid in CLLocation)
+        guard userLocation.course >= 0 else { return true }
+        
+        // Need post-turn bearing to compare against
+        guard let postBearing = wp.postBearing else { return true }
+        
+        let courseError = angleDifference(userLocation.course, postBearing)
+        return courseError <= bearingConfirmationTolerance
+    }
     
     // MARK: - Polyline Projection Helpers (v1.9.70)
     
@@ -531,15 +626,34 @@ class LocationService: NSObject, ObservableObject {
                 accumulatedDist += segmentDist
             }
             
-            // v1.9.70: Store polyline index for each waypoint
+            // v1.9.70: Store polyline index for each waypoint (bearing fields populated in second pass below)
             directionWaypoints.append((
                 coordinate: waypointCoord,
                 instruction: direction.instruction,
                 distance: direction.distance,
-                polylineIndex: waypointPolylineIndex
+                polylineIndex: waypointPolylineIndex,
+                preBearing: nil,
+                postBearing: nil,
+                turnAngle: nil,
+                isTurnPoint: false
             ))
             
             cumulativeDistance += Double(direction.distanceMeters)
+        }
+        
+        // v2.2: Second pass — compute pre/post bearings and turn angles from the polyline geometry.
+        // This tells us where corners are and what heading the user should have after each turn.
+        for i in 0..<directionWaypoints.count {
+            let idx = directionWaypoints[i].polylineIndex
+            let pre = averageBearingAroundIndex(idx, direction: -1, polyline: routePath)
+            let post = averageBearingAroundIndex(idx, direction: +1, polyline: routePath)
+            directionWaypoints[i].preBearing = pre
+            directionWaypoints[i].postBearing = post
+            if let pre = pre, let post = post {
+                let turn = angleDifference(pre, post)
+                directionWaypoints[i].turnAngle = turn
+                directionWaypoints[i].isTurnPoint = turn >= cornerTurnAngleThreshold
+            }
         }
         
         // v1.9.70 / v2.1.27: Use polyline projection to determine which waypoints are ahead/behind.
@@ -562,11 +676,18 @@ class LocationService: NSObject, ObservableObject {
         
         isMonitoringDirections = true
         
-        // v1.9.78: Log all directions for debugging
+        // v1.9.78 / v2.2: Log all directions with bearing info for debugging
         var allDirectionsLog = "📋 All directions (\(directionWaypoints.count) total):\n"
         for (idx, waypoint) in directionWaypoints.enumerated() {
             let marker = idx == currentDirectionIndex ? "👉" : "  "
-            allDirectionsLog += "\(marker) [\(idx)] \(waypoint.instruction) (polylineIndex: \(waypoint.polylineIndex))\n"
+            let turnInfo: String
+            if let turn = waypoint.turnAngle {
+                turnInfo = waypoint.isTurnPoint ? "🔄\(Int(turn))°" : "↗️\(Int(turn))°"
+            } else {
+                turnInfo = "—"
+            }
+            let postB = waypoint.postBearing.map { "\(Int($0))°" } ?? "—"
+            allDirectionsLog += "\(marker) [\(idx)] \(waypoint.instruction) (polylineIdx:\(waypoint.polylineIndex), turn:\(turnInfo), postBearing:\(postB))\n"
         }
         print("📍 [DIRECTION_MONITORING] \(allDirectionsLog)")
         debugLogger.log(allDirectionsLog, category: "DIRECTION_MONITORING")
@@ -608,7 +729,7 @@ class LocationService: NSObject, ObservableObject {
         let previousNotified = notifiedDirectionIndices
         
         // Rebuild waypoints with new directions
-        var newWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String, polylineIndex: Int)] = []
+        var newWaypoints: [(coordinate: CLLocationCoordinate2D, instruction: String, distance: String, polylineIndex: Int, preBearing: Double?, postBearing: Double?, turnAngle: Double?, isTurnPoint: Bool)] = []
         var cumulativeDistance: Double = 0
         var routeIndex = 0
         let totalRoutePoints = routePath.count
@@ -637,7 +758,11 @@ class LocationService: NSObject, ObservableObject {
                 coordinate: waypointCoord,
                 instruction: direction.instruction,
                 distance: direction.distance,
-                polylineIndex: waypointPolylineIndex
+                polylineIndex: waypointPolylineIndex,
+                preBearing: nil,
+                postBearing: nil,
+                turnAngle: nil,
+                isTurnPoint: false
             ))
             
             cumulativeDistance += Double(direction.distanceMeters)
@@ -646,6 +771,20 @@ class LocationService: NSObject, ObservableObject {
         // Update waypoints and route path
         directionWaypoints = newWaypoints
         cachedRoutePath = routePath
+        
+        // v2.2: Recompute bearings for updated waypoints
+        for i in 0..<directionWaypoints.count {
+            let idx = directionWaypoints[i].polylineIndex
+            let pre = averageBearingAroundIndex(idx, direction: -1, polyline: routePath)
+            let post = averageBearingAroundIndex(idx, direction: +1, polyline: routePath)
+            directionWaypoints[i].preBearing = pre
+            directionWaypoints[i].postBearing = post
+            if let pre = pre, let post = post {
+                let turn = angleDifference(pre, post)
+                directionWaypoints[i].turnAngle = turn
+                directionWaypoints[i].isTurnPoint = turn >= cornerTurnAngleThreshold
+            }
+        }
         
         // Restore progress (clamp to valid range)
         currentDirectionIndex = min(previousIndex, max(0, directionWaypoints.count - 1))
@@ -872,18 +1011,35 @@ class LocationService: NSObject, ObservableObject {
                 canAdvanceToReturnJourney = true
             }
             
+            // v2.2: Corner-aware bearing confirmation.
+            // For turn points (corners with >= 25° turn), require the user's GPS course to match the post-turn heading
+            // before advancing. This prevents premature advancement when the user is near but hasn't actually turned yet.
+            // The bearing gate is bypassed when: (a) not a turn point, (b) user speed < 0.5 m/s, or (c) course unavailable.
+            let bearingOK = isBearingConfirmed(waypointIndex: index, userLocation: currentLocation)
+            
             // Trigger notification if ALL conditions are met (stricter AND logic):
             // - Within 20m distance (stricter radius)
             // - Past on polyline
             // - Has moved enough along route
             // - Has consistent forward movement
             // - Has good GPS accuracy
+            // - Bearing confirmed (for turn points)
             // - Can advance to return journey (if applicable)
-            // OR failsafe: if very close (<8m), always trigger (stricter failsafe)
-            let shouldTrigger = (distance <= 20 && userIsAtOrPastOnPolyline && hasMovedEnough && hasConsistentMovement && hasGoodAccuracy && canAdvanceToReturnJourney) ||
-                                (distance <= 8 && canAdvanceToReturnJourney)  // Failsafe: if very close, always trigger (stricter failsafe)
+            // OR failsafe: if very close (<8m) AND bearing confirmed, always trigger
+            let shouldTrigger = (distance <= 20 && userIsAtOrPastOnPolyline && hasMovedEnough && hasConsistentMovement && hasGoodAccuracy && bearingOK && canAdvanceToReturnJourney) ||
+                                (distance <= 8 && bearingOK && canAdvanceToReturnJourney)  // Failsafe: if very close + bearing OK, always trigger
             
-            // v1.9.74: Comprehensive logging for direction advancement debugging
+            // v1.9.74 / v2.2: Comprehensive logging for direction advancement debugging (now includes bearing info)
+            let bearingDetail: String
+            if waypoint.isTurnPoint {
+                let courseStr = currentLocation.course >= 0 ? "\(Int(currentLocation.course))°" : "N/A"
+                let postBStr = waypoint.postBearing.map { "\(Int($0))°" } ?? "N/A"
+                let turnStr = waypoint.turnAngle.map { "\(Int($0))°" } ?? "N/A"
+                let speedStr = String(format: "%.2f", currentLocation.speed)
+                bearingDetail = "🔄 TURN POINT: turn=\(turnStr), postBearing=\(postBStr), userCourse=\(courseStr), speed=\(speedStr)m/s, bearingOK=\(bearingOK)"
+            } else {
+                bearingDetail = "↗️ Straight segment (no bearing gate)"
+            }
             let waypointLog = """
             Waypoint \(index + 1)/\(directionWaypoints.count): "\(waypoint.instruction)"
             - Distance: \(String(format: "%.1f", distance))m (threshold: 20m, failsafe: 8m)
@@ -894,6 +1050,7 @@ class LocationService: NSObject, ObservableObject {
               * hasMovedEnough: \(hasMovedEnough) (moved \(String(format: "%.1f", distanceMovedAlongRoute))m >= \(minMovementAlongRoute)m)
               * hasConsistentMovement: \(hasConsistentMovement) (needs \(minConsistentReadings) readings, \(consistencyThreshold*100)% forward)
               * hasGoodAccuracy: \(hasGoodAccuracy) (accuracy: \(String(format: "%.1f", currentLocation.horizontalAccuracy))m <= \(maxGPSAccuracy)m)
+              * bearingConfirmed: \(bearingOK) — \(bearingDetail)
             - Network: \(currentNetworkType)
             - shouldTrigger: \(shouldTrigger)
             """
@@ -911,6 +1068,7 @@ class LocationService: NSObject, ObservableObject {
                     if !hasMovedEnough { failureReasons.append("Not moved enough (\(String(format: "%.1f", distanceMovedAlongRoute))m < \(minMovementAlongRoute)m)") }
                     if !hasConsistentMovement { failureReasons.append("No consistent forward movement") }
                     if !hasGoodAccuracy { failureReasons.append("Poor GPS accuracy (\(String(format: "%.1f", currentLocation.horizontalAccuracy))m > \(maxGPSAccuracy)m)") }
+                    if !bearingOK { failureReasons.append("Bearing NOT confirmed (user hasn't turned yet) — \(bearingDetail)") }
                     
                     let failureLog = "❌ NOT TRIGGERING waypoint \(index + 1) - Reasons: \(failureReasons.joined(separator: ", "))"
                     print("📍 [WAYPOINT CHECK] [\(timeString)] \(failureLog)")
@@ -974,6 +1132,7 @@ class LocationService: NSObject, ObservableObject {
         
         // Display sync: keep banner in sync with user position (blue dot).
         // v2.1.28: Option 1 + time confirmation — advance at most +1 per update; when still behind, 2s timer re-checks and allows next step if position still ahead (avoids 0→3 jump, shows 0→1→2→3).
+        // v2.2: Also gated by bearing confirmation for turn points — don't advance banner past a corner until user's heading confirms the turn.
         // - When suggested > current: advance banner by at most +1; if still behind, start/reschedule 2s catch-up timer.
         // - When suggested < current: pull banner back to match dot and cancel catch-up timer.
         if currentDirectionIndex < directionWaypoints.count {
@@ -982,9 +1141,16 @@ class LocationService: NSObject, ObservableObject {
                 let oldIndex = currentDirectionIndex
                 let newIndex = min(currentDirectionIndex + 1, suggested, directionWaypoints.count - 1)
                 let lastMarkerVisited = isLastMarkerVisited?() ?? false
+                
+                // v2.2: Bearing gate for display sync — don't advance to the next step if it's a turn point and user hasn't turned
+                let bearingOKForSync = isBearingConfirmed(waypointIndex: newIndex, userLocation: currentLocation)
+                
                 // Only advance to next step when current step's waypoint (if any) has been activated
                 let mayAdvance: Bool
-                if let canAdvance = canAdvanceFromDirectionIndex {
+                if !bearingOKForSync {
+                    mayAdvance = false
+                    debugLogger.log("Display sync: NOT advancing from \(oldIndex) to \(newIndex) - bearing not confirmed at turn point", category: "DIRECTION_ADVANCE")
+                } else if let canAdvance = canAdvanceFromDirectionIndex {
                     mayAdvance = canAdvance(oldIndex)
                     if !mayAdvance {
                         debugLogger.log("Display sync: NOT advancing from \(oldIndex) to \(newIndex) - waypoint at current step not yet activated", category: "DIRECTION_ADVANCE")
@@ -1036,6 +1202,12 @@ class LocationService: NSObject, ObservableObject {
                         self?.performDirectionCatchUpCheck()
                     }
                 }
+                } else {
+                    // v2.2: mayAdvance was false (bearing gate or waypoint gate) — still schedule catch-up so we retry
+                    directionCatchUpTimer?.invalidate()
+                    directionCatchUpTimer = Timer.scheduledTimer(withTimeInterval: directionCatchUpInterval, repeats: false) { [weak self] _ in
+                        self?.performDirectionCatchUpCheck()
+                    }
                 }
             } else if suggested < currentDirectionIndex {
                 directionCatchUpTimer?.invalidate()
@@ -1052,7 +1224,8 @@ class LocationService: NSObject, ObservableObject {
         }
     }
     
-    /// v2.1.28: After 2s delay, re-check suggested from current location; if still ahead, advance banner by +1 (confirmation step so we don't advance on noise).
+    /// v2.1.28 / v2.2: After 2s delay, re-check suggested from current location; if still ahead, advance banner by +1.
+    /// v2.2: Also checks bearing confirmation at turn points before advancing.
     private func performDirectionCatchUpCheck() {
         directionCatchUpTimer?.invalidate()
         directionCatchUpTimer = nil
@@ -1064,6 +1237,18 @@ class LocationService: NSObject, ObservableObject {
             let oldIndex = currentDirectionIndex
             let newIndex = min(currentDirectionIndex + 1, suggested, directionWaypoints.count - 1)
             let lastMarkerVisited = isLastMarkerVisited?() ?? false
+            
+            // v2.2: Bearing gate for catch-up timer
+            let bearingOKForCatchUp = isBearingConfirmed(waypointIndex: newIndex, userLocation: location)
+            if !bearingOKForCatchUp {
+                debugLogger.log("Catch-up: NOT advancing from \(oldIndex) to \(newIndex) - bearing not confirmed at turn point. Will retry.", category: "DIRECTION_ADVANCE")
+                // Reschedule to try again — user may still be turning
+                directionCatchUpTimer = Timer.scheduledTimer(withTimeInterval: directionCatchUpInterval, repeats: false) { [weak self] _ in
+                    self?.performDirectionCatchUpCheck()
+                }
+                return
+            }
+            
             let mayAdvance: Bool
             if let canAdvance = canAdvanceFromDirectionIndex {
                 mayAdvance = canAdvance(oldIndex)

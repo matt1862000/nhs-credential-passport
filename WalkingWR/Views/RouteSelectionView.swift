@@ -7084,39 +7084,13 @@ struct LocalRoutePickerSheet: View {
                                 maneuver: "arrive"
                             )
                         } else if legIndex < waypoints.count {
-                            // Intermediate waypoint - create waypoint-specific instruction
+                            // v2.2: Simplified — no left/right side, just "Arrive at Waypoint"
                             let waypointIndex = legIndex + 1 // 1-indexed for display
                             let waypoint = waypoints[legIndex]
                             let waypointName = waypoint.name
                             
-                            // Determine left/right from original instruction
-                            let side = instructionLower.contains("right") ? "right" : "left"
-                            
-                            // #region agent log
-                            let logData2: [String: Any] = [
-                                "location": "RouteSelectionView:extractWalkingDirections:side",
-                                "message": "RouteSelectionView waypoint side",
-                                "data": [
-                                    "legIndex": legIndex,
-                                    "waypointIndex": waypointIndex,
-                                    "waypointName": waypointName,
-                                    "side": side,
-                                    "waypointsCount": waypoints.count,
-                                    "instructionPrefix": String(direction.instruction.prefix(120)),
-                                    "containsRight": instructionLower.contains("right"),
-                                    "containsLeft": instructionLower.contains("left")
-                                ],
-                                "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-                                "hypothesisId": "E"
-                            ]
-                            if let logJSON2 = try? JSONSerialization.data(withJSONObject: logData2),
-                               let logString2 = String(data: logJSON2, encoding: .utf8) {
-                                logString2.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
-                            }
-                            // #endregion
-                            
                             direction = WalkingDirection(
-                                instruction: "Waypoint \(waypointIndex) (\(waypointName)) is on your \(side)",
+                                instruction: "Arrive at Waypoint \(waypointIndex) (\(waypointName))",
                                 distance: step.distance.text,
                                 distanceMeters: step.distance.value,
                                 duration: step.duration.text,

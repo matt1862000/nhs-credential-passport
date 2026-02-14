@@ -727,19 +727,15 @@ class WaitingRoomViewModel: ObservableObject {
                        return (l.contains("arrive") || l.contains("destination")) && !d.instruction.contains("Waypoint")
                    }) {
                     let orig = directionsToUse[idx].instruction
-                    let side = orig.lowercased().contains("right") ? "right" : "left"
-                    // #region agent log
-                    let _wrLog: [String: Any] = ["location": "WaitingRoomViewModel:singleWP:side", "message": "Single-waypoint safeguard waypoint side", "data": ["waypointName": name, "instructionPrefix": String(orig.prefix(120)), "containsRight": orig.lowercased().contains("right"), "containsLeft": orig.lowercased().contains("left"), "side": side], "timestamp": Int(Date().timeIntervalSince1970 * 1000), "hypothesisId": "D"]
-                    if let _wrData = try? JSONSerialization.data(withJSONObject: _wrLog), let _wrLine = String(data: _wrData, encoding: .utf8) { _wrLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
-                    // #endregion
+                    // v2.2: Simplified — no left/right side, just "Arrive at Waypoint"
                     directionsToUse[idx] = WalkingDirection(
-                        instruction: "Waypoint 1 (\(name)) is on your \(side)",
+                        instruction: "Arrive at Waypoint 1 (\(name))",
                         distance: directionsToUse[idx].distance,
                         distanceMeters: directionsToUse[idx].distanceMeters,
                         duration: directionsToUse[idx].duration,
                         maneuver: "arrive"
                     )
-                    print("REFRESH_FALLBACK | Single-waypoint safeguard: replaced '\(orig.prefix(40))...' with Waypoint 1 (\(name))")
+                    print("REFRESH_FALLBACK | Single-waypoint safeguard: replaced '\(orig.prefix(40))...' with Arrive at Waypoint 1 (\(name))")
                 }
                 if resetDirectionIndex {
                     locationService.startDirectionMonitoring(directions: directionsToUse, routePath: route.routePath, skipPassedWaypoints: false)
@@ -749,7 +745,7 @@ class WaitingRoomViewModel: ObservableObject {
                 // Keep cached directions in sync so banner and expanded list show the new instructions (e.g. after delay-change route refresh).
                 cachedOriginalDirections = directionsToUse
                 // #region agent log — waypoint directions diagnostic (filter Xcode by WAYPOINT_DIAG)
-                let wpCountUpdate = directionsToUse.filter { $0.instruction.contains("Waypoint") && $0.instruction.contains("is on your") }.count
+                let wpCountUpdate = directionsToUse.filter { $0.instruction.contains("Arrive at Waypoint") }.count
                 print("WAYPOINT_DIAG updateCurrentRoute | route='\(route.name)' waypoints=\(route.qrMarkers.count) names=[\(route.qrMarkers.map { $0.name }.joined(separator: ", "))] | directions=\(directionsToUse.count) waypointLines=\(wpCountUpdate)")
                 let updatePayload: [String: Any] = ["location": "WaitingRoomViewModel:updateCurrentRoute:diag", "message": "route update waypoint diagnostic", "data": ["routeName": route.name, "expectedWaypoints": route.qrMarkers.count, "waypointNames": route.qrMarkers.map { $0.name }, "directionCount": directionsToUse.count, "waypointLineCount": wpCountUpdate], "timestamp": Int(Date().timeIntervalSince1970 * 1000), "hypothesisId": "A"]
                 if let updateData = try? JSONSerialization.data(withJSONObject: updatePayload), let updateLine = String(data: updateData, encoding: .utf8) { updateLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
@@ -1024,7 +1020,7 @@ class WaitingRoomViewModel: ObservableObject {
         // #endregion
         // #region agent log — waypoint directions diagnostic (filter Xcode by WAYPOINT_DIAG)
         let waypointNames = route.qrMarkers.map { $0.name }
-        let waypointLineCount = dirs.filter { $0.instruction.contains("Waypoint") && $0.instruction.contains("is on your") }.count
+        let waypointLineCount = dirs.filter { $0.instruction.contains("Arrive at Waypoint") }.count
         print("WAYPOINT_DIAG startWalk | expected waypoints=\(route.qrMarkers.count) names=[\(waypointNames.joined(separator: ", "))] | directions=\(dirs.count) waypointLines=\(waypointLineCount)")
         let diagPayload: [String: Any] = ["location": "WaitingRoomViewModel:startWalk:diag", "message": "waypoint diagnostic", "data": ["expectedWaypoints": route.qrMarkers.count, "waypointNames": waypointNames, "directionCount": dirs.count, "waypointLineCount": waypointLineCount], "timestamp": Int(Date().timeIntervalSince1970 * 1000), "hypothesisId": "E"]
         if let diagData = try? JSONSerialization.data(withJSONObject: diagPayload), let diagLine = String(data: diagData, encoding: .utf8) { diagLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
@@ -1119,7 +1115,7 @@ class WaitingRoomViewModel: ObservableObject {
             directionIndexToMarkerId = [:]
             var waypointCount = 0
             for (index, dir) in filteredDirections.enumerated() {
-                if dir.instruction.contains("Waypoint") && dir.instruction.contains("is on your"),
+                if dir.instruction.contains("Arrive at Waypoint"),
                    waypointCount < route.qrMarkers.count {
                     directionIndexToMarkerId[index] = route.qrMarkers[waypointCount].id
                     waypointCount += 1
@@ -1661,6 +1657,10 @@ class WaitingRoomViewModel: ObservableObject {
         guard let route = selectedRoute,
               let userLocation = locationService.currentLocation else { return }
         
+        // v2.2: Don't manipulate directions/state while marker arrival sheet is showing
+        // This prevents rapid state mutations from interfering with SwiftUI sheet presentation
+        guard !showMarkerArrivalPrompt else { return }
+        
         // Get route path for dynamic radius calculation
         let routePath = route.routePath
         
@@ -1769,9 +1769,16 @@ class WaitingRoomViewModel: ObservableObject {
                     arrivalInstruction = nil
                 }
                 
-                // Show the photo prompt (marker arrival sheet)
-                showMarkerArrivalPrompt = true
-                DebugLogger.shared.log("Set showMarkerArrivalPrompt=true for marker '\(marker.name)' (visited=\(visitedMarkerIds.count)/\(route.qrMarkers.count))", category: "ARRIVAL")
+                // v2.2: Show the marker arrival sheet after a small delay.
+                // SwiftUI needs a moment to process the visitedMarkerIds change (which triggers
+                // map checkmark update, polyline recalculation, etc.) before presenting a sheet.
+                // Without this delay, the sheet presentation can be silently dropped.
+                DebugLogger.shared.log("Waypoint visited — will show arrival sheet for '\(marker.name)' in 0.5s (visited=\(visitedMarkerIds.count)/\(route.qrMarkers.count))", category: "ARRIVAL")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    guard let self = self else { return }
+                    self.showMarkerArrivalPrompt = true
+                    DebugLogger.shared.log("Set showMarkerArrivalPrompt=true for marker '\(marker.name)'", category: "ARRIVAL")
+                }
                 
                 // Send notification
                 notificationService.sendMarkerArrivalNotification(markerName: marker.name)
@@ -1791,21 +1798,31 @@ class WaitingRoomViewModel: ObservableObject {
               let userLocation = locationService.currentLocation,
               let startLocation = walkSession.startLocation ?? route.routePath.first,
               !hasReachedHome,
+              !showMarkerArrivalPrompt,  // v2.2: Don't show home sheet while marker sheet is up
               walkSession.isActive else {
             if selectedRoute == nil || locationService.currentLocation == nil { return }
             if hasReachedHome { return }
+            if showMarkerArrivalPrompt { return }  // v2.2: Wait for marker sheet to dismiss
             if !walkSession.isActive { DebugLogger.shared.log("checkHomeArrival SKIP: walkSession.isActive=false", category: "HOME"); return }
             return
         }
         
-        // CRITICAL: Only check for home arrival if ALL waypoints have been visited
-        // This ensures we're at the END of the walk, not the beginning
-        guard visitedMarkerIds.count == route.qrMarkers.count,
-              route.qrMarkers.count > 0 else { return }
+        // CRITICAL: Only check for home arrival if ALL waypoints have been visited (or route has no waypoints).
+        // This ensures we're at the END of the walk, not the beginning.
+        // v2.2: Routes with 0 markers (e.g. locally generated walks) should still detect home arrival.
+        let allWaypointsVisited = route.qrMarkers.isEmpty || visitedMarkerIds.count == route.qrMarkers.count
+        guard allWaypointsVisited else { return }
         
-        // Additional check: Ensure we've been walking for at least 30 seconds
-        // This prevents false triggers if user starts near home
-        guard walkSession.elapsedSeconds >= 30 else { return }
+        // Additional check: Ensure we've been walking for at least 30 seconds (60s for 0-marker routes
+        // to ensure the user has actually gone out and come back, not just started near home).
+        let minElapsed: Int = route.qrMarkers.isEmpty ? 60 : 30
+        guard walkSession.elapsedSeconds >= minElapsed else { return }
+        
+        // v2.2: For 0-marker routes, also require the user to have walked at least 100m
+        // to prevent false triggers from GPS drift at the start
+        if route.qrMarkers.isEmpty {
+            guard locationService.distanceWalked >= 100 else { return }
+        }
         
         let startPoint = CLLocation(latitude: startLocation.latitude, longitude: startLocation.longitude)
         let distanceToHome = userLocation.distance(from: startPoint)
@@ -1816,9 +1833,15 @@ class WaitingRoomViewModel: ObservableObject {
         // v1.9.15: Use actual start location, not route end point
         // Activate when within 30 meters of start location
         if distanceToHome < 30 {
-            DebugLogger.shared.log("Home arrival DETECTED (distance: \(Int(distanceToHome))m, elapsed: \(walkSession.elapsedSeconds)s, waypoints: \(visitedMarkerIds.count)/\(route.qrMarkers.count)) - setting showHomeArrivalPrompt=true", category: "HOME")
+            DebugLogger.shared.log("Home arrival DETECTED (distance: \(Int(distanceToHome))m, elapsed: \(walkSession.elapsedSeconds)s, waypoints: \(visitedMarkerIds.count)/\(route.qrMarkers.count)) - will show home arrival sheet in 0.5s", category: "HOME")
             hasReachedHome = true
-            showHomeArrivalPrompt = true
+            
+            // v2.2: Small delay to let SwiftUI settle before presenting sheet
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self = self else { return }
+                self.showHomeArrivalPrompt = true
+                DebugLogger.shared.log("Set showHomeArrivalPrompt=true", category: "HOME")
+            }
             
             // v1.9.13: Cancel all walking notifications when reaching start/end point
             notificationService.cancelAllWalkingNotifications()
