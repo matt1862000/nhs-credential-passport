@@ -15,13 +15,6 @@ import FirebaseStorage
 class PrePopulatedPOIService {
     static let shared = PrePopulatedPOIService()
     
-    // #region agent log
-    /// Path for debug instrumentation (same as RouteSelectionView: app Documents on device so log can be retrieved).
-    private static func _agentLogPath() -> String {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first.map { $0.appendingPathComponent("debug.log").path } ?? "/Users/raihant/Documents/WalkingWR/.cursor/debug.log"
-    }
-    // #endregion agent log
-    
     // Prevent concurrent downloads; in-flight task so callers can await it
     private var isDownloading = false
     private var downloadTask: Task<Void, Never>?
@@ -334,7 +327,6 @@ class PrePopulatedPOIService {
             print("📦 Pre-populated DB: No database loaded (not downloaded or bundled)")
             return nil
         }
-        
         var matchingPOIs: [PlaceResult] = []
         var matchedPostcode: String? = nil
         var matchedSector: String? = nil

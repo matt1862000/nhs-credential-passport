@@ -1148,7 +1148,7 @@ struct LocalRoutePickerSheet: View {
     // v2.1.10: "+1" button — user can generate up to 5 additional routes on demand
     @State private var additionalRoutesGenerated: Int = 0
     @State private var isGeneratingAdditionalRoute = false
-    private let maxAdditionalRoutes = 10  // v2.1: Increased from 5 for testing variety
+    private let maxAdditionalRoutes = 1  // User can press +1 only once; Google Places fallback used as final attempt
     
     // v2.1.9: Cross-bucket route pool — routes generated for one duration whose actual
     // Google-measured duration fits a different bucket. Keyed by rounded 5-min duration.
@@ -1667,6 +1667,13 @@ struct LocalRoutePickerSheet: View {
                         print("[ROUTE_GEN] 🏁 [SAFETY] 8s timeout fired → showLoadingScreen already false, no-op")
                     }
                 }
+                // When only one route was found initially, try Google Places fallback once to add a second route
+                if allRoutes.count == 1, mapsService.hasAPIKey, let loc = locationService.currentLocation?.coordinate {
+                    Task {
+                        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s so UI has settled
+                        _ = await tryGooglePlacesFallbackToAddRoute(userCoordinate: loc, source: "initial_one_route_fallback")
+                    }
+                }
             }
             // Delay alerts - must show even when route sheet is open
             .alert("Location Limit Reached", isPresented: $showLocationLimitAlert) {
@@ -2030,8 +2037,9 @@ struct LocalRoutePickerSheet: View {
                 
                 // If postcode hit and prepop DB not ready: stay on "Finding places nearby" until download finishes OR 10s, then proceed
                 let inPostcodeArea = await PrePopulatedPOIService.shared.isInTargetPostcodeArea(userLocation.coordinate)
-                print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s DB_CHECK inPostcode=\(inPostcodeArea) hasDB=\(PrePopulatedPOIService.shared.hasDownloadedDatabase)")
-                if inPostcodeArea && !PrePopulatedPOIService.shared.hasDownloadedDatabase {
+                let hasDownloadedDatabase = PrePopulatedPOIService.shared.hasDownloadedDatabase
+                print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s DB_CHECK inPostcode=\(inPostcodeArea) hasDB=\(hasDownloadedDatabase)")
+                if inPostcodeArea && !hasDownloadedDatabase {
                     let prepopWaitStart = Date()
                     await PrePopulatedPOIService.shared.ensureDatabaseReadyWithTimeout(userLocation: userLocation.coordinate, waitUpToSeconds: 10.0)
                     let prepopWaitElapsed = Date().timeIntervalSince(prepopWaitStart)
@@ -4496,6 +4504,93 @@ struct LocalRoutePickerSheet: View {
         }
     }
     
+    /// One attempt to add a route using Google Places + Directions. Used when +1 fails or when only one route was found initially.
+    private func tryGooglePlacesFallbackToAddRoute(userCoordinate: CLLocationCoordinate2D, source: String) async -> Bool {
+        guard await MainActor.run(body: { mapsService.hasAPIKey }) else { return false }
+        let excludedPOIs = await MainActor.run { allRoutes.flatMap { $0.data.places } }
+        let googlePOIs = await mapsService.fetchGooglePOIsOnDemand(
+            location: userCoordinate,
+            radiusMeters: 2500,
+            existingPOIs: excludedPOIs
+        )
+        guard googlePOIs.count >= 2 else {
+            print("[DIAGNOSTIC +1] [GOOGLE PLACES FALLBACK] \(source): Too few POIs (\(googlePOIs.count))")
+            return false
+        }
+        let waypoints = Array(googlePOIs.prefix(5))
+        let targetDur = await MainActor.run { selectedDuration }
+        guard let googleResult = await mapsService.getGoogleDirectionsRoute(
+            origin: userCoordinate,
+            waypoints: waypoints,
+            targetDurationMinutes: targetDur
+        ) else {
+            print("[DIAGNOSTIC +1] [GOOGLE PLACES FALLBACK] \(source): getGoogleDirectionsRoute returned nil")
+            return false
+        }
+        let durationMin = googleResult.durationSeconds / 60
+        let minPct = targetDur <= 10 ? 0.65 : 0.80
+        let minBand = Int(Double(targetDur) * minPct)
+        let maxBand = Int(Double(targetDur) * 1.25)
+        guard durationMin >= minBand && durationMin <= maxBand else {
+            print("[DIAGNOSTIC +1] [GOOGLE PLACES FALLBACK] \(source): Route \(durationMin)min out of band \(minBand)-\(maxBand)")
+            return false
+        }
+        let markers = await MainActor.run {
+            createMarkersFromPlaces(googleResult.places, origin: userCoordinate)
+        }
+        guard !markers.isEmpty else { return false }
+        var directions = await MainActor.run {
+            extractWalkingDirections(from: googleResult.legs, waypoints: googleResult.places)
+        }
+        let routeDifficulty: RouteDifficulty = durationMin <= 10 ? .easy : (durationMin <= 20 ? .moderate : .challenging)
+        let waypointInfos = googleResult.places.map { place in
+            GeminiService.WaypointInfo(name: place.name, types: place.types ?? [], vicinity: place.vicinity)
+        }
+        let aiContent = await GeminiService.shared.generateRouteContent(
+            waypoints: waypointInfos,
+            durationMinutes: durationMin,
+            distanceMeters: googleResult.distanceMeters,
+            difficulty: routeDifficulty
+        )
+        let didAdd = await MainActor.run {
+            let route = WalkingRoute(
+                name: aiContent.name,
+                description: aiContent.description,
+                durationMinutes: durationMin,
+                distanceMeters: googleResult.distanceMeters,
+                difficulty: routeDifficulty,
+                isIndoor: false,
+                isAccessible: true,
+                landmarks: ["Start"] + googleResult.places.map { $0.name } + ["Return"],
+                icon: "location.fill",
+                color: .tealAccent,
+                qrMarkers: markers,
+                routeType: .local,
+                trimmed: googleResult.polyline,
+                walkingDirections: directions,
+                usedOSRMRouting: false
+            )
+            let newPlaceIds = Set(googleResult.places.map { $0.placeId })
+            if !shownPlaceIdSets.contains(newPlaceIds) {
+                shownPlaceIdSets.append(newPlaceIds)
+            }
+            let appended = appendRouteIfAllowed(
+                route: route,
+                data: googleResult,
+                isDeadZoneFallback: false,
+                isFromGoogle: true,
+                source: source,
+                bypassInBandCap: true
+            )
+            if appended {
+                print("[DIAGNOSTIC +1] [GOOGLE PLACES FALLBACK] ✅ \(source): Added '\(route.name)'")
+                logRoutePreviewSummary()
+            }
+            return appended
+        }
+        return didAdd
+    }
+    
     private func handleBackFromPreview() {
         print("🔙 handleBackFromPreview - resetting all generation state")
         
@@ -4872,6 +4967,16 @@ struct LocalRoutePickerSheet: View {
                     
                 } catch {
                     print("[DIAGNOSTIC +1] ❌ ERROR attempt \(attempt): \(error.localizedDescription)")
+                }
+            }
+            
+            // Google Places final fallback when +1 would otherwise fail
+            let hasKeyForFallback = await MainActor.run { mapsService.hasAPIKey }
+            if !added && hasKeyForFallback {
+                print("[DIAGNOSTIC +1] [GOOGLE PLACES FALLBACK] Trying one final attempt...")
+                let fallbackAdded = await tryGooglePlacesFallbackToAddRoute(userCoordinate: userLocation.coordinate, source: "+1_google_places_fallback")
+                if fallbackAdded {
+                    added = true
                 }
             }
             
