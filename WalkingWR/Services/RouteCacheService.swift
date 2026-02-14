@@ -21,6 +21,14 @@ class RouteCacheService {
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
     private let cacheExpiryHours: Double = 24 // Routes expire after 24 hours
     
+    // MARK: - Session (ToS: Apple/Google routes & POI kept only per session, not persisted)
+    //
+    // Session = one app process lifetime, location-bound:
+    // - Storage: in-memory only (sessionOnlyCache, sessionCrossBucketPool); never written to disk.
+    // - Valid while: app is running AND user is within 50m of where routes were generated.
+    // - Ends when: (1) app process is terminated, or (2) user moves >50m → session cache is cleared.
+    // Cancel / dismissing the route sheet does NOT end the session; same location can reuse cache.
+    
     /// Session-only cache for live-generated routes (not persisted; ToS). Reused when user taps Generate again without moving.
     private var sessionOnlyCache: (latitude: Double, longitude: Double, durationMinutes: Int, routes: [CachedRouteWithMetadata])?
     

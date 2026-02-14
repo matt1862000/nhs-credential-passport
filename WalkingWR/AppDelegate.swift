@@ -51,7 +51,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
             let triggerByLaunchArg = ProcessInfo.processInfo.arguments.contains("-RUN_DIAGNOSTIC")
             if triggerByFile || triggerByLaunchArg {
                 print("[DIAGNOSTIC] Trigger detected: file=\(triggerByFile), launchArg=\(triggerByLaunchArg)")
-                await runDiagnosticRouteGeneration()
+            await runDiagnosticRouteGeneration()
             }
         }
         

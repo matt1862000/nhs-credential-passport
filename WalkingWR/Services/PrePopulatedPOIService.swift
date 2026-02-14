@@ -57,7 +57,8 @@ class PrePopulatedPOIService {
     private static let supportedDistricts: Set<String> = [
         "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14",
         "S17", "S20", "S21", "S25", "S26", "S35", "S36",
-        "WF1", "WF2"
+        "WF1", "WF2", "WF3", "WF4", "WF5", "WF6", "WF7", "WF8", "WF9", "WF10",
+        "WF11", "WF12", "WF13", "WF14", "WF15", "WF16", "WF17"
     ]
     
     /// Max pre-populated routes to return per (postcode, duration). "Best" = least total time from user (route start + loop). Script emits all; app filters here because user location varies.
@@ -131,7 +132,25 @@ class PrePopulatedPOIService {
     
     /// Known postcode area centers (must match generate_database.py / Apps Script). Used for fallback when DB center is (0,0).
     private static let postcodeCenters: [(postcode: String, lat: Double, lon: Double)] = [
-        ("WF2 0GU", 53.7029, -1.5496),
+        // Wakefield districts
+        ("WF1", 53.683, -1.498),     // Wakefield city centre
+        ("WF2", 53.703, -1.550),     // Wakefield south-west (Sandal, Walton)
+        ("WF3", 53.720, -1.555),     // East Ardsley, Tingley
+        ("WF4", 53.660, -1.530),     // Horbury, Crigglestone
+        ("WF5", 53.693, -1.563),     // Ossett
+        ("WF6", 53.710, -1.410),     // Normanton
+        ("WF7", 53.665, -1.435),     // Pontefract (south)
+        ("WF8", 53.690, -1.310),     // Pontefract
+        ("WF9", 53.620, -1.330),     // South Elmsall, Hemsworth
+        ("WF10", 53.720, -1.360),    // Castleford
+        ("WF11", 53.715, -1.280),    // Knottingley
+        ("WF12", 53.685, -1.640),    // Dewsbury
+        ("WF13", 53.690, -1.690),    // Dewsbury (west)
+        ("WF14", 53.680, -1.720),    // Mirfield
+        ("WF15", 53.710, -1.730),    // Liversedge
+        ("WF16", 53.700, -1.710),    // Heckmondwike
+        ("WF17", 53.730, -1.690),    // Batley
+        // Sheffield districts
         ("S1", 53.3800, -1.4700), ("S2", 53.3750, -1.4600), ("S3", 53.3850, -1.4850),
         ("S4", 53.3900, -1.4700), ("S5", 53.4100, -1.4600), ("S6", 53.4000, -1.5000),
         ("S7", 53.3600, -1.4900), ("S8", 53.3500, -1.4800), ("S9", 53.3900, -1.4400),
@@ -179,17 +198,29 @@ class PrePopulatedPOIService {
         let lastUpdated: Date
         let postcodeAreas: [PostcodeAreaPOIs]
         
+        // MARK: - Sector (v2 format)
+        /// POIs grouped by postcode sector (e.g. "WF1 1"). Present only in v2 sector-indexed files.
+        struct SectorPOIs: Codable {
+            let sector: String           // e.g. "WF1 1"
+            let centerLatitude: Double
+            let centerLongitude: Double
+            let pois: [PrePopulatedPOI]
+        }
+        
         struct PostcodeAreaPOIs: Codable {
             let postcode: String
             let centerLatitude: Double
             let centerLongitude: Double
             let radiusMeters: Int
+            /// Flat POI list — present in v1; in v2 derived from sectors on decode.
             let pois: [PrePopulatedPOI]
             let routes: [PrePopulatedRoute]?  // Optional: routes for this postcode area
+            /// Sector-indexed POIs (v2 only). nil for v1 databases.
+            let sectors: [SectorPOIs]?
             
             /// Accept both camelCase and snake_case for center (some generators use center_latitude/center_longitude)
             enum CodingKeys: String, CodingKey {
-                case postcode, radiusMeters, pois, routes
+                case postcode, radiusMeters, pois, routes, sectors
                 case centerLatitude
                 case centerLongitude
                 case center_latitude
@@ -206,8 +237,16 @@ class PrePopulatedPOIService {
                     ?? c.decodeIfPresent(Double.self, forKey: .center_longitude)
                     ?? 0
                 radiusMeters = try c.decode(Int.self, forKey: .radiusMeters)
-                pois = try c.decode([PrePopulatedPOI].self, forKey: .pois)
                 routes = try c.decodeIfPresent([PrePopulatedRoute].self, forKey: .routes)
+                sectors = try c.decodeIfPresent([SectorPOIs].self, forKey: .sectors)
+                
+                // v2: if sectors exist, flatten their POIs into the top-level `pois` array
+                // v1: decode pois directly from the top-level `pois` key
+                if let sectors = sectors, !sectors.isEmpty {
+                    pois = sectors.flatMap { $0.pois }
+                } else {
+                    pois = (try? c.decode([PrePopulatedPOI].self, forKey: .pois)) ?? []
+                }
             }
             
             func encode(to encoder: Encoder) throws {
@@ -216,18 +255,23 @@ class PrePopulatedPOIService {
                 try c.encode(centerLatitude, forKey: .centerLatitude)
                 try c.encode(centerLongitude, forKey: .centerLongitude)
                 try c.encode(radiusMeters, forKey: .radiusMeters)
-                try c.encode(pois, forKey: .pois)
+                // Only encode pois if v1 (no sectors); v2 pois are derived
+                if sectors == nil {
+                    try c.encode(pois, forKey: .pois)
+                }
                 try c.encodeIfPresent(routes, forKey: .routes)
+                try c.encodeIfPresent(sectors, forKey: .sectors)
             }
             
             /// Memberwise init for generator/callers that build areas programmatically
-            init(postcode: String, centerLatitude: Double, centerLongitude: Double, radiusMeters: Int, pois: [PrePopulatedPOI], routes: [PrePopulatedRoute]?) {
+            init(postcode: String, centerLatitude: Double, centerLongitude: Double, radiusMeters: Int, pois: [PrePopulatedPOI], routes: [PrePopulatedRoute]?, sectors: [SectorPOIs]? = nil) {
                 self.postcode = postcode
                 self.centerLatitude = centerLatitude
                 self.centerLongitude = centerLongitude
                 self.radiusMeters = radiusMeters
                 self.pois = pois
                 self.routes = routes
+                self.sectors = sectors
             }
         }
         
@@ -268,6 +312,15 @@ class PrePopulatedPOIService {
     
     // MARK: - Public Methods
     
+    /// Duration-aware search radius: shorter walks need POIs closer to the user, longer walks can reach further.
+    /// Walking speed ~80 m/min, half for out-and-back = 40 m/min effective radius per minute.
+    /// Returns radius in meters.
+    static func durationAwareRadius(forMinutes minutes: Int) -> Double {
+        let base = Double(max(5, minutes)) * 40.0   // 5min → 200m, 10min → 400m, 30min → 1200m
+        let clamped = min(max(base, 400), 2500)      // floor 400m, cap 2500m
+        return clamped
+    }
+    
     /// Check if pre-populated database has been downloaded
     var hasDownloadedDatabase: Bool {
         UserDefaults.standard.bool(forKey: downloadCompleteKey)
@@ -284,6 +337,7 @@ class PrePopulatedPOIService {
         
         var matchingPOIs: [PlaceResult] = []
         var matchedPostcode: String? = nil
+        var matchedSector: String? = nil
         
         // Check each postcode area
         for area in database.postcodeAreas {
@@ -297,35 +351,69 @@ class PrePopulatedPOIService {
                 matchedPostcode = area.postcode
                 print("📦 Pre-populated DB: User location matches postcode area '\(area.postcode)' (distance: \(Int(distanceToArea))m from center)")
                 
-                // Filter POIs within the user's search radius
-                for poi in area.pois {
-                    let poiCoord = CLLocationCoordinate2D(
-                        latitude: poi.latitude,
-                        longitude: poi.longitude
-                    )
-                    let distanceToPOI = distanceBetween(location, poiCoord)
+                // --- v2 Sector-aware selection ---
+                if let sectors = area.sectors, !sectors.isEmpty {
+                    // Find nearest sector to the user
+                    let sortedSectors = sectors.sorted {
+                        let d1 = distanceBetween(location, CLLocationCoordinate2D(latitude: $0.centerLatitude, longitude: $0.centerLongitude))
+                        let d2 = distanceBetween(location, CLLocationCoordinate2D(latitude: $1.centerLatitude, longitude: $1.centerLongitude))
+                        return d1 < d2
+                    }
                     
-                    if distanceToPOI <= radiusMeters {
-                        // Skip POIs with junk names (e.g. "Unnamed" grit bins, "West Walk (0.6km)")
-                        if GoogleMapsService.isJunkPOIName(poi.name) { continue }
+                    if let nearest = sortedSectors.first {
+                        let nearestDist = distanceBetween(location, CLLocationCoordinate2D(latitude: nearest.centerLatitude, longitude: nearest.centerLongitude))
+                        matchedSector = nearest.sector
+                        print("📦 Pre-populated DB: Nearest sector '\(nearest.sector)' (\(Int(nearestDist))m from user)")
+                    }
+                    
+                    // Collect POIs from nearest sector first, then expand to adjacent sectors
+                    var seenPlaceIds = Set<String>()
+                    for sector in sortedSectors {
+                        let sectorCenter = CLLocationCoordinate2D(latitude: sector.centerLatitude, longitude: sector.centerLongitude)
+                        let sectorDist = distanceBetween(location, sectorCenter)
+                        // Include sector if its center is within the search radius * 2 (sector + user overlap)
+                        guard sectorDist <= radiusMeters * 2 else { continue }
                         
-                        // Convert to PlaceResult
-                        let placeResult = PlaceResult(
-                            placeId: poi.placeId,
-                            name: poi.name,
-                            vicinity: poi.vicinity,
-                            geometry: PlaceGeometry(
-                                location: PlaceLocation(
-                                    lat: poi.latitude,
-                                    lng: poi.longitude
-                                )
-                            ),
-                            types: poi.types,
-                            source: POISource.fromString(poi.source)
+                        for poi in sector.pois {
+                            guard !seenPlaceIds.contains(poi.placeId) else { continue }
+                            let poiCoord = CLLocationCoordinate2D(latitude: poi.latitude, longitude: poi.longitude)
+                            let distanceToPOI = distanceBetween(location, poiCoord)
+                            if distanceToPOI <= radiusMeters {
+                                if GoogleMapsService.isJunkPOIName(poi.name) { continue }
+                                seenPlaceIds.insert(poi.placeId)
+                                matchingPOIs.append(PlaceResult(
+                                    placeId: poi.placeId,
+                                    name: poi.name,
+                                    vicinity: poi.vicinity,
+                                    geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)),
+                                    types: poi.types,
+                                    source: POISource.fromString(poi.source)
+                                ))
+                            }
+                        }
+                    }
+                    
+                    print("📦 Pre-populated DB: Sector-aware selection found \(matchingPOIs.count) POIs across \(sortedSectors.filter { distanceBetween(location, CLLocationCoordinate2D(latitude: $0.centerLatitude, longitude: $0.centerLongitude)) <= radiusMeters * 2 }.count) sectors")
+                } else {
+                    // --- v1 flat POI list (no sectors) ---
+                    for poi in area.pois {
+                        let poiCoord = CLLocationCoordinate2D(
+                            latitude: poi.latitude,
+                            longitude: poi.longitude
                         )
-                        // Note: rating is stored in PrePopulatedPOI but not used in PlaceResult
-                        // Can be accessed via PrePopulatedPOIService if needed for filtering/scoring
-                        matchingPOIs.append(placeResult)
+                        let distanceToPOI = distanceBetween(location, poiCoord)
+                        
+                        if distanceToPOI <= radiusMeters {
+                            if GoogleMapsService.isJunkPOIName(poi.name) { continue }
+                            matchingPOIs.append(PlaceResult(
+                                placeId: poi.placeId,
+                                name: poi.name,
+                                vicinity: poi.vicinity,
+                                geometry: PlaceGeometry(location: PlaceLocation(lat: poi.latitude, lng: poi.longitude)),
+                                types: poi.types,
+                                source: POISource.fromString(poi.source)
+                            ))
+                        }
                     }
                 }
                 
@@ -335,7 +423,8 @@ class PrePopulatedPOIService {
         }
         
         if !matchingPOIs.isEmpty {
-            print("📦 ✅ PRE-POPULATED DB HIT! Found \(matchingPOIs.count) POIs from postcode area '\(matchedPostcode ?? "unknown")' - using database (no API calls needed)")
+            let sectorInfo = matchedSector.map { " (nearest sector: \($0))" } ?? ""
+            print("📦 ✅ PRE-POPULATED DB HIT! Found \(matchingPOIs.count) POIs from postcode area '\(matchedPostcode ?? "unknown")'\(sectorInfo) - using database (no API calls needed)")
             return matchingPOIs
         } else if matchedPostcode != nil {
             print("📦 Pre-populated DB: User in postcode area '\(matchedPostcode!)' but no POIs found within \(Int(radiusMeters))m radius")
@@ -942,7 +1031,9 @@ class PrePopulatedPOIService {
         if postcode.hasPrefix("S") {
             return String(postcode.prefix(while: { $0.isLetter || $0.isNumber }))
         }
-        if postcode.hasPrefix("WF") { return "WF2" }
+        if postcode.hasPrefix("WF") {
+            return String(postcode.split(separator: " ").first ?? Substring(postcode))
+        }
         return postcode
     }
     
@@ -1596,6 +1687,10 @@ class PrePopulatedPOIService {
             print("📦   Postcode areas: \(database.postcodeAreas.count)")
             let totalPOIs = database.postcodeAreas.reduce(0) { $0 + $1.pois.count }
             print("📦   Total POIs: \(totalPOIs)")
+            let totalSectors = database.postcodeAreas.compactMap { $0.sectors?.count }.reduce(0, +)
+            if totalSectors > 0 {
+                print("📦   Total sectors: \(totalSectors) (v2 sector-indexed)")
+            }
             
             return database
         } catch {

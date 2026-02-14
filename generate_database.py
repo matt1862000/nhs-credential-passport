@@ -4,7 +4,8 @@ Generate pre-populated POI and route database for WalkingWR app
 This script can be run on any computer with Python 3.7+
 
 Usage:
-    python3 generate_database.py
+    python3 generate_database.py                    # All postcode areas -> prepopulated_pois.json
+    python3 generate_database.py --postcode WF1     # Only WF1 -> prepopulated_pois_WF1.json
 
 Requirements:
     pip install requests polyline
@@ -30,6 +31,7 @@ import polyline  # pip install polyline
 
 # Postcode areas with their center coordinates
 POSTCODE_AREAS = [
+    ("WF1", 53.683, -1.498),        # Wakefield city centre
     ("WF2 0GU", 53.7029, -1.5496),  # Wakefield area
     ("S5 7JT", 53.4109, -1.4603),   # Sheffield area (Northern General Hospital)
     ("S35 0JW", 53.4200, -1.4800),  # Sheffield area
@@ -302,6 +304,15 @@ def filter_restricted_pois(pois: List[Dict]) -> List[Dict]:
     return filtered
 
 
+def filter_unnamed_pois(pois: List[Dict]) -> List[Dict]:
+    """Filter out POIs with no real name (OSM unnamed features)."""
+    filtered = [poi for poi in pois if (poi.get("name") or "").strip() and (poi.get("name") or "").strip().lower() != "unnamed"]
+    removed = len(pois) - len(filtered)
+    if removed > 0:
+        print(f"   🏷️ Filtered {removed} unnamed POIs")
+    return filtered
+
+
 def generate_route_osrm(origin_lat: float, origin_lon: float, 
                        waypoints: List[Tuple[float, float]], 
                        target_duration_min: int) -> Optional[Dict]:
@@ -458,22 +469,46 @@ def generate_routes_for_area(pois: List[Dict], origin_lat: float, origin_lon: fl
     return route_groups
 
 
+def _district_from_postcode(postcode: str) -> str:
+    """Outward code for filename: 'WF1 1AB' -> 'WF1', 'S5 7AU' -> 'S5'."""
+    return postcode.split()[0] if postcode.strip() else postcode.strip()
+
+
 def main():
     import sys
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate prepopulated POIs (OSM + Geograph) and routes (OSRM) for WalkingWR.")
+    parser.add_argument("--postcode", type=str, default=None,
+                        help="Run only this postcode (e.g. WF1, S5). Output: prepopulated_pois_<district>.json")
+    parser.add_argument("--pois-only", action="store_true",
+                        help="Fetch POIs only; do not generate routes (output routes: []).")
+    args = parser.parse_args()
+
+    areas_to_run = POSTCODE_AREAS
+    single_output_file = None
+    if args.postcode:
+        district = args.postcode.strip().upper().split()[0]
+        areas_to_run = [(pc, lat, lon) for pc, lat, lon in POSTCODE_AREAS if _district_from_postcode(pc) == district]
+        if not areas_to_run:
+            print(f"❌ No postcode area matching '{args.postcode}'. Known: {[_district_from_postcode(pc) for pc, _, _ in POSTCODE_AREAS]}")
+            sys.exit(1)
+        single_output_file = f"prepopulated_pois_{district}.json"
+        print(f"📦 Single postcode mode: {areas_to_run[0][0]} -> {single_output_file}\n")
+
     sys.stdout.flush()
     print("📦 Starting database generation for WalkingWR")
     sys.stdout.flush()
-    print(f"   Postcode areas: {len(POSTCODE_AREAS)}")
+    print(f"   Postcode areas: {len(areas_to_run)}")
     sys.stdout.flush()
     print(f"   Radius: {RADIUS_METERS}m")
     sys.stdout.flush()
     print(f"   Route durations: {DURATIONS_TO_GENERATE}\n")
     sys.stdout.flush()
-    
+
     postcode_areas = []
-    
-    for index, (postcode, lat, lon) in enumerate(POSTCODE_AREAS, 1):
-        print(f"\n📦 Processing postcode area {index}/{len(POSTCODE_AREAS)}: {postcode}")
+
+    for index, (postcode, lat, lon) in enumerate(areas_to_run, 1):
+        print(f"\n📦 Processing postcode area {index}/{len(areas_to_run)}: {postcode}")
         print(f"   Location: ({lat}, {lon})")
         
         # Fetch POIs from OSM
@@ -490,22 +525,27 @@ def main():
         
         # Filter out restricted POIs (playcare, nursery, kindergarten, playground, etc.)
         filtered_pois = filter_restricted_pois(deduplicated_pois)
-        
+        # Filter out unnamed POIs (OSM features with no name tag)
+        filtered_pois = filter_unnamed_pois(filtered_pois)
+
         print(f"   ✅ Total POIs after deduplication: {len(deduplicated_pois)}")
         print(f"   ✅ Total POIs after filtering: {len(filtered_pois)}")
         print(f"   📊 POI sources: OSM={len(osm_pois)}, Geograph={len(geograph_pois)}")
         print(f"   ⚠️ Note: Only OSM and Geograph POIs cached (Apple POIs not allowed)")
-        
-        # Generate routes using OSRM (OSM data, cacheable)
-        print(f"   🗺️ Generating routes using OSRM (OSM data, cacheable)...")
-        routes = generate_routes_for_area(filtered_pois, lat, lon)
-        
-        if routes:
-            total_routes = sum(len(r["routes"]) for r in routes)
-            print(f"   ✅ Generated {total_routes} routes across {len(routes)} duration groups")
+
+        if args.pois_only:
+            routes = []
+            print(f"   ⏭️ Skipping route generation (--pois-only)")
         else:
-            print(f"   ⚠️ No routes generated for this area")
-        
+            # Generate routes using OSRM (OSM data, cacheable)
+            print(f"   🗺️ Generating routes using OSRM (OSM data, cacheable)...")
+            routes = generate_routes_for_area(filtered_pois, lat, lon)
+            if routes:
+                total_routes = sum(len(r["routes"]) for r in routes)
+                print(f"   ✅ Generated {total_routes} routes across {len(routes)} duration groups")
+            else:
+                print(f"   ⚠️ No routes generated for this area")
+
         # Create postcode area entry
         area_entry = {
             "postcode": postcode,
@@ -513,7 +553,7 @@ def main():
             "centerLongitude": lon,
             "radiusMeters": RADIUS_METERS,
             "pois": filtered_pois,  # Only non-restricted POIs
-            "routes": routes  # OSRM-generated routes (OSM data, cacheable)
+            "routes": routes  # OSRM-generated routes, or [] when --pois-only
         }
         
         postcode_areas.append(area_entry)
@@ -527,19 +567,19 @@ def main():
         "lastUpdated": datetime.utcnow().isoformat() + "Z",
         "postcodeAreas": postcode_areas
     }
-    
-    # Save to JSON file
-    output_file = "prepopulated_pois.json"
+
+    # Save to JSON file (per-postcode or combined)
+    output_file = single_output_file if single_output_file else "prepopulated_pois.json"
     with open(output_file, "w") as f:
         json.dump(database, f, indent=2, ensure_ascii=False)
-    
+
     total_pois = sum(len(area["pois"]) for area in postcode_areas)
     total_routes = sum(
         len(r["routes"]) if area.get("routes") else 0
         for area in postcode_areas
         for r in (area.get("routes") or [])
     )
-    
+
     print(f"\n📦 ✅ Database generation complete!")
     print(f"   Total postcode areas: {len(postcode_areas)}")
     print(f"   Total POIs: {total_pois} (OSM + Geograph, filtered)")
