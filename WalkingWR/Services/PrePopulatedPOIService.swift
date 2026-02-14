@@ -367,12 +367,15 @@ class PrePopulatedPOIService {
                     }
                     
                     // Collect POIs from nearest sector first, then expand to adjacent sectors
+                    // Use max(radiusMeters * 2, area.radiusMeters) so short-walk radii don't
+                    // accidentally exclude all sectors (the user IS inside the postcode area).
+                    let sectorInclusionRadius = max(radiusMeters * 2, Double(area.radiusMeters))
                     var seenPlaceIds = Set<String>()
-                    for sector in sortedSectors {
+                    for (sectorIdx, sector) in sortedSectors.enumerated() {
                         let sectorCenter = CLLocationCoordinate2D(latitude: sector.centerLatitude, longitude: sector.centerLongitude)
                         let sectorDist = distanceBetween(location, sectorCenter)
-                        // Include sector if its center is within the search radius * 2 (sector + user overlap)
-                        guard sectorDist <= radiusMeters * 2 else { continue }
+                        // Always include the nearest sector; for others, check distance
+                        guard sectorIdx == 0 || sectorDist <= sectorInclusionRadius else { continue }
                         
                         for poi in sector.pois {
                             guard !seenPlaceIds.contains(poi.placeId) else { continue }
@@ -393,7 +396,8 @@ class PrePopulatedPOIService {
                         }
                     }
                     
-                    print("📦 Pre-populated DB: Sector-aware selection found \(matchingPOIs.count) POIs across \(sortedSectors.filter { distanceBetween(location, CLLocationCoordinate2D(latitude: $0.centerLatitude, longitude: $0.centerLongitude)) <= radiusMeters * 2 }.count) sectors")
+                    let includedSectorCount = sortedSectors.enumerated().filter { idx, s in idx == 0 || distanceBetween(location, CLLocationCoordinate2D(latitude: s.centerLatitude, longitude: s.centerLongitude)) <= sectorInclusionRadius }.count
+                    print("📦 Pre-populated DB: Sector-aware selection found \(matchingPOIs.count) POIs across \(includedSectorCount) sectors (inclusion radius: \(Int(sectorInclusionRadius))m)")
                 } else {
                     // --- v1 flat POI list (no sectors) ---
                     for poi in area.pois {

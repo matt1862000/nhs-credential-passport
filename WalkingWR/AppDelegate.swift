@@ -78,11 +78,22 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         let outputURL = docs.appendingPathComponent(Self.diagnosticOutputFilename)
         try? "[DIAGNOSTIC_STARTED]".write(to: outputURL.appendingPathExtension("started"), atomically: true, encoding: .utf8)
         
-        let testLocation = CLLocationCoordinate2D(latitude: 53.6825, longitude: -1.4915) // WF2 Kirkhamgate
+        // Request live GPS with up to 10s wait, fall back to hardcoded WF2 Kirkhamgate
+        let fallback = CLLocationCoordinate2D(latitude: 53.6825, longitude: -1.4915)
+        print("[DIAGNOSTIC] Requesting GPS fix (up to 10s)…")
+        let gpsCoord = await Self.requestGPSFix(timeout: 10)
+        let testLocation: CLLocationCoordinate2D
+        if let gps = gpsCoord {
+            testLocation = gps
+            print("[DIAGNOSTIC] ✅ Using LIVE GPS: \(gps.latitude), \(gps.longitude)")
+        } else {
+            testLocation = fallback
+            print("[DIAGNOSTIC] ⚠️ GPS unavailable after 10s — using fallback: \(fallback.latitude), \(fallback.longitude)")
+        }
         let mapsService = GoogleMapsService.shared
         let cacheService = RouteCacheService.shared
         let prepopService = PrePopulatedPOIService.shared
-        let buckets = stride(from: 10, through: 60, by: 5).map { $0 }
+        let buckets = [10]  // TEMP: Single bucket for quick testing (restore: stride(from: 10, through: 60, by: 5).map { $0 })
         let overallStart = Date()
         
         // Shared API health counters
@@ -97,7 +108,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         try? FileManager.default.removeItem(at: docs.appendingPathComponent("diagnostic_partial.json"))
         
         print("[DIAGNOSTIC] ════════════════════════════════════════════════════════")
-        print("[DIAGNOSTIC] Route Generation Test Harness — WF2 (53.6825, -1.4915)")
+        print("[DIAGNOSTIC] Route Generation Test Harness — (\(testLocation.latitude), \(testLocation.longitude))")
         print("[DIAGNOSTIC] Buckets: \(buckets.map { "\($0)min" }.joined(separator: ", "))")
         print("[DIAGNOSTIC] ════════════════════════════════════════════════════════")
         
@@ -242,7 +253,8 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
                     excludePlaceIds.formUnion(route.places.map { $0.placeId })
                     liveCount += 1
                     apiGoogleCalls += 1
-                    print("[DIAGNOSTIC] \(bucket)min live \(attempt + 1): \(wr.durationMinutes)min, \(wr.distanceMeters)m, \(route.places.count) waypoints, \(genTimeMs)ms, inBand=\(inBand)")
+                    let liveWPNames = route.places.map { $0.name }.joined(separator: ", ")
+                    print("[DIAGNOSTIC] \(bucket)min live \(attempt + 1): \(wr.durationMinutes)min, \(wr.distanceMeters)m, \(route.places.count) WPs [\(liveWPNames)], \(genTimeMs)ms, inBand=\(inBand)")
                 } catch {
                     let genTimeMs = Int(Date().timeIntervalSince(genStart) * 1000)
                     apiGoogleFailures += 1
@@ -279,8 +291,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         await diagnosticNotify("Diagnostic Phase 2/12", body: "+1 generation test")
         print("[DIAGNOSTIC] ═══ PHASE 2: +1 Generation Test ═══")
         var phase2Results: [[String: Any]] = []
-        for testBucket in [15, 25, 40] {
-            let allUsedIds = Set(allGeneratedRoutes.filter { $0.bucket == testBucket }.flatMap { $0.route.places.map { $0.placeId } })
+        var plusOneExcludedIds: Set<String> = []  // accumulate across +1 attempts
+        for testBucket in [10, 10, 10, 10, 10] {  // TEMP: 5x +1 tests at 10min (restore: [15, 25, 40])
+            let phase1Ids = Set(allGeneratedRoutes.filter { $0.bucket == testBucket }.flatMap { $0.route.places.map { $0.placeId } })
+            let allUsedIds = phase1Ids.union(plusOneExcludedIds)
             let plusOneStart = Date()
             var success = false, inBand = false, timedOut = false
             var plusOneTimeMs = 0
@@ -303,7 +317,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
                 success = true
                 plusOneRoute = route
                 plusOneWR = wr
-                print("[DIAGNOSTIC] +1 for \(testBucket)min: \(wr.durationMinutes)min, inBand=\(inBand), \(plusOneTimeMs)ms, timedOut=\(timedOut)")
+                let wpNames = route.places.map { $0.name }.joined(separator: ", ")
+                print("[DIAGNOSTIC] +1 for \(testBucket)min: \(wr.durationMinutes)min, \(route.places.count) WPs [\(wpNames)], inBand=\(inBand), \(plusOneTimeMs)ms, timedOut=\(timedOut)")
+                // Accumulate this route's POIs so next +1 won't repeat
+                plusOneExcludedIds.formUnion(route.places.map { $0.placeId })
             } catch {
                 plusOneTimeMs = Int(Date().timeIntervalSince(plusOneStart) * 1000)
                 timedOut = Date() > deadline
@@ -847,6 +864,18 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         }
     }
     
+    /// Request a one-shot GPS fix with a timeout. Returns nil if no fix within `timeout` seconds.
+    private static func requestGPSFix(timeout: TimeInterval) async -> CLLocationCoordinate2D? {
+        await withCheckedContinuation { continuation in
+            let helper = DiagnosticLocationHelper(timeout: timeout) { coord in
+                continuation.resume(returning: coord)
+            }
+            helper.start()
+            // prevent ARC from releasing helper before callback fires
+            _ = helper
+        }
+    }
+    
     /// Simple Haversine distance between two coordinates (meters)
     private static func distanceBetweenCoords(_ c1: CLLocationCoordinate2D, _ c2: CLLocationCoordinate2D) -> Double {
         let R = 6371000.0 // Earth radius in meters
@@ -1036,5 +1065,72 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
                 print("✅ Walk notifications stopped")
             }
         }
+    }
+}
+
+// MARK: - Diagnostic GPS Helper
+
+/// One-shot location helper for the diagnostic harness. Requests a GPS fix and calls back
+/// with the coordinate (or nil on timeout). Self-retaining until callback fires.
+private class DiagnosticLocationHelper: NSObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private let timeout: TimeInterval
+    private let callback: (CLLocationCoordinate2D?) -> Void
+    private var fired = false
+    private var retainCycle: DiagnosticLocationHelper?  // prevent ARC release
+    
+    init(timeout: TimeInterval, callback: @escaping (CLLocationCoordinate2D?) -> Void) {
+        self.timeout = timeout
+        self.callback = callback
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    }
+    
+    func start() {
+        retainCycle = self  // prevent ARC from releasing us
+        
+        // If we already have permission and a cached location, use it immediately
+        if manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways {
+            if let loc = manager.location, loc.timestamp.timeIntervalSinceNow > -30 {
+                finish(loc.coordinate)
+                return
+            }
+            manager.requestLocation()
+        } else {
+            manager.requestWhenInUseAuthorization()
+        }
+        
+        // Timeout fallback
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+            self?.finish(nil)
+        }
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if let loc = locations.last {
+            finish(loc.coordinate)
+        }
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        print("[DIAGNOSTIC] GPS error: \(error.localizedDescription)")
+        // Don't finish — let timeout handle it in case a retry succeeds
+    }
+    
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        if manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways {
+            manager.requestLocation()
+        } else if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
+            finish(nil)
+        }
+    }
+    
+    private func finish(_ coord: CLLocationCoordinate2D?) {
+        guard !fired else { return }
+        fired = true
+        manager.stopUpdatingLocation()
+        callback(coord)
+        retainCycle = nil  // release self
     }
 }
