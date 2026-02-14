@@ -61,6 +61,8 @@ struct RouteSelectionView: View {
     @State private var showIndoorOnly = false
     @State private var showAccessibleOnly = false
     @State private var showActiveWalk = false
+    /// Safety net: one extra Google refresh when active walk is visible but directions not from Google. Reset when walk ends.
+    @State private var safetyNetGoogleRetryAttempted = false
     // v1.9.36: pendingActiveWalk moved to ViewModel for iOS 17 compatibility
     @State private var showHelpSheet = false
     @State private var localRouteDuration: Int = 10
@@ -271,6 +273,12 @@ struct RouteSelectionView: View {
                 formatter.dateFormat = "HH:mm:ss.SSS"
                 let timeString = formatter.string(from: timestamp)
                 print("🔍 [iOS17 DEBUG] [\(timeString)] 🗺️ showActiveWalk changed: \(oldValue) → \(newValue)")
+                if newValue && !oldValue {
+                    startSafetyNetGoogleRetry()
+                }
+                if !newValue && oldValue {
+                    safetyNetGoogleRetryAttempted = false
+                }
             }
             // v1.9.38: iOS 17 fix - onDismiss doesn't reliably fire for sheets
             // Use onChange to detect when pre-walk anxiety sheet is dismissed
@@ -359,6 +367,54 @@ struct RouteSelectionView: View {
     func isTooLong(_ route: WalkingRoute) -> Bool {
         let buffer = 5
         return route.durationMinutes > viewModel.waitTimeInfo.estimatedMinutes - buffer
+    }
+    
+    /// Safety net: when active walk is visible but directions are still not from Google, attempt one more refresh after a delay. Runs at most once per walk.
+    private func startSafetyNetGoogleRetry() {
+        Task {
+            try? await Task.sleep(nanoseconds: 7_000_000_000) // 7s — let initial Let's Go refresh complete first
+            let routeAndProceed = await MainActor.run { () -> WalkingRoute? in
+                guard viewModel.walkSession.isActive else { return nil }
+                guard !viewModel.hasReceivedGoogleRefreshForPill else { return nil }
+                guard !safetyNetGoogleRetryAttempted else { return nil }
+                guard let route = viewModel.walkSession.currentRoute else { return nil }
+                safetyNetGoogleRetryAttempted = true
+                return route
+            }
+            guard let route = routeAndProceed else { return }
+            let mapsService = GoogleMapsService.shared
+            var userLocation = await MainActor.run { viewModel.locationService.currentLocation?.coordinate }
+            for _ in 0..<6 {
+                if userLocation != nil { break }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                userLocation = await MainActor.run { viewModel.locationService.currentLocation?.coordinate }
+            }
+            guard let userLocation = userLocation else {
+                print("DIRECTIONS | [SAFETY NET] No location — skipping Google retry")
+                return
+            }
+            let hasKey = await MainActor.run { mapsService.hasAPIKey }
+            guard hasKey else {
+                print("DIRECTIONS | [SAFETY NET] No API key — skipping")
+                return
+            }
+            let wasAPIRefusal = await MainActor.run { mapsService.isLastGoogleDirectionsFailureAPIRefusal }
+            if wasAPIRefusal {
+                print("DIRECTIONS | [SAFETY NET] Last failure was API refusal — skipping retry")
+                return
+            }
+            print("DIRECTIONS | [SAFETY NET] Directions not from Google yet — attempting one more refresh...")
+            if let refreshed = await mapsService.refreshRouteWithGoogleOnly(route: route, userLocation: userLocation) {
+                let previewTargetMin = route.durationMinutes
+                let capped = refreshed.withDurationSanityCap(targetDurationMinutes: previewTargetMin)
+                await MainActor.run {
+                    viewModel.updateCurrentRoute(capped, sourceIsGoogle: true)
+                    print("DIRECTIONS | [SAFETY NET] ✅ Google route applied")
+                }
+            } else {
+                print("DIRECTIONS | [SAFETY NET] Google retry failed — keeping preview route")
+            }
+        }
     }
 }
 
@@ -1049,6 +1105,8 @@ struct LocalRoutePickerSheet: View {
     @State private var refreshRaceState = RefreshRaceState()  // MapKit vs Google race: last route always Google
     /// When true, first route came from 30s Google fallback — skip Google refresh on Let's Go.
     @State private var currentRouteIsFromGoogle30sFallback = false
+    /// Safety net: one extra Google refresh attempt when active walk is visible but directions still not from Google. Reset when walk ends.
+    @State private var safetyNetGoogleRetryAttempted = false
     @State private var generatedRoute: WalkingRoute?
     @State private var generatedRouteData: GeneratedRoute?
     @State private var showMapPreview = false
@@ -1548,7 +1606,12 @@ struct LocalRoutePickerSheet: View {
                 let formatter = DateFormatter()
                 formatter.dateFormat = "HH:mm:ss.SSS"
                 let timeString = formatter.string(from: timestamp)
+                if newValue && !oldValue {
+                    // Active walk just shown — start safety net: one more Google refresh attempt after delay if directions still not from Google
+                    startSafetyNetGoogleRetry()
+                }
                 if !newValue && oldValue {
+                    safetyNetGoogleRetryAttempted = false
                     #if DEBUG
                     print("🔍 [MOTION DEBUG] [\(timeString)] 🚪 showActiveWalk changed: true → false (fullscreen dismissed)")
                     print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
@@ -4383,6 +4446,53 @@ struct LocalRoutePickerSheet: View {
                 print("DIRECTIONS | [\(formatter.string(from: Date()))] ⚠️ Google refresh failed — showing preview directions/polyline")
             }
             print("DIRECTIONS | ========== direction refresh finished ==========")
+        }
+    }
+    
+    /// Safety net: when active walk is visible but directions are still not from Google, attempt one more refresh after a delay (so Let's Go task has time to finish). Runs at most once per walk.
+    private func startSafetyNetGoogleRetry() {
+        Task {
+            try? await Task.sleep(nanoseconds: 7_000_000_000) // 7s — let initial Let's Go refresh complete first
+            let routeAndProceed = await MainActor.run { () -> WalkingRoute? in
+                guard viewModel.walkSession.isActive else { return nil }
+                guard !viewModel.hasReceivedGoogleRefreshForPill else { return nil }
+                guard !safetyNetGoogleRetryAttempted else { return nil }
+                guard let route = viewModel.walkSession.currentRoute else { return nil }
+                safetyNetGoogleRetryAttempted = true
+                return route
+            }
+            guard let route = routeAndProceed else { return }
+            var userLocation = await MainActor.run { locationService.currentLocation?.coordinate }
+            for _ in 0..<6 {
+                if userLocation != nil { break }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                userLocation = await MainActor.run { locationService.currentLocation?.coordinate }
+            }
+            guard let userLocation = userLocation else {
+                print("DIRECTIONS | [SAFETY NET] No location — skipping Google retry")
+                return
+            }
+            let hasKey = await MainActor.run { mapsService.hasAPIKey }
+            guard hasKey else {
+                print("DIRECTIONS | [SAFETY NET] No API key — skipping")
+                return
+            }
+            let wasAPIRefusal = await MainActor.run { mapsService.isLastGoogleDirectionsFailureAPIRefusal }
+            if wasAPIRefusal {
+                print("DIRECTIONS | [SAFETY NET] Last failure was API refusal — skipping retry")
+                return
+            }
+            print("DIRECTIONS | [SAFETY NET] Directions not from Google yet — attempting one more refresh...")
+            if let refreshed = await mapsService.refreshRouteWithGoogleOnly(route: route, userLocation: userLocation) {
+                let previewTargetMin = route.durationMinutes
+                let capped = refreshed.withDurationSanityCap(targetDurationMinutes: previewTargetMin)
+                await MainActor.run {
+                    viewModel.updateCurrentRoute(capped, sourceIsGoogle: true)
+                    print("DIRECTIONS | [SAFETY NET] ✅ Google route applied")
+                }
+            } else {
+                print("DIRECTIONS | [SAFETY NET] Google retry failed — keeping preview route")
+            }
         }
     }
     
