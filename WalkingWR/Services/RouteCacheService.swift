@@ -30,7 +30,8 @@ class RouteCacheService {
     // Cancel / dismissing the route sheet does NOT end the session; same location can reuse cache.
     
     /// Session-only cache for live-generated routes (not persisted; ToS). Reused when user taps Generate again without moving.
-    private var sessionOnlyCache: (latitude: Double, longitude: Double, durationMinutes: Int, routes: [CachedRouteWithMetadata])?
+    /// Keyed by rounded 5-min duration so pre-gen for multiple durations can coexist.
+    private var sessionOnlyCache: [Int: (latitude: Double, longitude: Double, routes: [CachedRouteWithMetadata])] = [:]
     
     /// Session-only cross-bucket pool: out-of-band routes keyed by duration bucket (e.g. 15, 25). Survives Cancel so 15 min route from a 20 min run can be used when user comes back and selects 15 min.
     private var sessionCrossBucketPool: [Int: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)]] = [:]
@@ -229,10 +230,10 @@ class RouteCacheService {
         // 🎯 PRIORITY 0: Session-only cache FIRST (user's actual routes this session, including +1 additions)
         // Session cache represents what the user just saw — takes priority over prepop DB.
         let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
-        if let session = sessionOnlyCache {
+        if let session = sessionOnlyCache[roundedDuration] {
             let sessionCoord = CLLocationCoordinate2D(latitude: session.latitude, longitude: session.longitude)
             let distance = distanceBetween(sessionCoord, location)
-            if distance <= matchRadiusMeters && session.durationMinutes == roundedDuration && !session.routes.isEmpty {
+            if distance <= matchRadiusMeters && !session.routes.isEmpty {
                 print("📦 SESSION CACHE HIT! \(session.routes.count) route(s) for \(durationMinutes)min at this location (instant reuse)")
                 return session.routes
             }
@@ -452,7 +453,7 @@ class RouteCacheService {
             )
         }
         if !meta.isEmpty {
-            sessionOnlyCache = (latitude: location.latitude, longitude: location.longitude, durationMinutes: rounded, routes: meta)
+            sessionOnlyCache[rounded] = (latitude: location.latitude, longitude: location.longitude, routes: meta)
             sessionLocation = location
             print("📦 Session cache updated: \(meta.count) route(s) for \(rounded)min (this session only)")
         }
@@ -463,16 +464,16 @@ class RouteCacheService {
     func setSessionRoutes(_ routes: [CachedRouteWithMetadata], at location: CLLocationCoordinate2D, durationMinutes: Int) {
         guard !routes.isEmpty else { return }
         let rounded = RouteCacheService.roundToNearest5Minutes(durationMinutes)
-        sessionOnlyCache = (latitude: location.latitude, longitude: location.longitude, durationMinutes: rounded, routes: routes)
+        sessionOnlyCache[rounded] = (latitude: location.latitude, longitude: location.longitude, routes: routes)
         sessionLocation = location
         print("📦 Session cache set: \(routes.count) route(s) for \(rounded)min (this session only)")
     }
     
     /// Clear session-only cache and cross-bucket pool (e.g. when user moves >50m so we don't serve stale routes).
     func clearSessionCache() {
-        let hadSession = sessionOnlyCache != nil
+        let hadSession = !sessionOnlyCache.isEmpty
         let hadPool = !sessionCrossBucketPool.isEmpty
-        sessionOnlyCache = nil
+        sessionOnlyCache.removeAll()
         sessionCrossBucketPool.removeAll()
         sessionLocation = nil
         if hadSession || hadPool {
@@ -532,8 +533,8 @@ class RouteCacheService {
     /// Used by getCachedRoutes so that e.g. 20 min selection that produced 10 min routes makes 10 min instantly available when user cancels and selects 10 min.
     private func getAndConsumeSessionCrossBucketRoutes(for targetDuration: Int, near location: CLLocationCoordinate2D) -> [CachedRouteWithMetadata]? {
         let sessionCoord: CLLocationCoordinate2D?
-        if let session = sessionOnlyCache {
-            sessionCoord = CLLocationCoordinate2D(latitude: session.latitude, longitude: session.longitude)
+        if let firstSession = sessionOnlyCache.values.first {
+            sessionCoord = CLLocationCoordinate2D(latitude: firstSession.latitude, longitude: firstSession.longitude)
         } else if let loc = sessionLocation {
             sessionCoord = loc
         } else {
@@ -563,8 +564,8 @@ class RouteCacheService {
     /// Peek at in-band routes from the session cross-bucket pool WITHOUT consuming them. Same location/in-band logic as getAndConsumeSessionCrossBucketRoutes but the pool is left untouched.
     private func getSessionCrossBucketRoutesPeek(for targetDuration: Int, near location: CLLocationCoordinate2D) -> [CachedRouteWithMetadata]? {
         let sessionCoord: CLLocationCoordinate2D?
-        if let session = sessionOnlyCache {
-            sessionCoord = CLLocationCoordinate2D(latitude: session.latitude, longitude: session.longitude)
+        if let firstSession = sessionOnlyCache.values.first {
+            sessionCoord = CLLocationCoordinate2D(latitude: firstSession.latitude, longitude: firstSession.longitude)
         } else if let loc = sessionLocation {
             sessionCoord = loc
         } else {
