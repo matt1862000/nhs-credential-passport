@@ -2548,10 +2548,12 @@ struct LocalRoutePickerSheet: View {
                         print("[ROUTE_DEBUG] 📦 SKIP prepopValidate — isPrepop=\(firstCached.isFromPrePopulatedDatabase), allRoutesEmpty=\(allRoutes.isEmpty)")
                     }
                     
-                    // Gemini name/description for first pre-populated route — run in parallel, don't block
-                    if firstCached.isFromPrePopulatedDatabase,
-                       (firstCached.name == nil || (firstCached.name ?? "").isEmpty || (firstCached.name ?? "") == "Local Discovery"),
-                       !filteredCachedRoute.places.isEmpty {
+                    // Gemini name/description for first cached route when it has no real name: prepop "Local Discovery" or session cross-bucket template ("X min walk"). Run in parallel, don't block.
+                    let needsLazyGemini = !firstRouteData.places.isEmpty && (
+                        (firstCached.isFromPrePopulatedDatabase && (firstCached.name == nil || (firstCached.name ?? "").isEmpty || (firstCached.name ?? "") == "Local Discovery")) ||
+                        Self.isTemplateRouteName(firstCached.name ?? "", description: firstCached.description)
+                    )
+                    if needsLazyGemini {
                         let placesForGemini = firstRouteData.places
                         let durationMin = max(1, durationToUse / 60)
                         let diff = firstRouteDifficulty
@@ -2565,7 +2567,7 @@ struct LocalRoutePickerSheet: View {
                                 durationMinutes: durationMin,
                                 distanceMeters: distanceToUse,
                                 difficulty: diff,
-                                originCoordinate: (lat: origin.latitude, lon: origin.longitude)
+                                originCoordinate: firstCached.isFromPrePopulatedDatabase ? (lat: origin.latitude, lon: origin.longitude) : nil
                             )
                             await MainActor.run {
                                 guard allRoutes.indices.contains(0) else { return }
@@ -2593,6 +2595,7 @@ struct LocalRoutePickerSheet: View {
                                 if currentRouteIndex == 0 {
                                     generatedRoute = updated
                                 }
+                                print("[ROUTE_DEBUG] 🔄 Cached route updated with Gemini name: '\(content.name)'")
                             }
                         }
                     }
@@ -5441,6 +5444,16 @@ struct LocalRoutePickerSheet: View {
         return durationOk && distanceOk
     }
     
+    /// True if the route name/description are the pregen template (e.g. "10 min walk" / "A short walk from start and back."). Used to trigger lazy Gemini naming when a cached/cross-bucket route is displayed.
+    private static func isTemplateRouteName(_ name: String, description: String?) -> Bool {
+        let suffix = " min walk"
+        guard name.hasSuffix(suffix) else { return false }
+        let prefix = String(name.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+        guard !prefix.isEmpty, prefix.allSatisfy({ $0.isNumber }) else { return false }
+        let templateDesc = "A short walk from start and back."
+        return description == nil || description?.isEmpty == true || description == templateDesc
+    }
+    
     /// Count how many routes currently in allRoutes are in-band (80-120% of target duration + min distance).
     private func inBandRouteCount() -> Int {
         allRoutes.filter { Self.isRouteInBand($0.route, selectedDuration: selectedDuration) }.count
@@ -6359,6 +6372,50 @@ struct LocalRoutePickerSheet: View {
                     registerRouteSignature(places: injected.data.places, distanceMeters: injected.data.distanceMeters)
                     shownPlaceIdSets.append(Set(injected.data.places.map { $0.placeId }))
                     injectedCount += 1
+                    // Lazy Gemini: if route had template name (e.g. "10 min walk"), fetch name/description now and update
+                    if Self.isTemplateRouteName(injected.route.name, description: injected.route.description) {
+                        let placeIdSet = Set(injected.data.places.map { $0.placeId })
+                        let places = injected.data.places
+                        let durationMin = injected.route.durationMinutes
+                        let distanceM = injected.route.distanceMeters
+                        Task {
+                            let waypointInfos = places.map { GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity) }
+                            let content = await GeminiService.shared.generateRouteContent(
+                                waypoints: waypointInfos,
+                                durationMinutes: durationMin,
+                                distanceMeters: distanceM,
+                                difficulty: nil
+                            )
+                            await MainActor.run {
+                                guard let idx = allRoutes.firstIndex(where: { Set($0.data.places.map { $0.placeId }) == placeIdSet }) else { return }
+                                let existing = allRoutes[idx].route
+                                let updated = WalkingRoute(
+                                    name: content.name,
+                                    description: content.description,
+                                    durationMinutes: existing.durationMinutes,
+                                    distanceMeters: existing.distanceMeters,
+                                    difficulty: existing.difficulty,
+                                    isIndoor: existing.isIndoor,
+                                    isAccessible: existing.isAccessible,
+                                    landmarks: existing.landmarks,
+                                    icon: existing.icon,
+                                    color: existing.color,
+                                    qrMarkers: existing.qrMarkers,
+                                    routeType: existing.routeType,
+                                    trimmed: existing.trimmed,
+                                    walkingDirections: existing.walkingDirections,
+                                    usedOSRMRouting: existing.usedOSRMRouting,
+                                    isFromPrePopulatedDatabase: existing.isFromPrePopulatedDatabase,
+                                    travelToStartMinutes: existing.travelToStartMinutes
+                                )
+                                allRoutes[idx] = (route: updated, data: allRoutes[idx].data, isDeadZoneFallback: allRoutes[idx].isDeadZoneFallback, isFromGoogle: allRoutes[idx].isFromGoogle)
+                                if currentRouteIndex == idx {
+                                    generatedRoute = updated
+                                }
+                                print("[ROUTE_DEBUG] 🔄 Cross-bucket route updated with Gemini name: '\(content.name)'")
+                            }
+                        }
+                    }
                 }
             }
             if injectedCount > 0 {
@@ -6400,12 +6457,24 @@ struct LocalRoutePickerSheet: View {
             var consecutiveDuplicates = 0
             let maxConsecutiveDuplicates = 3  // Stop after 3 duplicates in a row - variety exhausted
             var consecutiveFailures = 0
-            let maxConsecutiveFailures = 3  // Reduced from 5 - stop earlier if failing
+            let maxConsecutiveFailures = 3  // Real failures only (invalid result, exception); out-of-band no longer counts
+            var pregenAttempts = 0
+            let maxPregenAttempts = 6  // Cap total attempts so we don't run too long in areas with no second in-band route
+            let pregenTimeCap: TimeInterval = 40  // Stop searching for more in-band routes after this many seconds
             
             // Get pre-fetched POIs once for all iterations
             let poisToUse = await MainActor.run { prefetchedPOIs.isEmpty ? nil : prefetchedPOIs }
             
-            while routesGenerated < maxRoutesToGenerate && consecutiveFailures < maxConsecutiveFailures && consecutiveDuplicates < maxConsecutiveDuplicates {
+            while routesGenerated < maxRoutesToGenerate && consecutiveFailures < maxConsecutiveFailures && consecutiveDuplicates < maxConsecutiveDuplicates && pregenAttempts < maxPregenAttempts {
+                pregenAttempts += 1
+                // Time cap: stop searching for more in-band routes after pregenTimeCap seconds
+                if Date().timeIntervalSince(preGenTaskStart) >= pregenTimeCap {
+                    let inBand = await MainActor.run { inBandRouteCount() }
+                    if inBand < targetInBandRoutes {
+                        print("[ROUTE_GEN] ⏹️ Pregen time cap (\(Int(pregenTimeCap))s) — \(inBand)/\(targetInBandRoutes) in-band")
+                        break
+                    }
+                }
                 // Check if we've reached the in-band target
                 let currentInBand = await MainActor.run { inBandRouteCount() }
                 if currentInBand >= targetInBandRoutes {
@@ -6519,37 +6588,14 @@ struct LocalRoutePickerSheet: View {
                         )
                     }
                     
-                    // v1.9.49: Start route naming in parallel (Optimization 4: Parallel Gemini Naming)
-                    let waypointInfos = result.places.map { place in
-                        GeminiService.WaypointInfo(
-                            name: place.name,
-                            types: place.types ?? [],
-                            vicinity: place.vicinity
-                        )
-                    }
-                    
-                    // Start Gemini naming in parallel (has 3s timeout, template fallback)
-                    let namingTask = Task {
-                        await GeminiService.shared.generateRouteContent(
-                            waypoints: waypointInfos,
-                            durationMinutes: result.durationMinutes,
-                            distanceMeters: result.distanceMeters,
-                            difficulty: nil
-                        )
-                    }
-                    
-                    // Determine difficulty based on duration
+                    // Pregen: use template name first; call Gemini only if route is in-band (will be shown in preview)
+                    let templateName = "\(result.durationMinutes) min walk"
+                    let templateDescription = "A short walk from start and back."
                     let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
                     
-                    // Get route name (should be ready or nearly ready by now)
-                    let aiContent = await namingTask.value
-                    
-                    let routeName = aiContent.name
-                    let description = aiContent.description
-                    
                     var route = WalkingRoute(
-                        name: routeName,
-                        description: description,
+                        name: templateName,
+                        description: templateDescription,
                         durationMinutes: max(1, result.durationMinutes),
                         distanceMeters: result.distanceMeters,
                         difficulty: routeDifficulty,
@@ -6565,7 +6611,7 @@ struct LocalRoutePickerSheet: View {
                         usedOSRMRouting: result.usedOSRM  // v1.7.1: Track OSRM usage
                     )
                     var isFromGoogle = result.usedGoogleDirections
-                    // v2.1.12: Skip explicit re-measure if generateLocalRoute already used Google Directions
+                    // Always Google re-measure for pregen so we have accurate duration for in-band check
                     if isFromGoogle {
                         print("[ROUTE_DEBUG] 🔍 PRE-GEN route '\(route.name)': already Google-measured (\(route.durationMinutes)min, \(route.distanceMeters)m) — skipping redundant re-measure")
                     } else if mapsService.hasAPIKey && !result.places.isEmpty {
@@ -6613,6 +6659,42 @@ struct LocalRoutePickerSheet: View {
                         }
                     }
                     
+                    // Only call Gemini for routes we will show (in-band); out-of-band use template name in cross-bucket
+                    var cappedRoute = Self.applyDurationSanityCap(route, targetDurationMinutes: selectedDuration)
+                    let useWideBandBypass = await MainActor.run { !hasEnoughInBandRoutes() && !Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) && Self.isRouteInWideBand(cappedRoute, selectedDuration: selectedDuration) }
+                    let isInBand = Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) || useWideBandBypass
+                    if isInBand {
+                        let waypointInfos = result.places.map { place in
+                            GeminiService.WaypointInfo(name: place.name, types: place.types ?? [], vicinity: place.vicinity)
+                        }
+                        let aiContent = await GeminiService.shared.generateRouteContent(
+                            waypoints: waypointInfos,
+                            durationMinutes: route.durationMinutes,
+                            distanceMeters: route.distanceMeters,
+                            difficulty: nil
+                        )
+                        let routeWithGemini = WalkingRoute(
+                            name: aiContent.name,
+                            description: aiContent.description,
+                            durationMinutes: route.durationMinutes,
+                            distanceMeters: route.distanceMeters,
+                            difficulty: route.difficulty,
+                            isIndoor: route.isIndoor,
+                            isAccessible: route.isAccessible,
+                            landmarks: route.landmarks,
+                            icon: route.icon,
+                            color: route.color,
+                            qrMarkers: route.qrMarkers,
+                            routeType: route.routeType,
+                            trimmed: route.trimmed,
+                            walkingDirections: route.walkingDirections,
+                            usedOSRMRouting: route.usedOSRMRouting,
+                            isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase,
+                            travelToStartMinutes: route.travelToStartMinutes
+                        )
+                        cappedRoute = Self.applyDurationSanityCap(routeWithGemini, targetDurationMinutes: selectedDuration)
+                    }
+                    
                     await MainActor.run {
                         // v1.8.8: Check if route is too short (< 50% of target)
                         // Short routes are stored but not added - may use ONE at end if needed
@@ -6635,21 +6717,19 @@ struct LocalRoutePickerSheet: View {
                         // FINAL SAFETY CHECK: Deduplicate before storing
                         let deduplicatedResult = mapsService.finalizeRouteDedupForView(result)
                         
-                        // Only show in-band routes; out-of-band routes go to cross-bucket pool
-                        let cappedRoute = Self.applyDurationSanityCap(route, targetDurationMinutes: selectedDuration)
-                        // v2.1.14: When we still need more routes, accept wide-band (65–125% for short targets) so e.g. 7 min is shown for 10 min — same as +1 flow
-                        let useWideBandBypass = !hasEnoughInBandRoutes() && !Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) && Self.isRouteInWideBand(cappedRoute, selectedDuration: selectedDuration)
+                        // Only show in-band routes; out-of-band routes go to cross-bucket pool (cappedRoute has template name for those)
+                        let useWideBandBypassLocal = !hasEnoughInBandRoutes() && !Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) && Self.isRouteInWideBand(cappedRoute, selectedDuration: selectedDuration)
                         
                         let added = appendRouteIfAllowed(
                             route: cappedRoute,
                             data: deduplicatedResult,
                             isFromGoogle: isFromGoogle,
                             source: "pre-gen-loop",
-                            bypassInBandCap: useWideBandBypass
+                            bypassInBandCap: useWideBandBypassLocal
                         )
                         
+                        // Out-of-band (not added) is not a failure — we stored in cross-bucket; keep trying for in-band
                         if !added {
-                            consecutiveFailures += 1
                             return
                         }
                         
@@ -6716,8 +6796,15 @@ struct LocalRoutePickerSheet: View {
                     print("⚠️ Pre-generation error: \(error.localizedDescription)")
                 }
                 
-                // Small delay between generations to avoid rate limiting
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                // Small delay between generations; use longer delay when near MapKit limit to avoid rate limiting
+                let mapKitCount = await mapsService.currentMapKitRequestCount
+                let delayNs: UInt64 = mapKitCount >= 35 ? 500_000_000 : 200_000_000  // 0.5s near limit, 0.2s otherwise
+                try? await Task.sleep(nanoseconds: delayNs)
+            }
+            
+            let inBandAfterPregen = await MainActor.run { inBandRouteCount() }
+            if pregenAttempts >= maxPregenAttempts && inBandAfterPregen < targetInBandRoutes {
+                print("[ROUTE_GEN] ⏹️ Pregen stopped after \(maxPregenAttempts) attempts (cap) — \(inBandAfterPregen)/\(targetInBandRoutes) in-band")
             }
             
             // Check if we only found 1-2 routes - if so, try Google API for more POIs
