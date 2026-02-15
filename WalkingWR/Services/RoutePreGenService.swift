@@ -222,9 +222,19 @@ final class RoutePreGenService: ObservableObject {
                                         )
                                     }
                                     let diff2: RouteDifficulty = filteredSecond.durationMinutes <= 10 ? .easy : (filteredSecond.durationMinutes <= 20 ? .moderate : .challenging)
+                                    // Gemini name for 2nd route too (so it doesn't show "8 min walk" template)
+                                    let waypointInfos2 = filteredSecond.places.map { place in
+                                        GeminiService.WaypointInfo(name: place.name, types: place.types ?? [], vicinity: place.vicinity)
+                                    }
+                                    let aiContent2 = await GeminiService.shared.generateRouteContent(
+                                        waypoints: waypointInfos2,
+                                        durationMinutes: filteredSecond.durationMinutes,
+                                        distanceMeters: filteredSecond.distanceMeters,
+                                        difficulty: diff2
+                                    )
                                     var route2 = WalkingRoute(
-                                        name: "\(filteredSecond.durationMinutes) min walk",
-                                        description: "A short walk from start and back.",
+                                        name: aiContent2.name,
+                                        description: aiContent2.description,
                                         durationMinutes: max(1, filteredSecond.durationMinutes),
                                         distanceMeters: filteredSecond.distanceMeters,
                                         difficulty: diff2,

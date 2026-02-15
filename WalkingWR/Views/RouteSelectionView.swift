@@ -71,79 +71,6 @@ struct RouteStageTelemetryEntry: Identifiable {
     }
 }
 
-// MARK: - Debug: Test free routing APIs from UI
-struct DebugFreeAPISheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var resultMessage: String = "Tap a button to test that API."
-    @State private var isTesting: String? = nil  // which API is currently testing
-    
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                Text("Test free routing APIs with a fixed route (Kirkhamgate area).")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                
-                VStack(spacing: 12) {
-                    testButton("OSRM", apiKey: "osrm")
-                    testButton("OpenRouteService", apiKey: "openrouteservice")
-                    testButton("GraphHopper", apiKey: "graphhopper")
-                }
-                .padding(.top, 8)
-                
-                Text(resultMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(8)
-                    .padding(.horizontal, 24)
-                
-                Spacer()
-            }
-            .padding(.top, 24)
-            .navigationTitle("Debug: Free APIs")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-    
-    private func testButton(_ label: String, apiKey: String) -> some View {
-        let testing = isTesting == apiKey
-        return Button {
-            resultMessage = "Testing \(label)..."
-            isTesting = apiKey
-            Task {
-                let (success, message) = await GoogleMapsService.shared.testFreeRoutingAPI(apiKey)
-                await MainActor.run {
-                    resultMessage = message
-                    isTesting = nil
-                }
-            }
-        } label: {
-            HStack {
-                Text(label)
-                if testing {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(isTesting != nil)
-    }
-}
-
 struct RouteSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var showLocalRoutePicker: Bool
@@ -156,7 +83,6 @@ struct RouteSelectionView: View {
     @State private var safetyNetGoogleRetryAttempted = false
     // v1.9.36: pendingActiveWalk moved to ViewModel for iOS 17 compatibility
     @State private var showHelpSheet = false
-    @State private var showDebugSheet = false
     @State private var localRouteDuration: Int = 10
     @State private var localRouteUseCustom = false
     
@@ -258,18 +184,11 @@ struct RouteSelectionView: View {
                 #endif
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        HStack(spacing: 12) {
-                            Button("Debug") { showDebugSheet = true }
-                                .font(.caption)
-                            Button(action: { showHelpSheet = true }) {
-                                Image(systemName: "hand.raised.fill")
-                                    .foregroundColor(.coralPink)
-                            }
+                        Button(action: { showHelpSheet = true }) {
+                            Image(systemName: "hand.raised.fill")
+                                .foregroundColor(.coralPink)
                         }
                     }
-                }
-                .sheet(isPresented: $showDebugSheet) {
-                    DebugFreeAPISheet()
                 }
         }
     }
@@ -1236,7 +1155,6 @@ struct LocalRoutePickerSheet: View {
     @State private var viewedRouteIndices: Set<Int> = []  // Track which routes user has seen
     @State private var showPremiumUpsell = false  // Show upgrade message when all routes viewed
     @State private var showLocationLimitAlert = false  // Show when free tier location limit reached
-    @State private var showDebugSheet = false
     
     // v1.6.25: Route deduplication - track unique route signatures
     @State private var routeSignatures: Set<String> = []  // Unique signatures: "sortedPOIIds|distanceBucket"
@@ -1688,8 +1606,6 @@ struct LocalRoutePickerSheet: View {
                                         .buttonStyle(PrimaryButtonStyle(color: locationReady && !isGenerating ? .tealAccent : .gray))
                                         .disabled(!locationReady || isGenerating)
                                     }
-                                    Button("Debug") { showDebugSheet = true }
-                                        .font(.caption)
                                 }
                             }
                             
@@ -1711,9 +1627,6 @@ struct LocalRoutePickerSheet: View {
             .fullScreenCover(isPresented: $showActiveWalk) {
                 // v1.9.28: Immersive full-screen presentation - no navigation context
                 ActiveWalkView(viewModel: viewModel, locationService: viewModel.locationService, isPresented: $showActiveWalk)
-            }
-            .sheet(isPresented: $showDebugSheet) {
-                DebugFreeAPISheet()
             }
             .onChange(of: showActiveWalk) { oldValue, newValue in
                 let timestamp = Date()
@@ -2949,12 +2862,16 @@ struct LocalRoutePickerSheet: View {
                                     
                                     let routeDifficulty: RouteDifficulty = (durationToUse / 60) <= 10 ? .easy : ((durationToUse / 60) <= 20 ? .moderate : .challenging)
                                     
-                                    // Pre-populated routes from DB often have no name/description — generate with Gemini
+                                    // Pre-populated routes from DB or session-cached template routes — generate name with Gemini
                                     var routeName = cached.name ?? "Local Discovery"
                                     var routeDesc = cached.description ?? "A \(routeData.formattedDuration) walk passing \(routeData.places.count) local points of interest."
-                                    if (cached.name == nil || (cached.name ?? "").isEmpty || (cached.name ?? "") == "Local Discovery"),
-                                       cached.isFromPrePopulatedDatabase,
-                                       !routeData.places.isEmpty {
+                                    let needsGeminiName = !routeData.places.isEmpty && (
+                                        // Pre-populated DB routes with no name
+                                        ((cached.name == nil || (cached.name ?? "").isEmpty || (cached.name ?? "") == "Local Discovery") && cached.isFromPrePopulatedDatabase) ||
+                                        // Session-cached routes with template name (e.g. "8 min walk")
+                                        Self.isTemplateRouteName(cached.name ?? "", description: cached.description)
+                                    )
+                                    if needsGeminiName {
                                         let waypointInfos = routeData.places.map {
                                             GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity)
                                         }
@@ -2963,7 +2880,7 @@ struct LocalRoutePickerSheet: View {
                                             durationMinutes: max(1, durationToUse / 60),
                                             distanceMeters: distanceToUse,
                                             difficulty: routeDifficulty,
-                                            originCoordinate: nil
+                                            originCoordinate: cached.isFromPrePopulatedDatabase ? nil : nil
                                         )
                                         routeName = content.name
                                         routeDesc = content.description
@@ -4032,7 +3949,7 @@ struct LocalRoutePickerSheet: View {
                                         }
                                     }
                                 }
-                                func buildEnrichedAndRoute(refreshed: WalkingRoute, selected: [PlaceResult]) -> (WalkingRoute, GeneratedRoute) {
+                                func buildEnrichedAndRoute(refreshed: WalkingRoute, selected: [PlaceResult]) async -> (WalkingRoute, GeneratedRoute) {
                                     let placesForData = refreshed.qrMarkers.map { m in
                                         PlaceResult(
                                             placeId: m.id.uuidString,
@@ -4052,9 +3969,21 @@ struct LocalRoutePickerSheet: View {
                                     )
                                     let enrichedData = mapsService.addOnRoutePOIsIfNeeded(googleResult, origin: coord, candidatePOIs: placesForOutOfBand, durationMinutes: duration)
                                     let enrichedMarkers = RouteConversionHelper.markersFromPlaces(enrichedData.places, origin: coord)
+                                    // v2.1: Generate a UNIQUE Gemini name for the out-of-band route
+                                    // instead of reusing Route 1's name (which doesn't match these POIs)
+                                    let oobWaypointInfos = enrichedData.places.map { place in
+                                        GeminiService.WaypointInfo(name: place.name, types: place.types ?? [], vicinity: place.vicinity)
+                                    }
+                                    let oobContent = await GeminiService.shared.generateRouteContent(
+                                        waypoints: oobWaypointInfos,
+                                        durationMinutes: refreshed.durationMinutes,
+                                        distanceMeters: refreshed.distanceMeters,
+                                        difficulty: routeDifficulty
+                                    )
+                                    print("🤖 [MAIN OUT-OF-BAND] Gemini name for route 2: '\(oobContent.name)'")
                                     let googleRoute = WalkingRoute(
-                                        name: routeName,
-                                        description: description,
+                                        name: oobContent.name,
+                                        description: oobContent.description,
                                         durationMinutes: refreshed.durationMinutes,
                                         distanceMeters: refreshed.distanceMeters,
                                         difficulty: refreshed.difficulty,
@@ -4105,7 +4034,7 @@ struct LocalRoutePickerSheet: View {
                                             print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] POI \(index) \(selected[0].name): \(refreshed.durationMinutes)min (outside band)")
                                             continue
                                         }
-                                        let (cappedGoogleRoute, enrichedData) = buildEnrichedAndRoute(refreshed: refreshed, selected: selected)
+                                        let (cappedGoogleRoute, enrichedData) = await buildEnrichedAndRoute(refreshed: refreshed, selected: selected)
                                         print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] In-band at POI index \(index) (\(selected[0].name)) in \(index + 1) attempts")
                                         await addOutOfBandRoute(refreshed: refreshed, enrichedData: enrichedData, cappedGoogleRoute: cappedGoogleRoute)
                                         return
@@ -4166,7 +4095,7 @@ struct LocalRoutePickerSheet: View {
                                             print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Band attempt \(attempt + 1): \(refreshed.durationMinutes)min (outside band or distance < min for \(duration)min bucket)")
                                             continue
                                         }
-                                        let (cappedGoogleRoute, enrichedData) = buildEnrichedAndRoute(refreshed: refreshed, selected: selected)
+                                        let (cappedGoogleRoute, enrichedData) = await buildEnrichedAndRoute(refreshed: refreshed, selected: selected)
                                         print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Band attempt \(attempt + 1): Google in-band \(refreshed.durationMinutes)min — adding as route 2 (background)")
                                         await addOutOfBandRoute(refreshed: refreshed, enrichedData: enrichedData, cappedGoogleRoute: cappedGoogleRoute)
                                         return
