@@ -53,6 +53,21 @@ private final class RefreshRaceState {
     var walkStarted = false
 }
 
+/// Single-tag telemetry: stage name, elapsed seconds, API used, API not used (e.g. MapKit skipped when Google fallback).
+struct RouteStageTelemetryEntry: Identifiable {
+    let id = UUID()
+    let stage: String
+    let elapsedSec: TimeInterval?
+    let apiUsed: String
+    let apiNotUsed: String?
+    /// Console line for filtering by [STAGE_TELEMETRY] in Xcode
+    var consoleLine: String {
+        let timeStr = elapsedSec.map { String(format: "%.1fs", $0) } ?? "—"
+        let notUsedStr = apiNotUsed.map { " · not used: \($0)" } ?? ""
+        return "\(stage): \(timeStr) · \(apiUsed)\(notUsedStr)"
+    }
+}
+
 struct RouteSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var showLocalRoutePicker: Bool
@@ -1172,6 +1187,8 @@ struct LocalRoutePickerSheet: View {
     @State private var runSummaryStartTime: Date?
     @State private var runSummarySource: String = ""
     @State private var runSummaryTimeToFirstRouteSec: TimeInterval?
+    /// Stage timings + API used/not used for loading screen tag (e.g. "Directions 1.2s · Google · MapKit skipped")
+    @State private var routeStageTelemetry: [RouteStageTelemetryEntry] = []
     
     // v2.0.1: Check if delay is too short for a walk
     // Need at least 15 minutes (10 min walk + 5 min buffer) to recommend a walk
@@ -1944,6 +1961,10 @@ struct LocalRoutePickerSheet: View {
         let generateStartTime = Date()
         runSummaryStartTime = generateStartTime
         runSummarySource = ""
+        routeStageTelemetry.removeAll()
+        let startEntry = RouteStageTelemetryEntry(stage: "Start", elapsedSec: 0, apiUsed: "—", apiNotUsed: nil)
+        routeStageTelemetry.append(startEntry)
+        print("[STAGE_TELEMETRY] \(startEntry.consoleLine)")
         runSummaryTimeToFirstRouteSec = nil
         
         // Immediate logging to detect button tap
@@ -2046,6 +2067,11 @@ struct LocalRoutePickerSheet: View {
                     print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s DB_DOWNLOADED elapsed=\(String(format: "%.1f", prepopWaitElapsed))s")
                     print("📊 [TELEM] PREPOP_WAIT_ELAPSED seconds=\(String(format: "%.2f", prepopWaitElapsed)) (postcode hit, max 10s)")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Prepop wait done → advancing to Calculating routes")
+                    await MainActor.run {
+                        let e = RouteStageTelemetryEntry(stage: "Prepop wait", elapsedSec: prepopWaitElapsed, apiUsed: "prepop", apiNotUsed: nil)
+                        routeStageTelemetry.append(e)
+                        print("[STAGE_TELEMETRY] \(e.consoleLine)")
+                    }
                 }
                 
                 // CHECK CACHE FIRST (with movement detection)
@@ -2078,7 +2104,13 @@ struct LocalRoutePickerSheet: View {
                 if shouldUseCache, let cachedRoutes = RouteCacheService.shared.getCachedRoutes(near: userLocation.coordinate, durationMinutes: selectedDuration), !cachedRoutes.isEmpty {
                     let cacheCheckElapsed = Date().timeIntervalSince(cacheCheckStartTime)
                     let sourceLabel = cachedRoutes.first?.isFromPrePopulatedDatabase == true ? "prepop_database" : "memory_cache"
-                    await MainActor.run { runSummarySource = sourceLabel }
+                    await MainActor.run {
+                        runSummarySource = sourceLabel
+                        let e = RouteStageTelemetryEntry(stage: "Cache", elapsedSec: cacheCheckElapsed, apiUsed: "hit (\(sourceLabel))", apiNotUsed: nil)
+                        routeStageTelemetry.append(e)
+                        print("[STAGE_TELEMETRY] \(e.consoleLine)")
+                    }
+                    print("[STAGE_TELEMETRY] Free source: none (routes from cache) | not used: OSRM, MapKit, OpenRouteService, GraphHopper")
                     let firstActual = cachedRoutes.first?.route.durationSeconds ?? 0
                     let firstActualMin = firstActual / 60
                     let ratioPct = selectedDuration > 0 ? Int(round(Double(firstActualMin) / Double(selectedDuration) * 100)) : 0
@@ -2382,6 +2414,15 @@ struct LocalRoutePickerSheet: View {
                         shownPlaceIdSets = loadedPlaceIdSets
                         let timeToFirstRoute = Date().timeIntervalSince(generateStartTime)
                         print("ROUTE_FIRST_DISPLAYED time_to_first_route_sec=\(String(format: "%.2f", timeToFirstRoute)) duration=\(selectedDuration) source=cache")
+                        print("[STAGE_TELEMETRY] Bucket: duration=\(selectedDuration)min routes=\(loadedRoutes.count) inBand=\(inBandRouteCount())/\(targetInBandRoutes) total_sec=\(String(format: "%.2f", timeToFirstRoute))")
+                        for (idx, entry) in loadedRoutes.enumerated() {
+                            let r = entry.route
+                            let distKm = String(format: "%.1f", Double(r.distanceMeters) / 1000)
+                            let wps = r.qrMarkers.count
+                            let inBand = Self.isRouteInBand(r, selectedDuration: selectedDuration)
+                            let waypointNames = r.qrMarkers.map { $0.name }.joined(separator: " | ")
+                            print("[STAGE_TELEMETRY]   Route \(idx + 1): \(r.durationMinutes)min \(distKm)km \(wps) waypoints inBand=\(inBand) bucket=\(selectedDuration)min waypoints=[\(waypointNames)]")
+                        }
                     }
                     
                     // PREPOP ONLY: Google/MapKit validate-and-reorder (all routes: update preview time from Google, then reorder valid first when user on route 1)
@@ -3044,6 +3085,10 @@ struct LocalRoutePickerSheet: View {
                     return
                 }
                 
+                let cacheCheckElapsed = Date().timeIntervalSince(cacheCheckStartTime)
+                let cacheEntry = RouteStageTelemetryEntry(stage: "Cache", elapsedSec: cacheCheckElapsed, apiUsed: "miss", apiNotUsed: nil)
+                await MainActor.run { routeStageTelemetry.append(cacheEntry) }
+                print("[STAGE_TELEMETRY] \(cacheEntry.consoleLine)")
                 print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s CACHE_MISS — generating live route")
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - CACHE MISS - generating fresh route...")
                 print("ROUTE_PHASE phase=cache_miss_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
@@ -3452,6 +3497,18 @@ struct LocalRoutePickerSheet: View {
                     }
                     print("⏱️ [TIMING] Route: \(result.durationSeconds / 60)min, \(result.places.count) waypoints")
                     print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                    let routeGenApi = result.usedGoogleDirections ? "Google" : (result.usedOSRM ? "OSRM" : "MapKit")
+                    let freeSource = result.routingSourceUsed ?? (result.usedOSRM ? "OSRM" : "MapKit")
+                    let allFreeSources = ["OSRM", "MapKit", "OpenRouteService", "GraphHopper"]
+                    let notUsed = allFreeSources.filter { $0 != freeSource }
+                    print("[STAGE_TELEMETRY] Free source used: \(freeSource) | not used: \(notUsed.joined(separator: ", "))")
+                    let firstWaypointNames = result.places.map { $0.name }.joined(separator: " | ")
+                    print("[STAGE_TELEMETRY] First route: \(result.durationSeconds / 60)min \(String(format: "%.1f", Double(result.distanceMeters)/1000))km \(result.places.count) waypoints bucket=\(selectedDuration)min waypoints=[\(firstWaypointNames)]")
+                    await MainActor.run {
+                        let e = RouteStageTelemetryEntry(stage: "Route gen", elapsedSec: routeGenTime, apiUsed: routeGenApi, apiNotUsed: nil)
+                        routeStageTelemetry.append(e)
+                        print("[STAGE_TELEMETRY] \(e.consoleLine)")
+                    }
                     // #region agent log
                     do {
                         let totalTime = Date().timeIntervalSince(generateStartTime)
@@ -3513,25 +3570,55 @@ struct LocalRoutePickerSheet: View {
                     
                     print("ROUTE_PHASE phase=directions_start_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Extracting directions...")
+                    let directionsStartTime = Date()
+                    var directionsSource = "legs"
+                    var directionsNotUsed: String? = nil
                     
                     // Extract walking directions from OSRM/Google legs (in parallel with naming)
                     var directions = await MainActor.run {
                         extractWalkingDirections(from: filteredResult.legs, waypoints: filteredResult.places)
                     }
+                    if !directions.isEmpty { directionsSource = "legs" }
                     
-                    // v1.6.14: If no directions (OSRM was used), get them from Apple MapKit
+                    // v1.6.14: If no directions (OSRM was used), get them from MapKit or Google fallback
                     if directions.isEmpty && !filteredResult.places.isEmpty {
-                        print("🍎 No directions from route - getting from MapKit...")
-                        let mapKitStartTime = Date()
                         let waypointCoords = filteredResult.places.map { $0.coordinate }
                         let waypointNames = filteredResult.places.map { $0.name }
-                        directions = await mapsService.getMapKitDirectionsForRoute(
-                            origin: userLocation.coordinate,
-                            waypoints: waypointCoords,
-                            destination: userLocation.coordinate,
-                            waypointNames: waypointNames
-                        )
-                        print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - MapKit directions took \(String(format: "%.2f", Date().timeIntervalSince(mapKitStartTime)))s")
+                        // v2.1.13: If MapKit would incur long wait (rate-limited), use Google Directions so we don't block "Calculating routes"
+                        let useGoogleFallback = await mapsService.wouldMapKitDirectionsIncurLongWait()
+                        if useGoogleFallback {
+                            print("🌐 MapKit rate-limited - getting initial directions from Google...")
+                            let googleStartTime = Date()
+                            directions = await mapsService.getGoogleDirectionsForRoute(
+                                origin: userLocation.coordinate,
+                                waypoints: waypointCoords,
+                                destination: userLocation.coordinate,
+                                waypointNames: waypointNames
+                            )
+                            if !directions.isEmpty {
+                                directionsSource = "Google"
+                                directionsNotUsed = "MapKit"
+                            }
+                            print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Google directions took \(String(format: "%.2f", Date().timeIntervalSince(googleStartTime)))s")
+                        }
+                        if directions.isEmpty {
+                            print("🍎 No directions from route - getting from MapKit...")
+                            let mapKitStartTime = Date()
+                            directions = await mapsService.getMapKitDirectionsForRoute(
+                                origin: userLocation.coordinate,
+                                waypoints: waypointCoords,
+                                destination: userLocation.coordinate,
+                                waypointNames: waypointNames
+                            )
+                            if !directions.isEmpty { directionsSource = "MapKit" }
+                            print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - MapKit directions took \(String(format: "%.2f", Date().timeIntervalSince(mapKitStartTime)))s")
+                        }
+                    }
+                    let directionsElapsed = Date().timeIntervalSince(directionsStartTime)
+                    await MainActor.run {
+                        let e = RouteStageTelemetryEntry(stage: "Directions", elapsedSec: directionsElapsed, apiUsed: directionsSource, apiNotUsed: directionsNotUsed)
+                        routeStageTelemetry.append(e)
+                        print("[STAGE_TELEMETRY] \(e.consoleLine)")
                     }
                     print("ROUTE_PHASE phase=directions_done_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     
@@ -3580,12 +3667,19 @@ struct LocalRoutePickerSheet: View {
                     // v2.1.x: Snap POIs to road and replace polyline so route doesn’t go into buildings (e.g. school grounds)
                     var displayRoute = localRoute
                     var mainRouteDurationFromGoogle = false
+                    let roadSnapStartTime = Date()
                     print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s GOOGLE_SNAP_START")
                     print("ROUTE_PHASE phase=road_snap_start_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     if let snappedRoute = await mapsService.refreshRouteWithGoogleOnly(route: localRoute, userLocation: userLocation.coordinate) {
                         displayRoute = snappedRoute
                         mainRouteDurationFromGoogle = true
                         print("🛤️ [ROUTE CREATION] Applied road snap — polyline and markers now on road (no off-road POI)")
+                    }
+                    let roadSnapElapsed = Date().timeIntervalSince(roadSnapStartTime)
+                    await MainActor.run {
+                        let e = RouteStageTelemetryEntry(stage: "Road snap", elapsedSec: roadSnapElapsed, apiUsed: displayRoute.trimmed != localRoute.trimmed ? "Google" : "—", apiNotUsed: nil)
+                        routeStageTelemetry.append(e)
+                        print("[STAGE_TELEMETRY] \(e.consoleLine)")
                     }
                     displayRoute = Self.applyDurationSanityCap(displayRoute, targetDurationMinutes: selectedDuration)
                     print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s GOOGLE_SNAP_DONE")
@@ -3618,6 +3712,7 @@ struct LocalRoutePickerSheet: View {
                     var mainRoutePreviewSource = filteredResult.usedOSRM ? "osrm" : "mapkit"
                     // Always re-measure preview with Google when we have key and waypoints so preview time matches Google (what user sees after Let's Go). If Google fails, keep existing duration.
                     print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s GOOGLE_REMEASURE_START (live main route)")
+                    let remeasureStartTime = Date()
                     if mapsService.hasAPIKey && !filteredResult.places.isEmpty {
                         // #region agent log
                         let _liveOrigin = userLocation.coordinate
@@ -3680,6 +3775,12 @@ struct LocalRoutePickerSheet: View {
                             if let _lnd = try? JSONSerialization.data(withJSONObject: _liveNil), let _lns = String(data: _lnd, encoding: .utf8) { _lns.appendLine(toFile: _agentLogPath()) }
                             // #endregion agent log
                         }
+                    }
+                    let remeasureElapsed = Date().timeIntervalSince(remeasureStartTime)
+                    await MainActor.run {
+                        let e = RouteStageTelemetryEntry(stage: "Remeasure", elapsedSec: remeasureElapsed, apiUsed: mainRoutePreviewSource, apiNotUsed: nil)
+                        routeStageTelemetry.append(e)
+                        print("[STAGE_TELEMETRY] \(e.consoleLine)")
                     }
                     if !mainInBand && mapsService.hasAPIKey {
                         var placesForOutOfBand: [PlaceResult] = poisToUse ?? []
@@ -3994,6 +4095,16 @@ struct LocalRoutePickerSheet: View {
                         let totalTime = Date().timeIntervalSince(generateStartTime)
                         let route1WaypointNames = filteredResult.places.map { $0.name }.joined(separator: " → ")
                         let distanceKm = String(format: "%.1f", Double(displayRoute.distanceMeters) / 1000)
+                        let inBandCount = inBandRouteCount()
+                        print("[STAGE_TELEMETRY] Bucket: duration=\(selectedDuration)min routes=\(routesToShow.count) inBand=\(inBandCount)/\(targetInBandRoutes) total_sec=\(String(format: "%.2f", totalTime))")
+                        for (idx, entry) in routesToShow.enumerated() {
+                            let r = entry.route
+                            let distKm = String(format: "%.1f", Double(r.distanceMeters) / 1000)
+                            let wps = r.qrMarkers.count
+                            let inBand = Self.isRouteInBand(r, selectedDuration: selectedDuration)
+                            let waypointNames = r.qrMarkers.map { $0.name }.joined(separator: " | ")
+                            print("[STAGE_TELEMETRY]   Route \(idx + 1): \(r.durationMinutes)min \(distKm)km \(wps) waypoints inBand=\(inBand) bucket=\(selectedDuration)min waypoints=[\(waypointNames)]")
+                        }
                         print("ROUTE_FIRST_DISPLAYED time_to_first_route_sec=\(String(format: "%.2f", totalTime)) duration=\(selectedDuration) source=live")
                         print("═══════════════════════════════════════════════════════════")
                         print("[ROUTE_GEN] ROUTE_PREVIEW \(displayRoute.name), \(route1WaypointNames). \(displayRoute.durationMinutes) min \(distanceKm)km, \(mainRoutePreviewSource)")

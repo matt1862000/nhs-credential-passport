@@ -889,6 +889,15 @@ class GoogleMapsService: ObservableObject {
         }
     }
     
+    /// v2.1.13: Returns true if MapKit directions would incur a long wait (rate-limited).
+    /// Call before getMapKitDirectionsForRoute to decide whether to use Google Directions fallback for initial route.
+    func wouldMapKitDirectionsIncurLongWait() async -> Bool {
+        let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
+        let waitSec = status.waitTime ?? 0
+        let threshold: TimeInterval = 5
+        return status.shouldWait && waitSec > threshold
+    }
+    
     // MARK: - Google Directions Quota Tracking (v1.8.9)
     // Track daily usage to stay within budget (~$0.25/day max)
     // Free tier allows 333/day, 100 is conservative
@@ -6279,6 +6288,7 @@ class GoogleMapsService: ObservableObject {
                     waypointOrder: optimizedWaypointOrder
                 )
                 result.usedOSRM = true
+                result.routingSourceUsed = "OSRM"
                 return result
             } catch {
                 print("🗺️ OSRM failed, falling back to MapKit: \(error.localizedDescription)")
@@ -6371,14 +6381,15 @@ class GoogleMapsService: ObservableObject {
                         let encodedPolyline = encodePolyline(osrmResult.polyline)
                         let durationMinutes = osrmResult.duration / 60
                         print("🗺️ OSRM fallback success: \(osrmResult.distance)m, \(durationMinutes)min")
-                        
-                        return DirectionsResult(
+                        var fallbackResult = DirectionsResult(
                             legs: [leg],
                             overviewPolyline: OverviewPolyline(points: encodedPolyline),
                             summary: nil,
                             warnings: nil,
                             waypointOrder: optimizedWaypointOrder
                         )
+                        fallbackResult.routingSourceUsed = "OSRM"
+                        return fallbackResult
                     } catch {
                         print("🗺️ OSRM fallback also failed, trying OpenRouteService...")
                         // Try OpenRouteService then GraphHopper when OSRM fails
@@ -6398,13 +6409,15 @@ class GoogleMapsService: ObservableObject {
                                 )
                                 let encodedPolyline = encodePolyline(orsResult.polyline)
                                 print("🛤️ OpenRouteService fallback success: \(orsResult.distance)m, \(orsResult.duration / 60)min")
-                                return DirectionsResult(
+                                var orsDirResult = DirectionsResult(
                                     legs: [leg],
                                     overviewPolyline: OverviewPolyline(points: encodedPolyline),
                                     summary: nil,
                                     warnings: nil,
                                     waypointOrder: optimizedWaypointOrder
                                 )
+                                orsDirResult.routingSourceUsed = "OpenRouteService"
+                                return orsDirResult
                             } catch {
                                 print("🛤️ OpenRouteService fallback failed: \(error.localizedDescription)")
                             }
@@ -6425,13 +6438,15 @@ class GoogleMapsService: ObservableObject {
                                 )
                                 let encodedPolyline = encodePolyline(ghResult.polyline)
                                 print("🛤️ GraphHopper fallback success: \(ghResult.distance)m, \(ghResult.duration / 60)min")
-                                return DirectionsResult(
+                                var ghDirResult = DirectionsResult(
                                     legs: [leg],
                                     overviewPolyline: OverviewPolyline(points: encodedPolyline),
                                     summary: nil,
                                     warnings: nil,
                                     waypointOrder: optimizedWaypointOrder
                                 )
+                                ghDirResult.routingSourceUsed = "GraphHopper"
+                                return ghDirResult
                             } catch {
                                 print("🛤️ GraphHopper fallback failed: \(error.localizedDescription)")
                             }
@@ -6527,14 +6542,15 @@ class GoogleMapsService: ObservableObject {
         let encodedPolyline = encodePolyline(finalPolylinePoints)
         
         print("🍎 MapKit: \(allLegs.count) legs, \(totalDistance)m, \(totalDuration/60)min (FREE!)")
-        
-        return DirectionsResult(
+        var mapKitResult = DirectionsResult(
             legs: allLegs,
             overviewPolyline: OverviewPolyline(points: encodedPolyline),
             summary: nil,
             warnings: nil,
             waypointOrder: optimizedWaypointOrder
         )
+        mapKitResult.routingSourceUsed = "MapKit"
+        return mapKitResult
     }
     
     // MARK: - v1.6.14: Get MapKit Directions for Existing Route
@@ -6665,6 +6681,93 @@ class GoogleMapsService: ObservableObject {
         
         print("🍎 Got \(allDirections.count) directions from MapKit")
         return allDirections
+    }
+    
+    // MARK: - v2.1.13: Google Directions for Initial Route (fallback when MapKit rate-limited)
+    /// Returns turn-by-turn walking directions from Google Directions API for the same shape as getMapKitDirectionsForRoute.
+    /// Use when MapKit would incur a long wait (rate limit) so the first route does not block on "Calculating routes".
+    /// - Parameters:
+    ///   - origin: Start point
+    ///   - waypoints: Waypoint coordinates (display order)
+    ///   - destination: End point (usually same as origin for round-trips)
+    ///   - waypointNames: Names for "Arrive at Waypoint N (name)" instructions
+    /// - Returns: Array of WalkingDirection, or empty if API key missing, quota exhausted, or request fails
+    func getGoogleDirectionsForRoute(
+        origin: CLLocationCoordinate2D,
+        waypoints: [CLLocationCoordinate2D],
+        destination: CLLocationCoordinate2D,
+        waypointNames: [String] = []
+    ) async -> [WalkingDirection] {
+        guard !apiKey.isEmpty, canUseGoogleDirectionsRefresh else {
+            if !canUseGoogleDirectionsRefresh { print("🌐 [INITIAL DIRECTIONS] Google Directions quota exhausted - skipping fallback") }
+            return []
+        }
+        guard !waypoints.isEmpty else { return [] }
+        
+        let waypointsParam = waypoints.map { String(format: "%.6f,%.6f", $0.latitude, $0.longitude) }.joined(separator: "|")
+        var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
+        urlString += "origin=\(String(format: "%.6f,%.6f", origin.latitude, origin.longitude))"
+        urlString += "&destination=\(String(format: "%.6f,%.6f", destination.latitude, destination.longitude))"
+        urlString += "&waypoints=\(waypointsParam)"
+        urlString += "&mode=walking"
+        urlString += "&key=\(apiKey)"
+        
+        guard let url = URL(string: urlString) else { return [] }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10.0
+        if let bundleId = Bundle.main.bundleIdentifier {
+            request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+        }
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { return [] }
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let status = json["status"] as? String,
+                  status == "OK",
+                  let routes = json["routes"] as? [[String: Any]],
+                  let firstRoute = routes.first,
+                  let legs = firstRoute["legs"] as? [[String: Any]] else {
+                return []
+            }
+            recordGoogleDirectionsCall()
+            var allDirections: [WalkingDirection] = []
+            let isReturnRoute = origin.latitude == destination.latitude && origin.longitude == destination.longitude
+            for (legIndex, leg) in legs.enumerated() {
+                guard let steps = leg["steps"] as? [[String: Any]] else { continue }
+                let isReturnLeg = legIndex == legs.count - 1 && isReturnRoute && !waypoints.isEmpty
+                for (stepIndex, step) in steps.enumerated() {
+                    var instruction = (step["html_instructions"] as? String)?.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression) ?? "Continue"
+                    let stepDistText = (step["distance"] as? [String: Any])?["text"] as? String ?? ""
+                    let stepDistValue = (step["distance"] as? [String: Any])?["value"] as? Int ?? 0
+                    let stepDurText = (step["duration"] as? [String: Any])?["text"] as? String ?? ""
+                    var maneuver = step["maneuver"] as? String ?? "straight"
+                    let isLastStepOfLeg = stepIndex == steps.count - 1
+                    if isLastStepOfLeg {
+                        if isReturnLeg {
+                            instruction = "Return to starting point"
+                            maneuver = "arrive"
+                        } else if legIndex < waypointNames.count {
+                            let waypointIndex = legIndex + 1
+                            let name = waypointNames[legIndex]
+                            instruction = "Arrive at Waypoint \(waypointIndex) (\(name))"
+                            maneuver = "arrive"
+                        }
+                    }
+                    allDirections.append(WalkingDirection(
+                        instruction: instruction,
+                        distance: stepDistText,
+                        distanceMeters: stepDistValue,
+                        duration: stepDurText,
+                        maneuver: maneuver
+                    ))
+                }
+            }
+            print("🌐 [INITIAL DIRECTIONS] Got \(allDirections.count) directions from Google (MapKit fallback)")
+            return allDirections
+        } catch {
+            print("🌐 [INITIAL DIRECTIONS] Google Directions failed: \(error.localizedDescription)")
+            return []
+        }
     }
     
     // MARK: - v1.6.38: Refresh Route with MapKit Directions
@@ -12128,13 +12231,15 @@ class GoogleMapsService: ObservableObject {
         // #endregion
         
         // Return with deduplicated places (polyline will be regenerated by caller if needed)
-        let finalRoute = GeneratedRoute(
+        var finalRoute = GeneratedRoute(
             places: deduplicatedPlaces,
             polyline: route.polyline,
             distanceMeters: route.distanceMeters,
             durationSeconds: route.durationSeconds,
             legs: route.legs
         )
+        finalRoute.usedOSRM = route.usedOSRM
+        finalRoute.routingSourceUsed = route.routingSourceUsed
         
         // v2.0.3 Phase 1.5: Hard cap guard after deduplication
         // Note: We log here but enforce at call site to avoid making this function throwing
@@ -13070,13 +13175,15 @@ class GoogleMapsService: ObservableObject {
                     let acceptMin = wpCount == 1 ? singleWPMin : 0.50
                     let acceptMax = wpCount >= 3 ? 1.8 : (wpCount == 1 ? singleWPMax : 1.6)
                     if durationMin >= Int(Double(targetDurationMinutes) * acceptMin) && durationMin <= Int(Double(targetDurationMinutes) * acceptMax) {
-                        let route = GeneratedRoute(
+                        var route = GeneratedRoute(
                             places: selectedPOIs,
                             polyline: directions.overviewPolyline.points,
                             distanceMeters: totalDistance,
                             durationSeconds: totalDuration,
                             legs: directions.legs
                         )
+                        route.usedOSRM = directions.usedOSRM
+                        route.routingSourceUsed = directions.routingSourceUsed
                         
                         // Keep the best match: accuracy weighted by waypoint preference + travel-to-start penalty
                         // 3% bonus per WP, capped at 10% total — prevents 5-WP routes from winning with poor accuracy
@@ -13144,7 +13251,9 @@ class GoogleMapsService: ObservableObject {
                             let stretchMin = stretchDur / 60
                             let stretchRatio = Double(stretchMin) / Double(targetDurationMinutes)
                             if stretchRatio >= 0.6 && stretchRatio <= 1.6 && abs(stretchRatio - 1.0) < abs(ratio - 1.0) {
-                                let stretched = GeneratedRoute(places: stretchedPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: stretchDist, durationSeconds: stretchDur, legs: dirs.legs)
+                                var stretched = GeneratedRoute(places: stretchedPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: stretchDist, durationSeconds: stretchDur, legs: dirs.legs)
+                                stretched.usedOSRM = dirs.usedOSRM
+                                stretched.routingSourceUsed = dirs.routingSourceUsed
                                 print("⚡ [DIAGNOSTIC] 🔧 Stretched route: \(stretchMin)min (\(Int(stretchRatio*100))%) with +1 POI '\(extraPOI.0.name)'")
                                 bestStrategyARoute = stretched
                             }
@@ -13169,7 +13278,9 @@ class GoogleMapsService: ObservableObject {
                             let trimMin = trimDur / 60
                             let trimRatio = Double(trimMin) / Double(targetDurationMinutes)
                             if trimRatio >= 0.5 && trimRatio <= 1.6 && abs(trimRatio - 1.0) < abs(ratio - 1.0) {
-                                let trimmed = GeneratedRoute(places: trimmedPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: trimDist, durationSeconds: trimDur, legs: dirs.legs)
+                                var trimmed = GeneratedRoute(places: trimmedPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: trimDist, durationSeconds: trimDur, legs: dirs.legs)
+                                trimmed.usedOSRM = dirs.usedOSRM
+                                trimmed.routingSourceUsed = dirs.routingSourceUsed
                                 print("⚡ [DIAGNOSTIC] 🔧 Trimmed route: \(trimMin)min (\(Int(trimRatio*100))%) removed furthest POI")
                                 bestStrategyARoute = trimmed
                             }
@@ -13318,7 +13429,9 @@ class GoogleMapsService: ObservableObject {
                         let baseRatioCheck = Double(bestBase.durationSeconds / 60) / Double(targetDurationMinutes)
                         // Accept if within 60-150% AND better or similar accuracy to base
                         if ratio >= 0.6 && ratio <= 1.5 && abs(ratio - 1.0) <= abs(baseRatioCheck - 1.0) + 0.15 {
-                            let combined = GeneratedRoute(places: combinedPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: dist, durationSeconds: dur, legs: dirs.legs)
+                            var combined = GeneratedRoute(places: combinedPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: dist, durationSeconds: dur, legs: dirs.legs)
+                            combined.usedOSRM = dirs.usedOSRM
+                            combined.routingSourceUsed = dirs.routingSourceUsed
                             print("⚡ [DIAGNOSTIC] ✅ Quick 2-WP enhancement: \(durMin)min with \(combinedPOIs.map { $0.name }.joined(separator: " | ")) (was \(bestBase.durationSeconds / 60)min 1-WP)")
                             routeCapture?.addRoute(combined)
                             routeCapture?.incrementAttempts()
@@ -13400,7 +13513,9 @@ class GoogleMapsService: ObservableObject {
                                 let loopRatio = Double(loopMin) / Double(targetDurationMinutes)
                                 
                                 if abs(loopRatio - 1.0) < abs(baseRatio - 1.0) {
-                                    let loopRoute = GeneratedRoute(places: loopPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: loopDist, durationSeconds: loopDur, legs: dirs.legs)
+                                    var loopRoute = GeneratedRoute(places: loopPOIs, polyline: dirs.overviewPolyline.points, distanceMeters: loopDist, durationSeconds: loopDur, legs: dirs.legs)
+                                    loopRoute.usedOSRM = dirs.usedOSRM
+                                    loopRoute.routingSourceUsed = dirs.routingSourceUsed
                                     print("⚡ [DIAGNOSTIC] ✅ Loop fallback: \(loopMin)min (\(Int(loopRatio*100))%) vs out-and-back \(routeMins)min (\(Int(baseRatio*100))%) — POI loop through \(loopPOIs.map { $0.name }.joined(separator: " + "))")
                                     routeCapture?.addRoute(loopRoute)
                                     routeCapture?.incrementAttempts()
@@ -20716,6 +20831,8 @@ struct DirectionsResult: Codable {
     let warnings: [String]?
     let waypointOrder: [Int]?  // Optimized order when using optimize:true
     var usedOSRM: Bool = false  // v1.6.46: Track if polyline came from OSRM (not coded)
+    /// Which free routing engine was used: "OSRM" | "MapKit" | "OpenRouteService" | "GraphHopper" (not coded)
+    var routingSourceUsed: String? = nil
     
     enum CodingKeys: String, CodingKey {
         case legs
@@ -20783,6 +20900,9 @@ struct GeneratedRoute {
     // v2.1.12: Track if duration/distance came from Google Directions API (not MapKit/synthetic).
     // When true, callers can skip redundant Google re-measure calls.
     var usedGoogleDirections: Bool = false
+    
+    /// Free routing source used for this route: "OSRM" | "MapKit" | "OpenRouteService" | "GraphHopper" (from DirectionsResult).
+    var routingSourceUsed: String? = nil
     
     /// When set (pre-pop routes), walk time from user to first waypoint. Preview shows route-only duration; pill uses durationSeconds + this.
     var travelToStartSeconds: Int? = nil
