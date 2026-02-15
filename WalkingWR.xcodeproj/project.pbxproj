@@ -302,12 +302,13 @@
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 360;
+				CURRENT_PROJECT_VERSION = 361;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WalkingWR/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = WaitWell;
+				INFOPLIST_KEY_GRAPHHOPPER_API_KEY = "$(GRAPHHOPPER_API_KEY)";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need camera access to take photos of nature during your walks.";
 				INFOPLIST_KEY_NSHealthClinicalHealthRecordsShareUsageDescription = "Health data helps track your walking progress.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "We'd like to track your steps during walks to show your activity progress.";
@@ -316,12 +317,11 @@
 				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data helps us count your steps during walks.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "We save photos you take during your walks to your photo library.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to select photos.";
+				INFOPLIST_KEY_OPEN_ROUTE_SERVICE_API_KEY = "$(OPEN_ROUTE_SERVICE_API_KEY)";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
-				INFOPLIST_KEY_OPEN_ROUTE_SERVICE_API_KEY = "$(OPEN_ROUTE_SERVICE_API_KEY)";
-				INFOPLIST_KEY_GRAPHHOPPER_API_KEY = "$(GRAPHHOPPER_API_KEY)";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -349,12 +349,13 @@
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 360;
+				CURRENT_PROJECT_VERSION = 361;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WalkingWR/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = WaitWell;
+				INFOPLIST_KEY_GRAPHHOPPER_API_KEY = "$(GRAPHHOPPER_API_KEY)";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need camera access to take photos of nature during your walks.";
 				INFOPLIST_KEY_NSHealthClinicalHealthRecordsShareUsageDescription = "Health data helps track your walking progress.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "We'd like to track your steps during walks to show your activity progress.";
@@ -363,12 +364,11 @@
 				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data helps us count your steps during walks.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "We save photos you take during your walks to your photo library.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to select photos.";
+				INFOPLIST_KEY_OPEN_ROUTE_SERVICE_API_KEY = "$(OPEN_ROUTE_SERVICE_API_KEY)";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
-				INFOPLIST_KEY_OPEN_ROUTE_SERVICE_API_KEY = "$(OPEN_ROUTE_SERVICE_API_KEY)";
-				INFOPLIST_KEY_GRAPHHOPPER_API_KEY = "$(GRAPHHOPPER_API_KEY)";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

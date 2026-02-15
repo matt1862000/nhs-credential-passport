@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CoreLocation
 
 struct MainTabView: View {
     // ViewModel is passed in from SplashScreenView (already loaded data)
@@ -144,19 +145,46 @@ struct MainTabView: View {
             if let loc = viewModel.locationService.currentLocation {
                 Task {
                     await PrePopulatedPOIService.shared.downloadDatabaseIfNeeded(userLocation: loc.coordinate)
+                    // Once DB is ready, try to start route pre-gen for all clinician durations
+                    tryStartRoutePreGen(at: loc.coordinate)
                 }
             }
         }
         .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
             guard let loc = newLocation else { return }
+            // Cancel pre-gen if user moved significantly
+            if let preGenLoc = RoutePreGenService.shared.preGeneratedAtLocation {
+                let moved = CLLocation(latitude: loc.coordinate.latitude, longitude: loc.coordinate.longitude)
+                    .distance(from: CLLocation(latitude: preGenLoc.latitude, longitude: preGenLoc.longitude))
+                if moved > 50 {
+                    RoutePreGenService.shared.cancelAndClear()
+                }
+            }
             Task {
                 await PrePopulatedPOIService.shared.downloadDatabaseIfNeeded(userLocation: loc.coordinate)
+                tryStartRoutePreGen(at: loc.coordinate)
+            }
+        }
+        // When clinician list updates (Firebase snapshot), try to start pre-gen if POIs already ready
+        .onChange(of: viewModel.availableClinicians.count) { _, _ in
+            if let loc = viewModel.locationService.currentLocation {
+                tryStartRoutePreGen(at: loc.coordinate)
             }
         }
         // Global delay alerts - use the reusable modifier
         .delayAlerts(viewModel: viewModel)
     }
     
+    /// Try to start route pre-generation for all clinician durations.
+    /// Only starts if POIs are available (from pre-pop DB) and clinicians are loaded.
+    private func tryStartRoutePreGen(at coordinate: CLLocationCoordinate2D) {
+        let clinicians = viewModel.availableClinicians
+        guard !clinicians.isEmpty else { return }
+        // Check if POIs are available from pre-pop DB
+        guard let pois = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: coordinate, radiusMeters: 2500), pois.count >= 15 else { return }
+        RoutePreGenService.shared.startPreGenForAllClinicians(pois: pois, clinicians: clinicians, location: coordinate)
+    }
+
     private func checkForPendingPushNotification() {
         print("📱 checkForPendingPushNotification called - pending: \(AppDelegate.pendingNotification != nil)")
         

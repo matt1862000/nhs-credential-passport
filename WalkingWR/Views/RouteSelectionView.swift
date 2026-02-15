@@ -1767,15 +1767,16 @@ struct LocalRoutePickerSheet: View {
                 if newLocation != nil, prefetchedPOIs.isEmpty {
                     prefetchPOIsIfNeeded()
                 }
-                // Cancel pre-gen-before-tap if user moved significantly from where routes were pre-generated
-                if let newLoc = newLocation, let preGenLoc = preGeneratedAtLocation {
+                // Cancel pre-gen if user moved significantly from where routes were pre-generated
+                if let newLoc = newLocation, let preGenLoc = RoutePreGenService.shared.preGeneratedAtLocation {
                     let moved = CLLocation(latitude: newLoc.coordinate.latitude, longitude: newLoc.coordinate.longitude)
                         .distance(from: CLLocation(latitude: preGenLoc.latitude, longitude: preGenLoc.longitude))
                     if moved > movementThresholdMeters {
                         preGenBeforeTapTask?.cancel()
                         isPreGenBeforeTap = false
                         preGenBeforeTapDurations.removeAll()
-                        print("[PRE-GEN-TAP] Cancelled — user moved \(Int(moved))m from pre-gen location")
+                        RoutePreGenService.shared.cancelAndClear()
+                        print("[PRE-GEN-SVC] Cancelled — user moved \(Int(moved))m from pre-gen location")
                     }
                 }
             }
@@ -2019,7 +2020,7 @@ struct LocalRoutePickerSheet: View {
             prefetchedPOIs = earlyPOIs
             prefetchedForLocation = userLocation.coordinate
             print("⚡ Using \(earlyPOIs.count) EARLY-prefetched POIs - instant route ready!")
-            preGenerateRoutesBeforeTap()
+            triggerRoutePreGenService(pois: earlyPOIs, at: userLocation.coordinate)
             return
         }
         
@@ -2031,7 +2032,7 @@ struct LocalRoutePickerSheet: View {
             prefetchedPOIs = cachedPOIs
             prefetchedForLocation = userLocation.coordinate
             print("📦 Using \(cachedPOIs.count) cached POIs - no API call needed!")
-            preGenerateRoutesBeforeTap()
+            triggerRoutePreGenService(pois: cachedPOIs, at: userLocation.coordinate)
             return
         }
         
@@ -2041,7 +2042,7 @@ struct LocalRoutePickerSheet: View {
             prefetchedPOIs = dbPOIs
             prefetchedForLocation = userLocation.coordinate
             print("📦 Using \(dbPOIs.count) pre-populated DB POIs - no download needed!")
-            preGenerateRoutesBeforeTap()
+            triggerRoutePreGenService(pois: dbPOIs, at: userLocation.coordinate)
             return
         }
         
@@ -2068,7 +2069,9 @@ struct LocalRoutePickerSheet: View {
                     prefetchedPOIs = pois
                     isPrefetchingPOIs = false
                     print("✅ Pre-fetched \(pois.count) POIs - ready for fast route generation!")
-                    preGenerateRoutesBeforeTap()
+                    if let loc = locationService.currentLocation {
+                        triggerRoutePreGenService(pois: pois, at: loc.coordinate)
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -2079,232 +2082,19 @@ struct LocalRoutePickerSheet: View {
         }
     }
     
-    /// Pre-generate routes for recommended + neighbor durations before user taps Generate.
-    /// Triggered once POIs are ready and there is an active clinic delay.
-    func preGenerateRoutesBeforeTap() {
-        // Check if we have an active clinic delay (same logic as RouteSelectionView.hasActiveClinicDelay)
-        let clinicActive: Bool = viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable
-        guard clinicActive else { return }
-        guard !isPreGenBeforeTap else { return }
-        guard prefetchedPOIs.count >= 15 else { return }
-        guard let userLocation = locationService.currentLocation else { return }
-        
-        isPreGenBeforeTap = true
-        
-        // Calculate recommended duration (same logic as RouteSelectionView.recommendedDuration)
-        let availableTime: Int = viewModel.waitTimeInfo.estimatedMinutes - 5
-        let presetOptions: [Int] = [10, 15, 20, 25, 30]
-        let recDuration: Int
-        if availableTime < 10 {
-            recDuration = 10
-        } else if let bestOption = presetOptions.reversed().first(where: { $0 <= availableTime }) {
-            recDuration = bestOption
-        } else {
-            recDuration = 10
-        }
-        
-        var candidateDurations: [Int] = [recDuration, recDuration - 5, recDuration + 5]
-        candidateDurations = candidateDurations.filter { $0 >= 10 && $0 <= 30 }
-        let uniqueDurations: Set<Int> = Set(candidateDurations)
-        let durations: [Int] = Array(uniqueDurations).sorted { (a: Int, b: Int) -> Bool in
-            abs(a - recDuration) < abs(b - recDuration)
-        }
-        
-        let poisSnapshot = prefetchedPOIs
-        let coord = userLocation.coordinate
-        
-        print("[PRE-GEN-TAP] Starting route pre-generation for durations \(durations) (recommended=\(recDuration)min)")
-        
-        preGenBeforeTapTask = Task {
-            for duration in durations {
-                if Task.isCancelled { break }
-                
-                let mapKitCount = await mapsService.currentMapKitRequestCount
-                if mapKitCount >= 30 {
-                    print("[PRE-GEN-TAP] MapKit count \(mapKitCount) >= 30 — stopping to preserve quota for Generate tap")
-                    break
-                }
-                
-                if RouteCacheService.shared.getCachedRoutes(near: coord, durationMinutes: duration, consumeSessionCrossBucket: false) != nil {
-                    print("[PRE-GEN-TAP] Already have cached routes for \(duration)min — skipping")
-                    await MainActor.run { preGenBeforeTapDurations.insert(duration) }
-                    continue
-                }
-                
-                do {
-                    let result = try await mapsService.generateRouteTopologySafe(
-                        from: coord,
-                        targetDurationMinutes: duration,
-                        difficulty: nil,
-                        excludePlaceIds: [],
-                        excludePOIs: [],
-                        prefetchedPOIs: poisSnapshot
-                    )
-                    
-                    guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else {
-                        print("[PRE-GEN-TAP] Empty result for \(duration)min — skipping")
-                        continue
-                    }
-                    
-                    if Task.isCancelled { break }
-                    
-                    let filteredResult = mapsService.filterCloseWaypointsSync(from: result, durationMinutes: duration, origin: coord)
-                    
-                    let markers = await MainActor.run {
-                        createMarkersFromPlaces(filteredResult.places, origin: coord)
-                    }
-                    guard !markers.isEmpty else { continue }
-                    
-                    var directions = await MainActor.run {
-                        extractWalkingDirections(from: filteredResult.legs, waypoints: filteredResult.places)
-                    }
-                    if directions.isEmpty && !filteredResult.places.isEmpty {
-                        let waypointCoords = filteredResult.places.map { $0.coordinate }
-                        let waypointNames = filteredResult.places.map { $0.name }
-                        directions = await mapsService.getMapKitDirectionsForRoute(
-                            origin: coord,
-                            waypoints: waypointCoords,
-                            destination: coord,
-                            waypointNames: waypointNames
-                        )
-                    }
-                    
-                    if Task.isCancelled { break }
-                    
-                    let routeDifficulty: RouteDifficulty = filteredResult.durationMinutes <= 10 ? .easy : (filteredResult.durationMinutes <= 20 ? .moderate : .challenging)
-                    
-                    let waypointInfos = filteredResult.places.map { place in
-                        GeminiService.WaypointInfo(name: place.name, types: place.types ?? [], vicinity: place.vicinity)
-                    }
-                    let aiContent = await GeminiService.shared.generateRouteContent(
-                        waypoints: waypointInfos,
-                        durationMinutes: filteredResult.durationMinutes,
-                        distanceMeters: filteredResult.distanceMeters,
-                        difficulty: routeDifficulty
-                    )
-                    
-                    var route = WalkingRoute(
-                        name: aiContent.name,
-                        description: aiContent.description,
-                        durationMinutes: max(1, filteredResult.durationMinutes),
-                        distanceMeters: filteredResult.distanceMeters,
-                        difficulty: routeDifficulty,
-                        isIndoor: false,
-                        isAccessible: true,
-                        landmarks: ["Start"] + filteredResult.places.map { $0.name } + ["Return"],
-                        icon: "location.fill",
-                        color: .tealAccent,
-                        qrMarkers: markers,
-                        routeType: .local,
-                        trimmed: filteredResult.polyline,
-                        walkingDirections: directions,
-                        usedOSRMRouting: filteredResult.usedOSRM
-                    )
-                    
-                    if let snappedRoute = await mapsService.refreshRouteWithGoogleOnly(route: route, userLocation: coord) {
-                        route = snappedRoute
-                    }
-                    route = Self.applyDurationSanityCap(route, targetDurationMinutes: duration)
-                    
-                    let deduplicatedResult = await MainActor.run {
-                        mapsService.finalizeRouteDedupForView(filteredResult)
-                    }
-                    
-                    let meta = RouteCacheService.CachedRouteWithMetadata(
-                        route: deduplicatedResult,
-                        name: route.name,
-                        description: route.description,
-                        directions: directions.isEmpty ? nil : directions,
-                        isDeadZoneFallback: false,
-                        isFromPrePopulatedDatabase: false
-                    )
-                    RouteCacheService.shared.setSessionRoutes([meta], at: coord, durationMinutes: duration)
-                    
-                    await MainActor.run {
-                        preGenBeforeTapDurations.insert(duration)
-                        preGeneratedAtLocation = coord
-                    }
-                    print("[PRE-GEN-TAP] Stored route for \(duration)min: '\(route.name)' (\(route.durationMinutes)min, \(route.distanceMeters)m)")
-                    
-                    // Now generate a second route for the recommended duration
-                    if duration == recDuration && !Task.isCancelled {
-                        let mapKitCount2 = await mapsService.currentMapKitRequestCount
-                        if mapKitCount2 < 30 {
-                            let excludeIds = Set(result.places.map { $0.placeId })
-                            if let secondResult = try? await mapsService.generateRouteTopologySafe(
-                                from: coord,
-                                targetDurationMinutes: duration,
-                                difficulty: nil,
-                                excludePlaceIds: excludeIds,
-                                excludePOIs: result.places,
-                                prefetchedPOIs: poisSnapshot
-                            ), !secondResult.places.isEmpty, secondResult.distanceMeters > 0, secondResult.durationSeconds > 0 {
-                                let filteredSecond = mapsService.filterCloseWaypointsSync(from: secondResult, durationMinutes: duration, origin: coord)
-                                let markers2 = await MainActor.run { createMarkersFromPlaces(filteredSecond.places, origin: coord) }
-                                if !markers2.isEmpty {
-                                    var dirs2 = await MainActor.run { extractWalkingDirections(from: filteredSecond.legs, waypoints: filteredSecond.places) }
-                                    if dirs2.isEmpty && !filteredSecond.places.isEmpty {
-                                        dirs2 = await mapsService.getMapKitDirectionsForRoute(
-                                            origin: coord,
-                                            waypoints: filteredSecond.places.map { $0.coordinate },
-                                            destination: coord,
-                                            waypointNames: filteredSecond.places.map { $0.name }
-                                        )
-                                    }
-                                    let diff2: RouteDifficulty = filteredSecond.durationMinutes <= 10 ? .easy : (filteredSecond.durationMinutes <= 20 ? .moderate : .challenging)
-                                    let templateName = "\(filteredSecond.durationMinutes) min walk"
-                                    var route2 = WalkingRoute(
-                                        name: templateName,
-                                        description: "A short walk from start and back.",
-                                        durationMinutes: max(1, filteredSecond.durationMinutes),
-                                        distanceMeters: filteredSecond.distanceMeters,
-                                        difficulty: diff2,
-                                        isIndoor: false, isAccessible: true,
-                                        landmarks: ["Start"] + filteredSecond.places.map { $0.name } + ["Return"],
-                                        icon: "location.fill", color: .tealAccent,
-                                        qrMarkers: markers2, routeType: .local,
-                                        trimmed: filteredSecond.polyline,
-                                        walkingDirections: dirs2,
-                                        usedOSRMRouting: filteredSecond.usedOSRM
-                                    )
-                                    if let snapped2 = await mapsService.refreshRouteWithGoogleOnly(route: route2, userLocation: coord) {
-                                        route2 = snapped2
-                                    }
-                                    route2 = Self.applyDurationSanityCap(route2, targetDurationMinutes: duration)
-                                    let dedup2 = await MainActor.run { mapsService.finalizeRouteDedupForView(filteredSecond) }
-                                    let meta2 = RouteCacheService.CachedRouteWithMetadata(
-                                        route: dedup2,
-                                        name: route2.name,
-                                        description: route2.description,
-                                        directions: dirs2.isEmpty ? nil : dirs2,
-                                        isDeadZoneFallback: false,
-                                        isFromPrePopulatedDatabase: false
-                                    )
-                                    RouteCacheService.shared.setSessionRoutes([meta, meta2], at: coord, durationMinutes: duration)
-                                    print("[PRE-GEN-TAP] Stored 2nd route for recommended \(duration)min: '\(route2.name)'")
-                                }
-                            }
-                        }
-                    }
-                    
-                } catch {
-                    print("[PRE-GEN-TAP] Error for \(duration)min: \(error.localizedDescription)")
-                }
-                
-                try? await Task.sleep(nanoseconds: 300_000_000)
-            }
-            
-            await MainActor.run {
-                isPreGenBeforeTap = false
-                print("[PRE-GEN-TAP] Complete — pre-generated for durations: \(preGenBeforeTapDurations.sorted())")
-            }
-        }
+    /// Trigger route pre-generation via the shared RoutePreGenService.
+    /// Called from prefetchPOIsIfNeeded when POIs become available.
+    func triggerRoutePreGenService(pois: [PlaceResult], at coordinate: CLLocationCoordinate2D) {
+        let clinicians = viewModel.availableClinicians
+        guard !clinicians.isEmpty else { return }
+        RoutePreGenService.shared.startPreGenForAllClinicians(pois: pois, clinicians: clinicians, location: coordinate)
     }
     
     func generateRoute() {
-        // Cancel any in-flight pre-gen-before-tap so it doesn't compete for MapKit quota
+        // Cancel any in-flight pre-gen so it doesn't compete for MapKit quota
         preGenBeforeTapTask?.cancel()
         isPreGenBeforeTap = false
+        RoutePreGenService.shared.cancelAll()
         
         let generateStartTime = Date()
         runSummaryStartTime = generateStartTime
