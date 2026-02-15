@@ -156,6 +156,7 @@ struct RouteSelectionView: View {
     @State private var safetyNetGoogleRetryAttempted = false
     // v1.9.36: pendingActiveWalk moved to ViewModel for iOS 17 compatibility
     @State private var showHelpSheet = false
+    @State private var showDebugSheet = false
     @State private var localRouteDuration: Int = 10
     @State private var localRouteUseCustom = false
     
@@ -257,11 +258,18 @@ struct RouteSelectionView: View {
                 #endif
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: { showHelpSheet = true }) {
-                            Image(systemName: "hand.raised.fill")
-                                .foregroundColor(.coralPink)
+                        HStack(spacing: 12) {
+                            Button("Debug") { showDebugSheet = true }
+                                .font(.caption)
+                            Button(action: { showHelpSheet = true }) {
+                                Image(systemName: "hand.raised.fill")
+                                    .foregroundColor(.coralPink)
+                            }
                         }
                     }
+                }
+                .sheet(isPresented: $showDebugSheet) {
+                    DebugFreeAPISheet()
                 }
         }
     }
@@ -7159,8 +7167,8 @@ struct LocalRoutePickerSheet: View {
             // Run this batch in parallel (up to batchSize concurrent)
             await withTaskGroup(of: (Int, Result<GeneratedRoute, Error>).self) { group in
                 for duration in batch {
-                    if RouteCacheService.shared.getCachedRoutes(near: location, durationMinutes: duration) != nil {
-                        print("📦 \(duration)min already cached, skipping")
+                    if RouteCacheService.shared.getCachedRoutes(near: location, durationMinutes: duration, consumeSessionCrossBucket: false) != nil {
+                        print("📦 \(duration)min already cached, skipping (peek only, pool preserved)")
                         continue
                     }
                     group.addTask {

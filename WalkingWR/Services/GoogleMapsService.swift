@@ -6312,7 +6312,7 @@ class GoogleMapsService: ObservableObject {
         // Calculate directions for each leg (point to point)
         // Use OSRM when approaching MapKit rate limit to avoid hitting the cap
         let (useOSRM, osrmReason) = await shouldUseOSRM()
-        print("[FREE_API] OSRM=\(useOSRM ? "trying" : "skip(\(osrmReason))") ORS_key=\(openRouteServiceApiKey.isEmpty ? "no" : "yes") GH_key=\(graphHopperApiKey.isEmpty ? "no" : "yes") (ORS/GH only used after MapKit rate limit + OSRM failure)")
+        print("[FREE_API] OSRM=\(useOSRM ? "trying" : "skip(\(osrmReason))") ORS_key=\(openRouteServiceApiKey.isEmpty ? "no" : "yes") GH_key=\(graphHopperApiKey.isEmpty ? "no" : "yes") (ORS/GH also used when MapKit rate-limited or after OSRM failure)")
         
         if useOSRM {
             // 🗺️ Use OSRM for all legs at once (more efficient)
@@ -6436,6 +6436,73 @@ class GoogleMapsService: ObservableObject {
                 }
                 print("🗺️ Falling back to MapKit")
             }
+        }
+        
+        // v2.1.14: When MapKit would wait (rate limit) but OSRM was skipped (e.g. circuit breaker), use ORS/GraphHopper instead of waiting
+        let rateLimitStatus = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
+        let haveORSOrGH = !openRouteServiceApiKey.isEmpty || !graphHopperApiKey.isEmpty
+        let mapKitWouldWait = rateLimitStatus.shouldWait || rateLimitStatus.currentCount >= 36
+        if !forceMapKitRouting && haveORSOrGH && mapKitWouldWait {
+            print("🗺️ [ROUTING] MapKit rate limit (\(rateLimitStatus.currentCount)/50) — using ORS/GraphHopper instead of waiting")
+            if !openRouteServiceApiKey.isEmpty {
+                do {
+                    let orsResult = try await getOpenRouteServiceWalkingDirections(
+                        origin: origin,
+                        destination: destination,
+                        waypoints: waypoints
+                    )
+                    let leg = DirectionsLeg(
+                        distance: DirectionsValue(text: formatDistance(orsResult.distance), value: orsResult.distance),
+                        duration: DirectionsValue(text: formatDuration(orsResult.duration), value: orsResult.duration),
+                        startAddress: nil,
+                        endAddress: nil,
+                        steps: nil
+                    )
+                    let encodedPolyline = encodePolyline(orsResult.polyline)
+                    print("🗺️ [ROUTING] OpenRouteService: \(orsResult.distance)m, \(orsResult.duration / 60)min")
+                    var orsDirResult = DirectionsResult(
+                        legs: [leg],
+                        overviewPolyline: OverviewPolyline(points: encodedPolyline),
+                        summary: nil,
+                        warnings: nil,
+                        waypointOrder: optimizedWaypointOrder
+                    )
+                    orsDirResult.routingSourceUsed = "OpenRouteService"
+                    return orsDirResult
+                } catch {
+                    print("🗺️ [ROUTING] OpenRouteService failed: \(error.localizedDescription)")
+                }
+            }
+            if !graphHopperApiKey.isEmpty {
+                do {
+                    let ghResult = try await getGraphHopperWalkingDirections(
+                        origin: origin,
+                        destination: destination,
+                        waypoints: waypoints
+                    )
+                    let leg = DirectionsLeg(
+                        distance: DirectionsValue(text: formatDistance(ghResult.distance), value: ghResult.distance),
+                        duration: DirectionsValue(text: formatDuration(ghResult.duration), value: ghResult.duration),
+                        startAddress: nil,
+                        endAddress: nil,
+                        steps: nil
+                    )
+                    let encodedPolyline = encodePolyline(ghResult.polyline)
+                    print("🗺️ [ROUTING] GraphHopper: \(ghResult.distance)m, \(ghResult.duration / 60)min")
+                    var ghDirResult = DirectionsResult(
+                        legs: [leg],
+                        overviewPolyline: OverviewPolyline(points: encodedPolyline),
+                        summary: nil,
+                        warnings: nil,
+                        waypointOrder: optimizedWaypointOrder
+                    )
+                    ghDirResult.routingSourceUsed = "GraphHopper"
+                    return ghDirResult
+                } catch {
+                    print("🗺️ [ROUTING] GraphHopper failed: \(error.localizedDescription)")
+                }
+            }
+            print("🗺️ [ROUTING] ORS/GraphHopper both failed — falling back to MapKit (will wait if needed)")
         }
         
         // 🍎 Use MapKit for directions

@@ -223,7 +223,9 @@ class RouteCacheService {
     /// Also validates that cached routes are within tolerance (80-120%, or 75-125% for edge cases)
     /// NEW: If exact duration not found, checks adjacent slots (±5, ±10, ±15 min) for valid routes
     /// PRIORITY 0: Checks pre-populated database first (fastest, no API calls)
-    func getCachedRoutes(near location: CLLocationCoordinate2D, durationMinutes: Int) -> [CachedRouteWithMetadata]? {
+    /// - Parameter consumeSessionCrossBucket: When `true` (default), cross-bucket pool entries are consumed (removed from pool).
+    ///   Pass `false` from background pre-generation so routes stay in the pool for a later user-initiated request.
+    func getCachedRoutes(near location: CLLocationCoordinate2D, durationMinutes: Int, consumeSessionCrossBucket: Bool = true) -> [CachedRouteWithMetadata]? {
         // 🎯 PRIORITY 0: Session-only cache FIRST (user's actual routes this session, including +1 additions)
         // Session cache represents what the user just saw — takes priority over prepop DB.
         let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
@@ -233,6 +235,21 @@ class RouteCacheService {
             if distance <= matchRadiusMeters && session.durationMinutes == roundedDuration && !session.routes.isEmpty {
                 print("📦 SESSION CACHE HIT! \(session.routes.count) route(s) for \(durationMinutes)min at this location (instant reuse)")
                 return session.routes
+            }
+        }
+        
+        // 🎯 PRIORITY 0.5: Session cross-bucket pool — e.g. user chose 20 min, got 10 min routes (stored in pool); cancel then choose 10 min → instant.
+        if consumeSessionCrossBucket {
+            // User-initiated path: consume (remove) matching routes from the pool
+            if let crossBucketRoutes = getAndConsumeSessionCrossBucketRoutes(for: durationMinutes, near: location), !crossBucketRoutes.isEmpty {
+                print("📦 SESSION CROSS-BUCKET HIT! \(crossBucketRoutes.count) route(s) for \(durationMinutes)min (from earlier duration this session)")
+                return crossBucketRoutes
+            }
+        } else {
+            // Background pre-generation path: peek only, leave pool intact for later user request
+            if let crossBucketRoutes = getSessionCrossBucketRoutesPeek(for: durationMinutes, near: location), !crossBucketRoutes.isEmpty {
+                print("📦 SESSION CROSS-BUCKET PEEK: \(crossBucketRoutes.count) route(s) available for \(durationMinutes)min (pool unchanged)")
+                return crossBucketRoutes
             }
         }
         
@@ -497,6 +514,83 @@ class RouteCacheService {
         print("[ROUTE_DEBUG] 🔄 Session cross-bucket: stored '\(route.name)' (\(actualDuration)min) → \(bucket)min bucket (pool: \(total) routes)")
     }
     
+    /// In-band check for cache: 80–120% duration (75–125% for edge buckets) and minimum distance. Matches RouteSelectionView so cross-bucket routes returned from getCachedRoutes are valid for display.
+    private static func isRouteInBandForCache(_ route: WalkingRoute, targetDuration: Int) -> Bool {
+        let rounded = RouteCacheService.roundToNearest5Minutes(targetDuration)
+        let isEdge = rounded <= 5 || rounded >= 55
+        let minPercent = isEdge ? 0.75 : 0.80
+        let maxPercent = isEdge ? 1.25 : 1.20
+        let minAcc = Int(Double(rounded) * minPercent)
+        let maxAcc = Int(Double(rounded) * maxPercent)
+        let durationOk = route.durationMinutes >= minAcc && route.durationMinutes <= maxAcc
+        let minDist = max(200, rounded * 50)
+        let distanceOk = route.distanceMeters >= minDist
+        return durationOk && distanceOk
+    }
+    
+    /// Take in-band routes from the session cross-bucket pool for the given target duration and location; convert to cache format and remove from pool. Returns nil if no session location or not near session; otherwise returns routes (may be empty if pool had none in-band).
+    /// Used by getCachedRoutes so that e.g. 20 min selection that produced 10 min routes makes 10 min instantly available when user cancels and selects 10 min.
+    private func getAndConsumeSessionCrossBucketRoutes(for targetDuration: Int, near location: CLLocationCoordinate2D) -> [CachedRouteWithMetadata]? {
+        let sessionCoord: CLLocationCoordinate2D?
+        if let session = sessionOnlyCache {
+            sessionCoord = CLLocationCoordinate2D(latitude: session.latitude, longitude: session.longitude)
+        } else if let loc = sessionLocation {
+            sessionCoord = loc
+        } else {
+            sessionCoord = nil
+        }
+        guard let coord = sessionCoord else { return nil }
+        if distanceBetween(coord, location) > matchRadiusMeters { return nil }
+        
+        let entries = consumeSessionCrossBucket(for: targetDuration) { route, sel in
+            Self.isRouteInBandForCache(route, targetDuration: sel)
+        }
+        guard !entries.isEmpty else { return nil }
+        
+        let meta = entries.map { entry in
+            CachedRouteWithMetadata(
+                route: entry.data,
+                name: entry.route.name,
+                description: entry.route.description,
+                directions: entry.route.walkingDirections.isEmpty ? nil : entry.route.walkingDirections,
+                isDeadZoneFallback: false,
+                isFromPrePopulatedDatabase: false
+            )
+        }
+        return meta
+    }
+    
+    /// Peek at in-band routes from the session cross-bucket pool WITHOUT consuming them. Same location/in-band logic as getAndConsumeSessionCrossBucketRoutes but the pool is left untouched.
+    private func getSessionCrossBucketRoutesPeek(for targetDuration: Int, near location: CLLocationCoordinate2D) -> [CachedRouteWithMetadata]? {
+        let sessionCoord: CLLocationCoordinate2D?
+        if let session = sessionOnlyCache {
+            sessionCoord = CLLocationCoordinate2D(latitude: session.latitude, longitude: session.longitude)
+        } else if let loc = sessionLocation {
+            sessionCoord = loc
+        } else {
+            sessionCoord = nil
+        }
+        guard let coord = sessionCoord else { return nil }
+        if distanceBetween(coord, location) > matchRadiusMeters { return nil }
+        
+        let entries = peekSessionCrossBucket(for: targetDuration) { route, sel in
+            Self.isRouteInBandForCache(route, targetDuration: sel)
+        }
+        guard !entries.isEmpty else { return nil }
+        
+        let meta = entries.map { entry in
+            CachedRouteWithMetadata(
+                route: entry.data,
+                name: entry.route.name,
+                description: entry.route.description,
+                directions: entry.route.walkingDirections.isEmpty ? nil : entry.route.walkingDirections,
+                isDeadZoneFallback: false,
+                isFromPrePopulatedDatabase: false
+            )
+        }
+        return meta
+    }
+    
     /// Take in-band routes from the session cross-bucket pool for the given target duration (target bucket ±5). Only in-band entries are removed from the pool.
     func consumeSessionCrossBucket(for targetDuration: Int, isInBand: (WalkingRoute, Int) -> Bool) -> [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] {
         let targetBucket = RouteCacheService.roundToNearest5Minutes(targetDuration)
@@ -518,6 +612,27 @@ class RouteCacheService {
         
         if !result.isEmpty {
             print("[ROUTE_DEBUG] 🔄 Session cross-bucket: consumed \(result.count) route(s) for \(targetDuration)min")
+        }
+        return result
+    }
+    
+    /// Peek at in-band routes in the session cross-bucket pool WITHOUT removing them. Same bucket/in-band logic as consumeSessionCrossBucket but non-mutating.
+    func peekSessionCrossBucket(for targetDuration: Int, isInBand: (WalkingRoute, Int) -> Bool) -> [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] {
+        let targetBucket = RouteCacheService.roundToNearest5Minutes(targetDuration)
+        let bucketsToCheck = [targetBucket, targetBucket - 5, targetBucket + 5].filter { $0 >= 5 && $0 <= 60 }
+        var result: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
+        
+        for bucket in bucketsToCheck {
+            guard let pooled = sessionCrossBucketPool[bucket], !pooled.isEmpty else { continue }
+            for entry in pooled {
+                if isInBand(entry.route, targetDuration) {
+                    result.append(entry)
+                }
+            }
+        }
+        
+        if !result.isEmpty {
+            print("[ROUTE_DEBUG] 🔄 Session cross-bucket: peeked \(result.count) route(s) for \(targetDuration)min (pool unchanged)")
         }
         return result
     }
