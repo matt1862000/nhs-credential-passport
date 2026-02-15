@@ -877,13 +877,6 @@ class PrePopulatedPOIService {
                     print("📦 ✅ PRE-POPULATED ROUTES HIT! Found \(sortedByDurationAccuracy.count) routes for \(roundedDuration)min from postcode area '\(area.postcode)' - using database (no route generation needed)")
                     print("\(Self.telem) DB_RESULT returned=\(sortedByDurationAccuracy.count) postcode=\(area.postcode) requested=\(roundedDuration)")
                     print("\(Self.telem) \(Self.prepopTimingTag) stage=routes_used at=\(Self.prepopTimingStamp()) count=\(sortedByDurationAccuracy.count) requested=\(roundedDuration)")
-                    // #region agent log
-                    if let first = sortedByDurationAccuracy.first {
-                        let firstMin = first.route.durationSeconds / 60
-                        let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "location": "PrePopulatedPOIService:prepop_routes_returned", "message": "prepop_routes_returned", "data": ["source": "prepop", "requestedDuration": roundedDuration, "firstRouteActualMinutes": firstMin, "routeCount": sortedByDurationAccuracy.count, "inBand10pct": (firstMin >= Int(Double(roundedDuration) * 0.9) && firstMin <= Int(Double(roundedDuration) * 1.1))], "hypothesisId": "H6"]
-                        if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: Self._agentLogPath()) }
-                    }
-                    // #endregion agent log
                     return sortedByDurationAccuracy
                 } else {
                     let totalInBuckets = durationsToCheck.reduce(0) { sum, d in sum + (routes.first(where: { $0.durationMinutes == d })?.routes.count ?? 0) }

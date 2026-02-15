@@ -28,6 +28,10 @@
 	<string>AIzaSyDxMzPL_-enELjtzPWBNGoWbPjTmPGeZ_c</string>
 	<key>GEOGRAPH_API_KEY</key>
 	<string>df200a5f61</string>
+	<key>OPEN_ROUTE_SERVICE_API_KEY</key>
+	<string>eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjIyZWNkZGZjODYxZDQ1MzlhMGQ2ZmE0ZjVkMDIwMzQwIiwiaCI6Im11cm11cjY0In0=</string>
+	<key>GRAPHHOPPER_API_KEY</key>
+	<string>18828e81-0406-43b6-a486-4b18cfb2460b</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

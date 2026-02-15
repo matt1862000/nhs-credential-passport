@@ -675,6 +675,16 @@ class GoogleMapsService: ObservableObject {
         return Bundle.main.object(forInfoDictionaryKey: "GEOGRAPH_API_KEY") as? String ?? ""
     }
     
+    // OpenRouteService API Key - optional fallback routing (https://openrouteservice.org/)
+    private var openRouteServiceApiKey: String {
+        return Bundle.main.object(forInfoDictionaryKey: "OPEN_ROUTE_SERVICE_API_KEY") as? String ?? ""
+    }
+    
+    // GraphHopper API Key - optional fallback routing (https://www.graphhopper.com/)
+    private var graphHopperApiKey: String {
+        return Bundle.main.object(forInfoDictionaryKey: "GRAPHHOPPER_API_KEY") as? String ?? ""
+    }
+    
     // v2.0.3: Batch test mode flag - skip Apple Maps to avoid rate limiting
     private var isBatchTestMode: Bool = false
     
@@ -5390,6 +5400,103 @@ class GoogleMapsService: ObservableObject {
         throw GoogleMapsError.noRouteFound
     }
     
+    // MARK: - OpenRouteService Walking Directions (optional fallback)
+    /// Gets walking directions using OpenRouteService foot-walking profile.
+    /// Requires OPEN_ROUTE_SERVICE_API_KEY in Info.plist. Used after OSRM/MapKit when available.
+    private func getOpenRouteServiceWalkingDirections(
+        origin: CLLocationCoordinate2D,
+        destination: CLLocationCoordinate2D,
+        waypoints: [CLLocationCoordinate2D] = []
+    ) async throws -> (distance: Int, duration: Int, polyline: [CLLocationCoordinate2D]) {
+        guard !openRouteServiceApiKey.isEmpty else {
+            throw GoogleMapsError.apiError("OpenRouteService API key not configured")
+        }
+        var coords: [[Double]] = [[origin.longitude, origin.latitude]]
+        for wp in waypoints { coords.append([wp.longitude, wp.latitude]) }
+        coords.append([destination.longitude, destination.latitude])
+        
+        guard let url = URL(string: "https://api.openrouteservice.org/v2/directions/foot-walking") else {
+            throw GoogleMapsError.apiError("Invalid ORS URL")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(openRouteServiceApiKey, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["coordinates": coords])
+        request.timeoutInterval = 8
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw GoogleMapsError.apiError("OpenRouteService request failed")
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let routes = json["routes"] as? [[String: Any]],
+              let first = routes.first,
+              let summary = first["summary"] as? [String: Any],
+              let distance = summary["distance"] as? Double,
+              let duration = summary["duration"] as? Double,
+              distance > 0, duration > 0 else {
+            throw GoogleMapsError.noRouteFound
+        }
+        var polylinePoints: [CLLocationCoordinate2D] = []
+        if let encodedGeometry = first["geometry"] as? String {
+            polylinePoints = decodePolyline(encodedGeometry)
+        }
+        if polylinePoints.isEmpty {
+            polylinePoints = [origin] + waypoints + [destination]
+        }
+        print("🛤️ OpenRouteService: \(Int(distance))m, \(Int(duration / 60))min")
+        return (distance: Int(distance), duration: Int(duration), polyline: polylinePoints)
+    }
+    
+    // MARK: - GraphHopper Walking Directions (optional fallback)
+    /// Gets walking directions using GraphHopper foot profile.
+    /// Requires GRAPHHOPPER_API_KEY in Info.plist. Used after OSRM/MapKit/ORS when available.
+    private func getGraphHopperWalkingDirections(
+        origin: CLLocationCoordinate2D,
+        destination: CLLocationCoordinate2D,
+        waypoints: [CLLocationCoordinate2D] = []
+    ) async throws -> (distance: Int, duration: Int, polyline: [CLLocationCoordinate2D]) {
+        guard !graphHopperApiKey.isEmpty else {
+            throw GoogleMapsError.apiError("GraphHopper API key not configured")
+        }
+        var points: [String] = ["\(origin.latitude),\(origin.longitude)"]
+        for wp in waypoints { points.append("\(wp.latitude),\(wp.longitude)") }
+        points.append("\(destination.latitude),\(destination.longitude)")
+        var components = URLComponents(string: "https://graphhopper.com/api/1/route")!
+        components.queryItems = [URLQueryItem(name: "key", value: graphHopperApiKey), URLQueryItem(name: "profile", value: "foot"), URLQueryItem(name: "points_encoded", value: "false")]
+        for p in points { components.queryItems?.append(URLQueryItem(name: "point", value: p)) }
+        guard let url = components.url else { throw GoogleMapsError.apiError("Invalid GraphHopper URL") }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw GoogleMapsError.apiError("GraphHopper request failed")
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let paths = json["paths"] as? [[String: Any]],
+              let path = paths.first,
+              let distance = path["distance"] as? Double,
+              let timeMs = path["time"] as? Int64,
+              distance > 0 else {
+            throw GoogleMapsError.noRouteFound
+        }
+        var polylinePoints: [CLLocationCoordinate2D] = []
+        if let pointsObj = path["points"] as? [String: Any], let coords = pointsObj["coordinates"] as? [[Double]] {
+            polylinePoints = coords.compactMap { arr in
+                guard arr.count >= 2 else { return nil }
+                return CLLocationCoordinate2D(latitude: arr[1], longitude: arr[0])
+            }
+        }
+        if polylinePoints.isEmpty {
+            polylinePoints = [origin] + waypoints + [destination]
+        }
+        let durationSeconds = Int(timeMs / 1000)
+        print("🛤️ GraphHopper: \(Int(distance))m, \(durationSeconds / 60)min")
+        return (distance: Int(distance), duration: durationSeconds, polyline: polylinePoints)
+    }
+    
     /// Check if we should use OSRM instead of MapKit (when approaching rate limit)
     private func shouldUseOSRM() async -> Bool {
         // v2.1: User-initiated routes (+1) always get MapKit — better to risk rate limit than guaranteed OSRM timeout
@@ -6273,7 +6380,62 @@ class GoogleMapsService: ObservableObject {
                             waypointOrder: optimizedWaypointOrder
                         )
                     } catch {
-                        print("🗺️ OSRM fallback also failed")
+                        print("🗺️ OSRM fallback also failed, trying OpenRouteService...")
+                        // Try OpenRouteService then GraphHopper when OSRM fails
+                        if !openRouteServiceApiKey.isEmpty {
+                            do {
+                                let orsResult = try await getOpenRouteServiceWalkingDirections(
+                                    origin: origin,
+                                    destination: destination,
+                                    waypoints: waypoints
+                                )
+                                let leg = DirectionsLeg(
+                                    distance: DirectionsValue(text: formatDistance(orsResult.distance), value: orsResult.distance),
+                                    duration: DirectionsValue(text: formatDuration(orsResult.duration), value: orsResult.duration),
+                                    startAddress: nil,
+                                    endAddress: nil,
+                                    steps: nil
+                                )
+                                let encodedPolyline = encodePolyline(orsResult.polyline)
+                                print("🛤️ OpenRouteService fallback success: \(orsResult.distance)m, \(orsResult.duration / 60)min")
+                                return DirectionsResult(
+                                    legs: [leg],
+                                    overviewPolyline: OverviewPolyline(points: encodedPolyline),
+                                    summary: nil,
+                                    warnings: nil,
+                                    waypointOrder: optimizedWaypointOrder
+                                )
+                            } catch {
+                                print("🛤️ OpenRouteService fallback failed: \(error.localizedDescription)")
+                            }
+                        }
+                        if !graphHopperApiKey.isEmpty {
+                            do {
+                                let ghResult = try await getGraphHopperWalkingDirections(
+                                    origin: origin,
+                                    destination: destination,
+                                    waypoints: waypoints
+                                )
+                                let leg = DirectionsLeg(
+                                    distance: DirectionsValue(text: formatDistance(ghResult.distance), value: ghResult.distance),
+                                    duration: DirectionsValue(text: formatDuration(ghResult.duration), value: ghResult.duration),
+                                    startAddress: nil,
+                                    endAddress: nil,
+                                    steps: nil
+                                )
+                                let encodedPolyline = encodePolyline(ghResult.polyline)
+                                print("🛤️ GraphHopper fallback success: \(ghResult.distance)m, \(ghResult.duration / 60)min")
+                                return DirectionsResult(
+                                    legs: [leg],
+                                    overviewPolyline: OverviewPolyline(points: encodedPolyline),
+                                    summary: nil,
+                                    warnings: nil,
+                                    waypointOrder: optimizedWaypointOrder
+                                )
+                            } catch {
+                                print("🛤️ GraphHopper fallback failed: \(error.localizedDescription)")
+                            }
+                        }
                         throw GoogleMapsError.rateLimited(timeUntilReset: waitTime)
                     }
                 }
@@ -7710,9 +7872,11 @@ class GoogleMapsService: ObservableObject {
     // MARK: - v1.9.39: Google-Only Refresh (no MapKit fallback)
     /// Tries Google Directions only. Returns nil if Google fails (caller uses original route).
     /// This avoids the 15-50s MapKit fallback wait - if Google fails, just use original route.
+    /// - Parameter onRefinedRoute: When provided, returns fast route (raw waypoints) immediately and calls this with road-snapped route when ready (two Directions calls). When nil, uses single call: snap then Directions (no extra quota). Callback is invoked on MainActor.
     func refreshRouteWithGoogleOnly(
         route: WalkingRoute,
-        userLocation: CLLocationCoordinate2D
+        userLocation: CLLocationCoordinate2D,
+        onRefinedRoute: ((WalkingRoute) -> Void)? = nil
     ) async -> WalkingRoute? {
         let startTime = Date()
         let formatter = DateFormatter()
@@ -7746,7 +7910,64 @@ class GoogleMapsService: ObservableObject {
             return nil
         }
         
-        // v2.1.5: Snap waypoints to nearest public road (existing 10m logic unchanged), then call Google
+        // Option A: Fast path when caller wants refinement — Directions (raw) and road snapping in parallel; return fast route, then call onRefinedRoute with snapped route.
+        if let onRefined = onRefinedRoute {
+            print("REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: fast path (raw waypoints) + refinement in background")
+            async let fastResult = fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: rawWaypoints, preserveWaypointOrder: true)
+            async let snappedResult = snapWaypointsToRoads(route: route)
+            let fastRoute = await fastResult
+            if let fast = fastRoute {
+                let elapsed = Date().timeIntervalSince(startTime)
+                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready, fast path — refinement in background)")
+                Task { [route, userLocation] in
+                    let snapped = await self.snapWaypointsToRoads(route: route)
+                    for (index, (original, snappedCoord)) in zip(rawWaypoints, snapped).enumerated() where index < snapped.count {
+                        let distance = CLLocation(latitude: original.latitude, longitude: original.longitude)
+                            .distance(from: CLLocation(latitude: snappedCoord.latitude, longitude: snappedCoord.longitude))
+                        if distance > 1 {
+                            print("🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m (refinement)")
+                        }
+                    }
+                    if let refined = await self.fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snapped, preserveWaypointOrder: true) {
+                        let refineElapsed = Date().timeIntervalSince(startTime)
+                        print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly REFINED elapsed=\(String(format: "%.2f", refineElapsed))s (road-snapped)")
+                        await MainActor.run { onRefined(refined) }
+                    }
+                }
+                return fast
+            }
+            // Fast path failed — fall through to single-call path with snapped waypoints (and MapKit fallback if needed)
+            let snappedWaypoints = await snappedResult
+            for (index, (original, snapped)) in zip(rawWaypoints, snappedWaypoints).enumerated() where index < snappedWaypoints.count {
+                let distance = CLLocation(latitude: original.latitude, longitude: original.longitude)
+                    .distance(from: CLLocation(latitude: snapped.latitude, longitude: snapped.longitude))
+                if distance > 1 {
+                    print("🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m")
+                }
+            }
+            print("REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: fast path failed — using snapped waypoints (single call)")
+            if let result = await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snappedWaypoints, preserveWaypointOrder: true) {
+                let elapsed = Date().timeIntervalSince(startTime)
+                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready)")
+                return result
+            }
+            let googleStatus = lastGoogleDirectionsErrorStatus ?? "unknown"
+            print("REFRESH_FALLBACK | Google returned nil — status=\(googleStatus) (filter Xcode by REFRESH_FALLBACK to see when MapKit is used)")
+            let useMapKitFallback = googleStatus == "OVER_QUERY_LIMIT" || googleStatus == "REQUEST_DENIED"
+                || googleStatus == "NETWORK_ERROR" || googleStatus == "unknown"
+            if useMapKitFallback {
+                print("REFRESH_FALLBACK | Using MapKit fallback — reason: \(googleStatus == "OVER_QUERY_LIMIT" ? "quota exceeded" : googleStatus == "REQUEST_DENIED" ? "request denied" : googleStatus == "NETWORK_ERROR" ? "network/SSL error" : "unknown")")
+                if let mapKitRoute = await refreshRouteWithMapKitUsingSnappedWaypoints(route: route, userLocation: userLocation, snappedWaypoints: snappedWaypoints) {
+                    let totalElapsed = Date().timeIntervalSince(startTime)
+                    print("REFRESH_FALLBACK | MapKit fallback succeeded (total elapsed: \(String(format: "%.2f", totalElapsed))s)")
+                    return mapKitRoute
+                }
+            }
+            print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Returning nil - no fallback available")
+            return nil
+        }
+        
+        // Single-call path: snap then Directions (no extra quota; same behaviour as before when onRefinedRoute is nil).
         print("🛤️ [ROAD SNAP] Starting waypoint snapping for \(rawWaypoints.count) waypoints...")
         let snappedWaypoints = await snapWaypointsToRoads(route: route)
         for (index, (original, snapped)) in zip(rawWaypoints, snappedWaypoints).enumerated() where index < snappedWaypoints.count {
@@ -7757,7 +7978,6 @@ class GoogleMapsService: ObservableObject {
             }
         }
         
-        // Always try Google first (prioritise over MapKit for extend/delay-change refresh)
         print("REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: trying Google first (prioritised)")
         if let result = await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snappedWaypoints, preserveWaypointOrder: true) {
             let elapsed = Date().timeIntervalSince(startTime)
@@ -7767,7 +7987,6 @@ class GoogleMapsService: ObservableObject {
         // Log why Google failed so we can diagnose when MapKit fallback is used
         let googleStatus = lastGoogleDirectionsErrorStatus ?? "unknown"
         print("REFRESH_FALLBACK | Google returned nil — status=\(googleStatus) (filter Xcode by REFRESH_FALLBACK to see when MapKit is used)")
-        // v2.1.3: Fall back to MapKit when Google quota/denied, or network/SSL/unknown failure
         let useMapKitFallback = googleStatus == "OVER_QUERY_LIMIT" || googleStatus == "REQUEST_DENIED"
             || googleStatus == "NETWORK_ERROR" || googleStatus == "unknown"
         if useMapKitFallback {
