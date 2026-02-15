@@ -18,6 +18,7 @@
 		6C7C9FD92F39FD5E0067D7EA /* WF1.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = WF1.gpx; path = ../../Desktop/WF1.gpx; sourceTree = "<group>"; };
 		6C8A49462EFCA2CF00D1648E /* Sheffield_S5_7AU.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = Sheffield_S5_7AU.gpx; sourceTree = "<group>"; };
 		6CA4D88E2EE6145800FFA65F /* WalkingWR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WalkingWR.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -70,6 +71,7 @@
 				6C7C9FD82F39FBD90067D7EA /* WF1.gpx */,
 				6C7C9FD92F39FD5E0067D7EA /* WF1.gpx */,
 				6C8A49462EFCA2CF00D1648E /* Sheffield_S5_7AU.gpx */,
+				6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */,
 				6CA4D8902EE6145800FFA65F /* WalkingWR */,
 				6C96772E2EE9B7CE00DDB3B5 /* Frameworks */,
 				6CA4D88F2EE6145800FFA65F /* Products */,
@@ -293,13 +295,14 @@
 		};
 		6CA4D89A2EE6145900FFA65F /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 356;
+				CURRENT_PROJECT_VERSION = 357;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -317,6 +320,8 @@
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_OPEN_ROUTE_SERVICE_API_KEY = "$(OPEN_ROUTE_SERVICE_API_KEY)";
+				INFOPLIST_KEY_GRAPHHOPPER_API_KEY = "$(GRAPHHOPPER_API_KEY)";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -337,13 +342,14 @@
 		};
 		6CA4D89B2EE6145900FFA65F /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 356;
+				CURRENT_PROJECT_VERSION = 357;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -361,6 +367,8 @@
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_OPEN_ROUTE_SERVICE_API_KEY = "$(OPEN_ROUTE_SERVICE_API_KEY)";
+				INFOPLIST_KEY_GRAPHHOPPER_API_KEY = "$(GRAPHHOPPER_API_KEY)";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

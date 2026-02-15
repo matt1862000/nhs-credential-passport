@@ -29,9 +29,9 @@
 	<key>GEOGRAPH_API_KEY</key>
 	<string>df200a5f61</string>
 	<key>OPEN_ROUTE_SERVICE_API_KEY</key>
-	<string>eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjIyZWNkZGZjODYxZDQ1MzlhMGQ2ZmE0ZjVkMDIwMzQwIiwiaCI6Im11cm11cjY0In0=</string>
+	<string>$(OPEN_ROUTE_SERVICE_API_KEY)</string>
 	<key>GRAPHHOPPER_API_KEY</key>
-	<string>18828e81-0406-43b6-a486-4b18cfb2460b</string>
+	<string>$(GRAPHHOPPER_API_KEY)</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
@@ -39,6 +39,6 @@
 	<key>CFBundleShortVersionString</key>
 	<string>2.1.27</string>
 	<key>CFBundleVersion</key>
-	<string>356</string>
+	<string>357</string>
 </dict>
 </plist>

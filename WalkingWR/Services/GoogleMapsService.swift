@@ -677,12 +677,12 @@ class GoogleMapsService: ObservableObject {
     
     // OpenRouteService API Key - optional fallback routing (https://openrouteservice.org/)
     private var openRouteServiceApiKey: String {
-        return Bundle.main.object(forInfoDictionaryKey: "OPEN_ROUTE_SERVICE_API_KEY") as? String ?? ""
+        return (Bundle.main.object(forInfoDictionaryKey: "OPEN_ROUTE_SERVICE_API_KEY") as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
     // GraphHopper API Key - optional fallback routing (https://www.graphhopper.com/)
     private var graphHopperApiKey: String {
-        return Bundle.main.object(forInfoDictionaryKey: "GRAPHHOPPER_API_KEY") as? String ?? ""
+        return (Bundle.main.object(forInfoDictionaryKey: "GRAPHHOPPER_API_KEY") as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
     // v2.0.3: Batch test mode flag - skip Apple Maps to avoid rate limiting
@@ -924,6 +924,34 @@ class GoogleMapsService: ObservableObject {
     
     /// v2.1: When true, bypass OSRM and always use MapKit (set for user-initiated +1 routes)
     var forceMapKitRouting = false
+    
+    /// Launch-args cache (read once; UserDefaults is read every time so you can toggle at runtime).
+    private static let launchArgsForceFreeRoutingAPIs: Bool = {
+        let args = ProcessInfo.processInfo.arguments.map { $0.trimmingCharacters(in: .whitespaces) }
+        if let i = args.firstIndex(where: { $0 == "-ForceFreeRoutingAPIs" }) {
+            if i + 1 < args.count && (args[i + 1] == "1" || args[i + 1].lowercased() == "yes") { return true }
+            return true
+        }
+        return false
+    }()
+    private static let launchArgsForceRateLimitFallback: Bool = {
+        let args = ProcessInfo.processInfo.arguments.map { $0.trimmingCharacters(in: .whitespaces) }
+        if let i = args.firstIndex(where: { $0 == "-ForceRateLimitFallback" }) {
+            if i + 1 < args.count && (args[i + 1] == "1" || args[i + 1].lowercased() == "yes") { return true }
+            return true
+        }
+        return false
+    }()
+    /// Debug: Force use of free APIs. Check UserDefaults first (so you can set in debugger), then launch args.
+    private static var forceFreeRoutingAPIs: Bool {
+        if UserDefaults.standard.bool(forKey: "ForceFreeRoutingAPIs") { return true }
+        return launchArgsForceFreeRoutingAPIs
+    }
+    /// Debug: Force rate-limit fallback path. UserDefaults or launch args.
+    private static var forceRateLimitFallback: Bool {
+        if UserDefaults.standard.bool(forKey: "ForceRateLimitFallback") { return true }
+        return launchArgsForceRateLimitFallback
+    }
     
     /// v2.1.13: Caller-supplied deadline — when set, rate limit waits and endpoint-first loops bail early
     /// Set by the +1 handler so generateLocalRoute doesn't block past the user-facing timeout
@@ -5506,22 +5534,76 @@ class GoogleMapsService: ObservableObject {
         return (distance: Int(distance), duration: durationSeconds, polyline: polylinePoints)
     }
     
-    /// Check if we should use OSRM instead of MapKit (when approaching rate limit)
-    private func shouldUseOSRM() async -> Bool {
+    // MARK: - Debug: Test free routing APIs from UI
+    /// Test coordinates (round trip, 1 waypoint) — same as scripts/test_free_routing_apis.py
+    private static let testOrigin = CLLocationCoordinate2D(latitude: 53.6934, longitude: -1.5065)
+    private static let testWaypoint = CLLocationCoordinate2D(latitude: 53.7010, longitude: -1.4980)
+    private static let testDestination = CLLocationCoordinate2D(latitude: 53.6934, longitude: -1.5065)
+    
+    /// Call one free routing API for testing. Used by the Debug sheet in the app.
+    func testFreeRoutingAPI(_ name: String) async -> (success: Bool, message: String) {
+        let origin = Self.testOrigin
+        let destination = Self.testDestination
+        let waypoints = [Self.testWaypoint]
+        switch name.lowercased() {
+        case "osrm":
+            do {
+                let r = try await getOSRMWalkingDirections(origin: origin, destination: destination, waypoints: waypoints)
+                return (true, "OSRM: \(r.distance)m, \(r.duration / 60)min")
+            } catch {
+                return (false, "OSRM: \(error.localizedDescription)")
+            }
+        case "openrouteservice", "ors":
+            do {
+                let r = try await getOpenRouteServiceWalkingDirections(origin: origin, destination: destination, waypoints: waypoints)
+                return (true, "OpenRouteService: \(r.distance)m, \(r.duration / 60)min")
+            } catch {
+                return (false, "OpenRouteService: \(error.localizedDescription)")
+            }
+        case "graphhopper", "gh":
+            do {
+                let r = try await getGraphHopperWalkingDirections(origin: origin, destination: destination, waypoints: waypoints)
+                return (true, "GraphHopper: \(r.distance)m, \(r.duration / 60)min")
+            } catch {
+                return (false, "GraphHopper: \(error.localizedDescription)")
+            }
+        default:
+            return (false, "Unknown API: \(name)")
+        }
+    }
+    
+    private static var haveLoggedDebugFlags = false
+    /// Check if we should use OSRM instead of MapKit (when approaching rate limit).
+    /// Returns (useOSRM, reason) so callers can log why free APIs were skipped.
+    private func shouldUseOSRM() async -> (Bool, String) {
+        if !Self.haveLoggedDebugFlags {
+            Self.haveLoggedDebugFlags = true
+            let args = ProcessInfo.processInfo.arguments
+            let argsPreview = args.prefix(6).joined(separator: " ")
+            print("🗺️ [ROUTING] Launch args (first 6): \(argsPreview)")
+            print("🗺️ [ROUTING] Debug flags: ForceFreeRoutingAPIs=\(Self.forceFreeRoutingAPIs) ForceRateLimitFallback=\(Self.forceRateLimitFallback) (Scheme → Run → Arguments, or UserDefaults ForceFreeRoutingAPIs/ForceRateLimitFallback)")
+        }
+        // Debug: Force OSRM first to test free APIs (launch arg -ForceFreeRoutingAPIs 1)
+        if Self.forceFreeRoutingAPIs {
+            print("🗺️ [ROUTING] DEBUG: Forcing OSRM ( -ForceFreeRoutingAPIs )")
+            return (true, "debug_force")
+        }
         // v2.1: User-initiated routes (+1) always get MapKit — better to risk rate limit than guaranteed OSRM timeout
         if forceMapKitRouting {
             print("🗺️ [ROUTING] MapKit forced (user-initiated route) — skipping OSRM")
-            return false
+            return (false, "MapKit_forced")
         }
         // v2.1: If OSRM circuit breaker is tripped, don't send traffic there
         if isOSRMCircuitBreakerOpen {
             print("🗺️ [ROUTING] OSRM circuit breaker open — using MapKit despite rate limit")
-            return false
+            return (false, "OSRM_circuit_breaker")
         }
         let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
         // Use OSRM at 80% of rate limit (36+ of 45 requests) to avoid hitting MapKit cap
         // OSRM durations are corrected via osrmCalibrationFactor
-        return status.currentCount >= 36
+        let use = status.currentCount >= 36
+        let reason = use ? "near_limit(\(status.currentCount)/\(mapKitRateLimit))" : "under_limit(\(status.currentCount)/\(mapKitRateLimit))"
+        return (use, reason)
     }
     
     /// Check if background pre-generation should pause (to reserve quota for user requests)
@@ -6229,7 +6311,8 @@ class GoogleMapsService: ObservableObject {
         
         // Calculate directions for each leg (point to point)
         // Use OSRM when approaching MapKit rate limit to avoid hitting the cap
-        let useOSRM = await shouldUseOSRM()
+        let (useOSRM, osrmReason) = await shouldUseOSRM()
+        print("[FREE_API] OSRM=\(useOSRM ? "trying" : "skip(\(osrmReason))") ORS_key=\(openRouteServiceApiKey.isEmpty ? "no" : "yes") GH_key=\(graphHopperApiKey.isEmpty ? "no" : "yes") (ORS/GH only used after MapKit rate limit + OSRM failure)")
         
         if useOSRM {
             // 🗺️ Use OSRM for all legs at once (more efficient)
@@ -6291,8 +6374,67 @@ class GoogleMapsService: ObservableObject {
                 result.routingSourceUsed = "OSRM"
                 return result
             } catch {
-                print("🗺️ OSRM failed, falling back to MapKit: \(error.localizedDescription)")
-                // Fall through to MapKit
+                print("🗺️ OSRM failed: \(error.localizedDescription). Trying OpenRouteService then GraphHopper...")
+                // Try OpenRouteService then GraphHopper before falling back to MapKit
+                if !openRouteServiceApiKey.isEmpty {
+                    do {
+                        let orsResult = try await getOpenRouteServiceWalkingDirections(
+                            origin: origin,
+                            destination: destination,
+                            waypoints: waypoints
+                        )
+                        let leg = DirectionsLeg(
+                            distance: DirectionsValue(text: formatDistance(orsResult.distance), value: orsResult.distance),
+                            duration: DirectionsValue(text: formatDuration(orsResult.duration), value: orsResult.duration),
+                            startAddress: nil,
+                            endAddress: nil,
+                            steps: nil
+                        )
+                        let encodedPolyline = encodePolyline(orsResult.polyline)
+                        print("🛤️ OpenRouteService success (after OSRM): \(orsResult.distance)m, \(orsResult.duration / 60)min")
+                        var orsDirResult = DirectionsResult(
+                            legs: [leg],
+                            overviewPolyline: OverviewPolyline(points: encodedPolyline),
+                            summary: nil,
+                            warnings: nil,
+                            waypointOrder: optimizedWaypointOrder
+                        )
+                        orsDirResult.routingSourceUsed = "OpenRouteService"
+                        return orsDirResult
+                    } catch {
+                        print("🛤️ OpenRouteService failed: \(error.localizedDescription)")
+                    }
+                }
+                if !graphHopperApiKey.isEmpty {
+                    do {
+                        let ghResult = try await getGraphHopperWalkingDirections(
+                            origin: origin,
+                            destination: destination,
+                            waypoints: waypoints
+                        )
+                        let leg = DirectionsLeg(
+                            distance: DirectionsValue(text: formatDistance(ghResult.distance), value: ghResult.distance),
+                            duration: DirectionsValue(text: formatDuration(ghResult.duration), value: ghResult.duration),
+                            startAddress: nil,
+                            endAddress: nil,
+                            steps: nil
+                        )
+                        let encodedPolyline = encodePolyline(ghResult.polyline)
+                        print("🛤️ GraphHopper success (after OSRM): \(ghResult.distance)m, \(ghResult.duration / 60)min")
+                        var ghDirResult = DirectionsResult(
+                            legs: [leg],
+                            overviewPolyline: OverviewPolyline(points: encodedPolyline),
+                            summary: nil,
+                            warnings: nil,
+                            waypointOrder: optimizedWaypointOrder
+                        )
+                        ghDirResult.routingSourceUsed = "GraphHopper"
+                        return ghDirResult
+                    } catch {
+                        print("🛤️ GraphHopper failed: \(error.localizedDescription)")
+                    }
+                }
+                print("🗺️ Falling back to MapKit")
             }
         }
         
@@ -6324,6 +6466,11 @@ class GoogleMapsService: ObservableObject {
             
             let response: MKDirections.Response
             do {
+                // Debug: Simulate MapKit rate limit on first leg to test OSRM → ORS → GraphHopper fallback (launch arg -ForceRateLimitFallback 1)
+                if Self.forceRateLimitFallback && i == 0 {
+                    print("🗺️ [ROUTING] DEBUG: Simulating MapKit rate limit ( -ForceRateLimitFallback 1 ) — trying OSRM → ORS → GraphHopper")
+                    throw NSError(domain: "GEOErrorDomain", code: -3, userInfo: nil)
+                }
                 // v1.9.26: Add timeout guard (30s) with retry
                 response = try await withTimeout(seconds: 30) {
                     try await directions.calculate()

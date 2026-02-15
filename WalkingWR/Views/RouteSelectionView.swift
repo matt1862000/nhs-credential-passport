@@ -53,6 +53,9 @@ private final class RefreshRaceState {
     var walkStarted = false
 }
 
+/// Single tag for filtering: all route flow logs from "Choose a Route" through Let's Go use this.
+private let kRouteFlowTag = "[ROUTE_FLOW]"
+
 /// Single-tag telemetry: stage name, elapsed seconds, API used, API not used (e.g. MapKit skipped when Google fallback).
 struct RouteStageTelemetryEntry: Identifiable {
     let id = UUID()
@@ -65,6 +68,79 @@ struct RouteStageTelemetryEntry: Identifiable {
         let timeStr = elapsedSec.map { String(format: "%.1fs", $0) } ?? "—"
         let notUsedStr = apiNotUsed.map { " · not used: \($0)" } ?? ""
         return "\(stage): \(timeStr) · \(apiUsed)\(notUsedStr)"
+    }
+}
+
+// MARK: - Debug: Test free routing APIs from UI
+struct DebugFreeAPISheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var resultMessage: String = "Tap a button to test that API."
+    @State private var isTesting: String? = nil  // which API is currently testing
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Text("Test free routing APIs with a fixed route (Kirkhamgate area).")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                
+                VStack(spacing: 12) {
+                    testButton("OSRM", apiKey: "osrm")
+                    testButton("OpenRouteService", apiKey: "openrouteservice")
+                    testButton("GraphHopper", apiKey: "graphhopper")
+                }
+                .padding(.top, 8)
+                
+                Text(resultMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(8)
+                    .padding(.horizontal, 24)
+                
+                Spacer()
+            }
+            .padding(.top, 24)
+            .navigationTitle("Debug: Free APIs")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+    
+    private func testButton(_ label: String, apiKey: String) -> some View {
+        let testing = isTesting == apiKey
+        return Button {
+            resultMessage = "Testing \(label)..."
+            isTesting = apiKey
+            Task {
+                let (success, message) = await GoogleMapsService.shared.testFreeRoutingAPI(apiKey)
+                await MainActor.run {
+                    resultMessage = message
+                    isTesting = nil
+                }
+            }
+        } label: {
+            HStack {
+                Text(label)
+                if testing {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(isTesting != nil)
     }
 }
 
@@ -361,6 +437,8 @@ struct RouteSelectionView: View {
             }
             .onChange(of: showLocalRoutePicker) { _, isShowing in
                 if isShowing {
+                    let duration = shouldUseCustom ? customDurationForDelay : recommendedDuration
+                    print("\(kRouteFlowTag) stage=choose_route sheet_opened duration=\(duration)min (from Choose a Route)")
                     // Pre-select duration based on delay time
                     if shouldUseCustom {
                         localRouteUseCustom = true
@@ -1150,7 +1228,7 @@ struct LocalRoutePickerSheet: View {
     @State private var viewedRouteIndices: Set<Int> = []  // Track which routes user has seen
     @State private var showPremiumUpsell = false  // Show upgrade message when all routes viewed
     @State private var showLocationLimitAlert = false  // Show when free tier location limit reached
-    
+    @State private var showDebugSheet = false
     
     // v1.6.25: Route deduplication - track unique route signatures
     @State private var routeSignatures: Set<String> = []  // Unique signatures: "sortedPOIIds|distanceBucket"
@@ -1576,25 +1654,29 @@ struct LocalRoutePickerSheet: View {
                             if locationService.isAuthorized {
                                 let locationReady = locationService.currentLocation != nil
                                 
-                                HStack(spacing: 12) {
-                                    Button(action: generateRoute) {
-                                        HStack {
-                                            if isGenerating {
-                                                ProgressView()
-                                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                                Text("Loading…")
-                                            } else if !locationReady {
-                                                ProgressView()
-                                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                                Text("Finding Location...")
-                                            } else {
-                                                Image(systemName: "sparkles")
-                                                Text("Generate Route")
+                                VStack(spacing: 12) {
+                                    HStack(spacing: 12) {
+                                        Button(action: generateRoute) {
+                                            HStack {
+                                                if isGenerating {
+                                                    ProgressView()
+                                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                                    Text("Loading…")
+                                                } else if !locationReady {
+                                                    ProgressView()
+                                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                                    Text("Finding Location...")
+                                                } else {
+                                                    Image(systemName: "sparkles")
+                                                    Text("Generate Route")
+                                                }
                                             }
                                         }
+                                        .buttonStyle(PrimaryButtonStyle(color: locationReady && !isGenerating ? .tealAccent : .gray))
+                                        .disabled(!locationReady || isGenerating)
                                     }
-                                    .buttonStyle(PrimaryButtonStyle(color: locationReady && !isGenerating ? .tealAccent : .gray))
-                                    .disabled(!locationReady || isGenerating)
+                                    Button("Debug") { showDebugSheet = true }
+                                        .font(.caption)
                                 }
                             }
                             
@@ -1617,7 +1699,9 @@ struct LocalRoutePickerSheet: View {
                 // v1.9.28: Immersive full-screen presentation - no navigation context
                 ActiveWalkView(viewModel: viewModel, locationService: viewModel.locationService, isPresented: $showActiveWalk)
             }
-            
+            .sheet(isPresented: $showDebugSheet) {
+                DebugFreeAPISheet()
+            }
             .onChange(of: showActiveWalk) { oldValue, newValue in
                 let timestamp = Date()
                 let formatter = DateFormatter()
@@ -1639,6 +1723,7 @@ struct LocalRoutePickerSheet: View {
                 }
             }
             .onAppear {
+                print("\(kRouteFlowTag) stage=choose_route local_picker_visible duration=\(selectedDuration)min (LocalRoutePickerSheet onAppear)")
                 let timestamp = Date()
                 let formatter = DateFormatter()
                 formatter.dateFormat = "HH:mm:ss.SSS"
@@ -1964,6 +2049,7 @@ struct LocalRoutePickerSheet: View {
         routeStageTelemetry.removeAll()
         let startEntry = RouteStageTelemetryEntry(stage: "Start", elapsedSec: 0, apiUsed: "—", apiNotUsed: nil)
         routeStageTelemetry.append(startEntry)
+        print("\(kRouteFlowTag) +0.00s stage=generate_tapped duration=\(selectedDuration)min location=\(locationService.currentLocation != nil ? "available" : "nil") hasAPIKey=\(mapsService.hasAPIKey)")
         print("[STAGE_TELEMETRY] \(startEntry.consoleLine)")
         runSummaryTimeToFirstRouteSec = nil
         
@@ -1980,7 +2066,7 @@ struct LocalRoutePickerSheet: View {
         
         // v1.6.46: Guard against double-tap or rapid re-tap
         guard !isGenerating else {
-            print("⚠️ Already generating - ignoring tap")
+            print("\(kRouteFlowTag) stage=generate_ignored reason=already_generating")
             return
         }
         
@@ -1999,7 +2085,7 @@ struct LocalRoutePickerSheet: View {
         print("[FLOW] +0.0s START duration=\(selectedDuration)min")
         
         guard let userLocation = locationService.currentLocation else {
-            print("❌ No user location available")
+            print("\(kRouteFlowTag) stage=generate_abort reason=no_location")
             isGenerating = false
             showLoadingScreen = false
             routeGenerationComplete = false
@@ -2010,6 +2096,7 @@ struct LocalRoutePickerSheet: View {
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: generateStartTime)
         
+        print("\(kRouteFlowTag) +0.00s stage=task_start duration=\(selectedDuration)min lat=\(String(format: "%.5f", userLocation.coordinate.latitude)) lon=\(String(format: "%.5f", userLocation.coordinate.longitude))")
         print("⏱️ [ROUTE GENERATION] [\(timeString)] 🚀 generateRoutes() STARTED")
         print("📍 Location: (\(String(format: "%.5f", userLocation.coordinate.latitude)), \(String(format: "%.5f", userLocation.coordinate.longitude)))")
         print("🔑 mapsService.hasAPIKey: \(mapsService.hasAPIKey)")
@@ -2021,6 +2108,7 @@ struct LocalRoutePickerSheet: View {
             // Use Google APIs for smart routing
             print("⏱️ [ROUTE GENERATION] [\(timeString)] 🚀 Starting async Task for route generation...")
             Task {
+                func run() async {
                 let taskStartTime = Date()
                 let taskTimeString = formatter.string(from: taskStartTime)
                 print("ROUTE_START duration=\(selectedDuration) (grep this + first ROUTE_FIRST_DISPLAYED for time-to-preview)")
@@ -2029,10 +2117,14 @@ struct LocalRoutePickerSheet: View {
                 let cacheService = POICacheService.shared
                 let hasCachedPOIs = cacheService.getCachedPOIs(near: userLocation.coordinate) != nil
                 
+                let elapsed0 = Date().timeIntervalSince(generateStartTime)
+                print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsed0))s stage=poi_cache_check hasCachedPOIs=\(hasCachedPOIs)")
                 if !hasCachedPOIs {
                     print("📦 No cached POIs for this location")
+                    print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsed0))s stage=poi_cache_result result=miss")
                     // No cached POIs - would need a new slot
                     if !cacheService.canAddLocation(at: userLocation.coordinate) {
+                        print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsed0))s stage=generate_abort reason=location_limit_reached")
                         await MainActor.run {
                             showLocationLimitAlert = true
                             print("🔒 Location limit reached - showing upgrade prompt")
@@ -2044,6 +2136,7 @@ struct LocalRoutePickerSheet: View {
                     }
                 } else {
                     print("📦 POIs already cached for this location")
+                    print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsed0))s stage=poi_cache_result result=hit")
                 }
                 
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting generation...")
@@ -2059,11 +2152,14 @@ struct LocalRoutePickerSheet: View {
                 // If postcode hit and prepop DB not ready: stay on "Finding places nearby" until download finishes OR 10s, then proceed
                 let inPostcodeArea = await PrePopulatedPOIService.shared.isInTargetPostcodeArea(userLocation.coordinate)
                 let hasDownloadedDatabase = PrePopulatedPOIService.shared.hasDownloadedDatabase
+                let elapsedDb = Date().timeIntervalSince(generateStartTime)
+                print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsedDb))s stage=prepop_check inPostcode=\(inPostcodeArea) hasDB=\(hasDownloadedDatabase)")
                 print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s DB_CHECK inPostcode=\(inPostcodeArea) hasDB=\(hasDownloadedDatabase)")
                 if inPostcodeArea && !hasDownloadedDatabase {
                     let prepopWaitStart = Date()
                     await PrePopulatedPOIService.shared.ensureDatabaseReadyWithTimeout(userLocation: userLocation.coordinate, waitUpToSeconds: 10.0)
                     let prepopWaitElapsed = Date().timeIntervalSince(prepopWaitStart)
+                    print("\(kRouteFlowTag) +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s stage=prepop_wait elapsed=\(String(format: "%.2f", prepopWaitElapsed))s")
                     print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s DB_DOWNLOADED elapsed=\(String(format: "%.1f", prepopWaitElapsed))s")
                     print("📊 [TELEM] PREPOP_WAIT_ELAPSED seconds=\(String(format: "%.2f", prepopWaitElapsed)) (postcode hit, max 10s)")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Prepop wait done → advancing to Calculating routes")
@@ -2097,6 +2193,8 @@ struct LocalRoutePickerSheet: View {
                     print("   No preGeneratedAtLocation, will check cache")
                 }
                 
+                let elapsedCache = Date().timeIntervalSince(generateStartTime)
+                print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsedCache))s stage=route_cache_check shouldUseCache=\(shouldUseCache)")
                 print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s CACHE_CHECK")
                 print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Checking route cache...")
                 
@@ -2104,6 +2202,11 @@ struct LocalRoutePickerSheet: View {
                 if shouldUseCache, let cachedRoutes = RouteCacheService.shared.getCachedRoutes(near: userLocation.coordinate, durationMinutes: selectedDuration), !cachedRoutes.isEmpty {
                     let cacheCheckElapsed = Date().timeIntervalSince(cacheCheckStartTime)
                     let sourceLabel = cachedRoutes.first?.isFromPrePopulatedDatabase == true ? "prepop_database" : "memory_cache"
+                    let firstActual = cachedRoutes.first?.route.durationSeconds ?? 0
+                    let firstActualMin = firstActual / 60
+                    let ratioPct = selectedDuration > 0 ? Int(round(Double(firstActualMin) / Double(selectedDuration) * 100)) : 0
+                    let inBand = (ratioPct >= 80 && ratioPct <= 120)
+                    print("\(kRouteFlowTag) +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s stage=cache_hit count=\(cachedRoutes.count) source=\(sourceLabel) first_duration_min=\(firstActualMin) ratio_pct=\(ratioPct) inBand=\(inBand) cache_check_elapsed=\(String(format: "%.2f", cacheCheckElapsed))s")
                     await MainActor.run {
                         runSummarySource = sourceLabel
                         let e = RouteStageTelemetryEntry(stage: "Cache", elapsedSec: cacheCheckElapsed, apiUsed: "hit (\(sourceLabel))", apiNotUsed: nil)
@@ -2111,10 +2214,6 @@ struct LocalRoutePickerSheet: View {
                         print("[STAGE_TELEMETRY] \(e.consoleLine)")
                     }
                     print("[STAGE_TELEMETRY] Free source: none (routes from cache) | not used: OSRM, MapKit, OpenRouteService, GraphHopper")
-                    let firstActual = cachedRoutes.first?.route.durationSeconds ?? 0
-                    let firstActualMin = firstActual / 60
-                    let ratioPct = selectedDuration > 0 ? Int(round(Double(firstActualMin) / Double(selectedDuration) * 100)) : 0
-                    let inBand = (ratioPct >= 80 && ratioPct <= 120)
                     let timeToFirstRoute = Date().timeIntervalSince(generateStartTime)
                     print("ROUTE_RESULT target=\(selectedDuration) actual=\(firstActualMin) ratio_pct=\(ratioPct) in_80_120=\(inBand ? "Y" : "n") waypoints=\(cachedRoutes.first?.route.places.count ?? 0) elapsed_sec=— mode=\(sourceLabel) time_to_first_route_sec=\(String(format: "%.2f", timeToFirstRoute))")
                     print("ROUTES_SOURCE | using_routes source=\(sourceLabel) count=\(cachedRoutes.count) duration=\(selectedDuration) (confirm: app is using \(sourceLabel == "prepop_database" ? "pre-populated database" : "in-memory cache") for routes)")
@@ -2195,7 +2294,7 @@ struct LocalRoutePickerSheet: View {
                     }
                     // v2.1.7: Filter contradictory directions from cached directions too
                     if !firstDirections.isEmpty {
-                        firstDirections = filterContradictoryDirections(firstDirections)
+                        firstDirections = await MainActor.run { filterContradictoryDirections(firstDirections) }
                         print("⚡ Using directions for preview (MapKit full-loop or cached)")
                         
                         // #region agent log
@@ -2391,6 +2490,9 @@ struct LocalRoutePickerSheet: View {
                         allRoutes = loadedRoutes
                         let timeToFirst = Date().timeIntervalSince(generateStartTime)
                         runSummaryTimeToFirstRouteSec = timeToFirst
+                        let cacheRoutesSummary = loadedRoutes.enumerated().map { "r\($0.offset + 1):\($0.element.route.durationMinutes)min(inBand:\(Self.isRouteInBand($0.element.route, selectedDuration: selectedDuration)))" }.joined(separator: " ")
+                        print("\(kRouteFlowTag) +\(String(format: "%.2f", timeToFirst))s stage=routes_into_buckets source=cache count=\(loadedRoutes.count) target_bucket=\(selectedDuration)min inBand=\(inBandRouteCount())/\(targetInBandRoutes) \(cacheRoutesSummary)")
+                        print("\(kRouteFlowTag) +\(String(format: "%.2f", timeToFirst))s stage=first_route_ready name='\(loadedRoutes.first?.route.name ?? "?")' duration=\(loadedRoutes.first?.route.durationMinutes ?? 0)min (from cache)")
                         print("[FLOW] +\(String(format: "%.1f", timeToFirst))s ROUTE_DISPLAYED (cached) name='\(loadedRoutes.first?.route.name ?? "?")' duration=\(loadedRoutes.first?.route.durationMinutes ?? 0)min")
                         logRoutePreviewSummary()
                         
@@ -3086,6 +3188,8 @@ struct LocalRoutePickerSheet: View {
                 }
                 
                 let cacheCheckElapsed = Date().timeIntervalSince(cacheCheckStartTime)
+                let elapsedMiss = Date().timeIntervalSince(generateStartTime)
+                print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsedMiss))s stage=cache_miss elapsed_cache_check=\(String(format: "%.2f", cacheCheckElapsed))s — generating live")
                 let cacheEntry = RouteStageTelemetryEntry(stage: "Cache", elapsedSec: cacheCheckElapsed, apiUsed: "miss", apiNotUsed: nil)
                 await MainActor.run { routeStageTelemetry.append(cacheEntry) }
                 print("[STAGE_TELEMETRY] \(cacheEntry.consoleLine)")
@@ -3133,6 +3237,8 @@ struct LocalRoutePickerSheet: View {
                         print("⚠️ No pre-fetched POIs - will fetch during generation (slower)")
                     }
                     
+                    let elapsedGenStart = Date().timeIntervalSince(generateStartTime)
+                    print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsedGenStart))s stage=route_gen_start target_duration=\(selectedDuration)min prefetched_pois=\(poisToUse?.count ?? 0)")
                     print("[ROUTE_GEN] ⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Starting route generation (target \(selectedDuration)min)...")
                     print("ROUTE_PHASE phase=route_gen_call_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     let routeGenStartTime = Date()
@@ -3440,13 +3546,23 @@ struct LocalRoutePickerSheet: View {
                         // #endregion agent log
                     }
                     
-                    // v1.9.51: Collect excluded POIs for duplicate detection (empty for first route)
-                    let excludedPlaceIds: Set<String> = []
-                    let excludedPOIs: [PlaceResult] = []
-                    
+                    // v1.9.51: Collect excluded POIs for duplicate detection (empty for first route); mutable for retry when main route invalid
+                    var excludedPlaceIds: Set<String> = []
+                    var excludedPOIs: [PlaceResult] = []
+                    var mainRouteAttempt = 0
+                    var result: GeneratedRoute!
+                    var filteredResult: GeneratedRoute!
+                    var displayRoute: WalkingRoute!
+                    var deduplicatedResult: GeneratedRoute!
+                    var mainInBand = false
+                    var mainActualMin = 0
+                    var mainRoutePreviewSource = ""
+                    var googleSecondRoute: (route: WalkingRoute, data: GeneratedRoute)? = nil
+                    repeat {
                     // v2.0.2: Use topology-safe route generation (guarantees a route, especially for short walks)
-                    print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s ROUTE_GEN_START (generateRouteTopologySafe)")
-                    let result: GeneratedRoute
+                    let elapsedRg = Date().timeIntervalSince(generateStartTime)
+                    print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsedRg))s stage=generateRouteTopologySafe_call attempt=\(mainRouteAttempt + 1)")
+                    print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s ROUTE_GEN_START (generateRouteTopologySafe)\(mainRouteAttempt > 0 ? " [RETRY]" : "")")
                     do {
                         result = try await mapsService.generateRouteTopologySafe(
                             from: userLocation.coordinate,
@@ -3501,6 +3617,7 @@ struct LocalRoutePickerSheet: View {
                     let freeSource = result.routingSourceUsed ?? (result.usedOSRM ? "OSRM" : "MapKit")
                     let allFreeSources = ["OSRM", "MapKit", "OpenRouteService", "GraphHopper"]
                     let notUsed = allFreeSources.filter { $0 != freeSource }
+                    print("\(kRouteFlowTag) +\(String(format: "%.2f", totalTime))s stage=route_gen_done elapsed_gen=\(String(format: "%.2f", routeGenTime))s duration_min=\(result.durationSeconds / 60) waypoints=\(result.places.count) directions_api=\(routeGenApi) free_routing_source=\(freeSource)")
                     print("[STAGE_TELEMETRY] Free source used: \(freeSource) | not used: \(notUsed.joined(separator: ", "))")
                     let firstWaypointNames = result.places.map { $0.name }.joined(separator: " | ")
                     print("[STAGE_TELEMETRY] First route: \(result.durationSeconds / 60)min \(String(format: "%.1f", Double(result.distanceMeters)/1000))km \(result.places.count) waypoints bucket=\(selectedDuration)min waypoints=[\(firstWaypointNames)]")
@@ -3527,7 +3644,7 @@ struct LocalRoutePickerSheet: View {
                     }
                     
                     // v2.1.7: Filter close waypoints from fresh routes (100m under 25min, 200m for 25+ min to avoid clustered village waypoints).
-                    let filteredResult = mapsService.filterCloseWaypointsSync(from: result, durationMinutes: selectedDuration, origin: userLocation.coordinate)
+                    filteredResult = mapsService.filterCloseWaypointsSync(from: result, durationMinutes: selectedDuration, origin: userLocation.coordinate)
                     
                     print("ROUTE_PHASE phase=markers_start_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Creating markers...")
@@ -3615,6 +3732,8 @@ struct LocalRoutePickerSheet: View {
                         }
                     }
                     let directionsElapsed = Date().timeIntervalSince(directionsStartTime)
+                    let elapsedDir = Date().timeIntervalSince(generateStartTime)
+                    print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsedDir))s stage=directions_done elapsed=\(String(format: "%.2f", directionsElapsed))s api_used=\(directionsSource) api_not_used=\(directionsNotUsed ?? "—")")
                     await MainActor.run {
                         let e = RouteStageTelemetryEntry(stage: "Directions", elapsedSec: directionsElapsed, apiUsed: directionsSource, apiNotUsed: directionsNotUsed)
                         routeStageTelemetry.append(e)
@@ -3665,7 +3784,7 @@ struct LocalRoutePickerSheet: View {
                     )
                     
                     // v2.1.x: Snap POIs to road and replace polyline so route doesn’t go into buildings (e.g. school grounds)
-                    var displayRoute = localRoute
+                    displayRoute = localRoute
                     var mainRouteDurationFromGoogle = false
                     let roadSnapStartTime = Date()
                     print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s GOOGLE_SNAP_START")
@@ -3687,7 +3806,7 @@ struct LocalRoutePickerSheet: View {
                     
                     // FINAL SAFETY CHECK: Deduplicate before storing (use filteredResult)
                     print("🛡️ ROUTE SELECTION VIEW: Final deduplication check before storing route")
-                    let deduplicatedResult = await MainActor.run {
+                    deduplicatedResult = await MainActor.run {
                         // Access GoogleMapsService to deduplicate
                         let service = GoogleMapsService.shared
                         // Create a temporary route to use finalizeRouteDedup (use filteredResult)
@@ -3703,13 +3822,13 @@ struct LocalRoutePickerSheet: View {
                     }
                     
                     // When main result is outside acceptable band, try Google in background so we show route 1 immediately.
-                    var googleSecondRoute: (route: WalkingRoute, data: GeneratedRoute)? = nil
+                    googleSecondRoute = nil
                     let (minAcceptable, maxAcceptable) = Self.minMaxAcceptableMinutes(for: selectedDuration)
-                    var mainActualMin = deduplicatedResult.durationMinutes
-                    var mainInBand = Self.isRouteInBand(displayRoute, selectedDuration: selectedDuration)
+                    mainActualMin = deduplicatedResult.durationMinutes
+                    mainInBand = Self.isRouteInBand(displayRoute, selectedDuration: selectedDuration)
                     let mainWaypointNames = filteredResult.places.map { $0.name }.joined(separator: " → ")
                     print("[ROUTE_GEN] Main route: \(mainActualMin)min for \(selectedDuration)min target (band \(minAcceptable)–\(maxAcceptable)) inBand=\(mainInBand) waypoints=[\(mainWaypointNames)]")
-                    var mainRoutePreviewSource = filteredResult.usedOSRM ? "osrm" : "mapkit"
+                    mainRoutePreviewSource = filteredResult.usedOSRM ? "osrm" : "mapkit"
                     // Always re-measure preview with Google when we have key and waypoints so preview time matches Google (what user sees after Let's Go). If Google fails, keep existing duration.
                     print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s GOOGLE_REMEASURE_START (live main route)")
                     let remeasureStartTime = Date()
@@ -3782,6 +3901,18 @@ struct LocalRoutePickerSheet: View {
                         routeStageTelemetry.append(e)
                         print("[STAGE_TELEMETRY] \(e.consoleLine)")
                     }
+                    // Retry generation once when main route is out-of-band after remeasure (e.g. 9 min for 20 min request).
+                    if mainInBand { break }
+                    if mainRouteAttempt >= 1 { break }
+                    mainRouteAttempt += 1
+                    excludedPlaceIds = Set(filteredResult.places.map(\.placeId))
+                    excludedPOIs = Array(filteredResult.places)
+                    print("[ROUTE_GEN] Main route out-of-band after remeasure — retrying generation once with excluded waypoints")
+                    } while true
+                    // For out-of-band Task: capture final display route name/difficulty/description (same names as inside loop)
+                    let routeName = displayRoute.name
+                    let routeDifficulty = displayRoute.difficulty
+                    let description = displayRoute.description
                     if !mainInBand && mapsService.hasAPIKey {
                         var placesForOutOfBand: [PlaceResult] = poisToUse ?? []
                         if placesForOutOfBand.isEmpty {
@@ -4096,6 +4227,9 @@ struct LocalRoutePickerSheet: View {
                         let route1WaypointNames = filteredResult.places.map { $0.name }.joined(separator: " → ")
                         let distanceKm = String(format: "%.1f", Double(displayRoute.distanceMeters) / 1000)
                         let inBandCount = inBandRouteCount()
+                        let routesSummary = routesToShow.enumerated().map { "r\($0.offset + 1):\($0.element.route.durationMinutes)min(inBand:\(Self.isRouteInBand($0.element.route, selectedDuration: selectedDuration)))" }.joined(separator: " ")
+                        print("\(kRouteFlowTag) +\(String(format: "%.2f", totalTime))s stage=routes_into_buckets count=\(routesToShow.count) target_bucket=\(selectedDuration)min inBand=\(inBandCount)/\(targetInBandRoutes) \(routesSummary)")
+                        print("\(kRouteFlowTag) +\(String(format: "%.2f", totalTime))s stage=first_route_ready name='\(displayRoute.name)' duration=\(displayRoute.durationMinutes)min (map preview after stage animation)")
                         print("[STAGE_TELEMETRY] Bucket: duration=\(selectedDuration)min routes=\(routesToShow.count) inBand=\(inBandCount)/\(targetInBandRoutes) total_sec=\(String(format: "%.2f", totalTime))")
                         for (idx, entry) in routesToShow.enumerated() {
                             let r = entry.route
@@ -4144,7 +4278,7 @@ struct LocalRoutePickerSheet: View {
                     refreshRaceState.walkStarted = false
                     refreshRaceState.googleApplied = false
                     let liveRaceState = refreshRaceState
-                    let liveFirstRoute = displayRoute
+                    let liveFirstRoute: WalkingRoute = displayRoute
                     let liveUserLoc = userLocation.coordinate
                     Task {
                         let mapKitRoute = await mapsService.refreshRouteWithMapKit(route: liveFirstRoute, userLocation: liveUserLoc)
@@ -4179,6 +4313,8 @@ struct LocalRoutePickerSheet: View {
                         print("⏱️ Failed after \(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s")
                     }
                 }
+            }
+                await run()
             }
         } else {
             // Use basic generation (fallback)
@@ -4381,7 +4517,9 @@ struct LocalRoutePickerSheet: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: startTime)
-        
+        let routeSource: String = route.usedOSRMRouting ? "OSRM" : (route.isFromPrePopulatedDatabase ? "prepop" : "mapkit_or_google")
+        let fromGoogle = currentRouteIndex < allRoutes.count && allRoutes[currentRouteIndex].isFromGoogle
+        print("\(kRouteFlowTag) stage=lets_go name='\(route.name)' duration=\(route.durationMinutes)min waypoints=\(route.qrMarkers.count) source=\(routeSource) from_google_remeasure=\(fromGoogle)")
         print("DIRECTIONS | Filter Xcode console by: DIRECTIONS")
         print("DIRECTIONS | [\(timeString)] 🚶 Let's Go tapped — route: '\(route.name)' dirs: \(route.walkingDirections.count)")
         print("⏱️ [LET'S GO] [\(timeString)] 🚶 handleStartWalk() STARTED")
@@ -5361,6 +5499,8 @@ struct LocalRoutePickerSheet: View {
         // Append
         allRoutes.append((route: route, data: data, isDeadZoneFallback: isDeadZoneFallback, isFromGoogle: isFromGoogle))
         let currentInBand = inBandRouteCount()
+        let elapsed = runSummaryStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsed))s stage=route_added position=\(allRoutes.count) name='\(route.name)' duration=\(route.durationMinutes)min inBand=\(currentInBand)/\(targetInBandRoutes) source=\(source)")
         print("[ROUTE_GEN] ✅ [\(source)] '\(route.name)' \(route.durationMinutes)min \(String(format: "%.1f", Double(route.distanceMeters)/1000))km — route \(allRoutes.count) (inBand: \(currentInBand)/\(targetInBandRoutes))")
         
         // Immediately dismiss loading indicator once we have enough in-band routes
@@ -6183,6 +6323,8 @@ struct LocalRoutePickerSheet: View {
         isPreGeneratingRoutes = true
         varietyExhausted = false
         shouldCancelBackgroundWork = false  // v1.9.22: Reset cancel flag
+        let elapsedPreGen = runSummaryStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsedPreGen))s stage=pregen_start target_inBand=\(targetInBandRoutes) current_routes=\(allRoutes.count)")
         
         // v2.1.9: Inject cross-bucket routes from pool before generating new ones
         let crossBucketInjected = consumeCrossBucketRoutes(for: selectedDuration)

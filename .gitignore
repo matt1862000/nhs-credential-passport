@@ -73,3 +73,6 @@ admin_sheets/Apps_Script.js
 
 # Firebase service account key (never commit)
 serviceAccountKey.json
+
+# Xcode secrets (API keys — copy from Secrets.xcconfig.example)
+Secrets.xcconfig
