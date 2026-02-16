@@ -1208,11 +1208,20 @@ struct LocalRoutePickerSheet: View {
         return availableTime < 10  // Minimum walk is 10 minutes
     }
     
-    /// Indices into allRoutes for display: in-band routes first, then out-of-band (so the 16 min "fast" route stays visible as an option and isn’t replaced by a 25 min one).
+    /// Indices into allRoutes for display: route closest to selectedDuration (delay − 5) first, then by duration distance from target; in-band as tie-breaker.
     private var displayedRouteIndices: [Int] {
-        let inBand = allRoutes.indices.filter { Self.isRouteInBand(allRoutes[$0].route, selectedDuration: selectedDuration) }
-        let outOfBand = allRoutes.indices.filter { !inBand.contains($0) }
-        return inBand + outOfBand
+        let target = selectedDuration
+        return allRoutes.indices.sorted { a, b in
+            let durA = allRoutes[a].route.durationMinutes
+            let durB = allRoutes[b].route.durationMinutes
+            let distA = abs(durA - target)
+            let distB = abs(durB - target)
+            if distA != distB { return distA < distB }
+            let inBandA = Self.isRouteInBand(allRoutes[a].route, selectedDuration: selectedDuration)
+            let inBandB = Self.isRouteInBand(allRoutes[b].route, selectedDuration: selectedDuration)
+            if inBandA != inBandB { return inBandA }
+            return a < b
+        }
     }
     
     /// True when this route is out of band (show "Shorter/longer than X–Y min" banner). Uses same rule as in-band: duration + min distance for bucket; applies to all buckets.
@@ -3927,25 +3936,110 @@ struct LocalRoutePickerSheet: View {
                             }
                         }
                         if !placesForOutOfBand.isEmpty {
-                            print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Will try Google in background (main=\(mainActualMin)min, placesCount=\(placesForOutOfBand.count))")
                             let duration = selectedDuration
                             let coord = userLocation.coordinate
-                            Task {
-                                // v2.1: Sort by DURATION FIT instead of closest-first
-                                // For a 25min target, try POIs ~1km away first (estimated 25min round trip)
-                                // instead of wasting Google API calls on nearby POIs guaranteed to be too short
-                                let walkingSpeed = Double(mapsService.adaptiveWalkingSpeed)
-                                let bandMin = Double(duration) * 0.80
-                                let bandMax = Double(duration) * 1.20
-                                let bandMid = (bandMin + bandMax) / 2.0
-                                let sortedByDistance = placesForOutOfBand
-                                    .map { poi -> (poi: PlaceResult, estRoundTrip: Double) in
-                                        let dist = distanceBetweenCoordinates(coord, poi.coordinate)
-                                        let estRoundTripMin = (dist * 2.0) / walkingSpeed
-                                        return (poi, estRoundTripMin)
+                            // v2.1.16: SYNCHRONOUS quick Google attempt (up to 3 best-fit POIs) so the
+                            // first displayed route is in-band. Avoids showing e.g. 103 min for a 30 min target.
+                            let walkingSpeed = Double(mapsService.adaptiveWalkingSpeed)
+                            let bandMin = Double(duration) * 0.80
+                            let bandMax = Double(duration) * 1.20
+                            let bandMid = (bandMin + bandMax) / 2.0
+                            let sortedByDurationFit = placesForOutOfBand
+                                .map { poi -> (poi: PlaceResult, estRoundTrip: Double) in
+                                    let dist = distanceBetweenCoordinates(coord, poi.coordinate)
+                                    let estRoundTripMin = (dist * 2.0) / walkingSpeed
+                                    return (poi, estRoundTripMin)
+                                }
+                                .sorted { abs($0.estRoundTrip - bandMid) < abs($1.estRoundTrip - bandMid) }
+                                .map { $0.poi }
+                            let quickLimit = min(3, sortedByDurationFit.count)
+                            print("[ROUTE_GEN] ⏱️ [GOOGLE FIRST-ROUTE] Trying \(quickLimit) best-fit POIs synchronously before display (main=\(mainActualMin)min, target=\(duration)min)")
+                            var googleFirstFound = false
+                            for qi in 0..<quickLimit {
+                                let selected = [sortedByDurationFit[qi]]
+                                let markers = RouteConversionHelper.markersFromPlaces(selected, origin: coord)
+                                let minimalRoute = WalkingRoute(
+                                    name: routeName,
+                                    description: description,
+                                    durationMinutes: 0,
+                                    distanceMeters: 0,
+                                    difficulty: routeDifficulty,
+                                    isIndoor: false,
+                                    isAccessible: true,
+                                    landmarks: ["Start"] + selected.map(\.name) + ["Return"],
+                                    icon: "location.fill",
+                                    color: .tealAccent,
+                                    qrMarkers: markers,
+                                    routeType: .local,
+                                    encodedPolyline: nil,
+                                    walkingDirections: [],
+                                    usedOSRMRouting: false,
+                                    isFromPrePopulatedDatabase: false,
+                                    travelToStartMinutes: nil
+                                )
+                                if let refreshed = await mapsService.refreshRouteWithGoogleOnly(route: minimalRoute, userLocation: coord) {
+                                    let candidateRoute = WalkingRoute(name: refreshed.name, description: refreshed.description, durationMinutes: refreshed.durationMinutes, distanceMeters: refreshed.distanceMeters, difficulty: refreshed.difficulty, isIndoor: refreshed.isIndoor, isAccessible: refreshed.isAccessible, landmarks: refreshed.landmarks, icon: refreshed.icon, color: refreshed.color, qrMarkers: refreshed.qrMarkers, routeType: refreshed.routeType, trimmed: refreshed.trimmed, walkingDirections: refreshed.walkingDirections, usedOSRMRouting: false, isFromPrePopulatedDatabase: false, travelToStartMinutes: refreshed.travelToStartMinutes)
+                                    guard Self.isRouteInBand(candidateRoute, selectedDuration: duration) else {
+                                        print("[ROUTE_GEN] ⏱️ [GOOGLE FIRST-ROUTE] POI \(qi) \(selected[0].name): \(refreshed.durationMinutes)min (outside band)")
+                                        continue
                                     }
-                                    .sorted { abs($0.estRoundTrip - bandMid) < abs($1.estRoundTrip - bandMid) }
-                                    .map { $0.poi }
+                                    // Build enriched data + route for googleSecondRoute (will auto-switch to first position at display)
+                                    let placesForData = refreshed.qrMarkers.map { m in
+                                        PlaceResult(
+                                            placeId: m.id.uuidString,
+                                            name: m.name,
+                                            vicinity: m.location,
+                                            geometry: PlaceGeometry(location: PlaceLocation(lat: m.coordinate.latitude, lng: m.coordinate.longitude)),
+                                            types: ["point_of_interest"],
+                                            source: .unknown
+                                        )
+                                    }
+                                    let googleGenData = GeneratedRoute(
+                                        places: placesForData,
+                                        polyline: refreshed.encodedPolyline ?? "",
+                                        distanceMeters: refreshed.distanceMeters,
+                                        durationSeconds: refreshed.durationMinutes * 60,
+                                        legs: []
+                                    )
+                                    let enrichedData = mapsService.addOnRoutePOIsIfNeeded(googleGenData, origin: coord, candidatePOIs: placesForOutOfBand, durationMinutes: duration)
+                                    let enrichedMarkers = RouteConversionHelper.markersFromPlaces(enrichedData.places, origin: coord)
+                                    // Use template name for speed — lazy Gemini rename will run when card is displayed
+                                    let googleRoute = WalkingRoute(
+                                        name: "\(duration) min walk",
+                                        description: "A short walk from start and back.",
+                                        durationMinutes: refreshed.durationMinutes,
+                                        distanceMeters: refreshed.distanceMeters,
+                                        difficulty: routeDifficulty,
+                                        isIndoor: false,
+                                        isAccessible: true,
+                                        landmarks: ["Start"] + enrichedData.places.map(\.name) + ["Return"],
+                                        icon: "location.fill",
+                                        color: .tealAccent,
+                                        qrMarkers: enrichedMarkers,
+                                        routeType: .local,
+                                        encodedPolyline: refreshed.encodedPolyline,
+                                        walkingDirections: refreshed.walkingDirections,
+                                        usedOSRMRouting: false,
+                                        isFromPrePopulatedDatabase: false,
+                                        travelToStartMinutes: refreshed.travelToStartMinutes
+                                    )
+                                    let cappedGoogleRoute = googleRoute.withDurationSanityCap(targetDurationMinutes: duration)
+                                    googleSecondRoute = (route: cappedGoogleRoute, data: enrichedData)
+                                    googleFirstFound = true
+                                    print("[ROUTE_GEN] ⏱️ [GOOGLE FIRST-ROUTE] In-band at POI \(qi) (\(selected[0].name)): \(refreshed.durationMinutes)min — will display as first route")
+                                    break
+                                } else {
+                                    print("[ROUTE_GEN] ⏱️ [GOOGLE FIRST-ROUTE] POI \(qi) \(selected[0].name): Google returned nil")
+                                }
+                            }
+                            if !googleFirstFound {
+                                print("[ROUTE_GEN] ⏱️ [GOOGLE FIRST-ROUTE] No in-band from quick attempt — falling through to background search")
+                            }
+                            // Background task: continue searching remaining POIs if quick attempt didn't find an in-band route
+                            // (also adds additional routes even if quick attempt succeeded)
+                            print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Will try Google in background (main=\(mainActualMin)min, placesCount=\(placesForOutOfBand.count))")
+                            Task {
+                                let sortedByDistance = sortedByDurationFit
                                 let maxAttempts = min(25, 15 + duration / 5)
                                 print("[ROUTE_GEN] ⏱️ [MAIN OUT-OF-BAND] Trying duration-fit Google round-trip (\(sortedByDistance.count) POIs, max \(maxAttempts) attempts, band=\(Int(bandMin))-\(Int(bandMax))min)")
                                 func addOutOfBandRoute(refreshed: WalkingRoute, enrichedData: GeneratedRoute, cappedGoogleRoute: WalkingRoute) async {
@@ -4023,8 +4117,10 @@ struct LocalRoutePickerSheet: View {
                                     let cappedGoogleRoute = googleRoute.withDurationSanityCap(targetDurationMinutes: duration)
                                     return (cappedGoogleRoute, enrichedData)
                                 }
+                                // Skip POIs already tried in the synchronous quick attempt
+                                let skipCount = googleFirstFound ? quickLimit : 0
                                 let singlePOILimit = min(maxAttempts, sortedByDistance.count)
-                                for index in 0..<singlePOILimit {
+                                for index in skipCount..<singlePOILimit {
                                     guard index < sortedByDistance.count else { break }
                                     let selected = [sortedByDistance[index]]
                                     let markers = RouteConversionHelper.markersFromPlaces(selected, origin: coord)
@@ -5541,9 +5637,7 @@ struct LocalRoutePickerSheet: View {
     /// Search logs for "DISPLAYED ROUTES" to find this block.
     private func logRoutePreviewSummary() {
         guard !allRoutes.isEmpty else { return }
-        let inBand = allRoutes.indices.filter { Self.isRouteInBand(allRoutes[$0].route, selectedDuration: selectedDuration) }
-        let outOfBand = allRoutes.indices.filter { !inBand.contains($0) }
-        let displayed = inBand + outOfBand
+        let displayed = displayedRouteIndices
         print("[ROUTE_GEN] ========== DISPLAYED ROUTES (paste this block) ==========")
         print("[ROUTE_GEN] Target: \(selectedDuration) min | Total: \(displayed.count) routes")
         for (pos, idx) in displayed.enumerated() {
