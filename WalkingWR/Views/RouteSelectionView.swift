@@ -2405,6 +2405,19 @@ struct LocalRoutePickerSheet: View {
                     print("[ROUTE_GEN] ROUTE_PREVIEW \(cappedFirst.name), \(firstRouteWaypointsStr). \(cappedFirst.durationMinutes) min \(firstRouteDistanceKm)km, \(firstRoutePreviewSource)")
                     let firstIsFromGoogle = firstRoutePreviewSource == "google"
                     print("[ROUTE_DEBUG] 📦 APPEND_FIRST: isFromGoogle=\(firstIsFromGoogle), data=\(firstRouteData.durationSeconds)s/\(firstRouteData.distanceMeters)m, route=\(cappedFirst.durationMinutes)min/\(cappedFirst.distanceMeters)m, places=\(firstRouteData.places.count)")
+                    
+                    // v2.1.15: Safety net — if cached route is severely short after Google re-measure,
+                    // don't show it as the sole first route. Store in cross-bucket and fall through to live gen.
+                    let severelyShortCached = firstRoutePreviewSource.hasPrefix("google") && Self.isRouteSeverelyShort(cappedFirst, selectedDuration: selectedDuration)
+                    if severelyShortCached {
+                        await MainActor.run {
+                            storeCrossBucketRoute(route: cappedFirst, data: firstRouteData, isFromGoogle: true)
+                        }
+                        print("[ROUTE_GEN] ⚠️ Cached route severely short (\(cappedFirst.durationMinutes)min for \(selectedDuration)min target) — skipping display, falling through to live gen")
+                        // Don't append to loadedRoutes, don't show — fall through to live generation below
+                    }
+                    
+                    if !severelyShortCached {
                     loadedRoutes.append((route: cappedFirst, data: firstRouteData, isDeadZoneFallback: firstCached.isDeadZoneFallback, isFromGoogle: firstIsFromGoogle))
                     loadedPlaceIdSets.append(Set(firstRouteData.places.map { $0.placeId }))
                     
@@ -3158,6 +3171,13 @@ struct LocalRoutePickerSheet: View {
                     }
                     
                     return
+                    } // end if !severelyShortCached
+                    
+                    // v2.1.15: Severely short cached route — fall through to live generation
+                    print("[ROUTE_GEN] ⚠️ Severely short cached route (\(cappedFirst.durationMinutes)min for \(selectedDuration)min) — falling through to live generation")
+                    await MainActor.run {
+                        runSummarySource = "live_generation (cache severely short)"
+                    }
                 }
                 
                 let cacheCheckElapsed = Date().timeIntervalSince(cacheCheckStartTime)
@@ -4165,6 +4185,8 @@ struct LocalRoutePickerSheet: View {
                         let isShortRoute = deduplicatedResult.durationMinutes < minAcceptableDuration
                         if isShortRoute {
                             print("⚠️ Initial route is short fallback (\(deduplicatedResult.durationMinutes)min < \(minAcceptableDuration)min target 50%)")
+                            // v2.1.15: Also store in cross-bucket pool at its actual duration so it's useful for the right bucket
+                            storeCrossBucketRoute(route: displayRoute, data: deduplicatedResult, isFromGoogle: mainRoutePreviewSource == "google")
                         }
                         
                         // Initialize route array: always route 1 = main; if Google produced in-band, add as route 2 and auto-switch to it (cap duration for display)
@@ -5404,6 +5426,12 @@ struct LocalRoutePickerSheet: View {
         let minDist = minDistanceMetersForInBand(for: selectedDuration)
         let distanceOk = route.distanceMeters >= minDist
         return durationOk && distanceOk
+    }
+    
+    /// v2.1.15: True if route is severely short for the selected duration (< 50% of target). Used as a safety net to avoid showing
+    /// a severely out-of-band route as the sole first route — triggers cross-bucket storage + fallthrough to live generation.
+    private static func isRouteSeverelyShort(_ route: WalkingRoute, selectedDuration: Int) -> Bool {
+        route.durationMinutes < Int(Double(selectedDuration) * 0.50)
     }
     
     /// Wider band used for +1 and pre-gen when we need a second route: 65–125% for short targets (≤10 min), else same as isRouteInBand. Same min distance. So 7 min is accepted for 10 min target in pre-gen.

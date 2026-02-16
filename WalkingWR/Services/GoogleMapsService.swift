@@ -925,6 +925,9 @@ class GoogleMapsService: ObservableObject {
     /// v2.1: When true, bypass OSRM and always use MapKit (set for user-initiated +1 routes)
     var forceMapKitRouting = false
     
+    /// v2.1.15: When true, skip MapKit and use only free APIs (OSRM/ORS/GH). Set by RoutePreGenService when MapKit quota is capped.
+    var forceSkipMapKit = false
+    
     /// Launch-args cache (read once; UserDefaults is read every time so you can toggle at runtime).
     private static let launchArgsForceFreeRoutingAPIs: Bool = {
         let args = ProcessInfo.processInfo.arguments.map { $0.trimmingCharacters(in: .whitespaces) }
@@ -5588,6 +5591,16 @@ class GoogleMapsService: ObservableObject {
             print("🗺️ [ROUTING] DEBUG: Forcing OSRM ( -ForceFreeRoutingAPIs )")
             return (true, "debug_force")
         }
+        // v2.1.15: Pre-gen with MapKit capped — force free APIs (OSRM/ORS/GH)
+        if forceSkipMapKit {
+            if isOSRMCircuitBreakerOpen {
+                print("🗺️ [ROUTING] forceSkipMapKit but OSRM circuit breaker open — will try ORS/GH via rate-limit fallback path")
+                // Return false so we fall through to the ORS/GH rate-limit fallback code below
+                return (false, "forceSkipMapKit_osrm_tripped")
+            }
+            print("🗺️ [ROUTING] forceSkipMapKit — using OSRM (pre-gen MapKit capped)")
+            return (true, "forced_free_api")
+        }
         // v2.1: User-initiated routes (+1) always get MapKit — better to risk rate limit than guaranteed OSRM timeout
         if forceMapKitRouting {
             print("🗺️ [ROUTING] MapKit forced (user-initiated route) — skipping OSRM")
@@ -6442,7 +6455,7 @@ class GoogleMapsService: ObservableObject {
         let rateLimitStatus = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
         let haveORSOrGH = !openRouteServiceApiKey.isEmpty || !graphHopperApiKey.isEmpty
         let mapKitWouldWait = rateLimitStatus.shouldWait || rateLimitStatus.currentCount >= 36
-        if !forceMapKitRouting && haveORSOrGH && mapKitWouldWait {
+        if !forceMapKitRouting && haveORSOrGH && (mapKitWouldWait || forceSkipMapKit) {
             print("🗺️ [ROUTING] MapKit rate limit (\(rateLimitStatus.currentCount)/50) — using ORS/GraphHopper instead of waiting")
             if !openRouteServiceApiKey.isEmpty {
                 do {
