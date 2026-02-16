@@ -4320,6 +4320,51 @@ struct LocalRoutePickerSheet: View {
                             generatedRouteData = routesToShow[1].data
                         }
                         
+                        // Lazy Gemini for Google first-route: it was created with template name ("X min walk" / "A short walk from start and back.") — fetch real name/description and update so the 35min route shows a proper title.
+                        if let second = googleSecondRoute, Self.isTemplateRouteName(second.route.name, description: second.route.description), !second.data.places.isEmpty {
+                            let placeIdSet = Set(second.data.places.map { $0.placeId })
+                            let places = second.data.places
+                            let durationMin = second.route.durationMinutes
+                            let distanceM = second.route.distanceMeters
+                            Task {
+                                let waypointInfos = places.map { GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity) }
+                                let content = await GeminiService.shared.generateRouteContent(
+                                    waypoints: waypointInfos,
+                                    durationMinutes: durationMin,
+                                    distanceMeters: distanceM,
+                                    difficulty: nil
+                                )
+                                await MainActor.run {
+                                    guard let idx = allRoutes.firstIndex(where: { Set($0.data.places.map { $0.placeId }) == placeIdSet }) else { return }
+                                    let existing = allRoutes[idx].route
+                                    let updated = WalkingRoute(
+                                        name: content.name,
+                                        description: content.description,
+                                        durationMinutes: existing.durationMinutes,
+                                        distanceMeters: existing.distanceMeters,
+                                        difficulty: existing.difficulty,
+                                        isIndoor: existing.isIndoor,
+                                        isAccessible: existing.isAccessible,
+                                        landmarks: existing.landmarks,
+                                        icon: existing.icon,
+                                        color: existing.color,
+                                        qrMarkers: existing.qrMarkers,
+                                        routeType: existing.routeType,
+                                        trimmed: existing.trimmed,
+                                        walkingDirections: existing.walkingDirections,
+                                        usedOSRMRouting: existing.usedOSRMRouting,
+                                        isFromPrePopulatedDatabase: existing.isFromPrePopulatedDatabase,
+                                        travelToStartMinutes: existing.travelToStartMinutes
+                                    )
+                                    allRoutes[idx] = (route: updated, data: allRoutes[idx].data, isDeadZoneFallback: allRoutes[idx].isDeadZoneFallback, isFromGoogle: allRoutes[idx].isFromGoogle)
+                                    if currentRouteIndex == idx {
+                                        generatedRoute = updated
+                                    }
+                                    print("[ROUTE_DEBUG] 🔄 Google first-route updated with Gemini name: '\(content.name)'")
+                                }
+                            }
+                        }
+                        
                         // v1.8.0: Register first route's signature to prevent duplicates! (use filteredResult)
                         registerRouteSignature(places: filteredResult.places, distanceMeters: filteredResult.distanceMeters)
                         
