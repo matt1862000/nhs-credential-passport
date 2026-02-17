@@ -7257,6 +7257,50 @@ struct LocalRoutePickerSheet: View {
                         // Mark isFromGoogle as false so the sweep will re-measure them
                         allRoutes.append((route: cappedFallback, data: candidate.data, isDeadZoneFallback: true, isFromGoogle: false))
                         print("[ROUTE_GEN] ⚠️ Fallback: added '\(cappedFallback.name)' (\(cappedFallback.durationMinutes)min) from cross-bucket pool — pending Google re-measure")
+                        // Lazy Gemini for fallback when template name
+                        if Self.isTemplateRouteName(cappedFallback.name ?? "", description: cappedFallback.description), !candidate.data.places.isEmpty {
+                            let placeIdSet = Set(candidate.data.places.map { $0.placeId })
+                            let places = candidate.data.places
+                            let durationMin = cappedFallback.durationMinutes
+                            let distanceM = cappedFallback.distanceMeters
+                            Task {
+                                let waypointInfos = places.map { GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity) }
+                                let content = await GeminiService.shared.generateRouteContent(
+                                    waypoints: waypointInfos,
+                                    durationMinutes: durationMin,
+                                    distanceMeters: distanceM,
+                                    difficulty: nil
+                                )
+                                await MainActor.run {
+                                    guard let idx = allRoutes.firstIndex(where: { Set($0.data.places.map { $0.placeId }) == placeIdSet }) else { return }
+                                    let existing = allRoutes[idx].route
+                                    let updated = WalkingRoute(
+                                        name: content.name,
+                                        description: content.description,
+                                        durationMinutes: existing.durationMinutes,
+                                        distanceMeters: existing.distanceMeters,
+                                        difficulty: existing.difficulty,
+                                        isIndoor: existing.isIndoor,
+                                        isAccessible: existing.isAccessible,
+                                        landmarks: existing.landmarks,
+                                        icon: existing.icon,
+                                        color: existing.color,
+                                        qrMarkers: existing.qrMarkers,
+                                        routeType: existing.routeType,
+                                        trimmed: existing.trimmed,
+                                        walkingDirections: existing.walkingDirections,
+                                        usedOSRMRouting: existing.usedOSRMRouting,
+                                        isFromPrePopulatedDatabase: existing.isFromPrePopulatedDatabase,
+                                        travelToStartMinutes: existing.travelToStartMinutes
+                                    )
+                                    allRoutes[idx] = (route: updated, data: allRoutes[idx].data, isDeadZoneFallback: allRoutes[idx].isDeadZoneFallback, isFromGoogle: allRoutes[idx].isFromGoogle)
+                                    if currentRouteIndex == idx {
+                                        generatedRoute = updated
+                                    }
+                                    print("[ROUTE_DEBUG] 🔄 Fallback route updated with Gemini name: '\(content.name)'")
+                                }
+                            }
+                        }
                     }
                     if fallbackCandidates.isEmpty && !rejectedShortRoutes.isEmpty {
                         // Last resort: use rejected short routes
@@ -7267,6 +7311,50 @@ struct LocalRoutePickerSheet: View {
                             allRoutes.append((route: cappedFallbackRoute, data: fallback.data, isDeadZoneFallback: true, isFromGoogle: false))
                             isDeadZoneFallback = true
                             print("[ROUTE_GEN] ⚠️ Last-resort fallback: added short route (\(fallback.data.durationMinutes)min) — pending Google re-measure")
+                            // Lazy Gemini for last-resort fallback when template name
+                            if Self.isTemplateRouteName(cappedFallbackRoute.name ?? "", description: cappedFallbackRoute.description), !fallback.data.places.isEmpty {
+                                let placeIdSet = Set(fallback.data.places.map { $0.placeId })
+                                let places = fallback.data.places
+                                let durationMin = cappedFallbackRoute.durationMinutes
+                                let distanceM = cappedFallbackRoute.distanceMeters
+                                Task {
+                                    let waypointInfos = places.map { GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity) }
+                                    let content = await GeminiService.shared.generateRouteContent(
+                                        waypoints: waypointInfos,
+                                        durationMinutes: durationMin,
+                                        distanceMeters: distanceM,
+                                        difficulty: nil
+                                    )
+                                    await MainActor.run {
+                                        guard let idx = allRoutes.firstIndex(where: { Set($0.data.places.map { $0.placeId }) == placeIdSet }) else { return }
+                                        let existing = allRoutes[idx].route
+                                        let updated = WalkingRoute(
+                                            name: content.name,
+                                            description: content.description,
+                                            durationMinutes: existing.durationMinutes,
+                                            distanceMeters: existing.distanceMeters,
+                                            difficulty: existing.difficulty,
+                                            isIndoor: existing.isIndoor,
+                                            isAccessible: existing.isAccessible,
+                                            landmarks: existing.landmarks,
+                                            icon: existing.icon,
+                                            color: existing.color,
+                                            qrMarkers: existing.qrMarkers,
+                                            routeType: existing.routeType,
+                                            trimmed: existing.trimmed,
+                                            walkingDirections: existing.walkingDirections,
+                                            usedOSRMRouting: existing.usedOSRMRouting,
+                                            isFromPrePopulatedDatabase: existing.isFromPrePopulatedDatabase,
+                                            travelToStartMinutes: existing.travelToStartMinutes
+                                        )
+                                        allRoutes[idx] = (route: updated, data: allRoutes[idx].data, isDeadZoneFallback: allRoutes[idx].isDeadZoneFallback, isFromGoogle: allRoutes[idx].isFromGoogle)
+                                        if currentRouteIndex == idx {
+                                            generatedRoute = updated
+                                        }
+                                        print("[ROUTE_DEBUG] 🔄 Last-resort fallback updated with Gemini name: '\(content.name)'")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
