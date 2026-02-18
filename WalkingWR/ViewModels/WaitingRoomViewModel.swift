@@ -706,8 +706,14 @@ class WaitingRoomViewModel: ObservableObject {
     /// v2.1.1: Update current route with refreshed data (e.g., after background Google/MapKit fetch)
     /// Updates both selectedRoute and walkSession.currentRoute so map refreshes automatically.
     /// When resetDirectionIndex is true (e.g. Head back), directions start from step 0.
-    func updateCurrentRoute(_ route: WalkingRoute, sourceIsGoogle: Bool = false, resetDirectionIndex: Bool = false) {
+    /// - Parameter caller: Short label for logging (e.g. "Let's Go initial") — filter logs by [POLYLINE_UPDATE] to see what triggered each change.
+    func updateCurrentRoute(_ route: WalkingRoute, sourceIsGoogle: Bool = false, resetDirectionIndex: Bool = false, caller: String? = nil) {
         let incomingMin = route.durationMinutes
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let ts = formatter.string(from: Date())
+        let callerLabel = caller ?? "unknown"
+        print("🔄 [POLYLINE_UPDATE] [\(ts)] caller=\(callerLabel) route='\(route.name)' polylinePoints=\(route.routePath.count) directions=\(route.walkingDirections.count) durationMin=\(route.durationMinutes) sourceIsGoogle=\(sourceIsGoogle)")
         print("PILL | updateCurrentRoute ENTRY isActive=\(walkSession.isActive) incoming=\(incomingMin)min display=\(displayDurationMinutesForPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) lock=\(hasReceivedGoogleRefreshForPill) sourceIsGoogle=\(sourceIsGoogle) route.name=\(route.name)")
         selectedRoute = route
         if walkSession.isActive {
@@ -783,7 +789,7 @@ class WaitingRoomViewModel: ObservableObject {
         displayDurationMinutesForPill = route.durationMinutes
         lastKnownPillMinutes = route.durationMinutes
         Self.persistPillState(minutes: route.durationMinutes, locked: true)
-        updateCurrentRoute(route)
+        updateCurrentRoute(route, caller: "applyAdjustedRouteAndUpdatePill")
     }
     
     func acceptAdjustedRoute() {
@@ -863,7 +869,7 @@ class WaitingRoomViewModel: ObservableObject {
                     return
                 }
                 await MainActor.run {
-                    updateCurrentRoute(refreshed, sourceIsGoogle: true, resetDirectionIndex: true)
+                    updateCurrentRoute(refreshed, sourceIsGoogle: true, resetDirectionIndex: true, caller: "delayChangeRoute")
                     isLoadingDelayChangeRoute = false
                     delayChangeRouteError = nil
                 }
@@ -1334,7 +1340,7 @@ class WaitingRoomViewModel: ObservableObject {
                     usedOSRMRouting: false,
                     isFromPrePopulatedDatabase: currentRoute.isFromPrePopulatedDatabase
                 )
-                updateCurrentRoute(returnRoute, resetDirectionIndex: true)
+                updateCurrentRoute(returnRoute, resetDirectionIndex: true, caller: "headHome_minimal")
                 print("🏠 [HEAD HOME] Route updated: MINIMAL (already at start) — polyline points=2, from current to start")
                 return
             }
@@ -1361,7 +1367,7 @@ class WaitingRoomViewModel: ObservableObject {
                     usedOSRMRouting: false,
                     isFromPrePopulatedDatabase: currentRoute.isFromPrePopulatedDatabase
                 )
-                updateCurrentRoute(returnRoute, resetDirectionIndex: true)
+                updateCurrentRoute(returnRoute, resetDirectionIndex: true, caller: "headHome_google")
                 let first = result.polyline.first.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
                 let last = result.polyline.last.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
                 print("🏠 [HEAD HOME] Route updated: GOOGLE — polyline points=\(result.polyline.count), first=(\(first)), last=(\(last))")
@@ -1412,7 +1418,7 @@ class WaitingRoomViewModel: ObservableObject {
                     isFromPrePopulatedDatabase: currentRoute.isFromPrePopulatedDatabase
                 )
                 Task { @MainActor in
-                    self.updateCurrentRoute(returnRoute, resetDirectionIndex: true)
+                    self.updateCurrentRoute(returnRoute, resetDirectionIndex: true, caller: "headHome_mapkit")
                     let first = polylineCoords.first.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
                     let last = polylineCoords.last.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
                     print("🏠 [HEAD HOME] Route updated: MAPKIT — polyline points=\(polylineCoords.count), first=(\(first)), last=(\(last))")

@@ -428,7 +428,7 @@ struct RouteSelectionView: View {
                 let previewTargetMin = route.durationMinutes
                 let capped = refreshed.withDurationSanityCap(targetDurationMinutes: previewTargetMin)
                 await MainActor.run {
-                    viewModel.updateCurrentRoute(capped, sourceIsGoogle: true)
+                    viewModel.updateCurrentRoute(capped, sourceIsGoogle: true, caller: "safetyNet_mainView")
                     print("DIRECTIONS | [SAFETY NET] ✅ Google route applied")
                 }
             } else {
@@ -1716,11 +1716,18 @@ struct LocalRoutePickerSheet: View {
                         print("[ROUTE_GEN] 🏁 [SAFETY] 8s timeout fired → showLoadingScreen already false, no-op")
                     }
                 }
-                // When only one route was found initially, try Google Places fallback once to add a second route
+                // When only one route was found initially, try Google Places fallback to add a second route (retry once with different POIs if first attempt fails)
                 if allRoutes.count == 1, mapsService.hasAPIKey, let loc = locationService.currentLocation?.coordinate {
                     Task {
                         try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s so UI has settled
-                        _ = await tryGooglePlacesFallbackToAddRoute(userCoordinate: loc, source: "initial_one_route_fallback")
+                        var added = await tryGooglePlacesFallbackToAddRoute(userCoordinate: loc, source: "initial_one_route_fallback", waypointOffset: 0)
+                        if !added {
+                            print("[ROUTE_GEN] Second route: first attempt failed — retrying with different POI set")
+                            added = await tryGooglePlacesFallbackToAddRoute(userCoordinate: loc, source: "initial_one_route_fallback_retry", waypointOffset: 1)
+                        }
+                        if !added {
+                            print("[ROUTE_GEN] Second route: could not add (2 attempts)")
+                        }
                     }
                 }
             }
@@ -3056,7 +3063,7 @@ struct LocalRoutePickerSheet: View {
                         await MainActor.run {
                             if raceState.walkStarted {
                                 if !raceState.googleApplied {
-                                    viewModel.updateCurrentRoute(mapKitRoute)
+                                    viewModel.updateCurrentRoute(mapKitRoute, caller: "mapkit_preview_after_lets_go")
                                     print("DIRECTIONS | MapKit (preview) finished after Let's Go — applied (Google not yet)")
                                 } else {
                                     print("DIRECTIONS | MapKit (preview) finished after Let's Go — ignored (Google already applied)")
@@ -3580,7 +3587,7 @@ struct LocalRoutePickerSheet: View {
                     
                     let keptFallback = await MainActor.run(body: { currentRouteIsFromGoogle30sFallback })
                     if keptFallback {
-                        print("[ROUTE_GEN] ⏱️ [30s FALLBACK] Main generation finished late — keeping Google fallback route")
+                        print("[ROUTE_GEN] ⏱️ [30s FALLBACK] Main generation finished late — will add main as route 2 if valid")
                         // #region agent log
                         do {
                             let routeGenTime = Date().timeIntervalSince(routeGenStartTime)
@@ -3589,7 +3596,6 @@ struct LocalRoutePickerSheet: View {
                             if let d = try? JSONSerialization.data(withJSONObject: payload), let s = String(data: d, encoding: .utf8) { s.appendLine(toFile: _agentLogPath()) }
                         } catch {}
                         // #endregion agent log
-                        return
                     }
                     
                     let routeGenTime = Date().timeIntervalSince(routeGenStartTime)
@@ -4309,6 +4315,37 @@ struct LocalRoutePickerSheet: View {
                         }
                         // #endregion
                         
+                        // When 30s fallback already showed route 1: add main as route 2 instead of replacing
+                        if currentRouteIsFromGoogle30sFallback {
+                            let mainPlaceIds = Set(filteredResult.places.map { $0.placeId })
+                            let fallbackPlaceIds = allRoutes.first.map { Set($0.data.places.map { $0.placeId }) } ?? []
+                            if mainPlaceIds != fallbackPlaceIds {
+                                let cappedDisplay = Self.applyDurationSanityCap(displayRoute, targetDurationMinutes: selectedDuration)
+                                let isShortRoute = deduplicatedResult.durationMinutes < Int(Double(selectedDuration) * 0.50)
+                                allRoutes.append((route: cappedDisplay, data: deduplicatedResult, isDeadZoneFallback: isShortRoute, isFromGoogle: mainRoutePreviewSource == "google"))
+                                shownPlaceIdSets.append(mainPlaceIds)
+                                registerRouteSignature(places: filteredResult.places, distanceMeters: deduplicatedResult.distanceMeters)
+                                let liveSessionMeta = allRoutes.map { e in
+                                    RouteCacheService.CachedRouteWithMetadata(
+                                        route: e.data,
+                                        name: e.route.name,
+                                        description: e.route.description,
+                                        directions: e.route.walkingDirections,
+                                        isDeadZoneFallback: e.isDeadZoneFallback,
+                                        isFromPrePopulatedDatabase: false
+                                    )
+                                }
+                                RouteCacheService.shared.setSessionRoutes(liveSessionMeta, at: userLocation.coordinate, durationMinutes: selectedDuration)
+                                logRoutePreviewSummary()
+                                print("[ROUTE_GEN] ⏱️ [30s FALLBACK] Main route added as route 2 (fallback stays route 1) — total \(allRoutes.count) routes")
+                            } else {
+                                print("[ROUTE_GEN] ⏱️ [30s FALLBACK] Main route duplicate of fallback — not adding")
+                            }
+                            isGenerating = false
+                            routeGenerationComplete = true
+                            return
+                        }
+                        
                         isGenerating = false
                         routeGenerationComplete = true  // v1.8.5: Trigger stage animation completion
                         runSummaryTimeToFirstRouteSec = runSummaryStartTime.map { Date().timeIntervalSince($0) }
@@ -4485,7 +4522,7 @@ struct LocalRoutePickerSheet: View {
                         await MainActor.run {
                             if liveRaceState.walkStarted {
                                 if !liveRaceState.googleApplied {
-                                    viewModel.updateCurrentRoute(mapKitRoute)
+                                    viewModel.updateCurrentRoute(mapKitRoute, caller: "mapkit_live_after_lets_go")
                                     print("DIRECTIONS | MapKit (live) finished after Let's Go — applied (Google not yet)")
                                 }
                             } else {
@@ -4747,7 +4784,7 @@ struct LocalRoutePickerSheet: View {
         // When the route being started came from Google, set pill so it shows "X mins left" and we skip refresh below
         let startedRouteIsFromGoogle = currentRouteIndex < allRoutes.count && allRoutes[currentRouteIndex].isFromGoogle
         if startedRouteIsFromGoogle {
-            viewModel.updateCurrentRoute(route, sourceIsGoogle: true)
+            viewModel.updateCurrentRoute(route, sourceIsGoogle: true, caller: "lets_go_initial_from_google")
         }
         
         // Show map right away
@@ -4884,7 +4921,10 @@ struct LocalRoutePickerSheet: View {
                 }
                 await MainActor.run {
                     refreshRaceState.googleApplied = true
-                    viewModel.updateCurrentRoute(routeToApply, sourceIsGoogle: true)
+                    // Smooth transition: avoid polyline flash when swapping preview → Google route
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        viewModel.updateCurrentRoute(routeToApply, sourceIsGoogle: true, caller: "lets_go_google_refresh")
+                    }
                     isRouteRefreshed = true
                     print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ Google route applied (capped to preview \(routeToApply.durationMinutes)min; raw Google was \(refreshedRoute.durationMinutes)min)")
                 }
@@ -4893,7 +4933,9 @@ struct LocalRoutePickerSheet: View {
                     print("DIRECTIONS | Google had restricted roads - fetching MapKit fallback...")
                     if let mapKitFallback = await mapsService.getMapKitFallbackRoute(for: refreshedRoute) {
                         await MainActor.run {
-                            viewModel.updateCurrentRoute(mapKitFallback)
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                viewModel.updateCurrentRoute(mapKitFallback, caller: "mapkit_fallback_restricted_roads")
+                            }
                             print("DIRECTIONS | ✅ MapKit fallback applied (restricted roads)")
                         }
                     }
@@ -4944,7 +4986,7 @@ struct LocalRoutePickerSheet: View {
                 let previewTargetMin = route.durationMinutes
                 let capped = refreshed.withDurationSanityCap(targetDurationMinutes: previewTargetMin)
                 await MainActor.run {
-                    viewModel.updateCurrentRoute(capped, sourceIsGoogle: true)
+                    viewModel.updateCurrentRoute(capped, sourceIsGoogle: true, caller: "safetyNet_localPicker")
                     print("DIRECTIONS | [SAFETY NET] ✅ Google route applied")
                 }
             } else {
@@ -4954,7 +4996,8 @@ struct LocalRoutePickerSheet: View {
     }
     
     /// One attempt to add a route using Google Places + Directions. Used when +1 fails or when only one route was found initially.
-    private func tryGooglePlacesFallbackToAddRoute(userCoordinate: CLLocationCoordinate2D, source: String) async -> Bool {
+    /// - Parameter waypointOffset: 0 = use first 5 POIs; 1 = use next 5 (indices 2–6) for a different route attempt.
+    private func tryGooglePlacesFallbackToAddRoute(userCoordinate: CLLocationCoordinate2D, source: String, waypointOffset: Int = 0) async -> Bool {
         guard await MainActor.run(body: { mapsService.hasAPIKey }) else { return false }
         let excludedPOIs = await MainActor.run { allRoutes.flatMap { $0.data.places } }
         let googlePOIs = await mapsService.fetchGooglePOIsOnDemand(
@@ -4966,7 +5009,15 @@ struct LocalRoutePickerSheet: View {
             print("[DIAGNOSTIC +1] [GOOGLE PLACES FALLBACK] \(source): Too few POIs (\(googlePOIs.count))")
             return false
         }
-        let waypoints = Array(googlePOIs.prefix(5))
+        // Use 2–3 waypoints so Google returns a shorter route (more likely in-band for target duration)
+        let maxWaypoints = 3
+        let start = min(waypointOffset * 2, max(0, googlePOIs.count - maxWaypoints))
+        let end = min(start + maxWaypoints, googlePOIs.count)
+        guard end - start >= 2 else {
+            print("[DIAGNOSTIC +1] [GOOGLE PLACES FALLBACK] \(source): Not enough POIs for offset \(waypointOffset) (have \(googlePOIs.count))")
+            return false
+        }
+        let waypoints = Array(googlePOIs[start..<end])
         let targetDur = await MainActor.run { selectedDuration }
         guard let googleResult = await mapsService.getGoogleDirectionsRoute(
             origin: userCoordinate,
@@ -6154,7 +6205,7 @@ struct LocalRoutePickerSheet: View {
             // Only update if refreshed route has valid directions (use updateCurrentRoute so pill stays in sync and never reverts to longer duration)
             if newDirections > 0 {
                 print("PILL | caller: MapKit background refresh — route=\(refreshedRoute.durationMinutes)min before: display=\(viewModel.displayDurationMinutesForPill ?? -1) lock=\(viewModel.hasReceivedGoogleRefreshForPill)")
-                viewModel.updateCurrentRoute(refreshedRoute)
+                viewModel.updateCurrentRoute(refreshedRoute, caller: "mapkit_background_refresh")
                 
                 print("⏱️ [BG REFRESH] [\(updateTimeString)] ✅ Route updated successfully!")
                 print("╔═══════════════════════════════════════════════════════════╗")
