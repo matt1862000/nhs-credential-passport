@@ -136,6 +136,12 @@ private actor MapKitRateLimiter {
 
 // MARK: - OSM Mirror Health Tracker Actor (Thread-Safe)
 /// Actor to track OSM mirror health and rate limit status for intelligent rotation
+private actor RefreshedRouteHolder {
+    private var value: WalkingRoute?
+    func set(_ v: WalkingRoute?) { value = v }
+    func get() -> WalkingRoute? { value }
+}
+
 private actor OSMMirrorHealthTracker {
     struct MirrorStatus {
         var isRateLimited: Bool
@@ -417,6 +423,9 @@ struct RoutingToggles {
     // If database has no data, throws error instead of falling back to live APIs
     static let databaseOnlyMode = false  // ⚠️ SET TO true FOR DB-ONLY TESTING
     
+    /// ORS topology (Isochrones + Matrix): when true, filter POIs by isochrone, classify bands, Matrix pre-score finalists. When false, behavior matches legacy (no ORS topology).
+    static let useORSTopology = true
+    
     // Global
     static let enforceLowerBoundValidation = true          // Reject <50% unless fallback/sparse
     static let extensionTriggerMinPercent = 35.0           // Was 50%
@@ -676,9 +685,8 @@ class GoogleMapsService: ObservableObject {
     }
     
     // OpenRouteService API Key - optional fallback routing (https://openrouteservice.org/)
-    private var openRouteServiceApiKey: String {
-        return (Bundle.main.object(forInfoDictionaryKey: "OPEN_ROUTE_SERVICE_API_KEY") as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    }
+    // Same source as ORSService (Secrets.xcconfig → Info.plist + UserDefaults fallback).
+    private var openRouteServiceApiKey: String { APIKeys.openRouteService }
     
     // GraphHopper API Key - optional fallback routing (https://www.graphhopper.com/)
     private var graphHopperApiKey: String {
@@ -5390,10 +5398,9 @@ class GoogleMapsService: ObservableObject {
             throw GoogleMapsError.apiError("OSRM circuit breaker open")
         }
         
-        // v2.1: Only try "foot" profile (the public OSRM demo server supports foot/driving/cycling).
-        // "walking" profile doesn't exist on the public server and wastes a full timeout.
-        // Reduced timeout from 10s to 3s — OSRM normally responds in <1s.
-        let profilesToTry = ["foot", "driving"]
+        // Walking only: use "foot" profile. No driving — we only want walking directions.
+        // "walking" doesn't exist on the public OSRM server; "foot" is correct. Timeout 3s.
+        let profilesToTry = ["foot"]
         var lastError: Error?
         for profile in profilesToTry {
             let urlString = "https://router.project-osrm.org/route/v1/\(profile)/\(coordsPath)?overview=full&geometries=polyline"
@@ -5413,28 +5420,17 @@ class GoogleMapsService: ObservableObject {
                       distance > 0 else { continue }
                 let polylinePoints = decodePolyline(geometry)
                 if polylinePoints.isEmpty { continue }
-                let isWalkingProfile = (profile == "foot")
-                let finalDuration: Int
-                if isWalkingProfile {
-                    finalDuration = Int(duration)
-                    print("🗺️ OSRM: Using \(profile) profile → \(Int(duration / 60))min (API walking time)")
-                } else {
-                    let userWalkingSpeed = Double(adaptiveWalkingSpeed)
-                    let walkingMinutes = distance / userWalkingSpeed
-                    finalDuration = Int(walkingMinutes * 60)
-                    print("🗺️ OSRM: Using driving profile → converted to \(finalDuration / 60)min @ \(Int(userWalkingSpeed))m/min")
-                }
                 recordOSRMSuccess()
-                return (distance: Int(distance), duration: finalDuration, polyline: polylinePoints)
+                return (distance: Int(distance), duration: Int(duration), polyline: polylinePoints)
             } catch {
                 lastError = error
                 continue
             }
         }
-        // All profiles failed — record failure for circuit breaker
+        // Foot profile failed — record for circuit breaker
         recordOSRMFailure()
         if let err = lastError {
-            print("🗺️ OSRM: All profiles failed - \(err.localizedDescription)")
+            print("🗺️ OSRM: foot profile failed - \(err.localizedDescription)")
             throw GoogleMapsError.apiError("OSRM network error")
         }
         throw GoogleMapsError.noRouteFound
@@ -5576,6 +5572,15 @@ class GoogleMapsService: ObservableObject {
     }
     
     private static var haveLoggedDebugFlags = false
+    private static var lastRouteFlowFreeAPIPrintTime: Date?
+    private static let routeFlowFreeAPIThrottleInterval: TimeInterval = 5.0
+    /// Throttle ROUTE_FLOW free_api log to at most once per 5s (avoids I/O spam when evaluating many legs/candidates).
+    private static func shouldPrintRouteFlowFreeAPI() -> Bool {
+        let now = Date()
+        if let last = lastRouteFlowFreeAPIPrintTime, now.timeIntervalSince(last) < routeFlowFreeAPIThrottleInterval { return false }
+        lastRouteFlowFreeAPIPrintTime = now
+        return true
+    }
     /// Check if we should use OSRM instead of MapKit (when approaching rate limit).
     /// Returns (useOSRM, reason) so callers can log why free APIs were skipped.
     private func shouldUseOSRM() async -> (Bool, String) {
@@ -5583,32 +5588,34 @@ class GoogleMapsService: ObservableObject {
             Self.haveLoggedDebugFlags = true
             let args = ProcessInfo.processInfo.arguments
             let argsPreview = args.prefix(6).joined(separator: " ")
-            print("🗺️ [ROUTING] Launch args (first 6): \(argsPreview)")
-            print("🗺️ [ROUTING] Debug flags: ForceFreeRoutingAPIs=\(Self.forceFreeRoutingAPIs) ForceRateLimitFallback=\(Self.forceRateLimitFallback) (Scheme → Run → Arguments, or UserDefaults ForceFreeRoutingAPIs/ForceRateLimitFallback)")
+            print("[ROUTE_FLOW] stage=routing launch_args=\(argsPreview)")
+            print("[ROUTE_FLOW] stage=routing ForceFreeRoutingAPIs=\(Self.forceFreeRoutingAPIs) ForceRateLimitFallback=\(Self.forceRateLimitFallback)")
         }
         // Debug: Force OSRM first to test free APIs (launch arg -ForceFreeRoutingAPIs 1)
         if Self.forceFreeRoutingAPIs {
-            print("🗺️ [ROUTING] DEBUG: Forcing OSRM ( -ForceFreeRoutingAPIs )")
+            print("[ROUTE_FLOW] stage=routing debug=forcing_OSRM")
             return (true, "debug_force")
         }
         // v2.1.15: Pre-gen with MapKit capped — force free APIs (OSRM/ORS/GH)
         if forceSkipMapKit {
             if isOSRMCircuitBreakerOpen {
-                print("🗺️ [ROUTING] forceSkipMapKit but OSRM circuit breaker open — will try ORS/GH via rate-limit fallback path")
+                print("[ROUTE_FLOW] stage=routing forceSkipMapKit=yes OSRM_circuit_breaker=open fallback=ORS_GH")
                 // Return false so we fall through to the ORS/GH rate-limit fallback code below
                 return (false, "forceSkipMapKit_osrm_tripped")
             }
-            print("🗺️ [ROUTING] forceSkipMapKit — using OSRM (pre-gen MapKit capped)")
+            print("[ROUTE_FLOW] stage=routing forceSkipMapKit=yes using=OSRM pregen_mapkit_capped")
             return (true, "forced_free_api")
         }
         // v2.1: User-initiated routes (+1) always get MapKit — better to risk rate limit than guaranteed OSRM timeout
         if forceMapKitRouting {
-            print("🗺️ [ROUTING] MapKit forced (user-initiated route) — skipping OSRM")
+            if Self.shouldPrintRouteFlowFreeAPI() {
+                print("[ROUTE_FLOW] stage=routing MapKit=forced user_initiated skip=OSRM")
+            }
             return (false, "MapKit_forced")
         }
         // v2.1: If OSRM circuit breaker is tripped, don't send traffic there
         if isOSRMCircuitBreakerOpen {
-            print("🗺️ [ROUTING] OSRM circuit breaker open — using MapKit despite rate limit")
+            print("[ROUTE_FLOW] stage=routing OSRM_circuit_breaker=open using=MapKit despite_rate_limit")
             return (false, "OSRM_circuit_breaker")
         }
         let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
@@ -6325,25 +6332,55 @@ class GoogleMapsService: ObservableObject {
         // Calculate directions for each leg (point to point)
         // Use OSRM when approaching MapKit rate limit to avoid hitting the cap
         let (useOSRM, osrmReason) = await shouldUseOSRM()
-        print("[FREE_API] OSRM=\(useOSRM ? "trying" : "skip(\(osrmReason))") ORS_key=\(openRouteServiceApiKey.isEmpty ? "no" : "yes") GH_key=\(graphHopperApiKey.isEmpty ? "no" : "yes") (ORS/GH also used when MapKit rate-limited or after OSRM failure)")
+        // Throttle: log at most once per 5s to avoid I/O spam when evaluating many legs/candidates
+        if Self.shouldPrintRouteFlowFreeAPI() {
+            let orsFirst = useOSRM && !openRouteServiceApiKey.isEmpty
+            print("[ROUTE_FLOW] stage=free_api \(useOSRM ? (orsFirst ? "ORS_first_then_OSRM" : "OSRM") : "skip(\(osrmReason))") ORS_key=\(openRouteServiceApiKey.isEmpty ? "no" : "yes") GH_key=\(graphHopperApiKey.isEmpty ? "no" : "yes")")
+        }
         
         if useOSRM {
-            // 🗺️ Use OSRM for all legs at once (more efficient)
+            // Prefer ORS (HeiGIT) when we have a key — more reliable than public OSRM (which often times out).
+            // Order: ORS → OSRM → GraphHopper → MapKit
+            if !openRouteServiceApiKey.isEmpty {
+                do {
+                    let orsResult = try await getOpenRouteServiceWalkingDirections(
+                        origin: origin,
+                        destination: destination,
+                        waypoints: waypoints
+                    )
+                    let leg = DirectionsLeg(
+                        distance: DirectionsValue(text: formatDistance(orsResult.distance), value: orsResult.distance),
+                        duration: DirectionsValue(text: formatDuration(orsResult.duration), value: orsResult.duration),
+                        startAddress: nil,
+                        endAddress: nil,
+                        steps: nil
+                    )
+                    let encodedPolyline = encodePolyline(orsResult.polyline)
+                    print("🛤️ OpenRouteService (primary): \(orsResult.distance)m, \(orsResult.duration / 60)min")
+                    var orsDirResult = DirectionsResult(
+                        legs: [leg],
+                        overviewPolyline: OverviewPolyline(points: encodedPolyline),
+                        summary: nil,
+                        warnings: nil,
+                        waypointOrder: optimizedWaypointOrder
+                    )
+                    orsDirResult.routingSourceUsed = "OpenRouteService"
+                    return orsDirResult
+                } catch {
+                    print("🛤️ OpenRouteService (primary) failed: \(error.localizedDescription), trying OSRM then GraphHopper...")
+                }
+            }
+            // OSRM for all legs at once (when ORS not used or failed)
             recordOSRMCall()
             let needsCalibration = shouldCalibrateOSRM()
-            
             print("🗺️ Using OSRM for directions (MapKit near limit)\(needsCalibration ? " + calibrating" : "")")
-            
             do {
                 let osrmResult = try await getOSRMWalkingDirections(
                     origin: origin,
                     destination: destination,
                     waypoints: waypoints
                 )
-                
-                // If we need to calibrate, also get MapKit for the first leg and compare
                 if needsCalibration && allPoints.count >= 2 {
-                    // Do calibration in background - don't block the route result
                     Task {
                         await performCalibrationCheck(
                             origin: allPoints[0],
@@ -6351,12 +6388,8 @@ class GoogleMapsService: ObservableObject {
                         )
                     }
                 }
-                
-                // Apply calibration factor to OSRM duration (OSRM often overestimates)
                 let rawDuration = osrmResult.duration
                 let calibratedDuration = calibrateOSRMDuration(rawDuration)
-                
-                // Create a single leg with calibrated OSRM results
                 let leg = DirectionsLeg(
                     distance: DirectionsValue(text: formatDistance(osrmResult.distance), value: osrmResult.distance),
                     duration: DirectionsValue(text: formatDuration(calibratedDuration), value: calibratedDuration),
@@ -6364,18 +6397,12 @@ class GoogleMapsService: ObservableObject {
                     endAddress: nil,
                     steps: nil
                 )
-                
-                // Encode polyline
                 let encodedPolyline = encodePolyline(osrmResult.polyline)
-                
-                // OSRM returns total route, so we only have one "leg"
                 let rawMinutes = rawDuration / 60
                 let calibratedMinutes = calibratedDuration / 60
                 let factor = osrmCalibrationFactor
                 let samples = (UserDefaults.standard.array(forKey: osrmCalibrationSamplesKey) as? [Double])?.count ?? 0
                 print("🗺️ OSRM: \(allPoints.count - 1) legs, \(osrmResult.distance)m, \(rawMinutes)min → \(calibratedMinutes)min (×\(String(format: "%.2f", factor)) from \(samples) samples)")
-                
-                // v1.6.46: Mark result as OSRM-generated (driving polyline - needs MapKit refresh before navigation)
                 var result = DirectionsResult(
                     legs: [leg],
                     overviewPolyline: OverviewPolyline(points: encodedPolyline),
@@ -6387,37 +6414,7 @@ class GoogleMapsService: ObservableObject {
                 result.routingSourceUsed = "OSRM"
                 return result
             } catch {
-                print("🗺️ OSRM failed: \(error.localizedDescription). Trying OpenRouteService then GraphHopper...")
-                // Try OpenRouteService then GraphHopper before falling back to MapKit
-                if !openRouteServiceApiKey.isEmpty {
-                    do {
-                        let orsResult = try await getOpenRouteServiceWalkingDirections(
-                            origin: origin,
-                            destination: destination,
-                            waypoints: waypoints
-                        )
-                        let leg = DirectionsLeg(
-                            distance: DirectionsValue(text: formatDistance(orsResult.distance), value: orsResult.distance),
-                            duration: DirectionsValue(text: formatDuration(orsResult.duration), value: orsResult.duration),
-                            startAddress: nil,
-                            endAddress: nil,
-                            steps: nil
-                        )
-                        let encodedPolyline = encodePolyline(orsResult.polyline)
-                        print("🛤️ OpenRouteService success (after OSRM): \(orsResult.distance)m, \(orsResult.duration / 60)min")
-                        var orsDirResult = DirectionsResult(
-                            legs: [leg],
-                            overviewPolyline: OverviewPolyline(points: encodedPolyline),
-                            summary: nil,
-                            warnings: nil,
-                            waypointOrder: optimizedWaypointOrder
-                        )
-                        orsDirResult.routingSourceUsed = "OpenRouteService"
-                        return orsDirResult
-                    } catch {
-                        print("🛤️ OpenRouteService failed: \(error.localizedDescription)")
-                    }
-                }
+                print("🗺️ OSRM failed: \(error.localizedDescription). Trying GraphHopper...")
                 if !graphHopperApiKey.isEmpty {
                     do {
                         let ghResult = try await getGraphHopperWalkingDirections(
@@ -6456,7 +6453,7 @@ class GoogleMapsService: ObservableObject {
         let haveORSOrGH = !openRouteServiceApiKey.isEmpty || !graphHopperApiKey.isEmpty
         let mapKitWouldWait = rateLimitStatus.shouldWait || rateLimitStatus.currentCount >= 36
         if !forceMapKitRouting && haveORSOrGH && (mapKitWouldWait || forceSkipMapKit) {
-            print("🗺️ [ROUTING] MapKit rate limit (\(rateLimitStatus.currentCount)/50) — using ORS/GraphHopper instead of waiting")
+            print("[ROUTE_FLOW] stage=routing MapKit_rate_limit=\(rateLimitStatus.currentCount)_50 fallback=ORS_GraphHopper")
             if !openRouteServiceApiKey.isEmpty {
                 do {
                     let orsResult = try await getOpenRouteServiceWalkingDirections(
@@ -6472,7 +6469,7 @@ class GoogleMapsService: ObservableObject {
                         steps: nil
                     )
                     let encodedPolyline = encodePolyline(orsResult.polyline)
-                    print("🗺️ [ROUTING] OpenRouteService: \(orsResult.distance)m, \(orsResult.duration / 60)min")
+                    print("[ROUTE_FLOW] stage=routing OpenRouteService distance=\(orsResult.distance)m duration_min=\(orsResult.duration / 60)")
                     var orsDirResult = DirectionsResult(
                         legs: [leg],
                         overviewPolyline: OverviewPolyline(points: encodedPolyline),
@@ -6483,7 +6480,7 @@ class GoogleMapsService: ObservableObject {
                     orsDirResult.routingSourceUsed = "OpenRouteService"
                     return orsDirResult
                 } catch {
-                    print("🗺️ [ROUTING] OpenRouteService failed: \(error.localizedDescription)")
+                    print("[ROUTE_FLOW] stage=routing OpenRouteService=failed reason=\(error.localizedDescription)")
                 }
             }
             if !graphHopperApiKey.isEmpty {
@@ -6501,7 +6498,7 @@ class GoogleMapsService: ObservableObject {
                         steps: nil
                     )
                     let encodedPolyline = encodePolyline(ghResult.polyline)
-                    print("🗺️ [ROUTING] GraphHopper: \(ghResult.distance)m, \(ghResult.duration / 60)min")
+                    print("[ROUTE_FLOW] stage=routing GraphHopper distance=\(ghResult.distance)m duration_min=\(ghResult.duration / 60)")
                     var ghDirResult = DirectionsResult(
                         legs: [leg],
                         overviewPolyline: OverviewPolyline(points: encodedPolyline),
@@ -6512,10 +6509,10 @@ class GoogleMapsService: ObservableObject {
                     ghDirResult.routingSourceUsed = "GraphHopper"
                     return ghDirResult
                 } catch {
-                    print("🗺️ [ROUTING] GraphHopper failed: \(error.localizedDescription)")
+                    print("[ROUTE_FLOW] stage=routing GraphHopper=failed reason=\(error.localizedDescription)")
                 }
             }
-            print("🗺️ [ROUTING] ORS/GraphHopper both failed — falling back to MapKit (will wait if needed)")
+            print("[ROUTE_FLOW] stage=routing ORS_GraphHopper=both_failed fallback=MapKit")
         }
         
         // 🍎 Use MapKit for directions
@@ -6523,9 +6520,10 @@ class GoogleMapsService: ObservableObject {
         await rateLimiter.acquire()
         defer { Task { await rateLimiter.release() } }
         
-        // Check if we should do opportunistic calibration on first leg
+        // Check if we should do opportunistic calibration on first leg.
+        // Skip when MapKit is forced (user-initiated): avoids 4× OSRM calibration timeouts during base-route generation.
         let samples = UserDefaults.standard.array(forKey: osrmCalibrationSamplesKey) as? [Double] ?? []
-        let shouldOpportunisticallyCalibrate = samples.count < minSamplesForConfidence && allPoints.count >= 2
+        let shouldOpportunisticallyCalibrate = !forceMapKitRouting && samples.count < minSamplesForConfidence && allPoints.count >= 2
         
         for i in 0..<(allPoints.count - 1) {
             let legOrigin = allPoints[i]
@@ -6548,7 +6546,7 @@ class GoogleMapsService: ObservableObject {
             do {
                 // Debug: Simulate MapKit rate limit on first leg to test OSRM → ORS → GraphHopper fallback (launch arg -ForceRateLimitFallback 1)
                 if Self.forceRateLimitFallback && i == 0 {
-                    print("🗺️ [ROUTING] DEBUG: Simulating MapKit rate limit ( -ForceRateLimitFallback 1 ) — trying OSRM → ORS → GraphHopper")
+                    print("[ROUTE_FLOW] stage=routing debug=simulate_rate_limit trying=OSRM_ORS_GraphHopper")
                     throw NSError(domain: "GEOErrorDomain", code: -3, userInfo: nil)
                 }
                 // v1.9.26: Add timeout guard (30s) with retry
@@ -7087,7 +7085,29 @@ class GoogleMapsService: ObservableObject {
                         
                         var foundBetterRoute = false
                         
-                        // v1.6.47: Step 1 - Try OSRM first (FREE, uses OSM barrier data)
+                        // Try ORS first when we have key (avoids OSRM timeouts / log noise)
+                        if !foundBetterRoute && !openRouteServiceApiKey.isEmpty {
+                            do {
+                                let orsResult = try await getOpenRouteServiceWalkingDirections(
+                                    origin: legOrigin,
+                                    destination: legDestination,
+                                    waypoints: []
+                                )
+                                let orsRatio = straightLineDistance > 0 ? Double(orsResult.distance) / straightLineDistance : 1.0
+                                if orsRatio >= 1.15 {
+                                    print("✅ ORS segment BETTER: ratio=\(String(format: "%.2f", orsRatio)) (route: \(orsResult.distance)m) [FREE]")
+                                    segmentPoints = orsResult.polyline
+                                    segmentDistance = orsResult.distance
+                                    segmentDuration = orsResult.duration
+                                    foundBetterRoute = true
+                                }
+                            } catch {
+                                print("⚠️ ORS suspicion fallback failed: \(error.localizedDescription)")
+                            }
+                        }
+                        
+                        // v1.6.47: Step 1 - Try OSRM (FREE, uses OSM barrier data) when ORS didn't help
+                        if !foundBetterRoute {
                         do {
                             let osrmResult = try await getOSRMWalkingDirections(
                                 origin: legOrigin,
@@ -7108,6 +7128,7 @@ class GoogleMapsService: ObservableObject {
                             }
                         } catch {
                             print("⚠️ OSRM fallback failed: \(error.localizedDescription)")
+                        }
                         }
                         
                         // v1.6.47: Step 2 - If OSRM also suspicious, try Google (costs money)
@@ -7203,6 +7224,27 @@ class GoogleMapsService: ObservableObject {
         print("⏱️ [ROUTE REFRESH] [\(endTimeString)] ✅ refreshRouteWithMapKit() COMPLETED in \(String(format: "%.2f", totalElapsed))s")
         
         return refreshedRoute
+    }
+    
+    /// Runs refreshRouteWithMapKit with a time cap. If it doesn't complete within timeoutSeconds, returns the original route unchanged so the caller isn't blocked (e.g. 40s → 20s cap).
+    func refreshRouteWithMapKitWithTimeout(
+        route: WalkingRoute,
+        userLocation: CLLocationCoordinate2D,
+        timeoutSeconds: TimeInterval = 20
+    ) async -> WalkingRoute {
+        let holder = RefreshedRouteHolder()
+        let refreshTask = Task {
+            let r = await refreshRouteWithMapKit(route: route, userLocation: userLocation)
+            await holder.set(r)
+            return r
+        }
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if let r = await holder.get() { return r }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        print("⏱️ [ROUTE REFRESH] MapKit refresh timeout after \(Int(timeoutSeconds))s — keeping route as-is (directions may fill in later)")
+        return route
     }
     
     // MARK: - Preview final dedup: ensure all waypoints are unique when showing route preview
@@ -7902,12 +7944,16 @@ class GoogleMapsService: ObservableObject {
         }
     }
     
-    // MARK: - Optimistic hybrid: Overpass first, Google batch fallback
-    /// Snaps waypoints to roads: Overpass first (per-waypoint); if any waypoint fails, one batched Google Snap to Roads call.
+    // MARK: - Optimistic hybrid: ORS Snap V2 first (collaborative plan), then Overpass, then Google batch fallback
+    /// Snaps waypoints to roads: ORS Snap V2 first when key available (10000/150 limits); else Overpass per-waypoint; if any fail, Google Snap to Roads batch.
     /// Returns snapped waypoints in same order as route.qrMarkers. Empty array if route has no waypoints.
     func snapWaypointsToRoads(route: WalkingRoute) async -> [CLLocationCoordinate2D] {
         let rawWaypoints = route.qrMarkers.map { $0.coordinate }
         guard !rawWaypoints.isEmpty else { return [] }
+        if ORSService.shared.hasAPIKey, let orsSnapped = await ORSService.shared.fetchSnapV2(coordinates: rawWaypoints, radiusMeters: 100) {
+            print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(orsSnapped.count) waypoints) — ORS Snap V2")
+            return orsSnapped
+        }
         typealias SnapResult = (index: Int, coord: CLLocationCoordinate2D, overpassSucceeded: Bool)
         let overpassResults = await withTaskGroup(of: SnapResult.self) { group in
             for (index, waypoint) in rawWaypoints.enumerated() {
@@ -8336,6 +8382,118 @@ class GoogleMapsService: ObservableObject {
             print("REFRESH_FALLBACK | Not using MapKit — Google failed with status '\(googleStatus)' (fallback only for quota/denied/network/unknown)")
         }
         print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] ❌ Returning nil - no fallback available")
+        return nil
+    }
+    
+    /// ORS path: Snap V2 + ORS Directions. Returns a WalkingRoute when ORS key is present and both calls succeed; nil otherwise.
+    private func tryORSSnapAndDirections(route: WalkingRoute, userLocation: CLLocationCoordinate2D) async -> WalkingRoute? {
+        guard ORSService.shared.hasAPIKey else { return nil }
+        let rawWaypoints = route.qrMarkers.map { $0.coordinate }
+        guard !rawWaypoints.isEmpty else { return nil }
+        guard let orsSnapped = await ORSService.shared.fetchSnapV2(coordinates: rawWaypoints, radiusMeters: 100) else { return nil }
+        do {
+            let orsDir = try await getOpenRouteServiceWalkingDirections(origin: userLocation, destination: userLocation, waypoints: orsSnapped)
+            let durationMinutes = max(1, orsDir.duration / 60)
+            let encodedPoly = encodePolyline(orsDir.polyline)
+            var updatedMarkers: [QRMarker] = []
+            for (index, marker) in route.qrMarkers.enumerated() {
+                let coord = index < orsSnapped.count ? orsSnapped[index] : marker.coordinate
+                updatedMarkers.append(QRMarker(code: marker.code, name: marker.name, location: marker.location, coordinate: coord, contentType: marker.contentType, content: marker.content, pointsValue: marker.pointsValue))
+            }
+            print("REFRESH_SOURCE | ORS Snap V2 + Directions — route ready (ORS first)")
+            return WalkingRoute(
+                name: route.name,
+                description: route.description,
+                durationMinutes: durationMinutes,
+                distanceMeters: orsDir.distance > 0 ? orsDir.distance : route.distanceMeters,
+                difficulty: route.difficulty,
+                isIndoor: route.isIndoor,
+                isAccessible: route.isAccessible,
+                landmarks: route.landmarks,
+                icon: route.icon,
+                color: route.color,
+                qrMarkers: updatedMarkers,
+                routeType: route.routeType,
+                trimmed: encodedPoly.isEmpty ? route.trimmed : encodedPoly,
+                walkingDirections: route.walkingDirections,
+                usedOSRMRouting: false,
+                isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase,
+                travelToStartMinutes: route.travelToStartMinutes
+            )
+        } catch {
+            print("[ROUTE_FLOW] stage=ors_snap_race ors_directions_failed=\(error.localizedDescription)")
+            return nil
+        }
+    }
+    
+    /// Runs ORS (Snap V2 + Directions) and Google (snap + Directions) in parallel; returns the first non-nil result so the faster source wins.
+    func refreshRouteSnapRace(route: WalkingRoute, userLocation: CLLocationCoordinate2D) async -> WalkingRoute? {
+        await withTaskGroup(of: WalkingRoute?.self) { group in
+            group.addTask { await self.tryORSSnapAndDirections(route: route, userLocation: userLocation) }
+            group.addTask { await self.refreshRouteWithGoogleOnly(route: route, userLocation: userLocation) }
+            for await result in group {
+                if let r = result {
+                    print("REFRESH_SOURCE | Snap race winner: \(r.durationMinutes)min route")
+                    return r
+                }
+            }
+            return nil
+        }
+    }
+    
+    /// Race ORS vs Google with a timeout: whichever snaps first wins; if neither within timeoutSeconds, returns nil and optionally calls onCompleteAfterTimeout when one completes.
+    func refreshRouteSnapRaceWithTimeout(
+        route: WalkingRoute,
+        userLocation: CLLocationCoordinate2D,
+        timeoutSeconds: TimeInterval = 15,
+        onCompleteAfterTimeout: ((WalkingRoute?) -> Void)? = nil
+    ) async -> WalkingRoute? {
+        let holder = RefreshedRouteHolder()
+        let raceTask = Task {
+            let r = await refreshRouteSnapRace(route: route, userLocation: userLocation)
+            await holder.set(r)
+            return r
+        }
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if let r = await holder.get() { return r }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        print("⏱️ [SNAP RACE] Timeout after \(Int(timeoutSeconds))s — showing route; will update when ORS or Google completes")
+        if let callback = onCompleteAfterTimeout {
+            Task {
+                let r = await raceTask.value
+                await MainActor.run { callback(r) }
+            }
+        }
+        return nil
+    }
+    
+    /// Waits up to timeoutSeconds for refreshRouteWithGoogleOnly. If timeout, returns nil (caller uses original route); refresh continues in background and onCompleteAfterTimeout is called on MainActor when done so the view can update.
+    func refreshRouteWithGoogleOnlyWithTimeout(
+        route: WalkingRoute,
+        userLocation: CLLocationCoordinate2D,
+        timeoutSeconds: TimeInterval = 15,
+        onCompleteAfterTimeout: ((WalkingRoute?) -> Void)? = nil
+    ) async -> WalkingRoute? {
+        let holder = RefreshedRouteHolder()
+        let refreshTask = Task {
+            let r = await refreshRouteWithGoogleOnly(route: route, userLocation: userLocation)
+            await holder.set(r)
+            return r
+        }
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if let r = await holder.get() { return r }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        print("⏱️ [GOOGLE-ONLY REFRESH] Timeout after \(Int(timeoutSeconds))s — showing route; will update when Google completes")
+        if let callback = onCompleteAfterTimeout {
+            Task {
+                let r = await refreshTask.value
+                await MainActor.run { callback(r) }
+            }
+        }
         return nil
     }
     
@@ -13308,6 +13466,28 @@ class GoogleMapsService: ObservableObject {
         let fpPOIElapsed = Date().timeIntervalSince(fastPathStart)
         print("⚡ [DIAGNOSTIC] Ready: \(fpPOIs.count) POIs, \(fpBaseRoutes.count) base routes in \(String(format: "%.1f", fpPOIElapsed))s (radius=\(fpSearchRadius)m)")
         
+        // ORS isochrones (fast path): filter fpPOIs by walk-time polygon so topology runs when Tier 2 is used
+        if RoutingToggles.useORSTopology && ORSService.shared.hasAPIKey && !fpPOIs.isEmpty {
+            ORSService.shared.runConnectivityCheckIfNeeded(origin: location)
+            let bucket = ORSService.durationBucket(minutes: targetDurationMinutes)
+            do {
+                let isochroneBands = try await ORSService.shared.fetchIsochroneBands(origin: location, durationBucketMinutes: bucket)
+                if let outerPolygon = isochroneBands.outerPolygon {
+                    let beforeIso = fpPOIs.count
+                    fpPOIs = fpPOIs.filter { ORSService.shared.isPointInsidePolygon($0.coordinate, polygon: outerPolygon) }
+                    let afterIso = fpPOIs.count
+                    print("[ROUTE_FLOW] stage=ors_isochrone bucket=\(bucket)min pois_before=\(beforeIso) pois_after=\(afterIso) (fast_path)")
+                    fpPOIs = fpPOIs.map { poi in
+                        var p = poi
+                        p.orsBand = ORSService.shared.band(for: poi.coordinate, bands: isochroneBands)
+                        return p
+                    }
+                }
+            } catch {
+                print("[ROUTE_FLOW] stage=ors_isochrone fallback=radius_based reason=\(error) (fast_path)")
+            }
+        }
+        
         // SPRINT-9: Strategy A — Route directly THROUGH POIs as waypoints
         // KEY INSIGHT: targetRadius scales with wpCount. Fixed formula works across all environments
         // because the base route comparison (below) acts as safety net for outlier locations.
@@ -14194,6 +14374,32 @@ class GoogleMapsService: ObservableObject {
                 print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
                 print("⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", freeSourcesElapsed))s (free sources only)")
                 print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+            }
+        }
+        
+        // ════════════════════════════════════════════════════════════════
+        // ORS ISOCHRONES (v2): Filter POIs by walk-time polygon, classify band
+        // ════════════════════════════════════════════════════════════════
+        if RoutingToggles.useORSTopology && ORSService.shared.hasAPIKey {
+            ORSService.shared.runConnectivityCheckIfNeeded(origin: location)
+            let bucket = ORSService.durationBucket(minutes: targetDurationMinutes)
+            do {
+                let isochroneBands = try await ORSService.shared.fetchIsochroneBands(origin: location, durationBucketMinutes: bucket)
+                if let outerPolygon = isochroneBands.outerPolygon {
+                    let beforeIso = places.count
+                    places = places.filter { ORSService.shared.isPointInsidePolygon($0.coordinate, polygon: outerPolygon) }
+                    let afterIso = places.count
+                    print("[ROUTE_FLOW] stage=ors_isochrone bucket=\(bucket)min pois_before=\(beforeIso) pois_after=\(afterIso)")
+                    // Classify band for each remaining POI
+                    places = places.map { poi in
+                        var p = poi
+                        p.orsBand = ORSService.shared.band(for: poi.coordinate, bands: isochroneBands)
+                        return p
+                    }
+                }
+            } catch {
+                print("[ROUTE_FLOW] stage=ors_isochrone fallback=radius_based reason=\(error)")
+                // Leave orsBand nil; band rules skipped later
             }
         }
         
@@ -15213,9 +15419,12 @@ class GoogleMapsService: ObservableObject {
         let expansionHardWall = min(hardWallSeconds * 0.5, 5.0)  // Max 5s for expansion, or 50% of hard-wall
         
         // P0 FIX: Skip expansion if we're already past 50% of hard-wall budget
+        // ORS v2: When isochrones were used, prefer band/sector retries; avoid radius expansion first
+        let orsIsochronesInUse = RoutingToggles.useORSTopology && places.contains(where: { $0.orsBand != nil })
         if angularDiversityScore <= 2 && searchRadiusOverride == nil && elapsedBeforeExpansion < expansionHardWall {
-            // SPRINT-4: Global hard-stop check before expansion
-            if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "EXPANSION") {
+            if orsIsochronesInUse {
+                print("[ROUTE_FLOW] stage=ors_radius_skip reason=isochrones_in_use prefer_band_sector")
+            } else if !RoutingToggles.mustContinue(budget, bestSoFar: bestFallbackRoute, stage: "EXPANSION") {
                 print("⛔ [HARD-STOP] Skipping expansion - returning best-so-far")
                 // Skip expansion, continue with existing places
             } else {
@@ -16015,6 +16224,23 @@ class GoogleMapsService: ObservableObject {
             
             print("📊 [K-BEST] Collected \(collectedCombinations.count) candidate combinations for \(waypointCount) waypoints")
             
+            // ORS v2: Band-aware + ≥3 sector filter when topology enabled
+            if RoutingToggles.useORSTopology && (sectorQuotaUsed || places.contains { $0.orsBand != nil }) {
+                let withBands = places.contains { $0.orsBand != nil }
+                var filtered = collectedCombinations.filter { combo in
+                    let sectors = sectorSpanCount(waypoints: combo, origin: location)
+                    let bandOk = !withBands || satisfiesBandRules(waypoints: combo, targetDurationMinutes: targetDurationMinutes)
+                    return sectors >= 3 && bandOk
+                }
+                if filtered.count < 2 && !collectedCombinations.isEmpty {
+                    filtered = collectedCombinations.filter { sectorSpanCount(waypoints: $0, origin: location) >= 2 }
+                    print("[ROUTE_FLOW] stage=ors_sector relaxed=2_sectors combos=\(filtered.count)")
+                } else if filtered.count < collectedCombinations.count {
+                    print("[ROUTE_FLOW] stage=ors_band_sector min_sectors=3 combos=\(filtered.count)")
+                }
+                collectedCombinations = filtered
+            }
+            
             guard !collectedCombinations.isEmpty else {
                 print("📊 [K-BEST] No valid combinations collected - skipping waypoint count")
                 continue
@@ -16178,6 +16404,22 @@ class GoogleMapsService: ObservableObject {
                 
                 let estimatedMins = finalist.estimatedDuration / 60
                 print("🗺️ [K-BEST] Routing finalist \(idx + 1)/\(finalists.count): ~\(estimatedMins)min estimated, \(finalist.waypointCount) waypoints")
+                
+                // ORS Matrix pre-score: reject finalist if predicted loop <70% or >140% of target
+                if RoutingToggles.useORSTopology && ORSService.shared.hasAPIKey && !finalist.waypoints.isEmpty {
+                    do {
+                        let matrixResult = try await ORSService.shared.fetchMatrix(origin: location, waypoints: finalist.waypoints)
+                        let predictedSec = ORSService.shared.estimateLoopDuration(matrixResult: matrixResult)
+                        let targetSec = Double(targetDurationMinutes) * 60
+                        let ratio = predictedSec / targetSec
+                        if ratio < 0.70 || ratio > 1.40 {
+                            print("[ROUTE_FLOW] stage=ors_matrix finalist=\(idx + 1) result=reject predicted_sec=\(Int(predictedSec)) predicted_pct=\(String(format: "%.0f", ratio * 100))")
+                            continue
+                        }
+                    } catch {
+                        print("[ROUTE_FLOW] stage=ors_matrix finalist=\(idx + 1) result=skip reason=\(error)")
+                    }
+                }
                 
                 do {
                     if let route = try await tryRouteAndEvaluate(
@@ -19079,6 +19321,34 @@ class GoogleMapsService: ObservableObject {
         return bearing  // -180 to 180 degrees
     }
     
+    /// Number of unique bearing sectors (0..<sectorCount) spanned by waypoints from origin. Used for ≥3 sector rule.
+    private func sectorSpanCount(waypoints: [PlaceResult], origin: CLLocationCoordinate2D, sectorCount: Int = 4) -> Int {
+        var indices = Set<Int>()
+        for poi in waypoints {
+            let bearing = bearingBetween(origin, poi.coordinate)
+            let normalized = bearing < 0 ? bearing + 360 : bearing
+            let idx = Int(normalized / (360.0 / Double(sectorCount))) % sectorCount
+            indices.insert(idx)
+        }
+        return indices.count
+    }
+    
+    /// ORS band rules: ≤15 min ≥1 outer; 15–35 min ≥1 outer, ≥1 mid, ≥1 inner; 35+ min ≥2 outer, ≥1 mid, ≥1 inner. If all orsBand nil, returns true.
+    private func satisfiesBandRules(waypoints: [PlaceResult], targetDurationMinutes: Int) -> Bool {
+        let bands = waypoints.compactMap { $0.orsBand }
+        if bands.isEmpty { return true }
+        let inner = waypoints.filter { $0.orsBand == .inner }.count
+        let mid = waypoints.filter { $0.orsBand == .mid }.count
+        let outer = waypoints.filter { $0.orsBand == .outer }.count
+        if targetDurationMinutes <= 15 {
+            return outer >= 1
+        }
+        if targetDurationMinutes < 35 {
+            return outer >= 1 && mid >= 1 && inner >= 1
+        }
+        return outer >= 2 && mid >= 1 && inner >= 1
+    }
+    
     // v2.0.3: Helper to calculate angular difference with proper wrap-around handling
     private func angularDifference(_ a: Double, _ b: Double) -> Double {
         let diff = abs(a - b).truncatingRemainder(dividingBy: 360)
@@ -20994,6 +21264,8 @@ struct PlaceResult: Codable, Identifiable {
     let types: [String]?
     // v1.9.48: Track POI source for debugging and quality control
     var source: POISource = .unknown
+    /// ORS isochrone band (set during route generation when isochrones are used). Not from API.
+    var orsBand: POIWalkBand? = nil
     
     var id: String { placeId }
     
@@ -21012,7 +21284,7 @@ struct PlaceResult: Codable, Identifiable {
     
     enum CodingKeys: String, CodingKey {
         case placeId = "place_id"
-        case name, vicinity, geometry, types, source
+        case name, vicinity, geometry, types, source, orsBand
     }
     
     // v1.9.48: Custom decoder to handle missing source in cached data
@@ -21024,16 +21296,18 @@ struct PlaceResult: Codable, Identifiable {
         geometry = try container.decode(PlaceGeometry.self, forKey: .geometry)
         types = try container.decodeIfPresent([String].self, forKey: .types)
         source = try container.decodeIfPresent(POISource.self, forKey: .source) ?? .unknown
+        orsBand = try container.decodeIfPresent(POIWalkBand.self, forKey: .orsBand)
     }
     
     // v1.9.48: Convenience initializer for creating POIs with source
-    init(placeId: String, name: String, vicinity: String?, geometry: PlaceGeometry, types: [String]?, source: POISource = .unknown) {
+    init(placeId: String, name: String, vicinity: String?, geometry: PlaceGeometry, types: [String]?, source: POISource = .unknown, orsBand: POIWalkBand? = nil) {
         self.placeId = placeId
         self.name = name
         self.vicinity = vicinity
         self.geometry = geometry
         self.types = types
         self.source = source
+        self.orsBand = orsBand
     }
 }
 

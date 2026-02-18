@@ -118,6 +118,8 @@ class LocationService: NSObject, ObservableObject {
     private let bearingConfirmationTolerance: Double = 55.0
     /// Minimum speed (m/s) for CLLocation.course to be considered reliable. Below this, course is noise.
     private let minSpeedForReliableCourse: Double = 0.5
+    private static var lastWaypointSkipLogTime: Date?
+    private static let waypointSkipLogThrottleInterval: TimeInterval = 10.0
     
     /// Compute the initial bearing (degrees, 0-360) from point A to point B using the forward azimuth formula.
     private func bearing(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> Double {
@@ -802,9 +804,14 @@ class LocationService: NSObject, ObservableObject {
         let timeString = formatter.string(from: timestamp)
         
         guard isMonitoringDirections, !directionWaypoints.isEmpty, !cachedRoutePath.isEmpty else {
+            let now = Date()
+            let shouldLog = Self.lastWaypointSkipLogTime == nil || now.timeIntervalSince(Self.lastWaypointSkipLogTime!) >= Self.waypointSkipLogThrottleInterval
+            if shouldLog { Self.lastWaypointSkipLogTime = now }
             let skipLog = "Skipping waypoint check - Monitoring: \(isMonitoringDirections), Waypoints: \(directionWaypoints.count), Route: \(cachedRoutePath.count)"
-            print("📍 [WAYPOINT CHECK] [\(timeString)] \(skipLog)")
-            debugLogger.log(skipLog, category: "WAYPOINT")
+            if shouldLog {
+                print("📍 [WAYPOINT CHECK] [\(timeString)] \(skipLog)")
+                debugLogger.log(skipLog, category: "WAYPOINT")
+            }
             return
         }
         
