@@ -639,13 +639,25 @@ class RouteCacheService {
     }
     
     /// For safety net: get the N routes from the pool closest to selectedDuration (for fallback when we have fewer than targetInBandRoutes). Removes them from the pool.
+    /// Only considers routes within 50–150% of selectedDuration; prefers in-band (80–120%) then by duration proximity.
     func takeSessionCrossBucketFallbackCandidates(needed: Int, selectedDuration: Int) -> [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] {
         var all: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
         for (_, pooled) in sessionCrossBucketPool {
             all.append(contentsOf: pooled)
         }
         guard !all.isEmpty else { return [] }
-        all.sort { abs($0.route.durationMinutes - selectedDuration) < abs($1.route.durationMinutes - selectedDuration) }
+        let minDur = Int(Double(selectedDuration) * 0.50)
+        let maxDur = Int(Double(selectedDuration) * 1.50)
+        let inBandMin = Int(Double(selectedDuration) * 0.80)
+        let inBandMax = Int(Double(selectedDuration) * 1.20)
+        all = all.filter { $0.route.durationMinutes >= minDur && $0.route.durationMinutes <= maxDur }
+        guard !all.isEmpty else { return [] }
+        all.sort { a, b in
+            let aInBand = a.route.durationMinutes >= inBandMin && a.route.durationMinutes <= inBandMax
+            let bInBand = b.route.durationMinutes >= inBandMin && b.route.durationMinutes <= inBandMax
+            if aInBand != bInBand { return aInBand }
+            return abs(a.route.durationMinutes - selectedDuration) < abs(b.route.durationMinutes - selectedDuration)
+        }
         let taken = Array(all.prefix(needed))
         let takenSigs = Set(taken.map { Set($0.data.places.map { $0.placeId }) })
         for bucket in sessionCrossBucketPool.keys {

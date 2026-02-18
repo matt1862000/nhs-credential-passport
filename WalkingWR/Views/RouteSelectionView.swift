@@ -1716,17 +1716,23 @@ struct LocalRoutePickerSheet: View {
                         print("[ROUTE_GEN] 🏁 [SAFETY] 8s timeout fired → showLoadingScreen already false, no-op")
                     }
                 }
-                // When only one route was found initially, try Google Places fallback to add a second route (retry once with different POIs if first attempt fails)
-                if allRoutes.count == 1, mapsService.hasAPIKey, let loc = locationService.currentLocation?.coordinate {
+                // When only one route was found initially, try free engines first (MapKit/ORS/GraphHopper), then Google Places fallback
+                if allRoutes.count == 1, let loc = locationService.currentLocation?.coordinate {
                     Task {
                         try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s so UI has settled
-                        var added = await tryGooglePlacesFallbackToAddRoute(userCoordinate: loc, source: "initial_one_route_fallback", waypointOffset: 0)
+                        var added = await tryAddSecondRouteViaFreeEngines(userCoordinate: loc)
                         if !added {
-                            print("[ROUTE_GEN] Second route: first attempt failed — retrying with different POI set")
-                            added = await tryGooglePlacesFallbackToAddRoute(userCoordinate: loc, source: "initial_one_route_fallback_retry", waypointOffset: 1)
+                            added = await tryAddSecondRouteViaFreeEngines(userCoordinate: loc) // second attempt with same exclusions (engine may vary)
+                        }
+                        if !added && mapsService.hasAPIKey {
+                            added = await tryGooglePlacesFallbackToAddRoute(userCoordinate: loc, source: "initial_one_route_fallback", waypointOffset: 0)
+                            if !added {
+                                print("[ROUTE_GEN] Second route: first Google attempt failed — retrying with different POI set")
+                                added = await tryGooglePlacesFallbackToAddRoute(userCoordinate: loc, source: "initial_one_route_fallback_retry", waypointOffset: 1)
+                            }
                         }
                         if !added {
-                            print("[ROUTE_GEN] Second route: could not add (2 attempts)")
+                            print("[ROUTE_GEN] Second route: could not add (free engines + Google attempts)")
                         }
                     }
                 }
@@ -4995,6 +5001,103 @@ struct LocalRoutePickerSheet: View {
         }
     }
     
+    /// Try to add a second route using free engines (MapKit/ORS/GraphHopper) only. Used when we have 1 route and want to avoid Google first.
+    /// Returns true if an in-band route was added.
+    private func tryAddSecondRouteViaFreeEngines(userCoordinate: CLLocationCoordinate2D) async -> Bool {
+        let (excludedPlaceIds, excludedPOIs, duration, prefetched): (Set<String>, [PlaceResult], Int, [PlaceResult]?) = await MainActor.run {
+            let ids = allRoutes.first.map { Set($0.data.places.map { $0.placeId }) } ?? []
+            let pois = allRoutes.flatMap { $0.data.places }
+            return (ids, pois, selectedDuration, prefetchedPOIs.isEmpty ? nil : prefetchedPOIs)
+        }
+        do {
+            let result = try await mapsService.generateLocalRoute(
+                from: userCoordinate,
+                targetDurationMinutes: duration,
+                difficulty: nil,
+                excludePlaceIds: excludedPlaceIds,
+                excludePOIs: excludedPOIs,
+                prefetchedPOIs: prefetched,
+                preferMultiWaypoint: false
+            )
+            guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else { return false }
+            let durationMin = max(1, result.durationSeconds / 60)
+            let probeRoute = WalkingRoute(
+                name: "\(durationMin) min walk",
+                description: "",
+                durationMinutes: durationMin,
+                distanceMeters: result.distanceMeters,
+                difficulty: durationMin <= 10 ? .easy : (durationMin <= 20 ? .moderate : .challenging),
+                isIndoor: false,
+                isAccessible: true,
+                landmarks: [],
+                icon: "location.fill",
+                color: .tealAccent,
+                qrMarkers: [],
+                routeType: .local,
+                trimmed: result.polyline,
+                walkingDirections: [],
+                usedOSRMRouting: result.usedOSRM
+            )
+            guard Self.isRouteInBand(probeRoute, selectedDuration: duration) else {
+                print("[ROUTE_GEN] Free-engine second route: \(durationMin)min out-of-band for \(duration)min — skipping")
+                return false
+            }
+            let isUnique = await MainActor.run { isRouteTrulyUnique(places: result.places, distanceMeters: result.distanceMeters) }
+            guard isUnique else {
+                print("[ROUTE_GEN] Free-engine second route: duplicate — skipping")
+                return false
+            }
+            let markers = await MainActor.run { createMarkersFromPlaces(result.places, origin: userCoordinate) }
+            guard !markers.isEmpty else { return false }
+            var directions = await MainActor.run { extractWalkingDirections(from: result.legs, waypoints: result.places) }
+            if directions.isEmpty && !result.places.isEmpty {
+                let waypointCoords = result.places.map { $0.coordinate }
+                let waypointNames = result.places.map { $0.name }
+                directions = await mapsService.getMapKitDirectionsForRoute(
+                    origin: userCoordinate,
+                    waypoints: waypointCoords,
+                    destination: userCoordinate,
+                    waypointNames: waypointNames
+                )
+            }
+            let templateName = "\(durationMin) min walk"
+            let templateDescription = "A short walk from start and back."
+            let routeDifficulty: RouteDifficulty = durationMin <= 10 ? .easy : (durationMin <= 20 ? .moderate : .challenging)
+            let route = WalkingRoute(
+                name: templateName,
+                description: templateDescription,
+                durationMinutes: durationMin,
+                distanceMeters: result.distanceMeters,
+                difficulty: routeDifficulty,
+                isIndoor: false,
+                isAccessible: true,
+                landmarks: ["Start"] + result.places.map { $0.name } + ["Return"],
+                icon: "location.fill",
+                color: .tealAccent,
+                qrMarkers: markers,
+                routeType: .local,
+                trimmed: result.polyline,
+                walkingDirections: directions,
+                usedOSRMRouting: result.usedOSRM
+            )
+            let deduplicatedResult = mapsService.finalizeRouteDedupForView(result)
+            let added = await MainActor.run {
+                let capped = Self.applyDurationSanityCap(route, targetDurationMinutes: duration)
+                registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
+                shownPlaceIdSets.append(Set(result.places.map { $0.placeId }))
+                let didAdd = appendRouteIfAllowed(route: capped, data: deduplicatedResult, isFromGoogle: result.usedGoogleDirections, source: "initial_free_engine")
+                if didAdd {
+                    print("[ROUTE_GEN] ✅ Second route added via free engines: '\(capped.name ?? "?")' (\(durationMin)min)")
+                }
+                return didAdd
+            }
+            return added
+        } catch {
+            print("[ROUTE_GEN] Free-engine second route failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
     /// One attempt to add a route using Google Places + Directions. Used when +1 fails or when only one route was found initially.
     /// - Parameter waypointOffset: 0 = use first 5 POIs; 1 = use next 5 (indices 2–6) for a different route attempt.
     private func tryGooglePlacesFallbackToAddRoute(userCoordinate: CLLocationCoordinate2D, source: String, waypointOffset: Int = 0) async -> Bool {
@@ -6703,8 +6806,8 @@ struct LocalRoutePickerSheet: View {
             var consecutiveFailures = 0
             let maxConsecutiveFailures = 3  // Real failures only (invalid result, exception); out-of-band no longer counts
             var pregenAttempts = 0
-            let maxPregenAttempts = 6  // Cap total attempts so we don't run too long in areas with no second in-band route
-            let pregenTimeCap: TimeInterval = 40  // Stop searching for more in-band routes after this many seconds
+            let maxPregenAttempts = 10  // Cap total attempts (increased for better chance of second in-band route)
+            let pregenTimeCap: TimeInterval = 55  // Stop searching for more in-band routes after this many seconds
             
             // Get pre-fetched POIs once for all iterations
             let poisToUse = await MainActor.run { prefetchedPOIs.isEmpty ? nil : prefetchedPOIs }
@@ -7444,6 +7547,25 @@ struct LocalRoutePickerSheet: View {
                     print("[ROUTE_GEN] 🌐 Google POI fetch skipped: have \(routeCountAfterCrossBucket) routes (incl. cross-bucket)")
                 } else {
                     print("[ROUTE_GEN] 🌐 Google fallback skipped: routeCount=\(routeCountAfterCrossBucket) or no API key")
+                }
+            }
+            
+            // Second-chance phase: if still short on in-band routes, one more free-engine attempt then 2–3 Google fallback attempts (cap 15s)
+            let inBandAfterGoogleLoop = await MainActor.run { inBandRouteCount() }
+            if inBandAfterGoogleLoop < targetInBandRoutes {
+                let secondChanceStart = Date()
+                let secondChanceTimeCap: TimeInterval = 15
+                var secondChanceAdded = await tryAddSecondRouteViaFreeEngines(userCoordinate: userLocation.coordinate)
+                if !secondChanceAdded && mapsService.hasAPIKey {
+                    for (idx, offset) in [2, 3].enumerated() {
+                        if Date().timeIntervalSince(secondChanceStart) >= secondChanceTimeCap { break }
+                        secondChanceAdded = await tryGooglePlacesFallbackToAddRoute(userCoordinate: userLocation.coordinate, source: "second_chance_google", waypointOffset: offset)
+                        if secondChanceAdded { break }
+                        if idx < 1 { try? await Task.sleep(nanoseconds: 500_000_000) }
+                    }
+                }
+                if secondChanceAdded {
+                    print("[ROUTE_GEN] ✅ Second-chance phase added a route")
                 }
             }
             
