@@ -3872,6 +3872,10 @@ struct LocalRoutePickerSheet: View {
                         displayRoute = snappedRoute
                         mainRouteDurationFromGoogle = true  // refreshed route from ORS or Google
                         print("[WALK_REFRESH] 🛤️ [ROUTE CREATION] Applied road snap — polyline and markers now on road (no off-road POI)")
+                    } else {
+                        // Timeout or both failed: still snap waypoints to road so POI markers aren’t off-road (e.g. school grounds)
+                        displayRoute = await mapsService.ensureWaypointsSnappedToRoads(route: localRoute)
+                        print("[WALK_REFRESH] 🛤️ [ROUTE CREATION] Applied waypoint-only snap (timeout or no refresh) — markers on road")
                     }
                     let roadSnapElapsed = Date().timeIntervalSince(roadSnapStartTime)
                     await MainActor.run {

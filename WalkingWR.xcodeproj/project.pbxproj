@@ -298,12 +298,11 @@
 			baseConfigurationReference = 6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ORS_BASE_URL = "https://waitwellv3.vercel.app/api/ors";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 387;
+				CURRENT_PROJECT_VERSION = 388;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -331,6 +330,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 2.1.27;
+				ORS_BASE_URL = "https://waitwellv3.vercel.app/api/ors";
 				PRODUCT_BUNDLE_IDENTIFIER = com.nhs.WalkingWR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -348,12 +348,11 @@
 			baseConfigurationReference = 6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ORS_BASE_URL = "https://waitwellv3.vercel.app/api/ors";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 387;
+				CURRENT_PROJECT_VERSION = 388;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -381,6 +380,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 2.1.27;
+				ORS_BASE_URL = "https://waitwellv3.vercel.app/api/ors";
 				PRODUCT_BUNDLE_IDENTIFIER = com.nhs.WalkingWR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

@@ -51,6 +51,7 @@ final class WikipediaService {
             }
             return nil
         } catch {
+            print("\(Self.logTag) Wikipedia '\(commonName)': \(error.localizedDescription)")
             return nil
         }
     }

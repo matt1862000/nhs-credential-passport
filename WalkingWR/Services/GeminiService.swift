@@ -7,6 +7,13 @@
 
 import Foundation
 
+/// Result of identifying a bird from a photo (Gemini vision).
+struct BirdIdentificationResult {
+    let commonName: String
+    let scientificName: String
+    let speciesCode: String?
+}
+
 class GeminiService {
     static let shared = GeminiService()
     
@@ -680,6 +687,94 @@ class GeminiService {
         )
         
         return result
+    }
+    
+    // MARK: - Bird identification (vision)
+    
+    /// Identify a bird from a photo using Gemini vision. Use JPEG data (e.g. compressed from UIImage).
+    /// Returns nil if API key missing, request fails, or response cannot be parsed.
+    func identifyBird(imageData: Data) async -> BirdIdentificationResult? {
+        guard !apiKey.isEmpty else { return nil }
+        let base64 = imageData.base64EncodedString()
+        let prompt = """
+        Look at this photo and identify the bird. Consider only birds found in the UK.
+        Reply with exactly these three lines, no other text:
+        Common name: [the common English name]
+        Scientific name: [Latin binomial]
+        Species code: [4-letter eBird code if you know it, otherwise write unknown]
+        """
+        let urlString = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        guard let url = URL(string: urlString) else { return nil }
+        let requestBody: [String: Any] = [
+            "contents": [
+                [
+                    "parts": [
+                        [
+                            "inlineData": [
+                                "mimeType": "image/jpeg",
+                                "data": base64
+                            ]
+                        ],
+                        ["text": prompt]
+                    ]
+                ]
+            ]
+        ]
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 25
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "X-goog-api-key")
+        if let bundleId = Bundle.main.bundleIdentifier {
+            request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+        }
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else { return nil }
+        request.httpBody = bodyData
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 25
+        let session = URLSession(configuration: config)
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let candidates = json["candidates"] as? [[String: Any]],
+                  let first = candidates.first,
+                  let content = first["content"] as? [String: Any],
+                  let parts = content["parts"] as? [[String: Any]],
+                  let firstPart = parts.first,
+                  let text = firstPart["text"] as? String else {
+                return nil
+            }
+            return parseBirdIdentificationResponse(text)
+        } catch {
+            return nil
+        }
+    }
+    
+    private func parseBirdIdentificationResponse(_ text: String) -> BirdIdentificationResult? {
+        func value(afterColonIn line: String) -> String {
+            guard let idx = line.firstIndex(of: ":") else { return "" }
+            return String(line[line.index(after: idx)...]).trimmingCharacters(in: .whitespaces)
+        }
+        let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        var commonName: String?
+        var scientificName: String?
+        var speciesCode: String?
+        for line in lines {
+            let lower = line.lowercased()
+            if lower.hasPrefix("common name:") {
+                commonName = value(afterColonIn: line)
+            } else if lower.hasPrefix("scientific name:") {
+                scientificName = value(afterColonIn: line)
+            } else if lower.hasPrefix("species code:") {
+                let code = value(afterColonIn: line).lowercased()
+                if code != "unknown", code.count == 4, code.allSatisfy({ $0.isLetter }) {
+                    speciesCode = code
+                }
+            }
+        }
+        guard let name = commonName, !name.isEmpty, let sci = scientificName, !sci.isEmpty else { return nil }
+        return BirdIdentificationResult(commonName: name, scientificName: sci, speciesCode: speciesCode)
     }
 }
 

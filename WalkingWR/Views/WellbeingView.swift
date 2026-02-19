@@ -1537,10 +1537,19 @@ struct BirdSpottingView: View {
     @AppStorage("spottedBirdCodes") private var spottedBirdCodesData: Data = Data()
     @State private var expandedBird: String? = nil
     @State private var birds: [BirdInfo] = []
-    @State private var isLoading = true
+    @State private var isLoading = false
     @State private var loadError: String?
     @State private var useStaticFallback = false
     @State private var placeName: String? = nil
+    // Identify from photo (Gemini vision)
+    @State private var showBirdPhotoSource = false
+    @State private var showBirdPhotoPicker = false
+    @State private var birdPhotoUseCamera = false
+    @State private var birdPhotoForID: UIImage? = nil
+    @State private var isIdentifyingBird = false
+    @State private var identifiedBirdResult: BirdIdentificationResult? = nil
+    @State private var showIdentifiedAlert = false
+    @State private var identifyError: String? = nil
 
     var currentMonth: Int {
         Calendar.current.component(.month, from: Date())
@@ -1652,6 +1661,129 @@ struct BirdSpottingView: View {
             }
         }
         return birds
+    }
+
+    /// Spotted bird names that are not in the main list (e.g. from photo ID). Shown in "Also spotted" section.
+    private var extraSpottedBirdNames: [String] {
+        let mainNames = Set(displayedBirds.map { $0.name.lowercased() })
+        return spottedBirds
+            .filter { !mainNames.contains($0.lowercased()) }
+            .sorted()
+    }
+
+    /// Minimal BirdInfo for "Also spotted" rows (name only; no description/image).
+    private func minimalBirdInfo(for name: String) -> BirdInfo {
+        BirdInfo(
+            name: name,
+            scientificName: "",
+            description: "Spotted from photo.",
+            habitat: "",
+            imageURL: "",
+            localAsset: nil,
+            seasonalNote: "",
+            isYearRound: true,
+            summerOnly: false,
+            winterOnly: false,
+            speciesCode: nil
+        )
+    }
+
+    /// Welcome card when no list has been downloaded yet.
+    private var birdSpottingWelcomeCard: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(spacing: 12) {
+                Image(systemName: "bird.fill")
+                    .font(.system(size: 32))
+                    .foregroundColor(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bird Spotting")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    Text("0 spotted")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+            Text("Tap an option below to get started.")
+                .font(.subheadline)
+                .foregroundColor(.primary)
+
+            VStack(alignment: .leading, spacing: 12) {
+                Button {
+                    print("\(Self.birdSpotLogTag) stage=photo_source_opened")
+                    showBirdPhotoSource = true
+                } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "camera.fill")
+                            .font(.title3)
+                            .foregroundColor(.teal)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Identify from a photo")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                            Text("Take a photo or choose from your library. We’ll suggest the species and you can add it to your list.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemBackground))
+                    .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    print("\(Self.birdSpotLogTag) stage=download_birds_tapped")
+                    Task { await loadBirds() }
+                } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.title3)
+                            .foregroundColor(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Download birds seen in your area")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.primary)
+                            Text("Get the top 20 species reported near you in the last month. Tick them off as you spot them.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemBackground))
+                    .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(16)
+    }
+
+    /// Count text for header: "X/Y" where Y = main list + also spotted (e.g. 1/21).
+    private var spotCountText: String {
+        let mainSpotted = displayedBirds.filter { isSpotted($0) }.count
+        let mainTotal = displayedBirds.count
+        let extra = extraSpottedBirdNames.count
+        let totalSpotted = mainSpotted + extra
+        let totalBirds = mainTotal + extra
+        return "\(totalSpotted)/\(totalBirds)"
     }
 
     private var seasonalBirdsForHighlights: [BirdInfo] {
@@ -1772,38 +1904,61 @@ struct BirdSpottingView: View {
 
         print("\(Self.birdSpotLogTag) loading content for \(slice.count) birds (each appears when ready)")
         typealias IndexedBird = (index: Int, bird: BirdInfo)
-        await withTaskGroup(of: IndexedBird.self) { group in
-            for (i, sp) in slice.enumerated() {
-                group.addTask {
-                    let eol = await EOLService.shared.fetchSpeciesContent(commonName: sp.commonName, scientificName: sp.scientificName)
-                    let needWiki = eol.description == nil || eol.imageURL == nil
-                    let wiki: WikipediaSummary? = needWiki ? await WikipediaService.shared.fetchSummary(commonName: sp.commonName) : nil
-                    let desc = eol.description ?? wiki?.description ?? "No description available."
-                    let hab = eol.habitat ?? "Various habitats"
-                    let imgURL = eol.imageURL ?? wiki?.imageURL ?? ""
-                    let info = BirdInfo(
-                        name: sp.commonName,
-                        scientificName: sp.scientificName,
-                        description: desc,
-                        habitat: hab,
-                        imageURL: imgURL,
-                        localAsset: nil,
-                        seasonalNote: "",
-                        isYearRound: true,
-                        summerOnly: false,
-                        winterOnly: false,
-                        speciesCode: sp.speciesCode
-                    )
-                    return (i, info)
+        do {
+            try await withThrowingTaskGroup(of: IndexedBird.self) { group in
+                for (i, sp) in slice.enumerated() {
+                    group.addTask {
+                        do {
+                            let eol = await EOLService.shared.fetchSpeciesContent(commonName: sp.commonName, scientificName: sp.scientificName)
+                            let needWiki = eol.description == nil || eol.imageURL == nil
+                            let wiki: WikipediaSummary? = needWiki ? await WikipediaService.shared.fetchSummary(commonName: sp.commonName) : nil
+                            let desc = eol.description ?? wiki?.description ?? "No description available."
+                            let hab = eol.habitat ?? "Various habitats"
+                            let imgURL = eol.imageURL ?? wiki?.imageURL ?? ""
+                            let info = BirdInfo(
+                                name: sp.commonName,
+                                scientificName: sp.scientificName,
+                                description: desc,
+                                habitat: hab,
+                                imageURL: imgURL,
+                                localAsset: nil,
+                                seasonalNote: "",
+                                isYearRound: true,
+                                summerOnly: false,
+                                winterOnly: false,
+                                speciesCode: sp.speciesCode
+                            )
+                            print("\(Self.birdSpotLogTag) content ok [\(i)] \(sp.commonName) desc=\(desc != "No description available.") img=\(!imgURL.isEmpty)")
+                            return (i, info)
+                        } catch {
+                            print("\(Self.birdSpotLogTag) content fail [\(i)] \(sp.commonName): \(error.localizedDescription)")
+                            let fallback = BirdInfo(
+                                name: sp.commonName,
+                                scientificName: sp.scientificName,
+                                description: "No description available.",
+                                habitat: "Various habitats",
+                                imageURL: "",
+                                localAsset: nil,
+                                seasonalNote: "",
+                                isYearRound: true,
+                                summerOnly: false,
+                                winterOnly: false,
+                                speciesCode: sp.speciesCode
+                            )
+                            return (i, fallback)
+                        }
+                    }
+                }
+                for try await (i, info) in group {
+                    await MainActor.run {
+                        var updated = birds
+                        if i < updated.count { updated[i] = info }
+                        birds = updated
+                    }
                 }
             }
-            for await (i, info) in group {
-                await MainActor.run {
-                    var updated = birds
-                    if i < updated.count { updated[i] = info }
-                    birds = updated
-                }
-            }
+        } catch {
+            print("\(Self.birdSpotLogTag) EOL/Wikipedia load failed: \(error.localizedDescription)")
         }
 
         let finalBirds = await MainActor.run { birds }
@@ -1867,120 +2022,114 @@ struct BirdSpottingView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
-                    // Seasonal header card
-                    if useStaticFallback && locationService?.currentLocation == nil {
-                        Text("Enable location to see birds reported near you.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    VStack(spacing: 12) {
-                        // Season indicator
-                        HStack {
-                            Text(currentSeasonName)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(seasonColor)
-                                .clipShape(Capsule())
-                            
-                            Spacer()
-                            
-                            Text(useStaticFallback ? "Species list: eBird · Descriptions & images: EOL" : "eBird · EOL / Wikipedia")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        // Message: location-based when API birds (with place name if available), else seasonal
-                        Text(useStaticFallback ? seasonalMessage : (placeName.map { "In \($0), the following birds have been seen." } ?? "Based on recent sightings near you."))
-                            .font(.subheadline)
-                            .foregroundColor(.primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        
-                        Divider()
-                        
-                        // Stats
-                        HStack {
-                            Image(systemName: "bird.fill")
-                                .font(.title)
-                                .foregroundColor(.orange)
-                            Text("Birds Spotted")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                            Spacer()
-                            Text("\(displayedBirds.filter { isSpotted($0) }.count)/\(displayedBirds.count)")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.orange)
-                        }
-                        
-                        if !displayedBirds.isEmpty && displayedBirds.filter({ isSpotted($0) }).count == displayedBirds.count {
-                            Text("🎉 Amazing! You've spotted all the birds!")
-                                .font(.callout)
-                                .foregroundColor(.green)
-                        }
-                        
-                        Text("Tap a bird to learn more, then mark it as spotted")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding()
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(16)
-                    
-                    if useStaticFallback && !seasonalBirdsForHighlights.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("✨ Seasonal Specials")
-                                .font(.headline)
-                                .foregroundColor(.orange)
-                            Text("These birds are special to spot right now!")
+                    // Welcome card when no list loaded yet — start with 0 birds
+                    if displayedBirds.isEmpty && !isLoading {
+                        birdSpottingWelcomeCard
+                    } else {
+                        // Seasonal header card (after download)
+                        if useStaticFallback && locationService?.currentLocation == nil {
+                            Text("Enable location to see birds reported near you.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                            ForEach(seasonalBirdsForHighlights) { bird in
-                                HStack(spacing: 8) {
-                                    Image(systemName: isSpotted(bird) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundColor(isSpotted(bird) ? .green : .orange)
-                                    Text(bird.name)
-                                        .fontWeight(.medium)
-                                    Spacer()
-                                    Text(bird.seasonalNote)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                .padding(.vertical, 4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        VStack(spacing: 12) {
+                            HStack {
+                                Text(currentSeasonName)
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(seasonColor)
+                                    .clipShape(Capsule())
+                                Spacer()
+                                Text(useStaticFallback ? "Species list: eBird · Descriptions & images: EOL" : "eBird · EOL / Wikipedia")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
                             }
+                            Text(useStaticFallback ? seasonalMessage : (placeName.map { "In \($0), the following birds have been seen." } ?? "Based on recent sightings near you."))
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Divider()
+                            HStack {
+                                Image(systemName: "bird.fill")
+                                    .font(.title)
+                                    .foregroundColor(.orange)
+                                Text("Birds Spotted")
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                Spacer()
+                                Text(spotCountText)
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.orange)
+                            }
+                            if !displayedBirds.isEmpty && displayedBirds.filter({ isSpotted($0) }).count == displayedBirds.count {
+                                Text("🎉 Amazing! You've spotted all the birds!")
+                                    .font(.callout)
+                                    .foregroundColor(.green)
+                            }
+                            Text("Tap a bird to learn more, then mark it as spotted")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
                         .padding()
-                        .background(Color.orange.opacity(0.1))
+                        .background(Color(.secondarySystemBackground))
                         .cornerRadius(16)
-                    }
-                    
-                    if isLoading {
-                        HStack {
-                            Spacer()
-                            ProgressView()
-                            Text("Loading birds near you…")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                        }
-                        .padding(.vertical, 32)
-                    } else if let err = loadError, !err.isEmpty {
-                        VStack(spacing: 8) {
-                            Text(err)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                            Text("Showing common UK birds instead.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.vertical, 16)
-                    }
 
-                    ForEach(displayedBirds) { bird in
+                        if useStaticFallback && !seasonalBirdsForHighlights.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("✨ Seasonal Specials")
+                                    .font(.headline)
+                                    .foregroundColor(.orange)
+                                Text("These birds are special to spot right now!")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                ForEach(seasonalBirdsForHighlights) { bird in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: isSpotted(bird) ? "checkmark.circle.fill" : "circle")
+                                            .foregroundColor(isSpotted(bird) ? .green : .orange)
+                                        Text(bird.name)
+                                            .fontWeight(.medium)
+                                        Spacer()
+                                        Text(bird.seasonalNote)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .padding(.vertical, 4)
+                                }
+                            }
+                            .padding()
+                            .background(Color.orange.opacity(0.1))
+                            .cornerRadius(16)
+                        }
+
+                        if isLoading {
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                Text("Loading birds near you…")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                            }
+                            .padding(.vertical, 32)
+                        } else if let err = loadError, !err.isEmpty {
+                            VStack(spacing: 8) {
+                                Text(err)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                                Text("Showing common UK birds instead.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 16)
+                        }
+
+                        ForEach(displayedBirds) { bird in
                         BirdCard(
                             bird: bird,
                             isExpanded: expandedBird == bird.name,
@@ -1999,11 +2148,49 @@ struct BirdSpottingView: View {
                             }
                         )
                     }
-                    
+                    }
+
+                    if !extraSpottedBirdNames.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Also spotted")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.secondary)
+                                .padding(.top, 8)
+                            ForEach(extraSpottedBirdNames, id: \.self) { name in
+                                BirdCard(
+                                    bird: minimalBirdInfo(for: name),
+                                    isExpanded: expandedBird == name,
+                                    isSpotted: true,
+                                    customPhoto: SpottedPhotoStore.image(for: name),
+                                    onTap: {
+                                        withAnimation(.spring(response: 0.3)) {
+                                            if expandedBird == name {
+                                                expandedBird = nil
+                                            } else {
+                                                expandedBird = name
+                                            }
+                                        }
+                                    },
+                                    onSpotted: {
+                                        print("\(Self.birdSpotLogTag) stage=also_spotted_removed name=\(name)")
+                                        var set = spottedBirds
+                                        set.remove(name)
+                                        spottedBirdsData = (try? JSONEncoder().encode(set)) ?? Data()
+                                        SpottedPhotoStore.remove(name: name)
+                                    }
+                                )
+                            }
+                        }
+                    }
+
                     if !spottedBirds.isEmpty || !spottedBirdCodes.isEmpty {
                         Button {
+                            print("\(Self.birdSpotLogTag) stage=reset_all_sightings")
                             spottedBirdsData = Data()
                             spottedBirdCodesData = Data()
+                            SpottedPhotoStore.removeAll()
+                            print("\(Self.birdSpotLogTag) stage=reset_all_sightings_done")
                         } label: {
                             Text("Reset All Sightings")
                                 .font(.callout)
@@ -2017,11 +2204,264 @@ struct BirdSpottingView: View {
             .navigationTitle("Bird Spotting")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        print("\(Self.birdSpotLogTag) stage=photo_source_opened")
+                        showBirdPhotoSource = true
+                    } label: {
+                        Label("Identify from photo", systemImage: "camera.fill")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
                 }
             }
-            .task { await loadBirds() }
+            .sheet(isPresented: $showBirdPhotoSource) {
+                BirdPhotoSourceSheet(
+                    onTakePhoto: {
+                        print("\(Self.birdSpotLogTag) stage=photo_source_take_photo picker_opening")
+                        birdPhotoUseCamera = true
+                        showBirdPhotoSource = false
+                        showBirdPhotoPicker = true
+                    },
+                    onChooseFromLibrary: {
+                        print("\(Self.birdSpotLogTag) stage=photo_source_library picker_opening")
+                        birdPhotoUseCamera = false
+                        showBirdPhotoSource = false
+                        showBirdPhotoPicker = true
+                    },
+                    onCancel: {
+                        print("\(Self.birdSpotLogTag) stage=photo_source_cancelled")
+                        showBirdPhotoSource = false
+                    }
+                )
+            }
+            .sheet(isPresented: $showBirdPhotoPicker) {
+                ImagePicker(image: $birdPhotoForID, useCamera: birdPhotoUseCamera)
+            }
+            .onChange(of: birdPhotoForID) { _, newImage in
+                guard let img = newImage else { return }
+                print("\(Self.birdSpotLogTag) stage=image_selected picker_dismissed starting_identify")
+                showBirdPhotoPicker = false
+                Task { await runBirdIdentification(image: img) }
+            }
+            .overlay {
+                if isIdentifyingBird {
+                    ZStack {
+                        Color.black.opacity(0.6)
+                            .ignoresSafeArea()
+                        VStack(spacing: 16) {
+                            ProgressView()
+                                .scaleEffect(1.2)
+                                .tint(.white)
+                            Text("Identifying bird…")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 12)
+                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        }
+                    }
+                }
+            }
+            .alert("Bird identified", isPresented: $showIdentifiedAlert) {
+                Button("Add to spotted") {
+                    print("\(Self.birdSpotLogTag) stage=add_to_spotted_tapped")
+                    if let r = identifiedBirdResult { addIdentifiedBirdToSpotted(r, photo: birdPhotoForID) }
+                    identifiedBirdResult = nil
+                    showIdentifiedAlert = false
+                    birdPhotoForID = nil
+                    print("\(Self.birdSpotLogTag) stage=add_to_spotted_complete alert_dismissed")
+                }
+                Button("Done", role: .cancel) {
+                    print("\(Self.birdSpotLogTag) stage=done_tapped alert_dismissed")
+                    identifiedBirdResult = nil
+                    showIdentifiedAlert = false
+                    birdPhotoForID = nil
+                }
+            } message: {
+                if let r = identifiedBirdResult {
+                    Text("We think this is: \(r.commonName) (\(r.scientificName)). Add it to your spotted list?")
+                }
+            }
+            .alert("Identification failed", isPresented: .init(
+                get: { identifyError != nil },
+                set: { if !$0 { identifyError = nil; birdPhotoForID = nil; print("\(Self.birdSpotLogTag) stage=failed_alert_dismissed") } }
+            )) {
+                Button("OK", role: .cancel) {
+                    print("\(Self.birdSpotLogTag) stage=failed_alert_ok_tapped")
+                    identifyError = nil
+                    birdPhotoForID = nil
+                }
+            } message: {
+                if let err = identifyError {
+                    Text(err)
+                }
+            }
+        }
+    }
+    
+    private func runBirdIdentification(image: UIImage) async {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        print("\(Self.birdSpotLogTag) stage=identify_start overlay_visible")
+        await MainActor.run { isIdentifyingBird = true; identifyError = nil }
+        defer {
+            Task { @MainActor in
+                isIdentifyingBird = false
+                print("\(Self.birdSpotLogTag) stage=identify_overlay_dismissed")
+            }
+        }
+        guard let jpegData = compressImageForBirdID(image) else {
+            await MainActor.run { identifyError = "Could not process the photo." }
+            print("\(Self.birdSpotLogTag) stage=identify_compress_failed")
+            return
+        }
+        let compressMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        print("\(Self.birdSpotLogTag) stage=identify_compress_done compress_ms=\(compressMs) size_bytes=\(jpegData.count)")
+        let result = await GeminiService.shared.identifyBird(imageData: jpegData)
+        let apiMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000) - compressMs
+        print("\(Self.birdSpotLogTag) stage=identify_api_done api_ms=\(apiMs) result=\(result?.commonName ?? "nil")")
+        await MainActor.run {
+            if let r = result {
+                identifiedBirdResult = r
+                showIdentifiedAlert = true
+                print("\(Self.birdSpotLogTag) stage=alert_shown_success bird=\(r.commonName)")
+            } else {
+                identifyError = "Could not identify the bird. Try a clearer photo or a different bird."
+                print("\(Self.birdSpotLogTag) stage=alert_shown_failed")
+            }
+        }
+        let totalMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        print("\(Self.birdSpotLogTag) stage=identify_end total_ms=\(totalMs)")
+    }
+    
+    private func compressImageForBirdID(_ image: UIImage) -> Data? {
+        let maxDim: CGFloat = 1024
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return image.jpegData(compressionQuality: 0.8) }
+        let scale = min(maxDim / size.width, maxDim / size.height, 1)
+        let newSize = CGSize(width: size.width * scale, height: size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
+        return resized.jpegData(compressionQuality: 0.8)
+    }
+    
+    private func addIdentifiedBirdToSpotted(_ result: BirdIdentificationResult, photo: UIImage? = nil) {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        print("\(Self.birdSpotLogTag) stage=addToSpotted_start bird=\(result.commonName) has_photo=\(photo != nil)")
+        let r = result.commonName.lowercased()
+        // Exact match: same name or species code
+        var match = displayedBirds.first(where: {
+            $0.name.lowercased() == r || $0.speciesCode == result.speciesCode
+        })
+        // Fuzzy: checklist name appears in Gemini result (e.g. "Robin" in "European Robin") — prefer longest match
+        if match == nil {
+            let contained = displayedBirds.filter { r.contains($0.name.lowercased()) }
+            match = contained.max(by: { $0.name.count < $1.name.count })
+        }
+        // Fuzzy: result name appears in checklist name (e.g. "Robin" in "Robin (European)")
+        if match == nil {
+            match = displayedBirds.first(where: { $0.name.lowercased().contains(r) })
+        }
+        if let bird = match {
+            setSpotted(bird, true)
+            print("\(Self.birdSpotLogTag) addToSpotted: matched '\(result.commonName)' → list bird '\(bird.name)'")
+        } else {
+            // No match: only add as new if not already in the existing list
+            let alreadyInList = displayedBirds.first(where: {
+                $0.name.lowercased() == r || $0.speciesCode == result.speciesCode
+            })
+            if let bird = alreadyInList {
+                setSpotted(bird, true)
+                print("\(Self.birdSpotLogTag) addToSpotted: alreadyInList '\(result.commonName)' → '\(bird.name)'")
+            } else {
+                if let img = photo {
+                    SpottedPhotoStore.save(name: result.commonName, image: img)
+                }
+                if let code = result.speciesCode {
+                    var set = spottedBirdCodes
+                    set.insert(code)
+                    spottedBirdCodesData = (try? JSONEncoder().encode(set)) ?? Data()
+                }
+                var set = spottedBirds
+                set.insert(result.commonName)
+                spottedBirdsData = (try? JSONEncoder().encode(set)) ?? Data()
+                // So the main list count updates: also mark any list bird whose name is inside the result (e.g. "Robin" in "European Robin")
+                for listBird in displayedBirds where r.contains(listBird.name.lowercased()) {
+                    setSpotted(listBird, true)
+                    print("\(Self.birdSpotLogTag) addToSpotted: also marked list '\(listBird.name)' (in '\(result.commonName)')")
+                }
+                print("\(Self.birdSpotLogTag) addToSpotted: new '\(result.commonName)' (not in 20) → added to Also spotted, codes=\(result.speciesCode ?? "nil")")
+            }
+        }
+        let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        print("\(Self.birdSpotLogTag) stage=addToSpotted_end ms=\(ms)")
+    }
+}
+
+// MARK: - Bird photo source sheet
+private struct BirdPhotoSourceSheet: View {
+    let onTakePhoto: () -> Void
+    let onChooseFromLibrary: () -> Void
+    let onCancel: () -> Void
+    @Environment(\.dismiss) var dismiss
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Text("Identify a bird from a photo")
+                    .font(.headline)
+                Text("Take a new photo or choose one from your library.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                HStack(spacing: 24) {
+                    Button {
+                        onTakePhoto()
+                        dismiss()
+                    } label: {
+                        VStack(spacing: 8) {
+                            Image(systemName: "camera.fill")
+                                .font(.title)
+                            Text("Take photo")
+                                .font(.caption)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                        .background(Color(.secondarySystemBackground))
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        onChooseFromLibrary()
+                        dismiss()
+                    } label: {
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.title)
+                            Text("Photo library")
+                                .font(.caption)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                        .background(Color(.secondarySystemBackground))
+                        .cornerRadius(12)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal)
+                Spacer()
+            }
+            .padding()
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Cancel") {
+                        onCancel()
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }
@@ -2031,9 +2471,11 @@ struct BirdCard: View {
     let bird: BirdInfo
     let isExpanded: Bool
     let isSpotted: Bool
+    /// When set (e.g. for "Also spotted" from photo ID), show this image instead of bird.imageURL.
+    var customPhoto: UIImage? = nil
     let onTap: () -> Void
     let onSpotted: () -> Void
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header (always visible)
@@ -2080,8 +2522,17 @@ struct BirdCard: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Divider()
                     
-                    // Image - prefer local asset, fall back to URL. Use .fit so full bird (including head) is visible.
-                    if let assetName = bird.localAsset, UIImage(named: assetName) != nil {
+                    // Image - custom photo (e.g. from Identify from photo), then local asset, then URL.
+                    if let custom = customPhoto {
+                        Image(uiImage: custom)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 150)
+                            .background(Color.orange.opacity(0.06))
+                            .cornerRadius(12)
+                            .clipped()
+                    } else if let assetName = bird.localAsset, UIImage(named: assetName) != nil {
                         // Use bundled image
                         Image(assetName)
                             .resizable()
@@ -2090,9 +2541,9 @@ struct BirdCard: View {
                             .frame(height: 150)
                             .background(Color.orange.opacity(0.06))
                             .cornerRadius(12)
-                    } else {
+                    } else if !bird.imageURL.isEmpty, let url = URL(string: bird.imageURL) {
                         // Fall back to URL
-                        AsyncImage(url: URL(string: bird.imageURL)) { phase in
+                        AsyncImage(url: url) { phase in
                             switch phase {
                             case .empty:
                                 HStack {
@@ -2129,8 +2580,24 @@ struct BirdCard: View {
                                 EmptyView()
                             }
                         }
+                    } else {
+                        HStack {
+                            Spacer()
+                            VStack {
+                                Image(systemName: "bird.fill")
+                                    .font(.system(size: 40))
+                                    .foregroundColor(.orange)
+                                Text(bird.name)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .frame(height: 150)
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(12)
                     }
-                    
+
                     // Scientific name
                     Text(bird.scientificName)
                         .font(.caption)

@@ -91,6 +91,7 @@ final class ORSService {
     }()
     
     private var isochroneCache: [String: IsochroneCacheEntry] = [:]
+    private let cacheLock = NSLock()
     private let cacheMaxEntries = 50
     private let cacheTTL: TimeInterval = 300  // 5 minutes
     
@@ -142,12 +143,16 @@ final class ORSService {
     
     func fetchIsochroneBands(origin: CLLocationCoordinate2D, durationBucketMinutes: Int) async throws -> IsochroneBands {
         let key = cacheKey(origin: origin, durationBucketMinutes: durationBucketMinutes)
+        cacheLock.lock()
         if let entry = isochroneCache[key], Date().timeIntervalSince(entry.createdAt) < cacheTTL {
-            return entry.bands
+            let bands = entry.bands
+            cacheLock.unlock()
+            return bands
         }
-        
+        cacheLock.unlock()
+
         guard hasAPIKey else { throw ORSServiceError.noAPIKey }
-        
+
         let range = Self.rangeSeconds(forBucketMinutes: durationBucketMinutes)
         let url = URL(string: "\(baseURL)/v2/isochrones/foot-walking")!
         var request = URLRequest(url: url)
@@ -159,23 +164,28 @@ final class ORSService {
             "range": range
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        
+
         let (data, response) = try await session.data(for: request)
+        cacheLock.lock()
         if let http = response as? HTTPURLResponse {
             if http.statusCode == 429 {
-                if let cached = isochroneCache[key]?.bands { return cached }
+                let cached = isochroneCache[key]?.bands
+                cacheLock.unlock()
+                if let cached = cached { return cached }
                 throw ORSServiceError.rateLimited
             }
             if http.statusCode != 200 {
+                cacheLock.unlock()
                 throw ORSServiceError.httpStatus(http.statusCode, String(data: data.prefix(200), encoding: .utf8))
             }
         }
-        
+        cacheLock.unlock()
+
         let decoded = try JSONDecoder().decode(ORSIsochroneResponse.self, from: data)
         guard let features = decoded.features, !features.isEmpty else {
             throw ORSServiceError.invalidResponse("no features")
         }
-        
+
         var bands: [IsochroneBand] = []
         for f in features {
             guard let geom = f.geometry, let coords = geom.coordinates, let ring = coords.first, ring.count >= 3 else { continue }
@@ -187,12 +197,14 @@ final class ORSService {
         }
         bands.sort { $0.rangeSeconds < $1.rangeSeconds }
         let result = IsochroneBands(bands: bands)
-        
+
+        cacheLock.lock()
         if isochroneCache.count >= cacheMaxEntries {
-            let keysToRemove = isochroneCache.keys.prefix(cacheMaxEntries / 2)
+            let keysToRemove = Array(isochroneCache.keys.prefix(cacheMaxEntries / 2))
             for k in keysToRemove { isochroneCache.removeValue(forKey: k) }
         }
         isochroneCache[key] = IsochroneCacheEntry(bands: result)
+        cacheLock.unlock()
         return result
     }
     
