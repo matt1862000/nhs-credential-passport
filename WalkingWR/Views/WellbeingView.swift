@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UIKit
+import CoreLocation
 
 // MARK: - Wellbeing Category (extracted for reuse)
 enum WellbeingCategory: String, CaseIterable {
@@ -1539,6 +1540,7 @@ struct BirdSpottingView: View {
     @State private var isLoading = true
     @State private var loadError: String?
     @State private var useStaticFallback = false
+    @State private var placeName: String? = nil
 
     var currentMonth: Int {
         Calendar.current.component(.month, from: Date())
@@ -1696,6 +1698,7 @@ struct BirdSpottingView: View {
             await MainActor.run {
                 birds = Self.staticFallbackBirds
                 useStaticFallback = true
+                placeName = nil
                 isLoading = false
                 loadError = nil
             }
@@ -1706,6 +1709,7 @@ struct BirdSpottingView: View {
             await MainActor.run {
                 birds = Self.staticFallbackBirds
                 useStaticFallback = true
+                placeName = nil
                 isLoading = false
                 loadError = nil
             }
@@ -1722,6 +1726,7 @@ struct BirdSpottingView: View {
                 isLoading = false
                 loadError = nil
             }
+            await updatePlaceName(for: coordinate)
             return
         }
         print("\(Self.birdSpotLogTag) fetching eBird + EOL…")
@@ -1732,6 +1737,7 @@ struct BirdSpottingView: View {
             await MainActor.run {
                 birds = Self.staticFallbackBirds
                 useStaticFallback = true
+                placeName = nil
                 isLoading = false
                 loadError = nil
             }
@@ -1749,7 +1755,7 @@ struct BirdSpottingView: View {
                 habitat: "",
                 imageURL: "",
                 localAsset: nil,
-                seasonalNote: "Reported in your area this month",
+                seasonalNote: "",
                 isYearRound: true,
                 summerOnly: false,
                 winterOnly: false,
@@ -1762,6 +1768,7 @@ struct BirdSpottingView: View {
             isLoading = false
             loadError = nil
         }
+        await updatePlaceName(for: coordinate)
 
         print("\(Self.birdSpotLogTag) loading content for \(slice.count) birds (each appears when ready)")
         typealias IndexedBird = (index: Int, bird: BirdInfo)
@@ -1781,7 +1788,7 @@ struct BirdSpottingView: View {
                         habitat: hab,
                         imageURL: imgURL,
                         localAsset: nil,
-                        seasonalNote: "Reported in your area this month",
+                        seasonalNote: "",
                         isYearRound: true,
                         summerOnly: false,
                         winterOnly: false,
@@ -1802,6 +1809,22 @@ struct BirdSpottingView: View {
         let finalBirds = await MainActor.run { birds }
         BirdSpottingCache.shared.set(key: cacheKey, birds: finalBirds)
         print("\(Self.birdSpotLogTag) all \(finalBirds.count) birds loaded")
+    }
+
+    private func updatePlaceName(for coordinate: CLLocationCoordinate2D) async {
+        let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        let placemarks = try? await CLGeocoder().reverseGeocodeLocation(location)
+        guard let pm = placemarks?.first else { return }
+        // Prefer "Wakefield, West Yorkshire" style (mirrors birding sites e.g. BirdGuides hierarchy)
+        let locality = pm.locality ?? pm.subLocality
+        let area = pm.administrativeArea
+        let name: String?
+        if let loc = locality, let a = area, loc != a {
+            name = "\(loc), \(a)"
+        } else {
+            name = locality ?? area ?? pm.subAdministrativeArea
+        }
+        await MainActor.run { placeName = name }
     }
 
     // Season names for display
@@ -1870,8 +1893,8 @@ struct BirdSpottingView: View {
                                 .foregroundColor(.secondary)
                         }
                         
-                        // Message: location-based when API birds, else seasonal (updates with calendar month)
-                        Text(useStaticFallback ? seasonalMessage : "Birds reported near you this month.")
+                        // Message: location-based when API birds (with place name if available), else seasonal
+                        Text(useStaticFallback ? seasonalMessage : (placeName.map { "In \($0), the following birds have been seen." } ?? "Based on recent sightings near you."))
                             .font(.subheadline)
                             .foregroundColor(.primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2030,9 +2053,11 @@ struct BirdCard: View {
                         Text(bird.name)
                             .font(.headline)
                             .foregroundColor(.primary)
-                        Text(bird.seasonalNote)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        if !bird.seasonalNote.isEmpty {
+                            Text(bird.seasonalNote)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                     
                     Spacer()
