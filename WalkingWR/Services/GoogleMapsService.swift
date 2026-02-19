@@ -2046,6 +2046,15 @@ class GoogleMapsService: ObservableObject {
         isPrefetchingEarly = false
     }
     
+    /// Set POIs as "early prefetched" without a live API call (e.g. from cache or pre-pop DB).
+    /// Route sheet will use these via getEarlyPrefetchedPOIs() and skip its own fetch.
+    func setEarlyPrefetchedPOIs(_ pois: [PlaceResult], for location: CLLocationCoordinate2D) {
+        self.earlyPrefetchedPOIs = pois
+        self.earlyPrefetchLocation = location
+        self.earlyPrefetchComplete = true
+        self.isPrefetchingEarly = false
+    }
+    
     // MARK: - Find Nearby Places
     /// Finds points of interest near a location using multiple sources:
     /// 1. Google Places API (cached daily - one API call per 24 hours)

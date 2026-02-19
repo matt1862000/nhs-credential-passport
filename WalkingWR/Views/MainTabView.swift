@@ -145,7 +145,7 @@ struct MainTabView: View {
             if let loc = viewModel.locationService.currentLocation {
                 Task {
                     await PrePopulatedPOIService.shared.downloadDatabaseIfNeeded(userLocation: loc.coordinate)
-                    // Once DB is ready, try to start route pre-gen for all clinician durations
+                    ensurePOIsReadyForLocation(loc.coordinate)
                     tryStartRoutePreGen(at: loc.coordinate)
                 }
             }
@@ -162,6 +162,7 @@ struct MainTabView: View {
             }
             Task {
                 await PrePopulatedPOIService.shared.downloadDatabaseIfNeeded(userLocation: loc.coordinate)
+                ensurePOIsReadyForLocation(loc.coordinate)
                 tryStartRoutePreGen(at: loc.coordinate)
             }
         }
@@ -183,6 +184,25 @@ struct MainTabView: View {
         // Check if POIs are available from pre-pop DB
         guard let pois = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: coordinate, radiusMeters: 2500), pois.count >= 15 else { return }
         RoutePreGenService.shared.startPreGenForAllClinicians(pois: pois, clinicians: clinicians, location: coordinate)
+    }
+    
+    /// When we have location, ensure POIs are ready for route generation. Prefer cache and pre-pop DB to avoid a live API call.
+    private func ensurePOIsReadyForLocation(_ coordinate: CLLocationCoordinate2D) {
+        // 1. Prefer cached POIs (no API call)
+        if let cached = POICacheService.shared.getCachedPOIs(near: coordinate), !cached.isEmpty {
+            GoogleMapsService.shared.setEarlyPrefetchedPOIs(cached, for: coordinate)
+            return
+        }
+        // 2. Prefer pre-populated DB POIs (no API call)
+        let radiusMeters = 2500.0
+        if let dbPOIs = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: coordinate, radiusMeters: radiusMeters), !dbPOIs.isEmpty {
+            GoogleMapsService.shared.setEarlyPrefetchedPOIs(dbPOIs, for: coordinate)
+            return
+        }
+        // 3. No cache or pre-pop — do live fetch (only if we have API key)
+        if GoogleMapsService.shared.hasAPIKey {
+            GoogleMapsService.shared.prefetchPOIsEarly(location: coordinate)
+        }
     }
 
     private func checkForPendingPushNotification() {
