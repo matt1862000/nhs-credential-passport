@@ -184,6 +184,8 @@ class WaitingRoomViewModel: ObservableObject {
     private var walkTimer: Timer?
     private var updateTimer: Timer?
     private var isFirstFirebaseUpdate = true  // Skip alert on first sync
+    /// Prevents re-presenting clinician selection on every Firebase snapshot when user has no clinician and hasn't skipped.
+    private var hasAutoPresentedClinicianSelectionThisSession = false
     
     let healthKitService = HealthKitService()
     let notificationService = NotificationService.shared
@@ -443,7 +445,13 @@ class WaitingRoomViewModel: ObservableObject {
         // but now there are clinicians, prompt them to select one
         if hasSkippedClinicianSelection && selectedClinician == nil {
             hasSkippedClinicianSelection = false
+            showClinicianSelection = true
             print("📋 Clinicians now available - prompting user to select")
+        } else if selectedClinician == nil && !hasSkippedClinicianSelection && !hasAutoPresentedClinicianSelectionThisSession {
+            // Auto-show clinician selection once per session when we have clinicians and no selection.
+            // Stops the sheet from re-appearing on every Firebase snapshot.
+            hasAutoPresentedClinicianSelectionThisSession = true
+            showClinicianSelection = true
         }
         
         // Build clinicians entirely from Firebase data

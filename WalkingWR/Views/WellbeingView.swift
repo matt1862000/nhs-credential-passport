@@ -1753,7 +1753,7 @@ struct BirdSpottingView: View {
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.primary)
-                            Text("Get the top 20 species reported near you in the last month. Tick them off as you spot them.")
+                            Text("Get the top 10 species reported near you in the last month. Tick them off as you spot them.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1875,7 +1875,7 @@ struct BirdSpottingView: View {
             }
             return
         }
-        let limit = min(20, speciesList.count)
+        let limit = min(10, speciesList.count)
         let slice = Array(speciesList.prefix(limit))
 
         // Show list immediately with placeholders so birds appear as each one loads
@@ -2396,7 +2396,7 @@ struct BirdSpottingView: View {
                     setSpotted(listBird, true)
                     print("\(Self.birdSpotLogTag) addToSpotted: also marked list '\(listBird.name)' (in '\(result.commonName)')")
                 }
-                print("\(Self.birdSpotLogTag) addToSpotted: new '\(result.commonName)' (not in 20) → added to Also spotted, codes=\(result.speciesCode ?? "nil")")
+                print("\(Self.birdSpotLogTag) addToSpotted: new '\(result.commonName)' (not in 10) → added to Also spotted, codes=\(result.speciesCode ?? "nil")")
             }
         }
         let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
