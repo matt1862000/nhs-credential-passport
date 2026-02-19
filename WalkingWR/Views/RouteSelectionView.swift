@@ -1158,6 +1158,8 @@ struct LocalRoutePickerSheet: View {
     
     // v1.6.25: Route deduplication - track unique route signatures
     @State private var routeSignatures: Set<String> = []  // Unique signatures: "sortedPOIIds|distanceBucket"
+    /// Session-only: route signatures we already Google-validated in preview — skip duplicate validation when reopening same cache.
+    @State private var validatedPreviewRouteSignatures: Set<String> = []
     @State private var usedPrimaryPOIs: Set<String> = []  // v1.9.52: Track primary POI names to prevent semantic duplicates
     @State private var varietyExhausted = false  // True when no more unique routes possible
     
@@ -3092,6 +3094,70 @@ struct LocalRoutePickerSheet: View {
                         }
                     }
                     
+                    // Session cache only: validate first (displayed) route with Google in background so preview time is accurate. Prepop uses prepopMapKitValidateAndReorder instead.
+                    // Only run when we don't already have Google data for this route (skip if we validated it earlier this session).
+                    if !firstCached.isFromPrePopulatedDatabase, mapsService.hasAPIKey {
+                        let firstRouteForGoogle = firstRoute
+                        let firstDataForGoogle = firstRouteData
+                        let targetDuration = await MainActor.run { selectedDuration }
+                        let previewValidationSignature = firstDataForGoogle.places.map(\.placeId).sorted().joined(separator: "|") + "_\(targetDuration)"
+                        let alreadyValidated = await MainActor.run { validatedPreviewRouteSignatures.contains(previewValidationSignature) }
+                        if alreadyValidated {
+                            print("TIME_SOURCE | PREVIEW: Skipping Google validation — route already validated this session")
+                        }
+                        if !alreadyValidated {
+                        Task {
+                            guard let refreshed = await mapsService.refreshRouteWithGoogleOnly(route: firstRouteForGoogle, userLocation: userLoc) else {
+                                print("TIME_SOURCE | PREVIEW: Google validation skipped (API failed) — keeping cached \(firstRouteForGoogle.durationMinutes) min")
+                                return
+                            }
+                            var routeToApply = refreshed
+                            if mapsService.lastRouteHadRestrictedRoads, let mapKitFallback = await mapsService.getMapKitFallbackRoute(for: refreshed) {
+                                routeToApply = mapKitFallback
+                                print("TIME_SOURCE | PREVIEW: Google had restricted roads — using MapKit fallback \(mapKitFallback.durationMinutes) min for preview")
+                            }
+                            var updatedData = GeneratedRoute(
+                                places: firstDataForGoogle.places,
+                                polyline: routeToApply.trimmed ?? firstDataForGoogle.polyline,
+                                distanceMeters: routeToApply.distanceMeters,
+                                durationSeconds: routeToApply.durationMinutes * 60,
+                                legs: firstDataForGoogle.legs,
+                                usedOSRM: false,
+                                travelToStartSeconds: firstDataForGoogle.travelToStartSeconds
+                            )
+                            updatedData.usedGoogleDirections = true
+                            let isInBand = Self.isRouteInBand(routeToApply, selectedDuration: targetDuration)
+                            await MainActor.run {
+                                guard let idx = allRoutes.firstIndex(where: { $0.route.name == firstRouteForGoogle.name }) else { return }
+                                allRoutes[idx] = (route: routeToApply, data: updatedData, isDeadZoneFallback: allRoutes[idx].isDeadZoneFallback, isFromGoogle: true)
+                                if currentRouteIndex == idx {
+                                    generatedRoute = routeToApply
+                                    generatedRouteData = updatedData
+                                    lastValidRoute = routeToApply
+                                    lastValidRouteData = updatedData
+                                }
+                                print("TIME_SOURCE | PREVIEW: Google validation done — preview shows \(routeToApply.durationMinutes) min (was \(firstRouteForGoogle.durationMinutes) min, inBand: \(isInBand))")
+                                if !isInBand {
+                                    storeCrossBucketRoute(route: routeToApply, data: updatedData, isFromGoogle: true)
+                                }
+                                // Reorder so in-band routes appear first (match prepop behavior)
+                                let ordered = allRoutes.enumerated().sorted { a, b in
+                                    let inBandA = Self.isRouteInBand(a.element.route, selectedDuration: selectedDuration)
+                                    let inBandB = Self.isRouteInBand(b.element.route, selectedDuration: selectedDuration)
+                                    if inBandA != inBandB { return inBandA }
+                                    return a.offset < b.offset
+                                }
+                                allRoutes = ordered.map(\.element)
+                                if inBandRouteCount() == 0 {
+                                    print("TIME_SOURCE | PREVIEW: All routes out-of-band after validation — triggering pre-generation for in-band options")
+                                    preGenerateRemainingRoutes()
+                                }
+                                validatedPreviewRouteSignatures.insert(previewValidationSignature)
+                            }
+                        }
+                        }
+                    }
+                    
                     // v1.9.28: Clear any status messages - routes are ready to use
                     routeRefreshStatus = nil
                     
@@ -4885,6 +4951,13 @@ struct LocalRoutePickerSheet: View {
                 return
             }
             
+            // Skip refresh when route was already Google-validated in preview (same route and session) — saves one API call.
+            if wasFromGoogle {
+                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_skipped reason=already_validated_in_preview (using current route)")
+                print("DIRECTIONS | [\(taskTimeString)] ✅ Using preview route (already Google-validated)")
+                return
+            }
+            
             let googleStart = Date()
             print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_start (Google refresh on Let's Go)")
             print("DIRECTIONS | [\(taskTimeString)] 🌐 Google refresh starting...")
@@ -6299,18 +6372,22 @@ struct LocalRoutePickerSheet: View {
         let shouldReorder: Bool = await MainActor.run {
             currentRouteIndex == 0 && isValidByRouteName.values.contains(true)
         }
-        guard shouldReorder else { return }
-        
         await MainActor.run {
-            let ordered = allRoutes.enumerated().sorted { a, b in
-                let validA = isValidByRouteName[a.element.route.name] ?? false
-                let validB = isValidByRouteName[b.element.route.name] ?? false
-                if validA != validB { return validA }
-                return a.offset < b.offset
+            if shouldReorder {
+                let ordered = allRoutes.enumerated().sorted { a, b in
+                    let validA = isValidByRouteName[a.element.route.name] ?? false
+                    let validB = isValidByRouteName[b.element.route.name] ?? false
+                    if validA != validB { return validA }
+                    return a.offset < b.offset
+                }
+                allRoutes = ordered.map(\.element)
+                print("[ROUTE_DEBUG] 📦 PREPOP VALIDATE: Reordered — valid routes first (\(allRoutes.count) total)")
+                logRoutePreviewSummary()
             }
-            allRoutes = ordered.map(\.element)
-            print("[ROUTE_DEBUG] 📦 PREPOP VALIDATE: Reordered — valid routes first (\(allRoutes.count) total)")
-            logRoutePreviewSummary()
+            if inBandRouteCount() == 0 {
+                print("TIME_SOURCE | PREPOP VALIDATE: All routes out-of-band after validation — triggering pre-generation for in-band options")
+                preGenerateRemainingRoutes()
+            }
         }
     }
     
