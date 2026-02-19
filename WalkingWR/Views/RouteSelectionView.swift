@@ -4379,6 +4379,18 @@ struct LocalRoutePickerSheet: View {
                             storeCrossBucketRoute(route: displayRoute, data: deduplicatedResult, isFromGoogle: mainRoutePreviewSource == "google")
                         }
                         
+                        // Minimum display % (e.g. 30%): below this we don't show the route — show "no routes found" and suggest another bucket
+                        if Self.isRouteBelowMinimumDisplay(deduplicatedResult.durationMinutes, selectedDuration: selectedDuration) {
+                            print("[ROUTE_GEN] Route below minimum display (\(deduplicatedResult.durationMinutes)min < \(Int(Double(selectedDuration) * Self.minimumDisplayPercent))min for \(selectedDuration)min) — no routes found, suggest other bucket")
+                            allRoutes = []
+                            generatedRoute = nil
+                            generatedRouteData = nil
+                            routeGenerationComplete = true
+                            showLoadingScreen = false
+                            showMapPreview = true
+                            let others = durationOptions.filter { $0 != selectedDuration }.map { "\($0)" }.joined(separator: ", ")
+                            errorMessage = "No routes found for \(selectedDuration) min. Try \(others) min instead."
+                        } else {
                         // Initialize route array: always route 1 = main; if Google produced in-band, add as route 2 and auto-switch to it (cap duration for display)
                         var routesToShow: [(route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool, isFromGoogle: Bool)] = [(route: Self.applyDurationSanityCap(displayRoute, targetDurationMinutes: selectedDuration), data: deduplicatedResult, isDeadZoneFallback: isShortRoute, isFromGoogle: mainRoutePreviewSource == "google")]
                         var placeIdSetsToShow: [Set<String>] = [Set(filteredResult.places.map { $0.placeId })]
@@ -4514,6 +4526,7 @@ struct LocalRoutePickerSheet: View {
                         } else {
                             print("[ROUTE_GEN] ⏹️ First route is in-band — skipping pre-generation (have \(inBandRouteCount())/\(targetInBandRoutes))")
                         }
+                        }
                     }
                     
                     // MapKit started before Let's Go (live path) — same race: last route always Google
@@ -4590,12 +4603,13 @@ struct LocalRoutePickerSheet: View {
     
     @ViewBuilder
     private func shuffleErrorView(error: String) -> some View {
+        let isNoRoutesFound = error.hasPrefix("No routes found")
         VStack(spacing: 20) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 50))
                 .foregroundColor(.softAmber)
             
-            Text("Couldn't find a different route")
+            Text(isNoRoutesFound ? "No routes found" : "Couldn't find a different route")
                 .font(.headline)
                 .foregroundColor(.primary)
             
@@ -4606,18 +4620,26 @@ struct LocalRoutePickerSheet: View {
                 .padding(.horizontal)
             
             HStack(spacing: 16) {
-                Button("Try Again") {
-                    errorMessage = nil
-                    isShuffling = true
-                    generateRouteForShuffle()
+                if isNoRoutesFound {
+                    Button("Choose another duration") {
+                        showMapPreview = false
+                        errorMessage = nil
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                } else {
+                    Button("Try Again") {
+                        errorMessage = nil
+                        isShuffling = true
+                        generateRouteForShuffle()
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    
+                    Button("Change Options") {
+                        showMapPreview = false
+                        errorMessage = nil
+                    }
+                    .foregroundColor(.secondary)
                 }
-                .buttonStyle(PrimaryButtonStyle())
-                
-                Button("Change Options") {
-                    showMapPreview = false
-                    errorMessage = nil
-                }
-                .foregroundColor(.secondary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -5088,6 +5110,50 @@ struct LocalRoutePickerSheet: View {
                 let didAdd = appendRouteIfAllowed(route: capped, data: deduplicatedResult, isFromGoogle: result.usedGoogleDirections, source: "initial_free_engine")
                 if didAdd {
                     print("[ROUTE_GEN] ✅ Second route added via free engines: '\(capped.name ?? "?")' (\(durationMin)min)")
+                    // Lazy Gemini: replace template name/description with AI-generated (same as cross-bucket fallback)
+                    if Self.isTemplateRouteName(capped.name ?? "", description: capped.description), !result.places.isEmpty {
+                        let placeIdSet = Set(result.places.map { $0.placeId })
+                        let places = result.places
+                        let durationMinCap = capped.durationMinutes
+                        let distanceMCap = capped.distanceMeters
+                        Task {
+                            let waypointInfos = places.map { GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity) }
+                            let content = await GeminiService.shared.generateRouteContent(
+                                waypoints: waypointInfos,
+                                durationMinutes: durationMinCap,
+                                distanceMeters: distanceMCap,
+                                difficulty: nil
+                            )
+                            await MainActor.run {
+                                guard let idx = allRoutes.firstIndex(where: { Set($0.data.places.map { $0.placeId }) == placeIdSet }) else { return }
+                                let existing = allRoutes[idx].route
+                                let updated = WalkingRoute(
+                                    name: content.name,
+                                    description: content.description,
+                                    durationMinutes: existing.durationMinutes,
+                                    distanceMeters: existing.distanceMeters,
+                                    difficulty: existing.difficulty,
+                                    isIndoor: existing.isIndoor,
+                                    isAccessible: existing.isAccessible,
+                                    landmarks: existing.landmarks,
+                                    icon: existing.icon,
+                                    color: existing.color,
+                                    qrMarkers: existing.qrMarkers,
+                                    routeType: existing.routeType,
+                                    trimmed: existing.trimmed,
+                                    walkingDirections: existing.walkingDirections,
+                                    usedOSRMRouting: existing.usedOSRMRouting,
+                                    isFromPrePopulatedDatabase: existing.isFromPrePopulatedDatabase,
+                                    travelToStartMinutes: existing.travelToStartMinutes
+                                )
+                                allRoutes[idx] = (route: updated, data: allRoutes[idx].data, isDeadZoneFallback: allRoutes[idx].isDeadZoneFallback, isFromGoogle: allRoutes[idx].isFromGoogle)
+                                if currentRouteIndex == idx {
+                                    generatedRoute = updated
+                                }
+                                print("[ROUTE_DEBUG] 🔄 Free-engine route updated with Gemini name: '\(content.name)'")
+                            }
+                        }
+                    }
                 }
                 return didAdd
             }
@@ -5779,6 +5845,14 @@ struct LocalRoutePickerSheet: View {
     /// a severely out-of-band route as the sole first route — triggers cross-bucket storage + fallthrough to live generation.
     private static func isRouteSeverelyShort(_ route: WalkingRoute, selectedDuration: Int) -> Bool {
         route.durationMinutes < Int(Double(selectedDuration) * 0.50)
+    }
+    
+    /// Minimum fraction of requested duration for a route to be shown at all (e.g. 30%). Below this we show "No routes found" and suggest another bucket.
+    private static let minimumDisplayPercent = 0.30
+    
+    /// True if route duration is below the minimum display threshold — do not show; show "no routes found" and suggest another duration instead.
+    private static func isRouteBelowMinimumDisplay(_ routeMinutes: Int, selectedDuration: Int) -> Bool {
+        routeMinutes < max(1, Int(Double(selectedDuration) * minimumDisplayPercent))
     }
     
     /// Wider band used for +1 and pre-gen when we need a second route: 65–125% for short targets (≤10 min), else same as isRouteInBand. Same min distance. So 7 min is accepted for 10 min target in pre-gen.
@@ -7631,8 +7705,9 @@ struct LocalRoutePickerSheet: View {
                         }
                     }
                     if fallbackCandidates.isEmpty && !rejectedShortRoutes.isEmpty {
-                        // Last resort: use rejected short routes
-                        let bestShort = rejectedShortRoutes.max(by: { $0.data.durationMinutes < $1.data.durationMinutes })
+                        // Last resort: use rejected short routes only if at least minimum display % (e.g. 30%) of target
+                        let minDisplayMinutes = max(1, Int(Double(selectedDuration) * Self.minimumDisplayPercent))
+                        let bestShort = rejectedShortRoutes.filter { $0.data.durationMinutes >= minDisplayMinutes }.max(by: { $0.data.durationMinutes < $1.data.durationMinutes })
                         if let fallback = bestShort {
                             let cappedFallbackRoute = fallback.route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
                             // Mark isFromGoogle as false so the sweep will re-measure
