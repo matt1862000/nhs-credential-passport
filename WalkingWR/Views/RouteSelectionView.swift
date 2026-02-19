@@ -11370,6 +11370,7 @@ struct RouteExplorationLoadingView: View {
     @State private var lastStageAdvanceTime: Date = Date()
     @State private var hasCompletedAllStages: Bool = false
     @State private var notificationPermissionRequested: Bool = false
+    @State private var notificationDeniedThisSession: Bool = false  // Show cross for Stage 0 when user denies
     
     // Stage-specific animation states
     @State private var radarPulseScale: CGFloat = 1.0  // Stage 0: Radar pulse
@@ -11481,13 +11482,14 @@ struct RouteExplorationLoadingView: View {
                 VStack(spacing: 16) {
                     // Stage progress card - v1.8.5: Sequential stage animation
                     VStack(alignment: .leading, spacing: 12) {
-                        // Stage 0: Enabling notifications
+                        // Stage 0: Enabling notifications (cross when denied, tick when allowed)
                         stageRow(
                             icon: "bell.badge",
                             title: "Enabling notifications",
                             isComplete: displayedStageIndex >= 1,
                             isActive: displayedStageIndex == 0,
-                            activeColor: .orange
+                            activeColor: .orange,
+                            isDenied: (displayedStageIndex >= 1 && !notificationService.isAuthorized) || notificationDeniedThisSession
                         )
                         
                         // Stage 1: Finding places
@@ -11550,6 +11552,7 @@ struct RouteExplorationLoadingView: View {
             countdownSeconds = 60
             countdownExpired = false
             notificationPermissionRequested = false
+            notificationDeniedThisSession = false
             print("🎬 Loading view appeared - starting at stage 0 (Enabling notifications)")
             
             // IMPORTANT: Route generation (stages 1-4) runs independently in the background.
@@ -11688,6 +11691,18 @@ struct RouteExplorationLoadingView: View {
                     Task {
                         let granted = await self.notificationService.requestAuthorization()
                         print("🔔 Notification permission result: \(granted ? "granted" : "denied")")
+                        await MainActor.run {
+                            if !granted {
+                                self.notificationDeniedThisSession = true
+                                // Advance to next stage after short delay so user sees cross then progress
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                    if self.displayedStageIndex == 0 && !self.hasCompletedAllStages {
+                                        self.advanceToStageWithMinDelay(1)
+                                        self.startPOIIconsAnimation()
+                                    }
+                                }
+                            }
+                        }
                         // The onChange handler will advance to Stage 1 if granted
                         // Route generation (stages 1-4) continues regardless of this result
                     }
@@ -11716,10 +11731,14 @@ struct RouteExplorationLoadingView: View {
     // MARK: - Stage Row Helper
     
     @ViewBuilder
-    private func stageRow(icon: String, title: String, isComplete: Bool, isActive: Bool, subtitle: String? = nil, activeColor: Color = .tealAccent) -> some View {
+    private func stageRow(icon: String, title: String, isComplete: Bool, isActive: Bool, subtitle: String? = nil, activeColor: Color = .tealAccent, isDenied: Bool = false) -> some View {
         HStack(spacing: 12) {
-            // Status indicator (checkmark or spinner)
-            if isComplete {
+            // Status indicator (checkmark, cross when denied, or spinner)
+            if isDenied && (isComplete || isActive) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.orange)
+                    .font(.title3)
+            } else if isComplete {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundColor(.green)
                     .font(.title3)
@@ -11735,7 +11754,7 @@ struct RouteExplorationLoadingView: View {
             
             // Stage icon
             Image(systemName: icon)
-                .foregroundColor(isComplete ? .green : (isActive ? activeColor : .secondary.opacity(0.5)))
+                .foregroundColor(isDenied && (isComplete || isActive) ? .orange : (isComplete ? .green : (isActive ? activeColor : .secondary.opacity(0.5))))
                 .font(.subheadline)
                 .frame(width: 20)
             
