@@ -1400,7 +1400,7 @@ struct NatureSection: View {
             NatureCameraView(photoStorage: photoStorage)
         }
         .sheet(isPresented: $showBirdChecklist) {
-            BirdSpottingView()
+            BirdSpottingView(locationService: viewModel.locationService)
         }
     }
 }
@@ -1504,27 +1504,47 @@ struct BirdInfo: Identifiable {
     let scientificName: String
     let description: String
     let habitat: String
-    let imageURL: String // Wikipedia image URL (fallback)
-    let localAsset: String? // Bundled asset name (preferred)
-    let seasonalNote: String // When they're commonly seen
+    let imageURL: String
+    let localAsset: String?
+    let seasonalNote: String
     let isYearRound: Bool
     let summerOnly: Bool
     let winterOnly: Bool
+    /// eBird species code when from API; nil for static fallback. Used to key checklist.
+    let speciesCode: String?
+
+    init(name: String, scientificName: String, description: String, habitat: String, imageURL: String, localAsset: String?, seasonalNote: String, isYearRound: Bool, summerOnly: Bool, winterOnly: Bool, speciesCode: String? = nil) {
+        self.name = name
+        self.scientificName = scientificName
+        self.description = description
+        self.habitat = habitat
+        self.imageURL = imageURL
+        self.localAsset = localAsset
+        self.seasonalNote = seasonalNote
+        self.isYearRound = isYearRound
+        self.summerOnly = summerOnly
+        self.winterOnly = winterOnly
+        self.speciesCode = speciesCode
+    }
 }
 
 // MARK: - Bird Spotting View
 struct BirdSpottingView: View {
+    var locationService: LocationService?
     @Environment(\.dismiss) var dismiss
     @AppStorage("spottedBirds") private var spottedBirdsData: Data = Data()
+    @AppStorage("spottedBirdCodes") private var spottedBirdCodesData: Data = Data()
     @State private var expandedBird: String? = nil
-    
-    // Get current month to show appropriate birds
+    @State private var birds: [BirdInfo] = []
+    @State private var isLoading = true
+    @State private var loadError: String?
+    @State private var useStaticFallback = false
+
     var currentMonth: Int {
         Calendar.current.component(.month, from: Date())
     }
-    
-    // Common UK birds with seasonal availability
-    let allBirds: [BirdInfo] = [
+
+    private static let staticFallbackBirds: [BirdInfo] = [
         // Year-round residents (always show)
         BirdInfo(name: "Robin", scientificName: "Erithacus rubecula", 
                  description: "Britain's favourite bird with its distinctive red breast. Very territorial and often seen in gardens.",
@@ -1619,7 +1639,171 @@ struct BirdSpottingView: View {
                  localAsset: "Redwing",
                  seasonalNote: "Winter visitor (Oct-Mar)", isYearRound: false, summerOnly: false, winterOnly: true)
     ]
-    
+
+    /// Birds to show: dynamic list from API or static list filtered by current season.
+    private var displayedBirds: [BirdInfo] {
+        if useStaticFallback {
+            let isSummer = currentMonth >= 4 && currentMonth <= 9
+            let isWinter = currentMonth <= 3 || currentMonth >= 10
+            return Self.staticFallbackBirds.filter { b in
+                b.isYearRound || (b.summerOnly && isSummer) || (b.winterOnly && isWinter)
+            }
+        }
+        return birds
+    }
+
+    private var seasonalBirdsForHighlights: [BirdInfo] {
+        let month = currentMonth
+        return Self.staticFallbackBirds.filter { b in
+            (b.summerOnly && (month == 4 || month == 5)) || (b.winterOnly && (month == 10 || month == 11))
+        }
+    }
+
+    var spottedBirdCodes: Set<String> {
+        get { (try? JSONDecoder().decode(Set<String>.self, from: spottedBirdCodesData)) ?? [] }
+        set { spottedBirdCodesData = (try? JSONEncoder().encode(newValue)) ?? Data() }
+    }
+
+    var spottedBirds: Set<String> {
+        get { (try? JSONDecoder().decode(Set<String>.self, from: spottedBirdsData)) ?? [] }
+        set { spottedBirdsData = (try? JSONEncoder().encode(newValue)) ?? Data() }
+    }
+
+    func isSpotted(_ bird: BirdInfo) -> Bool {
+        if let code = bird.speciesCode { return spottedBirdCodes.contains(code) }
+        return spottedBirds.contains(bird.name)
+    }
+
+    func setSpotted(_ bird: BirdInfo, _ spotted: Bool) {
+        if let code = bird.speciesCode {
+            var set = spottedBirdCodes
+            if spotted { set.insert(code) } else { set.remove(code) }
+            spottedBirdCodesData = (try? JSONEncoder().encode(set)) ?? Data()
+        } else {
+            var set = spottedBirds
+            if spotted { set.insert(bird.name) } else { set.remove(bird.name) }
+            spottedBirdsData = (try? JSONEncoder().encode(set)) ?? Data()
+        }
+    }
+
+    private static let birdSpotLogTag = "[BIRD_SPOT]"
+
+    private func loadBirds() async {
+        let coord = await MainActor.run { locationService?.currentLocation?.coordinate }
+        let key = APIKeys.ebird
+        if coord == nil {
+            print("\(Self.birdSpotLogTag) no location, using static list")
+            await MainActor.run {
+                birds = Self.staticFallbackBirds
+                useStaticFallback = true
+                isLoading = false
+                loadError = nil
+            }
+            return
+        }
+        if key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            print("\(Self.birdSpotLogTag) no eBird API key, using static list")
+            await MainActor.run {
+                birds = Self.staticFallbackBirds
+                useStaticFallback = true
+                isLoading = false
+                loadError = nil
+            }
+            return
+        }
+        let coordinate = coord!
+        let month = Calendar.current.component(.month, from: Date())
+        let cacheKey = BirdSpottingCache.shared.cacheKey(coordinate: coordinate, month: month)
+        if let cached = BirdSpottingCache.shared.get(key: cacheKey), !cached.isEmpty {
+            print("\(Self.birdSpotLogTag) cache hit: \(cached.count) birds")
+            await MainActor.run {
+                birds = cached
+                useStaticFallback = false
+                isLoading = false
+                loadError = nil
+            }
+            return
+        }
+        print("\(Self.birdSpotLogTag) fetching eBird + EOL…")
+        await MainActor.run { isLoading = true; loadError = nil }
+        let speciesList = await EBirdService.shared.fetchRecentSpecies(coordinate: coordinate, daysBack: 30)
+        if speciesList.isEmpty {
+            print("\(Self.birdSpotLogTag) eBird returned 0 species, using static list")
+            await MainActor.run {
+                birds = Self.staticFallbackBirds
+                useStaticFallback = true
+                isLoading = false
+                loadError = nil
+            }
+            return
+        }
+        let limit = min(20, speciesList.count)
+        let slice = Array(speciesList.prefix(limit))
+
+        // Show list immediately with placeholders so birds appear as each one loads
+        let placeholders: [BirdInfo] = slice.map { sp in
+            BirdInfo(
+                name: sp.commonName,
+                scientificName: sp.scientificName,
+                description: "Loading…",
+                habitat: "",
+                imageURL: "",
+                localAsset: nil,
+                seasonalNote: "Reported in your area this month",
+                isYearRound: true,
+                summerOnly: false,
+                winterOnly: false,
+                speciesCode: sp.speciesCode
+            )
+        }
+        await MainActor.run {
+            birds = placeholders
+            useStaticFallback = false
+            isLoading = false
+            loadError = nil
+        }
+
+        print("\(Self.birdSpotLogTag) loading content for \(slice.count) birds (each appears when ready)")
+        typealias IndexedBird = (index: Int, bird: BirdInfo)
+        await withTaskGroup(of: IndexedBird.self) { group in
+            for (i, sp) in slice.enumerated() {
+                group.addTask {
+                    let eol = await EOLService.shared.fetchSpeciesContent(commonName: sp.commonName, scientificName: sp.scientificName)
+                    let needWiki = eol.description == nil || eol.imageURL == nil
+                    let wiki: WikipediaSummary? = needWiki ? await WikipediaService.shared.fetchSummary(commonName: sp.commonName) : nil
+                    let desc = eol.description ?? wiki?.description ?? "No description available."
+                    let hab = eol.habitat ?? "Various habitats"
+                    let imgURL = eol.imageURL ?? wiki?.imageURL ?? ""
+                    let info = BirdInfo(
+                        name: sp.commonName,
+                        scientificName: sp.scientificName,
+                        description: desc,
+                        habitat: hab,
+                        imageURL: imgURL,
+                        localAsset: nil,
+                        seasonalNote: "Reported in your area this month",
+                        isYearRound: true,
+                        summerOnly: false,
+                        winterOnly: false,
+                        speciesCode: sp.speciesCode
+                    )
+                    return (i, info)
+                }
+            }
+            for await (i, info) in group {
+                await MainActor.run {
+                    var updated = birds
+                    if i < updated.count { updated[i] = info }
+                    birds = updated
+                }
+            }
+        }
+
+        let finalBirds = await MainActor.run { birds }
+        BirdSpottingCache.shared.set(key: cacheKey, birds: finalBirds)
+        print("\(Self.birdSpotLogTag) all \(finalBirds.count) birds loaded")
+    }
+
     // Season names for display
     var currentSeasonName: String {
         switch currentMonth {
@@ -1656,45 +1840,17 @@ struct BirdSpottingView: View {
         }
     }
     
-    // Special seasonal birds to highlight
-    var seasonalHighlights: [BirdInfo] {
-        let month = currentMonth
-        return allBirds.filter { bird in
-            // Highlight arriving summer visitors in spring
-            if bird.summerOnly && (month == 4 || month == 5) { return true }
-            // Highlight arriving winter visitors in autumn
-            if bird.winterOnly && (month == 10 || month == 11) { return true }
-            return false
-        }
-    }
-    
-    // Filter birds based on current season
-    var seasonalBirds: [BirdInfo] {
-        let isSummer = currentMonth >= 4 && currentMonth <= 9  // April to September
-        let isWinter = currentMonth <= 3 || currentMonth >= 10 // October to March
-        
-        return allBirds.filter { bird in
-            if bird.isYearRound { return true }
-            if bird.summerOnly && isSummer { return true }
-            if bird.winterOnly && isWinter { return true }
-            return false
-        }
-    }
-    
-    var spottedBirds: Set<String> {
-        get {
-            (try? JSONDecoder().decode(Set<String>.self, from: spottedBirdsData)) ?? []
-        }
-        set {
-            spottedBirdsData = (try? JSONEncoder().encode(newValue)) ?? Data()
-        }
-    }
-    
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
                     // Seasonal header card
+                    if useStaticFallback && locationService?.currentLocation == nil {
+                        Text("Enable location to see birds reported near you.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     VStack(spacing: 12) {
                         // Season indicator
                         HStack {
@@ -1709,14 +1865,13 @@ struct BirdSpottingView: View {
                             
                             Spacer()
                             
-                            // RSPB credit
-                            Text("Data: RSPB")
+                            Text(useStaticFallback ? "Species list: eBird · Descriptions & images: EOL" : "eBird · EOL / Wikipedia")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
                         
-                        // Seasonal message
-                        Text(seasonalMessage)
+                        // Message: location-based when API birds, else seasonal (updates with calendar month)
+                        Text(useStaticFallback ? seasonalMessage : "Birds reported near you this month.")
                             .font(.subheadline)
                             .foregroundColor(.primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1732,13 +1887,13 @@ struct BirdSpottingView: View {
                                 .font(.title2)
                                 .fontWeight(.bold)
                             Spacer()
-                            Text("\(spottedBirds.count)/\(seasonalBirds.count)")
+                            Text("\(displayedBirds.filter { isSpotted($0) }.count)/\(displayedBirds.count)")
                                 .font(.title2)
                                 .fontWeight(.bold)
                                 .foregroundColor(.orange)
                         }
                         
-                        if spottedBirds.count == seasonalBirds.count && !seasonalBirds.isEmpty {
+                        if !displayedBirds.isEmpty && displayedBirds.filter({ isSpotted($0) }).count == displayedBirds.count {
                             Text("🎉 Amazing! You've spotted all the birds!")
                                 .font(.callout)
                                 .foregroundColor(.green)
@@ -1752,21 +1907,18 @@ struct BirdSpottingView: View {
                     .background(Color(.secondarySystemBackground))
                     .cornerRadius(16)
                     
-                    // Seasonal highlights (if any)
-                    if !seasonalHighlights.isEmpty {
+                    if useStaticFallback && !seasonalBirdsForHighlights.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("✨ Seasonal Specials")
                                 .font(.headline)
                                 .foregroundColor(.orange)
-                            
                             Text("These birds are special to spot right now!")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                            
-                            ForEach(seasonalHighlights) { bird in
+                            ForEach(seasonalBirdsForHighlights) { bird in
                                 HStack(spacing: 8) {
-                                    Image(systemName: spottedBirds.contains(bird.name) ? "checkmark.circle.fill" : "circle")
-                                        .foregroundColor(spottedBirds.contains(bird.name) ? .green : .orange)
+                                    Image(systemName: isSpotted(bird) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(isSpotted(bird) ? .green : .orange)
                                     Text(bird.name)
                                         .fontWeight(.medium)
                                     Spacer()
@@ -1782,12 +1934,34 @@ struct BirdSpottingView: View {
                         .cornerRadius(16)
                     }
                     
-                    // Bird cards
-                    ForEach(seasonalBirds) { bird in
+                    if isLoading {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                            Text("Loading birds near you…")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                        }
+                        .padding(.vertical, 32)
+                    } else if let err = loadError, !err.isEmpty {
+                        VStack(spacing: 8) {
+                            Text(err)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                            Text("Showing common UK birds instead.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 16)
+                    }
+
+                    ForEach(displayedBirds) { bird in
                         BirdCard(
                             bird: bird,
                             isExpanded: expandedBird == bird.name,
-                            isSpotted: spottedBirds.contains(bird.name),
+                            isSpotted: isSpotted(bird),
                             onTap: {
                                 withAnimation(.spring(response: 0.3)) {
                                     if expandedBird == bird.name {
@@ -1798,21 +1972,15 @@ struct BirdSpottingView: View {
                                 }
                             },
                             onSpotted: {
-                                var spotted = spottedBirds
-                                if spotted.contains(bird.name) {
-                                    spotted.remove(bird.name)
-                                } else {
-                                    spotted.insert(bird.name)
-                                }
-                                spottedBirdsData = (try? JSONEncoder().encode(spotted)) ?? Data()
+                                setSpotted(bird, !isSpotted(bird))
                             }
                         )
                     }
                     
-                    // Reset button
-                    if !spottedBirds.isEmpty {
+                    if !spottedBirds.isEmpty || !spottedBirdCodes.isEmpty {
                         Button {
                             spottedBirdsData = Data()
+                            spottedBirdCodesData = Data()
                         } label: {
                             Text("Reset All Sightings")
                                 .font(.callout)
@@ -1830,6 +1998,7 @@ struct BirdSpottingView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            .task { await loadBirds() }
         }
     }
 }
@@ -1886,14 +2055,15 @@ struct BirdCard: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Divider()
                     
-                    // Image - prefer local asset, fall back to URL
+                    // Image - prefer local asset, fall back to URL. Use .fit so full bird (including head) is visible.
                     if let assetName = bird.localAsset, UIImage(named: assetName) != nil {
                         // Use bundled image
                         Image(assetName)
                             .resizable()
-                            .aspectRatio(contentMode: .fill)
+                            .scaledToFit()
+                            .frame(maxWidth: .infinity)
                             .frame(height: 150)
-                            .clipped()
+                            .background(Color.orange.opacity(0.06))
                             .cornerRadius(12)
                     } else {
                         // Fall back to URL
@@ -1909,9 +2079,10 @@ struct BirdCard: View {
                             case .success(let image):
                                 image
                                     .resizable()
-                                    .aspectRatio(contentMode: .fill)
+                                    .scaledToFit()
+                                    .frame(maxWidth: .infinity)
                                     .frame(height: 150)
-                                    .clipped()
+                                    .background(Color.orange.opacity(0.06))
                                     .cornerRadius(12)
                             case .failure:
                                 HStack {

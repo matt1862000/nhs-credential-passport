@@ -43,7 +43,7 @@ class LocationService: NSObject, ObservableObject {
             // v1.9.78: Log every time direction index changes
             if currentDirectionIndex != oldValue {
                 let logMsg = "🔄 Direction index changed: \(oldValue) → \(currentDirectionIndex) (total: \(directionWaypoints.count))"
-                print("📍 [DIRECTION INDEX] \(logMsg)")
+                print("[WALK_REFRESH] 📍 [DIRECTION INDEX] \(logMsg)")
                 debugLogger.log(logMsg, category: "DIRECTION_INDEX")
                 let stepInstruction = currentDirectionIndex < directionWaypoints.count ? directionWaypoints[currentDirectionIndex].instruction : "arrival"
                 walkDebug("STEP \(currentDirectionIndex + 1)/\(directionWaypoints.count) → '\(stepInstruction)' (was \(oldValue + 1))")
@@ -51,7 +51,7 @@ class LocationService: NSObject, ObservableObject {
                 if currentDirectionIndex < directionWaypoints.count {
                     let currentWaypoint = directionWaypoints[currentDirectionIndex]
                     let instructionLog = "📋 Now showing instruction: '\(currentWaypoint.instruction)' (index \(currentDirectionIndex))"
-                    print("📍 [DIRECTION INDEX] \(instructionLog)")
+                    print("[WALK_REFRESH] 📍 [DIRECTION INDEX] \(instructionLog)")
                     debugLogger.log(instructionLog, category: "DIRECTION_INDEX")
                 }
             }

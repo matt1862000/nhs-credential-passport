@@ -43,6 +43,14 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
             application.registerForRemoteNotifications()
         }
         
+        // Release prepop in-memory cache on memory warning to reduce jetsam risk
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMemoryWarning),
+            name: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil
+        )
+        
         // Diagnostic route run: triggered by Documents/diagnostic_trigger.txt file (Finder file sharing)
         // OR by launch argument -RUN_DIAGNOSTIC (Xcode scheme > Run > Arguments > "-RUN_DIAGNOSTIC")
         Task {
@@ -56,6 +64,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
         }
         
         return true
+    }
+    
+    @objc private func handleMemoryWarning() {
+        PrePopulatedPOIService.shared.clearMemoryCache()
     }
     
     private func runDiagnosticRouteGenerationIfTriggered() async {

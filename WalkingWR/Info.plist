@@ -32,6 +32,8 @@
 	<string>$(OPEN_ROUTE_SERVICE_API_KEY)</string>
 	<key>GRAPHHOPPER_API_KEY</key>
 	<string>$(GRAPHHOPPER_API_KEY)</string>
+	<key>EBIRD_API_KEY</key>
+	<string>$(EBIRD_API_KEY)</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
@@ -39,6 +41,6 @@
 	<key>CFBundleShortVersionString</key>
 	<string>2.1.27</string>
 	<key>CFBundleVersion</key>
-	<string>363</string>
+	<string>383</string>
 </dict>
 </plist>

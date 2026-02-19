@@ -56,7 +56,7 @@ class FirebaseService: ObservableObject {
             guard let self = self else { return }
             
             #if DEBUG
-            print("📡 Firebase snapshot received!")
+            print("[WALK_REFRESH] 📡 Firebase snapshot received!")
             #endif
             
             if let error = error {

@@ -7021,7 +7021,7 @@ class GoogleMapsService: ObservableObject {
         let timeString = formatter.string(from: startTime)
         
         let routeSourceLabel = route.usedOSRMRouting ? "cached_OSM" : (route.isFromPrePopulatedDatabase ? "prepop" : "mapkit_or_google")
-        print("REFRESH_SOURCE | [\(timeString)] refreshRouteWithMapKit STARTED incoming=\(routeSourceLabel) usedOSRM=\(route.usedOSRMRouting) isPrePop=\(route.isFromPrePopulatedDatabase)")
+        print("[WALK_REFRESH] REFRESH_SOURCE | [\(timeString)] refreshRouteWithMapKit STARTED incoming=\(routeSourceLabel) usedOSRM=\(route.usedOSRMRouting) isPrePop=\(route.isFromPrePopulatedDatabase)")
         print("⏱️ [ROUTE REFRESH] [\(timeString)] 🍎 refreshRouteWithMapKit() STARTED")
         print("🍎 REFRESH: Getting fresh MapKit directions for navigation...")
         
@@ -7229,7 +7229,7 @@ class GoogleMapsService: ObservableObject {
         let endTime = Date()
         let endTimeString = formatter.string(from: endTime)
         let totalElapsed = endTime.timeIntervalSince(startTime)
-        print("REFRESH_SOURCE | [\(endTimeString)] refreshRouteWithMapKit COMPLETED elapsed=\(String(format: "%.2f", totalElapsed))s (Apple/MapKit route ready)")
+        print("[WALK_REFRESH] REFRESH_SOURCE | [\(endTimeString)] refreshRouteWithMapKit COMPLETED elapsed=\(String(format: "%.2f", totalElapsed))s (Apple/MapKit route ready)")
         print("⏱️ [ROUTE REFRESH] [\(endTimeString)] ✅ refreshRouteWithMapKit() COMPLETED in \(String(format: "%.2f", totalElapsed))s")
         
         return refreshedRoute
@@ -7468,7 +7468,7 @@ class GoogleMapsService: ObservableObject {
             // Prioritizes the road from the marker's address if available
             // This ensures routes stay on public roads and don't go into schools/private areas
             // Run queries in parallel for speed, with fallback mirrors for reliability
-            print("🛤️ [ROAD SNAP] Starting waypoint snapping for \(rawWaypoints.count) waypoints...")
+            print("[WALK_REFRESH] 🛤️ [ROAD SNAP] Starting waypoint snapping for \(rawWaypoints.count) waypoints...")
             let snappedWaypoints = await withTaskGroup(of: (Int, CLLocationCoordinate2D).self) { group in
                 for (index, waypoint) in rawWaypoints.enumerated() {
                     group.addTask {
@@ -7960,7 +7960,7 @@ class GoogleMapsService: ObservableObject {
         let rawWaypoints = route.qrMarkers.map { $0.coordinate }
         guard !rawWaypoints.isEmpty else { return [] }
         if ORSService.shared.hasAPIKey, let orsSnapped = await ORSService.shared.fetchSnapV2(coordinates: rawWaypoints, radiusMeters: 100) {
-            print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(orsSnapped.count) waypoints) — ORS Snap V2")
+            print("[WALK_REFRESH] 🛤️ [ROAD SNAP] Waypoint snapping complete (\(orsSnapped.count) waypoints) — ORS Snap V2")
             return orsSnapped
         }
         typealias SnapResult = (index: Int, coord: CLLocationCoordinate2D, overpassSucceeded: Bool)
@@ -8269,7 +8269,7 @@ class GoogleMapsService: ObservableObject {
         let timeString = formatter.string(from: startTime)
         
         let incomingSourceLabel = route.usedOSRMRouting ? "cached_OSM" : (route.isFromPrePopulatedDatabase ? "prepop" : "mapkit_or_google")
-        print("REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly STARTED incoming=\(incomingSourceLabel) (typically MapKit/Apple route from previous step)")
+        print("[WALK_REFRESH] REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly STARTED incoming=\(incomingSourceLabel) (typically MapKit/Apple route from previous step)")
         print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)] 🚀 refreshRouteWithGoogleOnly() STARTED")
         print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)]   Route: '\(route.name)'")
         print("⏱️ [GOOGLE-ONLY REFRESH] [\(timeString)]   Waypoints: \(route.qrMarkers.count)")
@@ -8297,25 +8297,25 @@ class GoogleMapsService: ObservableObject {
         
         // Option A: Fast path when caller wants refinement — Directions (raw) and road snapping in parallel; return fast route, then call onRefinedRoute with snapped route.
         if let onRefined = onRefinedRoute {
-            print("REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: fast path (raw waypoints) + refinement in background")
+            print("[WALK_REFRESH] REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: fast path (raw waypoints) + refinement in background")
             async let fastResult = fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: rawWaypoints, preserveWaypointOrder: true)
             async let snappedResult = snapWaypointsToRoads(route: route)
             let fastRoute = await fastResult
             if let fast = fastRoute {
                 let elapsed = Date().timeIntervalSince(startTime)
-                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready, fast path — refinement in background)")
+                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready, fast path — refinement in background)")
                 Task { [route, userLocation] in
                     let snapped = await self.snapWaypointsToRoads(route: route)
                     for (index, (original, snappedCoord)) in zip(rawWaypoints, snapped).enumerated() where index < snapped.count {
                         let distance = CLLocation(latitude: original.latitude, longitude: original.longitude)
                             .distance(from: CLLocation(latitude: snappedCoord.latitude, longitude: snappedCoord.longitude))
                         if distance > 1 {
-                            print("🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m (refinement)")
+                            print("[WALK_REFRESH] 🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m (refinement)")
                         }
                     }
                     if let refined = await self.fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snapped, preserveWaypointOrder: true) {
                         let refineElapsed = Date().timeIntervalSince(startTime)
-                        print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly REFINED elapsed=\(String(format: "%.2f", refineElapsed))s (road-snapped)")
+                        print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly REFINED elapsed=\(String(format: "%.2f", refineElapsed))s (road-snapped)")
                         await MainActor.run { onRefined(refined) }
                     }
                 }
@@ -8327,13 +8327,13 @@ class GoogleMapsService: ObservableObject {
                 let distance = CLLocation(latitude: original.latitude, longitude: original.longitude)
                     .distance(from: CLLocation(latitude: snapped.latitude, longitude: snapped.longitude))
                 if distance > 1 {
-                    print("🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m")
+                    print("[WALK_REFRESH] 🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m")
                 }
             }
-            print("REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: fast path failed — using snapped waypoints (single call)")
+            print("[WALK_REFRESH] REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: fast path failed — using snapped waypoints (single call)")
             if let result = await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snappedWaypoints, preserveWaypointOrder: true) {
                 let elapsed = Date().timeIntervalSince(startTime)
-                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready)")
+                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready)")
                 return result
             }
             let googleStatus = lastGoogleDirectionsErrorStatus ?? "unknown"
@@ -8353,20 +8353,20 @@ class GoogleMapsService: ObservableObject {
         }
         
         // Single-call path: snap then Directions (no extra quota; same behaviour as before when onRefinedRoute is nil).
-        print("🛤️ [ROAD SNAP] Starting waypoint snapping for \(rawWaypoints.count) waypoints...")
+        print("[WALK_REFRESH] 🛤️ [ROAD SNAP] Starting waypoint snapping for \(rawWaypoints.count) waypoints...")
         let snappedWaypoints = await snapWaypointsToRoads(route: route)
         for (index, (original, snapped)) in zip(rawWaypoints, snappedWaypoints).enumerated() where index < snappedWaypoints.count {
             let distance = CLLocation(latitude: original.latitude, longitude: original.longitude)
                 .distance(from: CLLocation(latitude: snapped.latitude, longitude: snapped.longitude))
             if distance > 1 {
-                print("🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m")
+                print("[WALK_REFRESH] 🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m")
             }
         }
         
-        print("REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: trying Google first (prioritised)")
+        print("[WALK_REFRESH] REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: trying Google first (prioritised)")
         if let result = await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snappedWaypoints, preserveWaypointOrder: true) {
             let elapsed = Date().timeIntervalSince(startTime)
-            print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready)")
+            print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready)")
             return result
         }
         // Log why Google failed so we can diagnose when MapKit fallback is used
@@ -8409,7 +8409,7 @@ class GoogleMapsService: ObservableObject {
                 let coord = index < orsSnapped.count ? orsSnapped[index] : marker.coordinate
                 updatedMarkers.append(QRMarker(code: marker.code, name: marker.name, location: marker.location, coordinate: coord, contentType: marker.contentType, content: marker.content, pointsValue: marker.pointsValue))
             }
-            print("REFRESH_SOURCE | ORS Snap V2 + Directions — route ready (ORS first)")
+            print("[WALK_REFRESH] REFRESH_SOURCE | ORS Snap V2 + Directions — route ready (ORS first)")
             return WalkingRoute(
                 name: route.name,
                 description: route.description,
@@ -8442,7 +8442,7 @@ class GoogleMapsService: ObservableObject {
             group.addTask { await self.refreshRouteWithGoogleOnly(route: route, userLocation: userLocation) }
             for await result in group {
                 if let r = result {
-                    print("REFRESH_SOURCE | Snap race winner: \(r.durationMinutes)min route")
+                    print("[WALK_REFRESH] REFRESH_SOURCE | Snap race winner: \(r.durationMinutes)min route")
                     return r
                 }
             }

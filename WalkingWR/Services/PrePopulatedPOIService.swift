@@ -103,6 +103,15 @@ class PrePopulatedPOIService {
     private let downloadCompleteKey = "prepopulatedPOIsDownloaded"
     /// Telemetry: which Firebase file was used (postcode district e.g. "S10", or "full"; unset if never downloaded)
     private let databaseSourceKey = "prepopulatedPOIs_source"
+    /// Manifest: postcode + center + radius so we can answer "in supported postcode?" without decoding the full DB
+    private let manifestPostcodeKey = "prepopulatedPOIs_manifest_postcode"
+    private let manifestCenterLatKey = "prepopulatedPOIs_manifest_centerLat"
+    private let manifestCenterLonKey = "prepopulatedPOIs_manifest_centerLon"
+    private let manifestRadiusKey = "prepopulatedPOIs_manifest_radius"
+    
+    /// In-memory decoded database to avoid repeated heavy decodes
+    private var cachedDatabaseInMemory: PrePopulatedPOIDatabase?
+    private let loadDatabaseLock = NSLock()
     
     private init() {}
     
@@ -319,10 +328,30 @@ class PrePopulatedPOIService {
         UserDefaults.standard.bool(forKey: downloadCompleteKey)
     }
     
+    /// Returns true if location is inside the cached postcode area, false if outside, nil if no manifest (unknown).
+    /// Used to avoid decoding the full DB when user is outside supported postcode.
+    private func supportedPostcodeDistrict(for location: CLLocationCoordinate2D) -> Bool? {
+        guard let postcode = UserDefaults.standard.string(forKey: manifestPostcodeKey),
+              UserDefaults.standard.object(forKey: manifestCenterLatKey) != nil,
+              UserDefaults.standard.object(forKey: manifestCenterLonKey) != nil,
+              UserDefaults.standard.object(forKey: manifestRadiusKey) != nil else {
+            return nil  // No manifest — caller will fall back to loadDatabase()
+        }
+        let centerLat = UserDefaults.standard.double(forKey: manifestCenterLatKey)
+        let centerLon = UserDefaults.standard.double(forKey: manifestCenterLonKey)
+        let radius = UserDefaults.standard.integer(forKey: manifestRadiusKey)
+        let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
+        let distance = distanceBetween(location, center)
+        return distance <= Double(radius)
+    }
+    
     /// Get POIs from pre-populated database near the given location
     /// Returns POIs if within any postcode area's radius, nil otherwise
     /// PRIORITY: This is checked FIRST before any API calls
     func getPrePopulatedPOIs(near location: CLLocationCoordinate2D, radiusMeters: Double = 2500) -> [PlaceResult]? {
+        if supportedPostcodeDistrict(for: location) == false {
+            return nil  // Outside cached postcode — no decode
+        }
         guard let database = loadDatabase() else {
             print("📦 Pre-populated DB: No database loaded (not downloaded or bundled)")
             return nil
@@ -435,6 +464,9 @@ class PrePopulatedPOIService {
     /// Returns routes for the specified duration if within any postcode area's radius, nil otherwise
     /// PRIORITY: This is checked FIRST before generating new routes
     func getPrePopulatedRoutes(near location: CLLocationCoordinate2D, durationMinutes: Int, radiusMeters: Double = 2500) -> [RouteCacheService.CachedRouteWithMetadata]? {
+        if supportedPostcodeDistrict(for: location) == false {
+            return nil  // Outside cached postcode — no decode
+        }
         guard let database = loadDatabase() else {
             print("📦 Pre-populated DB: No database loaded for routes (not downloaded or bundled)")
             print("\(Self.telem) DB_LOADED loaded=false reason=not_downloaded requested=\(durationMinutes)")
@@ -1335,6 +1367,14 @@ class PrePopulatedPOIService {
         }
         print("\(Self.telem) \(Self.prepopTimingTag) stage=location_given at=\(Self.prepopTimingStamp())")
 
+        // Resolve postcode first — don't start download at all if user is outside supported postcode
+        let postcodeDistrict = await getPostcodeDistrict(for: userLocation)
+        if postcodeDistrict == nil {
+            print("📦 Pre-populated DB: User location not in any target postcode area - no download")
+            print("\(Self.telem) DOWNLOAD_SKIP reason=no_matching_postcode")
+            return
+        }
+
         // If a download is already in progress, wait for it so caller gets the DB when ready
         if let existing = downloadTask {
             print("📦 Pre-populated DB: Download already in progress, waiting for it...")
@@ -1344,12 +1384,8 @@ class PrePopulatedPOIService {
 
         // Already have cache and no need to re-download — unless user is in a different postcode (e.g. moved from WF2 to S5)
         let cachedSource = UserDefaults.standard.string(forKey: databaseSourceKey)
-        let currentPostcode = await getPostcodeDistrict(for: userLocation)
         if UserDefaults.standard.data(forKey: storageKey) != nil, hasDownloadedDatabase {
-            if let postcode = currentPostcode, postcode == cachedSource {
-                return
-            }
-            if currentPostcode == nil {
+            if let postcode = postcodeDistrict, postcode == cachedSource {
                 return
             }
             // User is in a different postcode than cache — proceed to download current area and replace cache
@@ -1361,22 +1397,13 @@ class PrePopulatedPOIService {
         downloadTask = Task {
             defer { isDownloading = false; downloadTask = nil }
         
-        // Determine postcode district from location: reverse geocode first, then fallback to distance-to-centers
-        let postcodeDistrict = await getPostcodeDistrict(for: userLocation)
-        if let district = postcodeDistrict {
-            print("📦 Pre-populated DB: User in postcode district '\(district)' - downloading postcode file only")
-            print("\(Self.telem) DOWNLOAD_START attemptedPostcode=\(district) location=(\(String(format: "%.5f", userLocation.latitude)),\(String(format: "%.5f", userLocation.longitude)))")
-        } else {
-            print("📦 Pre-populated DB: User location not in any target postcode area - no download")
-            print("\(Self.telem) DOWNLOAD_START attemptedPostcode=none location=(\(String(format: "%.5f", userLocation.latitude)),\(String(format: "%.5f", userLocation.longitude)))")
-        }
+        // Postcode already resolved above
+        let district = postcodeDistrict!
+        print("📦 Pre-populated DB: User in postcode district '\(district)' - downloading postcode file only")
+        print("\(Self.telem) DOWNLOAD_START attemptedPostcode=\(district) location=(\(String(format: "%.5f", userLocation.latitude)),\(String(format: "%.5f", userLocation.longitude)))")
         
         // Try to get download URL (postcode-specific only)
-        guard let postcodeDistrict = postcodeDistrict else {
-            print("📦 Pre-populated DB: User not in any target postcode area - no download")
-            print("\(Self.telem) DOWNLOAD_SKIP reason=no_matching_postcode")
-            return
-        }
+        let postcodeDistrict = district
         guard let url = await getDatabaseURL(for: postcodeDistrict) else {
             // Postcode file not found in Firebase - use cached database if available, otherwise API only
             if hasDownloadedDatabase {
@@ -1563,11 +1590,26 @@ class PrePopulatedPOIService {
     
     /// Clear pre-populated database (for testing/reset)
     func clearDatabase() {
+        loadDatabaseLock.lock()
+        defer { loadDatabaseLock.unlock() }
+        cachedDatabaseInMemory = nil
         UserDefaults.standard.removeObject(forKey: storageKey)
         UserDefaults.standard.removeObject(forKey: downloadCompleteKey)
-        UserDefaults.standard.removeObject(forKey: "prepopulatedPOIs_version")  // Also clear version key
+        UserDefaults.standard.removeObject(forKey: "prepopulatedPOIs_version")
         UserDefaults.standard.removeObject(forKey: databaseSourceKey)
-        print("📦 Pre-populated DB: Cleared (database, download flag, version, and source)")
+        UserDefaults.standard.removeObject(forKey: manifestPostcodeKey)
+        UserDefaults.standard.removeObject(forKey: manifestCenterLatKey)
+        UserDefaults.standard.removeObject(forKey: manifestCenterLonKey)
+        UserDefaults.standard.removeObject(forKey: manifestRadiusKey)
+        print("📦 Pre-populated DB: Cleared (database, download flag, version, source, manifest, memory cache)")
+    }
+    
+    /// Release in-memory decoded database to free memory (e.g. on memory warning). Next load will decode from UserDefaults again.
+    func clearMemoryCache() {
+        loadDatabaseLock.lock()
+        defer { loadDatabaseLock.unlock() }
+        cachedDatabaseInMemory = nil
+        print("📦 Pre-populated DB: Memory cache cleared")
     }
     
     /// Get database statistics
@@ -1646,31 +1688,35 @@ class PrePopulatedPOIService {
     }
     
     private func loadDatabase() -> PrePopulatedPOIDatabase? {
+        loadDatabaseLock.lock()
+        if let cached = cachedDatabaseInMemory {
+            loadDatabaseLock.unlock()
+            return cached
+        }
+        loadDatabaseLock.unlock()
+        
         guard let data = UserDefaults.standard.data(forKey: storageKey) else {
-            // No cached database - don't use bundled, return nil
             print("📦 Pre-populated DB: No cached database in UserDefaults - will use API calls")
             print("📦 Pre-populated DB: ⚠️  Database should download from Firebase on next app launch")
             return nil
         }
         
         do {
-            // First, check if the cached data has numeric timestamps (old format)
-            // If so, convert it to the new string format before decoding
             if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let lastUpdated = json["lastUpdated"],
                lastUpdated is NSNumber {
-                // Old format detected - clear cache
                 print("📦 Pre-populated DB: ⚠️  Old cached format detected (numeric timestamp) - clearing cache")
-                print("📦 Pre-populated DB:   This should not happen if database was downloaded from Firebase")
-                print("📦 Pre-populated DB:   Database may need to be regenerated with new format")
                 clearDatabase()
-                print("📦 Pre-populated DB: Will download fresh database from Firebase on next app launch")
                 return nil
             }
             
             let decoder = createJSONDecoder()
             let database = try decoder.decode(PrePopulatedPOIDatabase.self, from: data)
-            // Log which database source is being used
+            
+            loadDatabaseLock.lock()
+            cachedDatabaseInMemory = database
+            loadDatabaseLock.unlock()
+            
             print("📦 Pre-populated DB: ✅ Using CACHED database from UserDefaults")
             print("📦   Version: \(database.version)")
             print("📦   Postcode areas: \(database.postcodeAreas.count)")
@@ -1684,22 +1730,30 @@ class PrePopulatedPOIService {
             return database
         } catch {
             print("📦 Pre-populated DB: Failed to load cached database - \(error.localizedDescription)")
-            print("📦 Pre-populated DB: Error details: \(error)")
-            // Clear potentially corrupted cache
             clearDatabase()
-            print("📦 Pre-populated DB: Will download fresh database from Firebase on next app launch")
             return nil
         }
     }
     
+    private func saveManifest(database: PrePopulatedPOIDatabase) {
+        guard let area = database.postcodeAreas.first else { return }
+        let center = effectiveCenter(for: area)
+        UserDefaults.standard.set(area.postcode, forKey: manifestPostcodeKey)
+        UserDefaults.standard.set(center.latitude, forKey: manifestCenterLatKey)
+        UserDefaults.standard.set(center.longitude, forKey: manifestCenterLonKey)
+        UserDefaults.standard.set(area.radiusMeters, forKey: manifestRadiusKey)
+    }
+    
     private func saveDatabase(_ database: PrePopulatedPOIDatabase) {
         do {
-            // Use ISO8601 date encoding to match our decoding strategy
-            // This prevents the "old format" detection on next load
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             let data = try encoder.encode(database)
             UserDefaults.standard.set(data, forKey: storageKey)
+            loadDatabaseLock.lock()
+            cachedDatabaseInMemory = nil  // Next load will decode the new blob
+            loadDatabaseLock.unlock()
+            saveManifest(database: database)
             print("📦 Pre-populated DB: Saved to UserDefaults with ISO8601 date format")
         } catch {
             print("📦 Pre-populated DB: Failed to save - \(error.localizedDescription)")

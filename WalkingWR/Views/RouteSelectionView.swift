@@ -3805,7 +3805,7 @@ struct LocalRoutePickerSheet: View {
                     if let snappedRoute = await mapsService.refreshRouteSnapRaceWithTimeout(route: localRoute, userLocation: userLocation.coordinate, timeoutSeconds: 15, onCompleteAfterTimeout: nil) {
                         displayRoute = snappedRoute
                         mainRouteDurationFromGoogle = true  // refreshed route from ORS or Google
-                        print("🛤️ [ROUTE CREATION] Applied road snap — polyline and markers now on road (no off-road POI)")
+                        print("[WALK_REFRESH] 🛤️ [ROUTE CREATION] Applied road snap — polyline and markers now on road (no off-road POI)")
                     }
                     let roadSnapElapsed = Date().timeIntervalSince(roadSnapStartTime)
                     await MainActor.run {
@@ -4862,7 +4862,7 @@ struct LocalRoutePickerSheet: View {
                 routeSource = "mapkit_or_google"
             }
             print("DIRECTIONS | ========== direction refresh (Google on Let's Go) ==========")
-            print("REFRESH_SOURCE | [\(taskTimeString)] route_source=\(routeSource) name='\(route.name)' waypoints=\(route.qrMarkers.count)")
+            print("[WALK_REFRESH] REFRESH_SOURCE | [\(taskTimeString)] route_source=\(routeSource) name='\(route.name)' waypoints=\(route.qrMarkers.count)")
             
             // Wait briefly for location (often nil the instant user taps Let's Go)
             var userLocation: CLLocationCoordinate2D?
@@ -4881,12 +4881,12 @@ struct LocalRoutePickerSheet: View {
             
             // Google only — show Google directions and polyline when available; fall back only on API rejection
             guard mapsService.hasAPIKey else {
-                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_skipped reason=no_api_key (using preview route)")
+                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_skipped reason=no_api_key (using preview route)")
                 return
             }
             
             let googleStart = Date()
-            print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_start (Google refresh on Let's Go)")
+            print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_start (Google refresh on Let's Go)")
             print("DIRECTIONS | [\(taskTimeString)] 🌐 Google refresh starting...")
             var refreshedRoute: WalkingRoute? = await mapsService.refreshRouteWithGoogleOnly(
                 route: route,
@@ -4903,7 +4903,7 @@ struct LocalRoutePickerSheet: View {
             }
             if let refreshedRoute = refreshedRoute {
                 let googleElapsed = Date().timeIntervalSince(googleStart)
-                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_done elapsed=\(String(format: "%.2f", googleElapsed))s")
+                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_done elapsed=\(String(format: "%.2f", googleElapsed))s")
                 // Cap refreshed duration so it matches preview: avoid showing 45 min when preview was 8 min (same sanity cap as elsewhere, using preview duration as target)
                 let previewTargetMin = route.durationMinutes
                 let cappedRefreshedRoute = refreshedRoute.withDurationSanityCap(targetDurationMinutes: previewTargetMin)
@@ -4980,7 +4980,7 @@ struct LocalRoutePickerSheet: View {
                     }
                 }
             } else {
-                print("REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_failed (using preview route — Google unavailable or API rejection)")
+                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_failed (using preview route — Google unavailable or API rejection)")
                 print("DIRECTIONS | [\(formatter.string(from: Date()))] ⚠️ Google refresh failed — showing preview directions/polyline")
             }
             print("DIRECTIONS | ========== direction refresh finished ==========")
