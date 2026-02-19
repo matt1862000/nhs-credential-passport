@@ -10,7 +10,7 @@ import {
   Testimonials,
   Download,
   Footer,
-} from '@/components'
+} from '../components'
 
 export default function Home() {
   return (

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
-import { useTheme } from '@/contexts/ThemeContext'
+import { useTheme } from '../contexts/ThemeContext'
 
 export default function Navbar() {
   const [isScrolled, setIsScrolled] = useState(false)
