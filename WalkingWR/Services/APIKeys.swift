@@ -19,9 +19,12 @@ enum APIKeys {
     static var orsBaseURL: String {
         let fromPlist = (Bundle.main.object(forInfoDictionaryKey: orsBaseURLPlistKey) as? String ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !fromPlist.isEmpty { return fromPlist }
-        return (UserDefaults.standard.string(forKey: orsBaseURLUserDefaultsKey) ?? "")
+        let fromUserDefaults = (UserDefaults.standard.string(forKey: orsBaseURLUserDefaultsKey) ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = !fromPlist.isEmpty ? fromPlist : fromUserDefaults
+        // If xcconfig wasn't applied, plist may contain literal "$(ORS_BASE_URL)" which fails DNS. Treat as unset.
+        if raw.contains("$(") || !raw.hasPrefix("https://") || raw.count < 20 { return "" }
+        return raw
     }
     
     /// OpenRouteService API key. Read from Info.plist (injected by Secrets.xcconfig at build time), then UserDefaults fallback. Not sent when orsBaseURL points to your proxy.

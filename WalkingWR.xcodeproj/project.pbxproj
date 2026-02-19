@@ -298,11 +298,12 @@
 			baseConfigurationReference = 6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ORS_BASE_URL = "https://waitwellv3.vercel.app/api/ors";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 383;
+				CURRENT_PROJECT_VERSION = 384;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -347,11 +348,12 @@
 			baseConfigurationReference = 6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ORS_BASE_URL = "https://waitwellv3.vercel.app/api/ors";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 383;
+				CURRENT_PROJECT_VERSION = 384;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
