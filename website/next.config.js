@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',
+  // No output: 'export' — API routes (e.g. /api/ors) require a server. Static export excludes them.
   images: {
     unoptimized: true,
     remotePatterns: [
