@@ -2312,7 +2312,11 @@ struct BirdSpottingView: View {
                 print("\(Self.birdSpotLogTag) stage=identify_overlay_dismissed")
             }
         }
-        guard let jpegData = compressImageForBirdID(image) else {
+        // Run heavy resize/compress off the main thread to avoid blocking and speed up
+        let jpegData: Data? = await Task.detached(priority: .userInitiated) {
+            compressImageForBirdID(image)
+        }.value
+        guard let jpegData = jpegData else {
             await MainActor.run { identifyError = "Could not process the photo." }
             print("\(Self.birdSpotLogTag) stage=identify_compress_failed")
             return
@@ -2337,14 +2341,14 @@ struct BirdSpottingView: View {
     }
     
     private func compressImageForBirdID(_ image: UIImage) -> Data? {
-        let maxDim: CGFloat = 1024
+        let maxDim: CGFloat = 640
         let size = image.size
-        guard size.width > 0, size.height > 0 else { return image.jpegData(compressionQuality: 0.8) }
+        guard size.width > 0, size.height > 0 else { return image.jpegData(compressionQuality: 0.65) }
         let scale = min(maxDim / size.width, maxDim / size.height, 1)
         let newSize = CGSize(width: size.width * scale, height: size.height * scale)
         let renderer = UIGraphicsImageRenderer(size: newSize)
         let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: newSize)) }
-        return resized.jpegData(compressionQuality: 0.8)
+        return resized.jpegData(compressionQuality: 0.65)
     }
     
     private func addIdentifiedBirdToSpotted(_ result: BirdIdentificationResult, photo: UIImage? = nil) {
