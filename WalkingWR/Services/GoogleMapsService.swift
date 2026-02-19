@@ -7957,8 +7957,8 @@ class GoogleMapsService: ObservableObject {
         }
     }
     
-    // MARK: - Optimistic hybrid: ORS Snap V2 first (collaborative plan), then Overpass, then Google batch fallback
-    /// Snaps waypoints to roads: ORS Snap V2 first when key available (10000/150 limits); else Overpass per-waypoint; if any fail, Google Snap to Roads batch.
+    // MARK: - Optimistic hybrid: ORS Snap V2 first, then Overpass, then Google, then ORS retry (HeiGIT)
+    /// Snaps waypoints to roads: ORS Snap V2 first when key available; else Overpass per-waypoint; if any fail, Google batch; if Google fails, ORS Snap V2 retry; else Overpass partial.
     /// Returns snapped waypoints in same order as route.qrMarkers. Empty array if route has no waypoints.
     func snapWaypointsToRoads(route: WalkingRoute) async -> [CLLocationCoordinate2D] {
         let rawWaypoints = route.qrMarkers.map { $0.coordinate }
@@ -8002,8 +8002,12 @@ class GoogleMapsService: ObservableObject {
             print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(googleSnapped.count) waypoints) — Google batch fallback")
             return googleSnapped
         }
+        if ORSService.shared.hasAPIKey, let orsRetry = await ORSService.shared.fetchSnapV2(coordinates: rawWaypoints, radiusMeters: 100) {
+            print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(orsRetry.count) waypoints) — ORS Snap V2 retry (HeiGIT)")
+            return orsRetry
+        }
         let fallback = overpassResults.map { $0.coord }
-        print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(fallback.count) waypoints) — Overpass (some unchanged, Google failed)")
+        print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(fallback.count) waypoints) — Overpass (some unchanged, Google and ORS retry failed)")
         return fallback
     }
     
