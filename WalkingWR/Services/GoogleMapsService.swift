@@ -6452,8 +6452,8 @@ class GoogleMapsService: ObservableObject {
         let rateLimitStatus = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
         let haveORSOrGH = !openRouteServiceApiKey.isEmpty || !graphHopperApiKey.isEmpty
         let mapKitWouldWait = rateLimitStatus.shouldWait || rateLimitStatus.currentCount >= 36
-        if !forceMapKitRouting && haveORSOrGH && (mapKitWouldWait || forceSkipMapKit) {
-            print("[ROUTE_FLOW] stage=routing MapKit_rate_limit=\(rateLimitStatus.currentCount)_50 fallback=ORS_GraphHopper")
+        if !forceMapKitRouting && haveORSOrGH && (mapKitWouldWait || forceSkipMapKit || isOSRMCircuitBreakerOpen) {
+            print("[ROUTE_FLOW] stage=routing MapKit_rate_limit=\(rateLimitStatus.currentCount)_50 circuit_breaker=\(isOSRMCircuitBreakerOpen) fallback=ORS_GraphHopper")
             if !openRouteServiceApiKey.isEmpty {
                 do {
                     let orsResult = try await getOpenRouteServiceWalkingDirections(

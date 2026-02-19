@@ -3894,6 +3894,17 @@ struct LocalRoutePickerSheet: View {
                             let remeasureWaypoints = filteredResult.places.map { $0.name }.joined(separator: " → ")
                             print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s GOOGLE_REMEASURE_DONE duration=\(mainActualMin)min")
                             print("[ROUTE_GEN] Main route duration re-measured with Google: \(mainActualMin)min (display only, was \(deduplicatedResult.durationMinutes)min) waypoints=[\(remeasureWaypoints)]")
+                            // v2.1: Update GeneratedRoute with Google values so route and data match (Google is source of truth)
+                            deduplicatedResult = GeneratedRoute(
+                                places: deduplicatedResult.places,
+                                polyline: googleResult.polyline.isEmpty ? deduplicatedResult.polyline : googleResult.polyline,
+                                distanceMeters: googleResult.distanceMeters,
+                                durationSeconds: googleResult.durationSeconds,
+                                legs: googleResult.legs ?? deduplicatedResult.legs,
+                                usedOSRM: false,
+                                usedGoogleDirections: true,
+                                travelToStartSeconds: deduplicatedResult.travelToStartSeconds
+                            )
                         } else {
                             // #region agent log
                             let _liveNil: [String: Any] = [
@@ -5361,11 +5372,6 @@ struct LocalRoutePickerSheet: View {
         print("[DIAGNOSTIC +1] userLocation=\(userLocation.coordinate.latitude),\(userLocation.coordinate.longitude)")
         
         Task {
-            // v2.1: Force MapKit for +1 routes — bypass OSRM threshold
-            // User-initiated routes need fast, reliable routing (MapKit), not OSRM which may be down
-            mapsService.forceMapKitRouting = true
-            defer { mapsService.forceMapKitRouting = false }
-            
             // v2.1.13: Overall deadline for +1 (outer loop timeout)
             let deadline = Date().addingTimeInterval(25)
             defer { mapsService.callerDeadline = nil }
@@ -7707,13 +7713,13 @@ struct LocalRoutePickerSheet: View {
                     if fallbackCandidates.isEmpty && !rejectedShortRoutes.isEmpty {
                         // Last resort: use rejected short routes only if at least minimum display % (e.g. 30%) of target
                         let minDisplayMinutes = max(1, Int(Double(selectedDuration) * Self.minimumDisplayPercent))
-                        let bestShort = rejectedShortRoutes.filter { $0.data.durationMinutes >= minDisplayMinutes }.max(by: { $0.data.durationMinutes < $1.data.durationMinutes })
+                        let bestShort = rejectedShortRoutes.filter { $0.route.durationMinutes >= minDisplayMinutes }.max(by: { $0.route.durationMinutes < $1.route.durationMinutes })
                         if let fallback = bestShort {
                             let cappedFallbackRoute = fallback.route.withDurationSanityCap(targetDurationMinutes: selectedDuration)
                             // Mark isFromGoogle as false so the sweep will re-measure
                             allRoutes.append((route: cappedFallbackRoute, data: fallback.data, isDeadZoneFallback: true, isFromGoogle: false))
                             isDeadZoneFallback = true
-                            print("[ROUTE_GEN] ⚠️ Last-resort fallback: added short route (\(fallback.data.durationMinutes)min) — pending Google re-measure")
+                            print("[ROUTE_GEN] ⚠️ Last-resort fallback: added short route (\(fallback.route.durationMinutes)min) — pending Google re-measure")
                             // Lazy Gemini for last-resort fallback when template name
                             if Self.isTemplateRouteName(cappedFallbackRoute.name ?? "", description: cappedFallbackRoute.description), !fallback.data.places.isEmpty {
                                 let placeIdSet = Set(fallback.data.places.map { $0.placeId })
@@ -8585,16 +8591,16 @@ struct LocalRouteMapPreview: View {
         .tealAccent
     }
     
-    /// True if route duration exceeds requested target
+    /// True if route duration exceeds requested target (uses display/Google duration as source of truth)
     var isOverTarget: Bool {
-        guard let data = generatedData, targetDurationMinutes > 0 else { return false }
-        return data.durationMinutes > targetDurationMinutes
+        guard targetDurationMinutes > 0 else { return false }
+        return route.durationMinutes > targetDurationMinutes
     }
     
-    /// How many minutes over target
+    /// How many minutes over target (uses display/Google duration as source of truth)
     var minutesOverTarget: Int {
-        guard let data = generatedData else { return 0 }
-        return max(0, data.durationMinutes - targetDurationMinutes)
+        guard targetDurationMinutes > 0 else { return 0 }
+        return max(0, route.durationMinutes - targetDurationMinutes)
     }
     
     var hasRealPolyline: Bool {
