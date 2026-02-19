@@ -15,7 +15,7 @@ enum APIKeys {
     private static let ebirdPlistKey = "EBIRD_API_KEY"
     private static let ebirdUserDefaultsKey = "EBIRD_API_KEY"
     
-    /// Base URL for ORS requests. When set to your proxy (e.g. https://wait-well.vercel.app/api/ors), the app does not send the API key (key stays server-side). When unset, app uses api.openrouteservice.org and sends OPEN_ROUTE_SERVICE_API_KEY.
+    /// Base URL for ORS requests. When set to your proxy (e.g. https://waitwellv3.vercel.app/api/ors), the app does not send the API key (key stays server-side). When unset, app uses api.openrouteservice.org and sends OPEN_ROUTE_SERVICE_API_KEY.
     static var orsBaseURL: String {
         let fromPlist = (Bundle.main.object(forInfoDictionaryKey: orsBaseURLPlistKey) as? String ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
