@@ -687,6 +687,8 @@ class GoogleMapsService: ObservableObject {
     // OpenRouteService API Key - optional fallback routing (https://openrouteservice.org/)
     // Same source as ORSService (Secrets.xcconfig → Info.plist + UserDefaults fallback).
     private var openRouteServiceApiKey: String { APIKeys.openRouteService }
+    /// True when ORS can be used: proxy (ORS_BASE_URL) set, or client key set.
+    private var canUseOpenRouteService: Bool { !APIKeys.orsBaseURL.isEmpty || !openRouteServiceApiKey.isEmpty }
     
     // GraphHopper API Key - optional fallback routing (https://www.graphhopper.com/)
     private var graphHopperApiKey: String {
@@ -5453,19 +5455,21 @@ class GoogleMapsService: ObservableObject {
         destination: CLLocationCoordinate2D,
         waypoints: [CLLocationCoordinate2D] = []
     ) async throws -> (distance: Int, duration: Int, polyline: [CLLocationCoordinate2D]) {
-        guard !openRouteServiceApiKey.isEmpty else {
+        let useProxy = !APIKeys.orsBaseURL.isEmpty
+        guard useProxy || !openRouteServiceApiKey.isEmpty else {
             throw GoogleMapsError.apiError("OpenRouteService API key not configured")
         }
         var coords: [[Double]] = [[origin.longitude, origin.latitude]]
         for wp in waypoints { coords.append([wp.longitude, wp.latitude]) }
         coords.append([destination.longitude, destination.latitude])
         
-        guard let url = URL(string: "https://api.openrouteservice.org/v2/directions/foot-walking") else {
+        let orsBase = useProxy ? APIKeys.orsBaseURL : "https://api.openrouteservice.org"
+        guard let url = URL(string: "\(orsBase)/v2/directions/foot-walking") else {
             throw GoogleMapsError.apiError("Invalid ORS URL")
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(openRouteServiceApiKey, forHTTPHeaderField: "Authorization")
+        if !useProxy { request.setValue(openRouteServiceApiKey, forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["coordinates": coords])
         request.timeoutInterval = 8
@@ -6343,14 +6347,14 @@ class GoogleMapsService: ObservableObject {
         let (useOSRM, osrmReason) = await shouldUseOSRM()
         // Throttle: log at most once per 5s to avoid I/O spam when evaluating many legs/candidates
         if Self.shouldPrintRouteFlowFreeAPI() {
-            let orsFirst = useOSRM && !openRouteServiceApiKey.isEmpty
-            print("[ROUTE_FLOW] stage=free_api \(useOSRM ? (orsFirst ? "ORS_first_then_OSRM" : "OSRM") : "skip(\(osrmReason))") ORS_key=\(openRouteServiceApiKey.isEmpty ? "no" : "yes") GH_key=\(graphHopperApiKey.isEmpty ? "no" : "yes")")
+            let orsFirst = useOSRM && canUseOpenRouteService
+            print("[ROUTE_FLOW] stage=free_api \(useOSRM ? (orsFirst ? "ORS_first_then_OSRM" : "OSRM") : "skip(\(osrmReason))") ORS=\(canUseOpenRouteService ? "yes" : "no") GH_key=\(graphHopperApiKey.isEmpty ? "no" : "yes")")
         }
         
         if useOSRM {
-            // Prefer ORS (HeiGIT) when we have a key — more reliable than public OSRM (which often times out).
+            // Prefer ORS (HeiGIT) when we have proxy or key — more reliable than public OSRM (which often times out).
             // Order: ORS → OSRM → GraphHopper → MapKit
-            if !openRouteServiceApiKey.isEmpty {
+            if canUseOpenRouteService {
                 do {
                     let orsResult = try await getOpenRouteServiceWalkingDirections(
                         origin: origin,
@@ -6459,11 +6463,11 @@ class GoogleMapsService: ObservableObject {
         
         // v2.1.14: When MapKit would wait (rate limit) but OSRM was skipped (e.g. circuit breaker), use ORS/GraphHopper instead of waiting
         let rateLimitStatus = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
-        let haveORSOrGH = !openRouteServiceApiKey.isEmpty || !graphHopperApiKey.isEmpty
+        let haveORSOrGH = canUseOpenRouteService || !graphHopperApiKey.isEmpty
         let mapKitWouldWait = rateLimitStatus.shouldWait || rateLimitStatus.currentCount >= 36
         if !forceMapKitRouting && haveORSOrGH && (mapKitWouldWait || forceSkipMapKit || isOSRMCircuitBreakerOpen) {
             print("[ROUTE_FLOW] stage=routing MapKit_rate_limit=\(rateLimitStatus.currentCount)_50 circuit_breaker=\(isOSRMCircuitBreakerOpen) fallback=ORS_GraphHopper")
-            if !openRouteServiceApiKey.isEmpty {
+            if canUseOpenRouteService {
                 do {
                     let orsResult = try await getOpenRouteServiceWalkingDirections(
                         origin: origin,
@@ -6627,7 +6631,7 @@ class GoogleMapsService: ObservableObject {
                     } catch {
                         print("🗺️ OSRM fallback also failed, trying OpenRouteService...")
                         // Try OpenRouteService then GraphHopper when OSRM fails
-                        if !openRouteServiceApiKey.isEmpty {
+                        if canUseOpenRouteService {
                             do {
                                 let orsResult = try await getOpenRouteServiceWalkingDirections(
                                     origin: origin,
@@ -7094,8 +7098,8 @@ class GoogleMapsService: ObservableObject {
                         
                         var foundBetterRoute = false
                         
-                        // Try ORS first when we have key (avoids OSRM timeouts / log noise)
-                        if !foundBetterRoute && !openRouteServiceApiKey.isEmpty {
+                        // Try ORS first when we have proxy or key (avoids OSRM timeouts / log noise)
+                        if !foundBetterRoute && canUseOpenRouteService {
                             do {
                                 let orsResult = try await getOpenRouteServiceWalkingDirections(
                                     origin: legOrigin,

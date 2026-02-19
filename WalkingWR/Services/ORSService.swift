@@ -75,7 +75,15 @@ private final class IsochroneCacheEntry {
 final class ORSService {
     static let shared = ORSService()
     
-    private let baseURL = "https://api.openrouteservice.org"
+    /// When ORS_BASE_URL is set (e.g. to your Vercel proxy), use it and do not send the API key. Otherwise use ORS directly with key.
+    private var baseURL: String {
+        let proxy = APIKeys.orsBaseURL
+        if !proxy.isEmpty { return proxy }
+        return "https://api.openrouteservice.org"
+    }
+    
+    private var useProxy: Bool { !APIKeys.orsBaseURL.isEmpty }
+    
     private let session: URLSession = {
         let c = URLSessionConfiguration.default
         c.timeoutIntervalForRequest = 10  // Fail fast so route gen can fall back to radius-based
@@ -93,6 +101,7 @@ final class ORSService {
     
     private static var hasLoggedMissingKey = false
     var hasAPIKey: Bool {
+        if useProxy { return true }
         let ok = !apiKey.isEmpty
         if !ok && !Self.hasLoggedMissingKey {
             Self.hasLoggedMissingKey = true
@@ -143,7 +152,7 @@ final class ORSService {
         let url = URL(string: "\(baseURL)/v2/isochrones/foot-walking")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(apiKey, forHTTPHeaderField: "Authorization")
+        if !useProxy { request.setValue(apiKey, forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
             "locations": [[origin.longitude, origin.latitude]],
@@ -231,7 +240,7 @@ final class ORSService {
         let url = URL(string: "\(baseURL)/v2/matrix/foot-walking")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(apiKey, forHTTPHeaderField: "Authorization")
+        if !useProxy { request.setValue(apiKey, forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
             "locations": locations,
@@ -285,7 +294,7 @@ final class ORSService {
         guard let url = URL(string: "\(baseURL)/v2/snap/foot-walking") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue(apiKey, forHTTPHeaderField: "Authorization")
+        if !useProxy { request.setValue(apiKey, forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let body: [String: Any] = [
