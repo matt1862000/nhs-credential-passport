@@ -10342,6 +10342,7 @@ class GoogleMapsService: ObservableObject {
                         from: location,
                         distanceMeters: targetDistance,
                         bearing: bearing,
+                        targetMinutes: targetMinutes,
                         nearbyPOIs: nearbyPOIs
                     ) {
                         return (index, route)
@@ -10422,6 +10423,7 @@ class GoogleMapsService: ObservableObject {
         from location: CLLocationCoordinate2D,
         distanceMeters: Double,
         bearing: Double,
+        targetMinutes: Int,
         nearbyPOIs: [PlaceResult] = []  // Optional: real POIs to name the route waypoint
     ) async throws -> GeneratedRoute {
         // Calculate destination coordinate using bearing and distance
@@ -10483,8 +10485,55 @@ class GoogleMapsService: ObservableObject {
             let corridorWidth = max(800.0, distanceMeters * 0.4)
             if let best = bestPOI, bestDist < corridorWidth {
                 destinationPOI = best
+            } else if let best = bestPOI {
+                // Nearest real POI is outside corridor — re-measure route to that POI; if in-band, use it (real waypoint instead of "Scenic X Walk")
+                let minAcceptable = Int(Double(targetMinutes) * 0.5)
+                let maxAcceptable = Int(Double(targetMinutes) * 1.8)
+                let (remResult, didTimeout) = await directionsWithTimeout(
+                    origin: location,
+                    destination: location,
+                    waypoints: [best.coordinate],
+                    timeout: timeout,
+                    targetDurationMinutes: targetMinutes,
+                    angularDiversityScore: nil,
+                    postcode: nil,
+                    useEstimatorOnSoftCap: false
+                )
+                if let rem = remResult, !didTimeout {
+                    let remDuration = rem.legs.reduce(0) { $0 + $1.duration.value }
+                    let remDistance = rem.legs.reduce(0) { $0 + $1.distance.value }
+                    let remMinutes = remDuration / 60
+                    if remMinutes >= minAcceptable && remMinutes <= maxAcceptable {
+                        print("⚡ [DIAGNOSTIC] Re-measured to nearest real POI '\(best.name)' — \(remMinutes)min (in-band), using real waypoint")
+                        return GeneratedRoute(
+                            places: [best],
+                            polyline: rem.overviewPolyline.points,
+                            distanceMeters: remDistance,
+                            durationSeconds: remDuration,
+                            legs: rem.legs
+                        )
+                    }
+                }
+                // Re-measure out of band or failed — keep synthetic name
+                let directionName: String
+                let normalizedBearing = bearing.truncatingRemainder(dividingBy: 360)
+                switch normalizedBearing {
+                case 0..<45, 315..<360: directionName = "North"
+                case 45..<135: directionName = "East"
+                case 135..<225: directionName = "South"
+                default: directionName = "West"
+                }
+                destinationPOI = PlaceResult(
+                    placeId: "topology_\(Int(bearing))",
+                    name: "Scenic \(directionName) Walk",
+                    vicinity: nil,
+                    geometry: PlaceGeometry(
+                        location: PlaceLocation(lat: destination.latitude, lng: destination.longitude)
+                    ),
+                    types: ["point_of_interest"],
+                    source: .osm
+                )
             } else {
-                // Descriptive fallback name based on direction (no distance suffix - would be filtered as junk)
                 let directionName: String
                 let normalizedBearing = bearing.truncatingRemainder(dividingBy: 360)
                 switch normalizedBearing {
@@ -10531,6 +10580,46 @@ class GoogleMapsService: ObservableObject {
             distanceMeters: totalDistance,
             durationSeconds: totalDuration,
             legs: directions.legs
+        )
+    }
+    
+    /// If the route has a single synthetic waypoint ("Scenic X Walk" / topology_), find nearest real POI to its GPS, re-measure route there and back; if in-band, return route with that real POI.
+    private func tryReplaceSyntheticWaypointWithNearestReal(
+        route: GeneratedRoute,
+        from location: CLLocationCoordinate2D,
+        candidatePOIs: [PlaceResult],
+        targetMinutes: Int
+    ) async -> GeneratedRoute {
+        guard route.places.count == 1 else { return route }
+        let place = route.places[0]
+        let isSynthetic = place.placeId.hasPrefix("topology_") || (place.name.hasPrefix("Scenic ") && place.name.hasSuffix(" Walk"))
+        guard isSynthetic, !candidatePOIs.isEmpty else { return route }
+        let syntheticCoord = place.coordinate
+        guard let nearest = candidatePOIs.min(by: { distanceBetween(syntheticCoord, $0.coordinate) < distanceBetween(syntheticCoord, $1.coordinate) }) else { return route }
+        let (remResult, didTimeout) = await directionsWithTimeout(
+            origin: location,
+            destination: location,
+            waypoints: [nearest.coordinate],
+            timeout: RoutingToggles.perCallTimeoutNormal,
+            targetDurationMinutes: targetMinutes,
+            angularDiversityScore: nil,
+            postcode: nil,
+            useEstimatorOnSoftCap: false
+        )
+        guard let rem = remResult, !didTimeout else { return route }
+        let remDuration = rem.legs.reduce(0) { $0 + $1.duration.value }
+        let remDistance = rem.legs.reduce(0) { $0 + $1.distance.value }
+        let remMinutes = remDuration / 60
+        let minAcceptable = Int(Double(targetMinutes) * 0.5)
+        let maxAcceptable = Int(Double(targetMinutes) * 1.8)
+        guard remMinutes >= minAcceptable && remMinutes <= maxAcceptable else { return route }
+        print("⚡ [DIAGNOSTIC] Tier 2: Replaced synthetic waypoint with nearest real '\(nearest.name)' — \(remMinutes)min (in-band)")
+        return GeneratedRoute(
+            places: [nearest],
+            polyline: rem.overviewPolyline.points,
+            distanceMeters: remDistance,
+            durationSeconds: remDuration,
+            legs: rem.legs
         )
     }
     
@@ -10864,7 +10953,9 @@ class GoogleMapsService: ObservableObject {
             if let route = try? await mapKitOutAndBack(
                 from: location,
                 distanceMeters: targetDistance,
-                bearing: bearing
+                bearing: bearing,
+                targetMinutes: targetDurationMinutes,
+                nearbyPOIs: []
             ) {
                 let routeMinutes = route.durationSeconds / 60
                 // Accept if within 50-200% of target (very lenient for fallback)
@@ -10880,7 +10971,9 @@ class GoogleMapsService: ObservableObject {
         if let route = try? await mapKitOutAndBack(
             from: location,
             distanceMeters: 200,
-            bearing: 0
+            bearing: 0,
+            targetMinutes: targetDurationMinutes,
+            nearbyPOIs: []
         ) {
             print("🆘 [FALLBACK] ✅ Generated minimal route: \(route.durationSeconds / 60)min")
             return route
@@ -13441,6 +13534,10 @@ class GoogleMapsService: ObservableObject {
                     }
                     return route
                 }
+                // Replace any remaining synthetic waypoints ("Scenic X Walk"): find nearest real POI to synthetic GPS, re-measure, use if in-band
+                for i in fpBaseRoutes.indices {
+                    fpBaseRoutes[i] = await tryReplaceSyntheticWaypointWithNearestReal(route: fpBaseRoutes[i], from: location, candidatePOIs: namingCandidates2, targetMinutes: targetDurationMinutes)
+                }
             }
             
             // Check how many Apple POIs fall in the usable distance band for the target duration
@@ -13865,7 +13962,7 @@ class GoogleMapsService: ObservableObject {
                 
                 for retryBearing in retryBearings {
                     guard Date().timeIntervalSince(fastPathStart) < fastPathHardTimeout else { break }
-                    if let retry = try? await mapKitOutAndBack(from: location, distanceMeters: retryDist, bearing: retryBearing, nearbyPOIs: fpPOIs) {
+                    if let retry = try? await mapKitOutAndBack(from: location, distanceMeters: retryDist, bearing: retryBearing, targetMinutes: targetDurationMinutes, nearbyPOIs: fpPOIs) {
                         let retryMin = retry.durationSeconds / 60
                         let retryRatio = Double(retryMin) / Double(targetDurationMinutes)
                         if abs(retryRatio - 1.0) < abs(bestRetryRatio - 1.0) {
@@ -13947,7 +14044,7 @@ class GoogleMapsService: ObservableObject {
         let fallbackBearings = [Double.random(in: 0...90), Double.random(in: 90...180), Double.random(in: 180...270), Double.random(in: 270...360)]
         var fallbackRoute: GeneratedRoute? = nil
         for bearing in fallbackBearings {
-            if let fb = try? await mapKitOutAndBack(from: location, distanceMeters: fallbackDist, bearing: bearing, nearbyPOIs: fpPOIs) {
+            if let fb = try? await mapKitOutAndBack(from: location, distanceMeters: fallbackDist, bearing: bearing, targetMinutes: targetDurationMinutes, nearbyPOIs: fpPOIs) {
                 fallbackRoute = fb
                 break
             }
