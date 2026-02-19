@@ -8949,9 +8949,11 @@ struct LocalRouteMapPreview: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 
-                // Places found (if using smart routing)
-                if let data = generatedData, !data.places.filter({ !GoogleMapsService.isJunkPOIName($0.name) }).isEmpty {
-                    let displayPlaces = data.places.filter { !GoogleMapsService.isJunkPOIName($0.name) }
+                // Places along your route — always show at bottom when route has POIs (from generatedData or route.qrMarkers)
+                let placesFromData = generatedData?.places.filter { !GoogleMapsService.isJunkPOIName($0.name) } ?? []
+                let markersFromRoute = route.qrMarkers.filter { !GoogleMapsService.isJunkPOIName($0.name) }
+                let hasPOIsToShow = !placesFromData.isEmpty || !markersFromRoute.isEmpty
+                if hasPOIsToShow {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Places along your route:")
                             .font(.caption)
@@ -8959,19 +8961,36 @@ struct LocalRouteMapPreview: View {
                         
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
-                                ForEach(displayPlaces) { place in
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "mappin.circle.fill")
-                                            .font(.caption)
-                                            .foregroundColor(.mintGreen)
-                                        Text(place.displayName)
-                                            .font(.caption)
-                                            .foregroundColor(.primary)
+                                if !placesFromData.isEmpty {
+                                    ForEach(placesFromData) { place in
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "mappin.circle.fill")
+                                                .font(.caption)
+                                                .foregroundColor(.mintGreen)
+                                            Text(place.displayName)
+                                                .font(.caption)
+                                                .foregroundColor(.primary)
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color.mintGreen.opacity(0.1))
+                                        .clipShape(Capsule())
                                     }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(Color.mintGreen.opacity(0.1))
-                                    .clipShape(Capsule())
+                                } else {
+                                    ForEach(markersFromRoute) { marker in
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "mappin.circle.fill")
+                                                .font(.caption)
+                                                .foregroundColor(.mintGreen)
+                                            Text(marker.name)
+                                                .font(.caption)
+                                                .foregroundColor(.primary)
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color.mintGreen.opacity(0.1))
+                                        .clipShape(Capsule())
+                                    }
                                 }
                             }
                         }
@@ -9097,9 +9116,8 @@ struct LocalRouteMapPreview: View {
                 
                 // Action buttons
                 HStack(spacing: 10) {
-                    // v1.6.45: Only show Next and +1 buttons once we have 2+ routes
+                    // Next button — only when 2+ routes
                     if totalRoutes > 1 {
-                        // Next button — lavenderMist
                         Button(action: onShuffle) {
                             HStack(spacing: 6) {
                                 Image(systemName: "shuffle")
@@ -9116,8 +9134,10 @@ struct LocalRouteMapPreview: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .buttonStyle(.plain)
-                        
-                        // v2.1.10: +1 button — softAmber, generate one additional route on demand
+                    }
+                    
+                    // +1 button — show when 2+ routes, or when 1 route and not loading more (so user can try to get another)
+                    if totalRoutes > 1 || (totalRoutes == 1 && !isLoadingMoreRoutes) {
                         Button(action: onGenerateAdditional) {
                             Group {
                                 if isGeneratingAdditional {
