@@ -1,0 +1,23 @@
+postcode	placeId	name	latitude	longitude	types	vicinity	source
+S10	osm_1056119964	Aye'crumb'bar	53.3675437	-1.5303503	fast_food	Fulwood Road	osm
+S10	osm_106888083	Bull's Head	53.3710955	-1.523309	pub	Fulwood Road	osm
+S10	osm_109278027	Direct Travel	53.3791325	-1.5217968	travel_agency	Ringstead Crescent	osm
+S10	osm_106893746	Fulwood Motor Company	53.3680073	-1.5283977	car		osm
+S10	osm_1056119962	Headlines	53.3675963	-1.5302163	hairdresser	Fulwood Road	osm
+S10	osm_115395026	Kings Active Foundation	53.3723697	-1.5322183	outdoor_education_centre		osm
+S10	osm_1056119961	Lavang	53.3676141	-1.5301449	restaurant	Fulwood Road	osm
+S10	osm_1875934431	Neil Davis Repairs	53.3679105	-1.5281044	car_repair		osm
+S10	osm_109565138	Nether Green Junior School	53.3672205	-1.5293168	school	Sheffield	osm
+S10	osm_108251854	Nether Green Methodist Church	53.3675351	-1.5285372	place_of_worship	Nethergreen Road	osm
+S10	osm_1367999907	Nethergreen Surgery	53.368232	-1.5275516	doctors	Nethergreen Road	osm
+S10	osm_97150332	Quarry House	53.3870836	-1.5342746	guest_house		osm
+S10	osm_106888159	Ranmoor Parish Centre	53.3724493	-1.5222107	community_centre	Ranmoor Park Road	osm
+S10	osm_23759360	Sandygate	53.3763907	-1.5314702	sports_centre	Sandygate Road	osm
+S10	osm_23760344	The Claremont Hospital	53.3753212	-1.5359314	hospital	Sandygate Road	osm
+S10	osm_9758600138	The Hidden Library	53.3678646	-1.5292563	public_bookcase		osm
+S10	osm_1067642410	The Learning Studio	53.3711045	-1.522932	prep_school	Fulwood Road	osm
+S10	osm_9057481505	The Martins Guest House	53.3693925	-1.5261417	guest_house	Fulwood Road	osm
+S10	osm_108257529	The Rising Sun	53.3671328	-1.5303357	pub	Fulwood Road	osm
+S10	osm_1067642409	Turkish Top Cut	53.3710913	-1.5229819	hairdresser	Fulwood Road	osm
+S10	osm_1056119965	Ultimate Bathrooms	53.3675035	-1.5304325	bathroom_furnishing	Fulwood Road	osm
+S10	osm_111405476	Valleyside Garden Centre	53.3804023	-1.5371673	garden_centre		osm

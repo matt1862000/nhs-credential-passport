@@ -1,0 +1,76 @@
+postcode	placeId	name	latitude	longitude	types	vicinity	source
+S21	osm_814464110	Abbeydale Golf Club	53.325568	-1.5041291	golf_course	Twentywell Lane	osm
+S21	osm_1234759378	American Pizza House	53.320645	-1.491267	fast_food	Lowedges Road	osm
+S21	osm_1110089332	Barker The Bakers	53.3275508	-1.4888307	bakery	Westwick Crescent	osm
+S21	osm_1266224261	Barkers The Bakers Ltd	53.3226138	-1.4808115	bakery	Lowedges Road	osm
+S21	osm_1266224262	Be Beautiful	53.3226251	-1.4808937	beauty		osm
+S21	osm_157117105	Bradway Community Hall	53.3187936	-1.5020859	community_centre		osm
+S21	osm_137971321	Bradway Pet Shop	53.3184125	-1.504129	pet		osm
+S21	osm_137971326	Bradway Pharmacy	53.3186995	-1.505187	pharmacy		osm
+S21	osm_137971319	Bradway Post Office	53.3182835	-1.5048035	supermarket		osm
+S21	osm_184301314	Bradway Primary School	53.3184543	-1.5095165	school	Sheffield	osm
+S21	osm_135968306	Broadway Bowling Club	53.3195702	-1.5016639	sports_centre		osm
+S21	osm_1234759388	Buttilicious	53.3203945	-1.490632	fast_food	Lowedges Road	osm
+S21	osm_1110089325	Cello Coffee House	53.3272949	-1.488406	cafe	Bocking Lane	osm
+S21	osm_141276881	Coach and Horses	53.3098471	-1.4778433	pub	Sheffield Road	osm
+S21	osm_23058063	Dore and Totley Golf Club	53.3143806	-1.4938601	golf_course		osm
+S21	osm_3369956467	Dore and Totley golf club	53.3189115	-1.5013966	sports_centre		osm
+S21	osm_157254380	Ferndale	53.3136669	-1.4610509	garden_centre		osm
+S21	osm_128202066	GHB Dental Care	53.3271171	-1.4887678	dentist		osm
+S21	osm_5258078132	Greenhill Methodist Church	53.3268095	-1.4807891	place_of_worship	School Lane	osm
+S21	osm_135837250	Greenhill Park	53.3197948	-1.4807868	park		osm
+S21	osm_1110089323	Greenhill Pharmacy	53.3275545	-1.4883701	pharmacy		osm
+S21	osm_2052937145	Greenhill Post Office	53.3276287	-1.4882588	post_office	Bocking Lane	osm
+S21	osm_128206744	Greenhill Primary School	53.3259958	-1.4865754	school	Greenhill Main Road	osm
+S21	osm_135837640	Gresley Road Meeting Room	53.3207247	-1.4860518	community_centre		osm
+S21	osm_9355191158	Hair Union	53.3291338	-1.5155028	hairdresser		osm
+S21	osm_1234759380	Hot Kitchen	53.3206108	-1.4914344	fast_food	Lowedges Road	osm
+S21	osm_1110089330	Jaipur Tandoori House	53.3274111	-1.4884919	restaurant	Bocking Lane	osm
+S21	osm_1110089326	Key Homecare	53.327341	-1.4884838	doityourself	Westwick Crescent	osm
+S21	osm_137971313	Little Treasures	53.3184876	-1.5044771	toys		osm
+S21	osm_137971316	Love & Best Wishes	53.3183592	-1.504886	stationery		osm
+S21	osm_1110089337	Love the Look	53.3275153	-1.4887653	clothes	Westwick Crescent	osm
+S21	osm_6005450587	Low Edges Road Post Office	53.3223885	-1.4795615	post_office	Low Edges Road	osm
+S21	osm_1076890332	Lowedges Barbers	53.3223316	-1.4794504	hairdresser	Lowedges Road	osm
+S21	osm_136233076	Lowedges Community Centre	53.320503	-1.4851253	community_centre		osm
+S21	osm_1234759385	Lowedges Convenience Store	53.3204598	-1.4907482	convenience	Lowedges Road	osm
+S21	osm_1266224260	Lowedges Dental Care	53.3226024	-1.4807287	dentist		osm
+S21	osm_1418003482	Lowedges Fire Station	53.319756	-1.4978679	fire_station	Lowedges Road	osm
+S21	osm_1234759382	Lowedges Fish Bar	53.3205971	-1.4915999	fast_food	Lowedges Road	osm
+S21	osm_1076890333	Lowedges Fried Chicken	53.3223135	-1.4793529	fast_food	Lowedges Road	osm
+S21	osm_135805892	Lowedges Junior Academy	53.3213481	-1.4838105	school	Lowedges Road	osm
+S21	osm_32120217	Lower Meadow Primary School	53.3201945	-1.4714829	school	Batemoor Road	osm
+S21	osm_137971324	Makinsons	53.3185325	-1.5050033	greengrocer		osm
+S21	osm_137971314	Mets	53.3184872	-1.5049541	butcher		osm
+S21	osm_32823730	Moor View Golf Centre	53.3214648	-1.5025267	sports_centre		osm
+S21	osm_137971307	Moulin Roty	53.3183473	-1.5042758	toys		osm
+S21	osm_6005562405	Mr & Mrs Cod	53.3271991	-1.4879358	fast_food	Greenhill Main Road	osm
+S21	osm_166178697	M&T Transmissions	53.3195818	-1.5020716	car_repair	Bradway Road	osm
+S21	osm_4570638638	Rajdhani	53.3275286	-1.5155202	restaurant	Abbeydale Road South	osm
+S21	osm_1392218077	Renaissance	53.327095	-1.4831418	clothes	Greenhill Main Road	osm
+S21	osm_137971323	Retail Therapy	53.3184292	-1.5048909	clothes		osm
+S21	osm_1110089334	Rootz	53.327599	-1.4889075	hairdresser	Westwick Crescent	osm
+S21	osm_411122915	Sainsbury's	53.307991	-1.4771397	fuel		osm
+S21	osm_135859600	South Sheffield Church	53.3195527	-1.4987497	place_of_worship		osm
+S21	osm_131360150	St Peters	53.325355	-1.4886546	place_of_worship		osm
+S21	osm_1392313625	Sunbeams	53.3268228	-1.4843958	beauty		osm
+S21	osm_411357831	The Chequers	53.3119212	-1.460459	pub	Eckington Road	osm
+S21	osm_137403262	The Grennel Mower	53.3203077	-1.4920443	pub	Lowedges Road	osm
+S21	osm_1234759387	The Meeting Place	53.3205911	-1.4907795	community_centre	Lowedges Road	osm
+S21	osm_135715632	The Michael Church	53.3226865	-1.4819061	place_of_worship		osm
+S21	osm_4570649393	The Summer House	53.3289559	-1.5155429	restaurant	Abbeydale Road South	osm
+S21	osm_128202266	The White Hart	53.3269883	-1.4858098	pub	Greenhill Main Road	osm
+S21	osm_127188947	The White Swan	53.3271432	-1.483004	pub	Greenhill Main Road	osm
+S21	osm_137971329	Thomas Cook	53.3184565	-1.5049206	travel_agency		osm
+S21	osm_137971315	Tillys	53.3183283	-1.5048524	cafe	Twentywell Lane	osm
+S21	osm_137971312	Tim Hyde	53.3184057	-1.5048652	hairdresser		osm
+S21	osm_99012797	Toby Inn	53.3155921	-1.4756791	restaurant	Sheffield Road	osm
+S21	osm_370004392	Total	53.3129787	-1.4597449	fuel		osm
+S21	osm_138364120	Twentywellsick Wood Nature Reserve	53.3231857	-1.5115039	nature_reserve		osm
+S21	osm_1234759386	Vape & Beauty	53.3205384	-1.4907669	e-cigarette	Lowedges Road	osm
+S21	osm_1392313627	Venus	53.3268159	-1.4846088	hairdresser	Greenhill Main Road	osm
+S21	osm_10870122866	Wacky Warehouse	53.3121511	-1.4604668	indoor_play	Eckington Road	osm
+S21	osm_6005562408	Westwick Convenience Store	53.3273627	-1.4891105	convenience		osm
+S21	osm_1392313630	Ye Olde Barbers Shoppe	53.3269791	-1.4845879	hairdresser	Greenhill Main Road	osm
+S21	osm_412019136	Yew Tree	53.3109861	-1.4624393	pub		osm
+S21	osm_1392313626	YourPharmacy	53.3268194	-1.4844983	pharmacy	Greenhill Main Road	osm

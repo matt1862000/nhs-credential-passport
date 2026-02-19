@@ -1,0 +1,237 @@
+postcode	placeId	name	latitude	longitude	types	vicinity	source
+S9	osm_206103119	39 Desserts	53.4012914	-1.4138412	confectionery	Valley Centertainment	osm
+S9	osm_1122291440	Ace Janitorial Supplies	53.3942337	-1.4314554	trade	Attercliffe Road	osm
+S9	osm_106554946	Acliffe Garage	53.403367	-1.4185506	car_repair	Attercliffe Common	osm
+S9	osm_29353834	Acres Hill Community Primary School	53.3803573	-1.417611	school	Sheffield	osm
+S9	osm_277034713	Adult & Community Training	53.3899858	-1.4174831	school		osm
+S9	osm_106300876	A.F. Dobson	53.3867261	-1.4109433	furniture	Main Road	osm
+S9	osm_1144969033	Ahmad	53.3864374	-1.4122908	hairdresser	Staniforth Road	osm
+S9	osm_1144887914	Al Madina Fashion	53.3866613	-1.411476	clothes	Main Road	osm
+S9	osm_106125057	Al-Huda Academy	53.3883078	-1.4259568	place_of_worship		osm
+S9	osm_1144152437	All Colours Tattoo	53.3860621	-1.4106735	tattoo	Main Road	osm
+S9	osm_1428085353	Al-Shafeey Centre	53.3881722	-1.4193465	place_of_worship		osm
+S9	osm_108732632	Amana Bazaar	53.3870814	-1.4155615	convenience	Staniforth Road	osm
+S9	osm_1144969036	Angel's	53.3864517	-1.4124554	beauty	Staniforth Road	osm
+S9	osm_1120801575	Appliance Centre	53.3933833	-1.4324949	appliance	Attercliffe Road	osm
+S9	osm_106554954	Arena Motor Services	53.4022714	-1.4167506	car_repair	Clifton Street	osm
+S9	osm_106300880	Aries Lighting	53.3862153	-1.4098726	lighting	Main Road	osm
+S9	osm_1079984271	Aroma	53.3796268	-1.4180982	fast_food	Mather Road	osm
+S9	osm_1301121253	Arrow Self Drive	53.402426	-1.4164196	car_rental	Surbiton Street	osm
+S9	osm_1144887920	At-Tawheed	53.3869196	-1.4114064	travel_agency	Main Road	osm
+S9	osm_1120801578	Attercliffe Car Company	53.3937475	-1.4318533	car		osm
+S9	osm_1120801584	Attercliffe Pharmacy	53.3938979	-1.4318554	pharmacy	Attercliffe Road	osm
+S9	osm_104870382	Attercliffe Police Station	53.3981726	-1.4262806	police		osm
+S9	osm_634006813	Attercliffe Post Office	53.3958192	-1.4302394	post_office	Attercliffe Road	osm
+S9	osm_110026479	Autohaus Dolby	53.3932866	-1.409179	car_repair	Barleywood Road	osm
+S9	osm_108692964	Balfour Carpets	53.3880533	-1.4189	carpet	Staniforth Road	osm
+S9	osm_1144152439	Bargain Zone	53.3861655	-1.4116853	variety_store	Staniforth Road	osm
+S9	osm_106298310	Bee Pszczolka	53.3863123	-1.4101517	convenience	Main Road	osm
+S9	osm_1120801573	Big Baps	53.3933327	-1.432604	fast_food	Attercliffe Road	osm
+S9	osm_106555005	Big Filla	53.4020558	-1.4180194	fast_food	Broughton Lane	osm
+S9	osm_6216474355	Blade	53.3994363	-1.4229245	artwork		osm
+S9	osm_1144887923	Bob's Fruit & Veg	53.3870192	-1.4113594	greengrocer	Main Road	osm
+S9	osm_1120801576	Brotherhood Barbers	53.393416	-1.4324576	hairdresser	Attercliffe Road	osm
+S9	osm_1143946983	Bully Pound	53.3856783	-1.4093273	pet	Greenland Road	osm
+S9	osm_102326767	Cafe 313	53.3950501	-1.4279639	cafe	Worksop Road	osm
+S9	osm_1144152433	Cake Box	53.3863733	-1.4107566	pastry	Main Road	osm
+S9	osm_599315988	Canon Medical Arena	53.3948357	-1.4253272	stadium		osm
+S9	osm_110565783	CC Motors	53.3972722	-1.413146	car		osm
+S9	osm_1144986819	Chaii Nastha	53.3850398	-1.4080953	cafe	Main Road	osm
+S9	osm_1095006113	Chamak	53.3858719	-1.4103546	clothes		osm
+S9	osm_277034722	Chapelwood Meeting Room	53.3927853	-1.4165441	place_of_worship		osm
+S9	osm_1122291423	Charlie's Angels Fm	53.394137	-1.432323	trade	Attercliffe Road	osm
+S9	osm_106123844	Chaska Chai	53.3900881	-1.4280861	cafe	Staniforth Road	osm
+S9	osm_1144887910	Chick Fried	53.3865253	-1.4115508	fast_food	Main Road	osm
+S9	osm_1079984274	China Town	53.3798204	-1.4184349	restaurant	Mather Road	osm
+S9	osm_75238140	Chiquito	53.4012583	-1.4154089	restaurant	Valley Centertainment	osm
+S9	osm_108732648	Church Of Christ	53.3860511	-1.4109462	place_of_worship		osm
+S9	osm_104639242	Church of Jesus Christ Apostolic	53.3846835	-1.4098572	place_of_worship		osm
+S9	osm_206103114	Cineworld	53.4026222	-1.4137903	cinema		osm
+S9	osm_1301121252	Clifton Garage	53.4026496	-1.4172552	car_repair	Clifton Street	osm
+S9	osm_1143946982	Colour Box	53.3856963	-1.4094062	hairdresser	Greenland Road	osm
+S9	osm_1104721858	Costa Drive Thru	53.3901431	-1.4089347	cafe	Greenland Road	osm
+S9	osm_96112401	Costco	53.3841446	-1.4203748	wholesale	Parkway Drive	osm
+S9	osm_12589814212	Costco Food Court	53.3842549	-1.4210275	fast_food		osm
+S9	osm_1060663474	Costco Fuel	53.383196	-1.4197489	fuel		osm
+S9	osm_1144969052	Curry House Apna	53.3863222	-1.4132844	restaurant	Staniforth Road	osm
+S9	osm_322680732	Darnal Spiritualist National Union Church	53.3887887	-1.4198284	place_of_worship		osm
+S9	osm_1144969035	Darnall Charcoal Grill	53.3864475	-1.4124041	fast_food	Staniforth Road	osm
+S9	osm_25419853	Darnall Community Park	53.391063	-1.4212563	park		osm
+S9	osm_1144986812	Darnall Continental Grocer	53.3864906	-1.4142347	convenience	Staniforth Road	osm
+S9	osm_1144152438	Darnall Dental Clinic	53.3861784	-1.4115729	dentist	Staniforth Road	osm
+S9	osm_106302137	Darnall Fisheries	53.3877628	-1.4111502	fast_food	Main Road	osm
+S9	osm_106304148	Darnall Housing Office	53.3853951	-1.4113125	social_facility		osm
+S9	osm_106300883	Darnall Library	53.3866807	-1.4104987	library		osm
+S9	osm_1144986814	Darnall New Style	53.3852376	-1.4087679	hairdresser	Main Road	osm
+S9	osm_109434434	Darnall Pharmacy	53.3881722	-1.4102294	pharmacy	York Road	osm
+S9	osm_13145171959	Darnall Post Office	53.3855345	-1.4093988	post_office		osm
+S9	osm_1143946980	Darnall Pound Plus	53.385834	-1.4093571	variety_store	Greenland Road	osm
+S9	osm_108734629	Darnall Road Baptist	53.3920433	-1.4201023	place_of_worship		osm
+S9	osm_1259360393	Darnall Service Station	53.3872399	-1.4088786	fuel	Greenland Road	osm
+S9	osm_1144887925	Darnall Textiles	53.3870895	-1.4113365	clothes	Main Road	osm
+S9	osm_303858796	Darnell Primary Health Care Centre	53.3846707	-1.408873	doctors		osm
+S9	osm_96658363	Davy's Sporting Club	53.3789025	-1.4093784	sports_centre		osm
+S9	osm_1134950588	Decor Barber	53.3714304	-1.4192061	hairdresser	Prince of Wales Road	osm
+S9	osm_6466279485	Dee Dee’s Cafe	53.4040461	-1.4138044	cafe	Attercliffe Common	osm
+S9	osm_1095245546	Deli At The Don	53.3950409	-1.4303922	cafe	Attercliffe Road	osm
+S9	osm_1143946978	Deli Delicious	53.3857006	-1.4101039	deli	Main Road	osm
+S9	osm_322679322	Dilkash	53.3887482	-1.4225068	fast_food	Staniforth Road	osm
+S9	osm_1122291427	Diplomat	53.3947822	-1.4314493	massage	Attercliffe Road	osm
+S9	osm_634006814	Direct Shop and Sew	53.39592	-1.4301664	fabric	Attercliffe Road	osm
+S9	osm_1144986806	Dodos	53.3864192	-1.4138364	confectionery	Staniforth Road	osm
+S9	osm_23646707	Don Valley Bowl	53.3990749	-1.4209987	park		osm
+S9	osm_1095245545	Don Valley Hotel	53.395102	-1.4303065	pub	Attercliffe Road	osm
+S9	osm_1144350262	DSA Autocentre	53.3979897	-1.4268481	car_repair	Fell Road	osm
+S9	osm_1144986810	Easier Travel	53.3867188	-1.4139384	travel_agency	Staniforth Road	osm
+S9	osm_5728163229	EIS Cafe	53.3988469	-1.4245363	cafe		osm
+S9	osm_108691280	Elahi Jame Mosque	53.3893492	-1.4238977	place_of_worship		osm
+S9	osm_1122291444	Elios Coffee Lounge	53.3947631	-1.4306496	cafe	Attercliffe Road	osm
+S9	osm_23049494	English Institute of Sport Sheffield	53.3983799	-1.4246692	sports_centre		osm
+S9	osm_1144152440	Evolution	53.3861622	-1.411766	clothes	Staniforth Road	osm
+S9	osm_1144887928	Faiza Fashions	53.3872011	-1.4112992	tailor	Main Road	osm
+S9	osm_1134950587	Family Fish Bar	53.3718545	-1.4189316	fast_food	Prince of Wales Road	osm
+S9	osm_1144152453	Fashion Ways	53.3864515	-1.4115886	tailor	Staniforth Road	osm
+S9	osm_1144887913	Fatimah Hair & Beauty	53.3866346	-1.4114854	hairdresser	Main Road	osm
+S9	osm_1146075947	FF	53.3892584	-1.424493	hairdresser	Staniforth Road	osm
+S9	osm_1144152442	First Choice Off Licence	53.3861562	-1.4119873	alcohol	Staniforth Road	osm
+S9	osm_1144887922	Flavourz Cafe	53.3869833	-1.4113718	cafe	Main Road	osm
+S9	osm_75238138	Frankie & Benny's	53.4015394	-1.4150267	restaurant	Broughton Lane	osm
+S9	osm_1144152443	Fresh Potraviny	53.386155	-1.4120823	convenience	Staniforth Road	osm
+S9	osm_106303442	Freshmart	53.3869507	-1.412135	supermarket	Irving Street	osm
+S9	osm_1122291422	FryMaster	53.3940432	-1.4322259	fast_food	Attercliffe Road	osm
+S9	osm_1134950586	Furniture World	53.3715481	-1.419254	furniture	Prince of Wales Road	osm
+S9	osm_1122708429	Gardening Equipment Services	53.395937	-1.4292046	trade	Attercliffe Road	osm
+S9	osm_1144986805	G.G Fashions	53.3864063	-1.4137698	clothes	Staniforth Road	osm
+S9	osm_104639227	Greenland Cars	53.3858426	-1.4083783	car	Senior Road	osm
+S9	osm_110565777	GSF Car Parts	53.396577	-1.4125636	car_parts		osm
+S9	osm_1144986808	HA barbers	53.3864456	-1.4139658	hairdresser	Staniforth Road	osm
+S9	osm_110565782	Haelo Mansion	53.3983484	-1.4119439	restaurant	Dannemora Drive	osm
+S9	osm_1146075940	Halak Appliances	53.3894799	-1.4259087	appliance	Staniforth Road	osm
+S9	osm_96431716	Half Moon	53.3800302	-1.4187761	pub	Mather Road	osm
+S9	osm_1122291431	Hanky Panky	53.3949561	-1.4312156	erotic	Attercliffe Road	osm
+S9	osm_104639236	Hazels Market	53.3851383	-1.4084345	convenience	Waverley Road	osm
+S9	osm_1144969038	Headmasters	53.3864856	-1.4125773	hairdresser	Staniforth Road	osm
+S9	osm_1144986803	HFC	53.3863608	-1.4135924	fast_food	Staniforth Road	osm
+S9	osm_1144969047	H&H Health Store	53.386259	-1.4129797	health_food	Staniforth Road	osm
+S9	osm_29331503	High Hazels Junior School	53.387518	-1.4146023	school	Fisher Lane	osm
+S9	osm_22939398	High Hazels Park	53.3856258	-1.401188	park		osm
+S9	osm_102327548	Hireforce	53.3954487	-1.4292923	tool_hire	Worksop Road	osm
+S9	osm_317691107	Hobbycraft	53.404673	-1.4126348	craft	Attercliffe Common	osm
+S9	osm_68440764	Hollywood Bowl	53.4017038	-1.4134919	bowling_alley	Valley Centertainment	osm
+S9	osm_1146075937	Ibrahims	53.3895199	-1.4261564	convenience	Staniforth Road	osm
+S9	osm_23049513	iceSheffield	53.4001875	-1.4227354	stadium		osm
+S9	osm_5741036008	IceSheffield Cafe	53.3997938	-1.4228427	cafe		osm
+S9	osm_13202420630	image sign	53.397943	-1.4131238	signs		osm
+S9	osm_1120801583	Indus	53.3940318	-1.4316782	restaurant	Attercliffe Road	osm
+S9	osm_104639228	Interiors 13	53.3853163	-1.4091345	kitchen		osm
+S9	osm_12064493705	Ionity Sheffield	53.4054056	-1.4172213	charging_station		osm
+S9	osm_1144887919	Irenka Express	53.3868787	-1.4114607	alcohol	Main Road	osm
+S9	osm_13202420637	Jackson's	53.4019187	-1.4173672	wholesale		osm
+S9	osm_102326668	Jamia Mosque	53.3942371	-1.4307366	place_of_worship		osm
+S9	osm_13128714259	Jamia Mosque Gulzar-e-Habib	53.3872795	-1.4224783	place_of_worship		osm
+S9	osm_110566205	JCT600 Volkswagen	53.3992138	-1.406194	car		osm
+S9	osm_1149710750	Jimmy Monkey	53.3943519	-1.414091	fast_food	Clipstone Gardens	osm
+S9	osm_1144887926	KA Stylist	53.3871238	-1.4113225	hairdresser	Main Road	osm
+S9	osm_1146075941	Khan Plus	53.3894637	-1.4257783	variety_store	Staniforth Road	osm
+S9	osm_1146075944	Krispy Kod	53.3892975	-1.4247046	fast_food	Staniforth Road	osm
+S9	osm_1122291442	Kutchenhaus	53.3947947	-1.4304571	kitchen	Attercliffe Road	osm
+S9	osm_1144969051	Lavinia Shop	53.3863133	-1.4132317	convenience	Staniforth Road	osm
+S9	osm_1079984270	Littledale Convenience Store	53.3795604	-1.4179538	convenience	Mather Road	osm
+S9	osm_109434437	Living Waters	53.3882554	-1.4125531	place_of_worship		osm
+S9	osm_1144986813	Lumóra	53.3852481	-1.4088665	yes	Main Road	osm
+S9	osm_1144986800	Maa Ji	53.3865932	-1.4131882	cafe	Staniforth Road	osm
+S9	osm_6216389893	Marble Players	53.4059529	-1.4141647	artwork		osm
+S9	osm_109438038	Markazi Jamia	53.3900027	-1.4160641	place_of_worship	Industry Road	osm
+S9	geograph_3669991	Memorial stone at Salmon Pastures	53.389426	-1.442272	geograph		geograph
+S9	osm_1144152435	M&H Tailors	53.3859945	-1.4105732	tailor	Main Road	osm
+S9	osm_1144152441	Mir Shisha Accessories	53.3861644	-1.4118693	tobacco	Staniforth Road	osm
+S9	osm_1144969044	Miss Y's	53.3862042	-1.4126036	clothes	Staniforth Road	osm
+S9	osm_1144969045	Nadeem Barbers	53.3862128	-1.41266	hairdresser	Staniforth Road	osm
+S9	osm_1144887927	Nafis Fast Food	53.3871551	-1.4113144	fast_food	Main Road	osm
+S9	osm_322694965	Noor Al Hadi Mosque	53.3896753	-1.4274416	place_of_worship		osm
+S9	osm_761203177	Noose and Gibbet Inn	53.401207	-1.4171724	pub	Broughton Lane	osm
+S9	osm_1136780343	Oasis Academy Don Valley	53.3955478	-1.4271943	school	Leeds Road	osm
+S9	osm_1144969031	Orchid	53.386431	-1.4121767	hairdresser	Staniforth Road	osm
+S9	osm_1245623214	Oro Jewellers	53.3958798	-1.4292745	jewelry	Attercliffe Road	osm
+S9	osm_1144152444	Our Choice	53.3871246	-1.4107968	variety_store	Main Road	osm
+S9	osm_110026462	Phillimore Community Primary School	53.3945795	-1.4170068	school	Sheffield	osm
+S9	osm_25419298	Phillimore Park	53.3944853	-1.4164834	park		osm
+S9	osm_1144887924	Phone Surgeon	53.3870594	-1.4113451	mobile_phone	Main Road	osm
+S9	osm_5981468782	Pimoroni	53.3861416	-1.4240262	computer	Parkway Drive	osm
+S9	osm_1299396841	Pinnacle Cars	53.3955387	-1.4062872	car		osm
+S9	osm_102457494	Pipworth Community Primary School	53.3735667	-1.4156602	school	Sheffield	osm
+S9	osm_13202420631	Pirtek	53.3980392	-1.4131708	yes		osm
+S9	osm_106559323	Pizza Hut	53.4061597	-1.4138075	restaurant	Attercliffe Common	osm
+S9	osm_104870630	Premier Inn	53.4014627	-1.4229516	hotel	Attercliffe Common	osm
+S9	osm_1134950585	Prince of Vapez	53.3716352	-1.4192705	e-cigarette	Prince of Wales Road	osm
+S9	osm_1160731971	Principle Support	53.4024816	-1.4217594	social_facility		osm
+S9	osm_1245623210	Qama Limited	53.3956019	-1.4302705	doityourself	Attercliffe Road	osm
+S9	osm_761203176	Quba Education Centre	53.3942647	-1.4269683	place_of_worship		osm
+S9	osm_277034711	Quix News	53.3897191	-1.4170593	convenience	Darnall Road	osm
+S9	osm_1146075945	Rassam's Express	53.389288	-1.4246386	convenience	Staniforth Road	osm
+S9	osm_1146075943	Rassam's Local	53.3893073	-1.4247711	convenience	Staniforth Road	osm
+S9	osm_1144887929	Real Taste	53.387232	-1.4112883	fast_food	Main Road	osm
+S9	osm_1144969041	Recanto	53.3861639	-1.4123501	convenience	Staniforth Road	osm
+S9	osm_1143946976	Rhee's Beauty Bar	53.3857587	-1.4101883	beauty	Main Road	osm
+S9	osm_1134950583	Rubans Convenience Store	53.3718226	-1.419014	convenience	Prince of Wales Road	osm
+S9	osm_1144986804	Ruby House	53.3863949	-1.4137157	restaurant	Staniforth Road	osm
+S9	osm_1144969043	S9 Communication	53.3861946	-1.412542	mobile_phone	Staniforth Road	osm
+S9	osm_1144887916	SA News	53.3867284	-1.4114539	newsagent	Main Road	osm
+S9	osm_1144969053	Salon 614	53.3863346	-1.4133539	hairdresser	Staniforth Road	osm
+S9	osm_1095245544	Samara Lounge	53.3951759	-1.4301609	hookah_lounge	Attercliffe Road	osm
+S9	osm_1144969040	Sanam Kebabish	53.3865395	-1.4127229	fast_food	Staniforth Road	osm
+S9	osm_110564223	Seraphic Academy	53.3972079	-1.4185581	school		osm
+S9	osm_1144155323	Seven Hills Tyres Ltd	53.3869797	-1.415217	tyres	Staniforth Road	osm
+S9	osm_1144986802	Sheaf Sports & Trophies	53.3866108	-1.4133032	sports	Staniforth Road	osm
+S9	osm_100392537	Sheffield Park Academy	53.375192	-1.4189528	school	Sheffield	osm
+S9	geograph_3262224	Sheffield Quality Forge Limited	53.392292	-1.44013	geograph		geograph
+S9	osm_322648569	Sheffield Subud Centre	53.3909472	-1.4262379	community_centre		osm
+S9	osm_1391026616	Sheffield Supercharger	53.4053145	-1.4143105	charging_station		osm
+S9	osm_1122291424	Sheffield Tooling Company	53.3942059	-1.4322399	doityourself	Attercliffe Road	osm
+S9	osm_1144969032	Sheikh & Balen	53.3864315	-1.412231	hairdresser	Staniforth Road	osm
+S9	osm_1143946977	Siam Health	53.3857298	-1.4101517	massage	Main Road	osm
+S9	osm_1144986798	Smart Barbers	53.3866354	-1.413441	hairdresser	Staniforth Road	osm
+S9	osm_1146075946	Smart Style	53.3892786	-1.4245773	hairdresser	Staniforth Road	osm
+S9	osm_1039145328	Smyths	53.4044432	-1.4146618	toys		osm
+S9	osm_1144969042	Sonias Fashions & Taylors	53.3861814	-1.4124521	tailor	Staniforth Road	osm
+S9	osm_1144969046	SoSaucy	53.3862297	-1.412733	restaurant	Staniforth Road	osm
+S9	osm_25419881	South Yorkshire Police	53.3979249	-1.425838	police		osm
+S9	osm_1122291425	Spicy Bites	53.3946686	-1.4314712	fast_food	Attercliffe Road	osm
+S9	osm_1144887911	S&S Barbers	53.386561	-1.4115065	hairdresser	Main Road	osm
+S9	osm_110021338	St Alban	53.3923202	-1.4150281	place_of_worship		osm
+S9	osm_322680738	Staniforth Mini Market	53.387998	-1.4195323	convenience	Staniforth Road	osm
+S9	osm_1144969037	Star Shop	53.3864762	-1.4125095	clothes	Staniforth Road	osm
+S9	osm_1144887918	Sta's	53.3868384	-1.4114142	alcohol	Main Road	osm
+S9	osm_1120801572	Steel City Garage	53.393183	-1.4321472	car_repair	Baltic Road	osm
+S9	osm_599315985	Steel City Stadium	53.3960341	-1.4253574	stadium		osm
+S9	osm_1144152452	Storeys	53.3864526	-1.4116804	adult_gaming_centre	Staniforth Road	osm
+S9	osm_13202420620	Sunbelt Rentals	53.3945997	-1.4104366	plant_hire		osm
+S9	osm_106127024	Sunrise Groceries	53.3894348	-1.4252743	convenience	Staniforth Road	osm
+S9	osm_1134950589	Surena Pizza	53.3717254	-1.4191664	fast_food	Prince of Wales Road	osm
+S9	osm_1436391011	SYD Smiths (Spares)	53.3877389	-1.4088398	motorcycle_repair		osm
+S9	osm_1149710751	Tea And Toast	53.3943704	-1.4139537	cafe	Clipstone Gardens	osm
+S9	osm_110026496	TeamSport Karting Sheffield	53.3950281	-1.4055867	sports_centre	Shepcote Way	osm
+S9	osm_1144887921	Teasmaid	53.3869581	-1.4114425	cafe	Main Road	osm
+S9	osm_12622845401	Tec-nick Autos	53.3983384	-1.4134227	car_repair		osm
+S9	osm_1245623212	Thai Thai Spa	53.3954698	-1.4299019	massage	Attercliffe Road	osm
+S9	osm_96442184	The 3 Feathers	53.376307	-1.412815	pub	Bowden Wood Crescent	osm
+S9	osm_1122708432	The Library	53.3960151	-1.4284142	restaurant	Leeds Road	osm
+S9	osm_1144986817	The Little Mesters Cafe	53.3853208	-1.4082401	cafe	Waverley Road	osm
+S9	osm_206130646	The Range	53.4041888	-1.4134161	houseware	Attercliffe Common	osm
+S9	osm_1144152436	The Style House	53.3860131	-1.4106273	hairdresser	Main Road	osm
+S9	osm_106302140	The Terminus Tavern	53.3873991	-1.411305	pub	Main Road	osm
+S9	osm_106555021	The Wentworth	53.4037773	-1.4204412	pub	Milford Street	osm
+S9	osm_1160731973	The Wentworth Beer Garden	53.4037857	-1.4205895	outdoor_seating		osm
+S9	osm_1144152450	Thomas Bakers	53.3864291	-1.411856	fast_food	Staniforth Road	osm
+S9	osm_3593657568	Tomb of Benjamin Huntsman	53.3993129	-1.4265845	attraction, tomb		osm
+S9	osm_13202420638	Top Express Hand Car Wash	53.4017337	-1.4172412	car_wash		osm
+S9	osm_96437620	Travelodge Sheffield Richmond	53.3742081	-1.4142563	hotel	Prince of Wales Road	osm
+S9	osm_106300878	TSB	53.3872222	-1.4108266	bank	Main Road	osm
+S9	osm_110026493	UK Storage	53.3952685	-1.4112195	storage_rental	Shepcote Lane	osm
+S9	osm_1144152454	Unique Style	53.3864715	-1.4115448	hairdresser	Staniforth Road	osm
+S9	osm_1212040519	Urban Rasoi	53.3860067	-1.4115063	restaurant	Station Road	osm
+S9	osm_1136780342	UTC Sheffield Olympic Legacy Park	53.3969647	-1.4257403	school	Old Hall Road	osm
+S9	osm_23049454	Utilita Arena Sheffield	53.3998934	-1.4188158	arena		osm
+S9	osm_3083221905	Weldricks Pharmacy	53.384902	-1.4089811	pharmacy		osm
+S9	osm_1122291443	Xclusive	53.3949265	-1.4305204	kitchen	Attercliffe Road	osm
+S9	osm_1122291437	Zabka Minimarket	53.3944231	-1.4312491	convenience	Attercliffe Road	osm

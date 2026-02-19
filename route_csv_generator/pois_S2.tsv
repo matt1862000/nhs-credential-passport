@@ -1,0 +1,165 @@
+postcode	placeId	name	latitude	longitude	types	vicinity	source
+S2	osm_95688663	74th Oak Street Scout Group	53.3560406	-1.4658491	community_centre		osm
+S2	osm_135856445	A.E. Butterworth	53.357677	-1.4826264	bicycle	Abbeydale Road	osm
+S2	osm_361227484	Alam Hill Books	53.3570355	-1.4738793	books		osm
+S2	osm_1137849722	Alan's Barber	53.361446	-1.4301017	hairdresser	City Road	osm
+S2	osm_1146462442	Alberts	53.364245	-1.4346116	fast_food	City Road	osm
+S2	osm_249762919	Anna Roberts	53.3572599	-1.4829834	clothes	Abbeydale Road	osm
+S2	osm_8385461440	Another Level	53.3566277	-1.4766513	beauty		osm
+S2	osm_95419837	Arbourthorne Community Primary School	53.3594426	-1.446371	school	Eastern Avenue	osm
+S2	osm_1033296731	Arbourthorne Fish Bar	53.3600507	-1.4374181	fast_food	Northern Avenue	osm
+S2	osm_852304929	Archdale School	53.3681441	-1.4249162	school	Archdale Road	osm
+S2	osm_173301640	Arman Food Store	53.3573033	-1.4829435	convenience	Abbeydale Road	osm
+S2	osm_97413337	Ashley Rogers	53.3615458	-1.4302237	tailor	City Road	osm
+S2	osm_205729688	Bannerdale Osteopaths	53.3597477	-1.4878077	clinic	Machon Bank Road	osm
+S2	osm_7982694661	Best Pizza	53.3649444	-1.4355598	fast_food	City Road	osm
+S2	osm_95246655	B&M Bargains	53.3573388	-1.476983	variety_store	Chesterfield Road	osm
+S2	osm_168966398	Boots	53.3566085	-1.4784311	chemist	Chesterfield Road	osm
+S2	osm_97837912	Broadfield Hotel	53.3582373	-1.4827366	pub	Abbeydale Road	osm
+S2	osm_101007992	Broadfield Park	53.3578827	-1.481171	park		osm
+S2	osm_7982694657	Bronze & Polished	53.3641241	-1.4336293	beauty		osm
+S2	osm_137534577	Burger Buzz	53.3579668	-1.4823731	fast_food	Abbeydale Road	osm
+S2	osm_564117791	Burton Roofing Merchants	53.3825591	-1.4287767	trade		osm
+S2	osm_1333224953	B.U.tiful	53.3657425	-1.4286443	hairdresser	Fairleigh	osm
+S2	osm_8385471345	Café Des Amis	53.3570415	-1.4762208	cafe	Chesterfield Road	osm
+S2	osm_32213312	Carfield Primary School	53.3540158	-1.466	school	Argyle Road	osm
+S2	osm_1146462445	Caribbean Fusion	53.3647035	-1.4353359	fast_food	City Road	osm
+S2	osm_361242610	Casa Italia	53.3567438	-1.4765198	restaurant	Chesterfield Road	osm
+S2	osm_1030111347	Cash Converters	53.3560037	-1.4490581	pawnbroker	Gleadless Road	osm
+S2	osm_90716554	Castle View Park	53.372502	-1.4311729	park		osm
+S2	osm_267646097	Cat Lane Bakery	53.3573318	-1.4604825	bakery	Cat Lane	osm
+S2	osm_8385433165	CheebaCheeba	53.3568282	-1.4764293	cafe	Chesterfield Road	osm
+S2	geograph_1930478	Cholera Monument, Sheffield	53.3762	-1.45913	geograph		geograph
+S2	geograph_1918736	Cholera Monument, Norfolk Road	53.375836	-1.458082	geograph		geograph
+S2	osm_7982694653	Christy's	53.3617625	-1.4305568	beauty		osm
+S2	osm_1146462441	City Grocers	53.364117	-1.4344206	convenience	City Road	osm
+S2	osm_173301639	Curry Master	53.3573336	-1.4829198	fast_food	Abbeydale Road	osm
+S2	osm_168966400	Currys	53.3562737	-1.4791604	electronics	Sheffield	osm
+S2	osm_1030111341	Daily News & Cards	53.3558043	-1.4487201	newsagent	Gleadless Road	osm
+S2	osm_361228574	Daughters	53.3555492	-1.4711237	convenience	Valley Road	osm
+S2	osm_222008863	Diocese of Hallam Pastoral Centre	53.3923749	-1.4374419	place_of_worship		osm
+S2	osm_1033296724	DJ's Sarni Bar	53.3595806	-1.4380133	fast_food	Northern Avenue	osm
+S2	osm_137534566	Earth Claims	53.3580187	-1.4823738	bank	Abbeydale Road	osm
+S2	osm_161076766	East Bank Medical Centre	53.3588617	-1.4385191	doctors		osm
+S2	osm_1265069222	Edge Cutters	53.3595041	-1.4873676	hairdresser	Sheldon Road	osm
+S2	osm_97413411	Elm Tree Police Station	53.3617893	-1.4298903	police		osm
+S2	osm_6880645887	Europcar	53.3805538	-1.4279588	car_rental	Parkway Avenue	osm
+S2	osm_7982694655	Express Dial A Pizza	53.3618241	-1.4306688	fast_food	City Road	osm
+S2	osm_1030111345	ExtraCare	53.3559372	-1.4489429	charity	Gleadless Road	osm
+S2	osm_1254567144	Flowers & Gifts 2 Go	53.3754671	-1.4290221	florist	Manor Park Centre	osm
+S2	osm_1241440846	gian	53.3579001	-1.4459088	convenience	East Bank Road	osm
+S2	osm_1217612949	Gin Bar	53.3584708	-1.4824824	bar	Abbeydale Road	osm
+S2	osm_67844861	Gleadless Medical Centre	53.3565289	-1.4514569	doctors		osm
+S2	osm_7982694654	GoLocalExtra	53.3617969	-1.4306192	convenience		osm
+S2	osm_13483637937	Greek Gods Cuisine	53.3930282	-1.4783223	fast_food	Neepsend Lane	osm
+S2	osm_137534593	Hafiz Store	53.3579096	-1.4824134	convenience	Abbeydale Road	osm
+S2	osm_1363329002	Hair & Beauty Lounge	53.3722666	-1.4256282	hairdresser	Harborough Avenue	osm
+S2	osm_1030111344	Hammonds Bread Shop	53.3559038	-1.4488896	bakery	Gleadless Road	osm
+S2	osm_856114623	Happy House	53.3617048	-1.4304688	fast_food	City Road	osm
+S2	osm_13482836110	Heeley Sidings	53.3562479	-1.4783307	artwork		osm
+S2	osm_94151045	Highfield Motors	53.3922195	-1.4357608	car_parts	Attercliffe Road	osm
+S2	geograph_7356804	Hillside below the Cholera Monument	53.375933	-1.459735	geograph		geograph
+S2	osm_5435868336	HSS Hire	53.3811341	-1.427452	tool_hire		osm
+S2	osm_95688806	I Said Bread	53.3556337	-1.4687493	bakery	Rushdale Road	osm
+S2	osm_137534584	Ideal Hairdresser	53.3581047	-1.4823072	hairdresser	Abbeydale Road	osm
+S2	osm_1137849723	Indian Chef	53.3614811	-1.4301552	restaurant	City Road	osm
+S2	osm_95545340	International Automatic Cars	53.3575649	-1.4757678	car, Meersbrook Police Station		osm
+S2	geograph_6403325	Iron compass at the Cholera Monument	53.375935	-1.460035	geograph		geograph
+S2	osm_137534586	Jaan Kebab House	53.358133	-1.4822838	fast_food	Abbeydale Road	osm
+S2	osm_1097407473	Kathy's Tea Room	53.3749833	-1.4300183	cafe		osm
+S2	osm_361227485	Kingdom Hall of Jehovah's Witnesses	53.3568302	-1.4734103	place_of_worship		osm
+S2	osm_1254567145	Krown Tanning & Beauty	53.3755111	-1.4289951	beauty	Manor Park Centre	osm
+S2	osm_95708662	Kwik Fit	53.3643661	-1.4349372	car_repair	City Road	osm
+S2	osm_8464197444	Leaves	53.3625964	-1.4313646	artwork		osm
+S2	osm_1146462447	Lees	53.3647633	-1.4354294	appliance	City Road	osm
+S2	osm_173301638	Level Up	53.3573692	-1.4828705	hairdresser	Abbeydale Road	osm
+S2	osm_1244621578	Little Jack's Corner	53.3653642	-1.4283685	fast_food	Sheffield	osm
+S2	osm_95688687	Little London Bodyworks	53.3559113	-1.4713092	car_repair	Valley Road	osm
+S2	geograph_7644811	Looking towards St Paul's Tower, Sheffield	53.375751	-1.459136	geograph		geograph
+S2	osm_1241440847	Lotus	53.3579153	-1.4457724	fast_food	East Bank Road	osm
+S2	osm_71868183	Makro	53.3841914	-1.4299802	wholesale	Parkway Avenue	osm
+S2	osm_175666775	Mandala	53.357398	-1.4759399	cafe	Chesterfield Road	osm
+S2	osm_22958399	Manor Fields	53.3698899	-1.4324557	park		osm
+S2	osm_1254567142	Manor Park Fisheries	53.3754292	-1.4291376	fast_food	Manor Park Centre	osm
+S2	osm_98241953	Manor Park Medical Centre	53.3755481	-1.4276886	doctors		osm
+S2	osm_1254567140	Manor Park Post Office	53.3753476	-1.429316	post_office	Manor Park Centre	osm
+S2	osm_1244621576	Manor Post Office	53.3654765	-1.4285074	post_office	Fairleigh	osm
+S2	osm_856114622	Manor Top Fish Bar	53.3615929	-1.4303018	fast_food	City Road	osm
+S2	osm_1137849720	Martyn Kemp Opticians	53.3613875	-1.4299905	optician	City Road	osm
+S2	osm_8385433166	Master Barber	53.3568014	-1.4764843	hairdresser		osm
+S2	osm_29363390	Mather Community Park	53.3795748	-1.4190562	park		osm
+S2	osm_22928362	Meersbrook Park	53.3537403	-1.4743168	park		osm
+S2	osm_95843271	Meersbrook Park Church	53.3556404	-1.4776766	place_of_worship		osm
+S2	osm_95258982	Meersbrook Service Station	53.356159	-1.463662	car_repair	Meersbrook Road	osm
+S2	osm_173301644	MJ Dressmaker & Designer	53.3574732	-1.482794	clothes	Abbeydale Road	osm
+S2	osm_1030111350	Momma Katz	53.356103	-1.4492277	cafe	Gleadless Road	osm
+S2	osm_1222820929	Nether Edge Market	53.3597095	-1.4875891	memorial		osm
+S2	osm_23761754	Nether Edge Primary School	53.3580562	-1.483449	school	Glen Road	osm
+S2	osm_358518649	Newfield Green Clinic	53.3563858	-1.450016	doctors		osm
+S2	osm_94223218	Newfield Green Dental Surgery	53.3570399	-1.4510684	dentist		osm
+S2	osm_52916225	Newfield Green Library	53.3552642	-1.4483529	library	Gleadless Road	osm
+S2	osm_1030111343	Newfield Green Post Office	53.3558728	-1.4488342	post_office	Gleadless Road	osm
+S2	osm_94587123	Newfield Nursing Home	53.3574849	-1.4596232	social_facility	Cat Lane	osm
+S2	osm_1363329004	No.1 Chinese Takeaway	53.3721439	-1.4254266	fast_food	Harborough Avenue	osm
+S2	osm_173301645	Noble and Wylie	53.3575415	-1.4827161	shoes	Abbeydale Road	osm
+S2	osm_8385461441	Nxt Level	53.3566573	-1.4766164	hairdresser		osm
+S2	osm_1030111349	One Stop Mini Market	53.3560686	-1.449171	convenience	Gleadless Road	osm
+S2	geograph_5239814	Path near the Cholera Monument, Sheffield	53.376467	-1.458375	geograph		geograph
+S2	geograph_5239819	Path up to the Cholera Monument, Sheffield	53.375669	-1.46079	geograph		geograph
+S2	osm_95416186	Pearl Motors	53.3577622	-1.445314	car_repair		osm
+S2	osm_4732373421	Pentagon Jeep	53.3810512	-1.4287532	car_repair	Parkway Avenue	osm
+S2	osm_5058954622	Pentagon Kia	53.3809559	-1.4284857	car_repair	Parkway Avenue	osm
+S2	osm_4732373322	Pentagon Vauxhall	53.3808821	-1.4287452	car_repair	Parkway Avenue	osm
+S2	osm_95416199	Pizza City	53.3579548	-1.4461088	fast_food	East Bank Road	osm
+S2	osm_1033296732	Popeyes Pizza	53.3601563	-1.4376452	fast_food	Northern Avenue	osm
+S2	osm_95246603	Porcelanosa	53.3569616	-1.4772823	bathroom_furnishing	Windsor Road	osm
+S2	osm_361228577	Premier, Steve's Convenience Shop	53.3553666	-1.4712846	convenience	Valley Road	osm
+S2	osm_8385471344	Queen Nails	53.3569935	-1.4762798	yes		osm
+S2	osm_8385471343	Raskits	53.3569623	-1.476312	beauty		osm
+S2	osm_11618164074	Scullion and Scott	53.3593517	-1.4867721	hairdresser		osm
+S2	osm_1426414117	Sheffield Animal Centre	53.3876625	-1.4327168	animal_shelter		osm
+S2	osm_1030111348	Sheffield Barnet Barbers	53.3560371	-1.4491148	hairdresser	Gleadless Road	osm
+S2	geograph_8071413	Sheffield Cholera Monument	53.375752	-1.459286	geograph		geograph
+S2	osm_221853589	Sheffield Inclusion Centre	53.364868	-1.4399092	school	Spring Lane	osm
+S2	osm_401564469	Sheffield Springs Academy	53.3565294	-1.4363838	school	Hurlfield Road	osm
+S2	geograph_1903709	Sheffield: the Cholera Monument	53.375659	-1.458686	geograph		geograph
+S2	geograph_7735474	Sheffield's cholera memorial	53.375752	-1.459286	geograph		geograph
+S2	osm_1244621577	Singh's	53.3653823	-1.4285222	convenience	Sheffield	osm
+S2	osm_137534581	SM World Travel	53.3580479	-1.4823513	travel_agency	Abbeydale Road	osm
+S2	osm_122727195	Springs Leisure Centre	53.357278	-1.4364177	sports_centre	East Bank Road	osm
+S2	osm_97408099	St Swithun	53.3660871	-1.428218	place_of_worship		osm
+S2	osm_1254567141	St Vincent's	53.3753758	-1.429193	charity	Manor Park Centre	osm
+S2	osm_1363329003	Steel Inn Café	53.3721989	-1.4255172	cafe	Harborough Avenue	osm
+S2	geograph_2933658	Substantial Victorian houses in Norfolk Road	53.377004	-1.458068	geograph		geograph
+S2	osm_595210057	Sugar	53.3575905	-1.4826933	ice_cream	Abbeydale Road	osm
+S2	osm_175666771	Taylor News	53.3572375	-1.4759943	convenience	Chesterfield Road	osm
+S2	osm_173301643	Tea with Percie	53.3575201	-1.4827517	cafe	Abbeydale Road	osm
+S2	osm_173301636	Tee Cut	53.3574385	-1.4828159	hairdresser	Abbeydale Road	osm
+S2	osm_90716548	Temple Park Centre	53.374577	-1.4278552	place_of_worship		osm
+S2	osm_1030111352	Terry Wright Community Hall	53.3554119	-1.4485773	community_centre	Gleadless Road	osm
+S2	osm_175666777	The Bhaji Shack	53.3574394	-1.4759287	restaurant	Chesterfield Road	osm
+S2	osm_52916223	The Blackstock	53.3555304	-1.4489703	pub	Gleadless Road	osm
+S2	geograph_6403333	The Cholera Monument	53.375661	-1.459137	geograph		geograph
+S2	geograph_1885518	The Cholera Monument (1835) in Claywood Gardens	53.375752	-1.459286	geograph		geograph
+S2	osm_97425709	The Co-operative Food	53.3596558	-1.4374428	supermarket	Northern Avenue	osm
+S2	osm_168966404	The Food Warehouse	53.3564812	-1.4787988	supermarket	Chesterfield Road	osm
+S2	osm_541131812	The Hardy Pick	53.356878	-1.4800897	pub	Broadfield Close	osm
+S2	osm_8385471342	The Log Shop	53.3569351	-1.4763442	fuel	Chesterfield Road	osm
+S2	osm_1097407472	The Merrie Monk	53.3750297	-1.4302483	pub	Manor Park Centre	osm
+S2	osm_1146462446	The New City Road Laundry Service	53.3647333	-1.4353825	laundry	City Road	osm
+S2	osm_122727167	The Spires Centre	53.3582774	-1.4358839	community_centre	East Bank Road	osm
+S2	osm_244209408	Toools	53.3566803	-1.476532	doityourself	Chesterfield Road	osm
+S2	osm_268425389	Top Chopper	53.3584017	-1.4825061	hairdresser	Abbeydale Road	osm
+S2	osm_101414164	Tuck News	53.3580714	-1.4827134	confectionery	Abbeydale Road	osm
+S2	osm_7982694656	UBU	53.3639985	-1.4334288	hairdresser		osm
+S2	osm_1097407474	Valentino's Pizza	53.3749821	-1.4299372	fast_food	Manor Park Centre	osm
+S2	osm_361228570	Valley Road Garage	53.3559097	-1.4716757	car_repair	Valley Road	osm
+S2	osm_7966760286	Virgin Crucible	53.3581015	-1.4794929	artwork		osm
+S2	osm_8308604419	Well Pharmacy	53.3561564	-1.449855	pharmacy		osm
+S2	osm_97408010	Windy House Lane Pocket Park	53.3644756	-1.4294453	park		osm
+S2	osm_1454479164	Wobbly Wheel Cyclery	53.355277	-1.4671865	bicycle	Kent Road	osm
+S2	osm_29332996	Woodbourn Road Stadium	53.3896668	-1.4322281	sports_centre		osm
+S2	osm_1033296733	Wow Barbers	53.3601046	-1.4375345	hairdresser	Northern Avenue	osm
+S2	osm_1363399991	Yamato	53.3593748	-1.4868558	fast_food	Sheldon Road	osm
+S2	osm_1244621581	Yummy Plaza	53.3654566	-1.4287392	fast_food	Wulfric Road	osm
+S2	osm_1030111346	Zakwetu	53.3559703	-1.4490002	hardware	Gleadless Road	osm

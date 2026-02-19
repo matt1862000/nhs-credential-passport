@@ -38,6 +38,7 @@ struct WaitTimeView: View {
     @State private var pulseAnimation = false
     @State private var activeSheet: WaitTimeSheetType?
     @State private var showIntroduction = false
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         NavigationStack {
@@ -82,7 +83,7 @@ struct WaitTimeView: View {
             .navigationTitle("Clinic Delay")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(colorScheme == .dark ? .dark : .light, for: .navigationBar)
             #endif
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -586,6 +587,7 @@ struct WalkingSuggestionCard: View {
     // Suggested duration based on wait time (leave 5 min buffer)
     // Returns 30 as default if no clinic is active (free walk mode)
     // 30 min chosen because: most reliable routes (90%+) and WHO recommended daily activity
+    // v2.0.1: Minimum walk is 10 minutes, so need 15+ min delay to recommend a walk
     private var suggestedDuration: Int {
         if !hasActiveClinicDelay {
             return 30 // Default for free walk mode - best route reliability
@@ -593,10 +595,10 @@ struct WalkingSuggestionCard: View {
         let waitTime = viewModel.waitTimeInfo.estimatedMinutes
         // Dynamic calculation: delay minus 5-minute buffer to return
         let suggested = waitTime - 5
-        if suggested >= 5 {
+        if suggested >= 10 {  // Minimum walk duration is 10 minutes
             return suggested
         }
-        return 0 // Too short to walk (less than 5 min delay)
+        return 0 // Too short to walk (less than 15 min delay needed for 10 min walk + 5 min buffer)
     }
     
     // Estimated steps for the duration
@@ -943,7 +945,7 @@ struct AnxietyCheckSheet: View {
     }
     
     var subtitle: String {
-        isPostWalk ? "How do you feel now?" : "How anxious do you feel right now?"
+        isPostWalk ? "How do you feel now?" : "How do you feel?"
     }
     
     var body: some View {
@@ -1033,9 +1035,11 @@ struct AnxietyCheckSheet: View {
                 let formatter = DateFormatter()
                 formatter.dateFormat = "HH:mm:ss.SSS"
                 let timeString = formatter.string(from: timestamp)
+                #if DEBUG
                 print("🔍 [MOTION DEBUG] [\(timeString)] 📋 AnxietyCheckSheet.onAppear() - isPostWalk: \(isPostWalk)")
                 print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(viewModel.stepTrackingWasEnabled)")
                 print("🔍 [MOTION DEBUG] [\(timeString)]   Motion auth status: \(viewModel.healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
+                #endif
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

@@ -10,11 +10,15 @@
 		6C9677302EE9B7CE00DDB3B5 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 6C96772F2EE9B7CE00DDB3B5 /* FirebaseFirestore */; };
 		6C9677322EE9B7D700DDB3B5 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 6C9677312EE9B7D700DDB3B5 /* FirebaseCore */; };
 		6C96776D2EEA2F9900DDB3B5 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = 6C96776C2EEA2F9900DDB3B5 /* FirebaseMessaging */; };
+		6C96776E2EEA2F9900DDB3B5 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 6C96776F2EEA2F9900DDB3B5 /* FirebaseStorage */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		6C7C9FD82F39FBD90067D7EA /* WF1.gpx */ = {isa = PBXFileReference; lastKnownFileType = text; name = WF1.gpx; path = ../../Desktop/WF1.gpx; sourceTree = "<group>"; };
+		6C7C9FD92F39FD5E0067D7EA /* WF1.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = WF1.gpx; path = ../../Desktop/WF1.gpx; sourceTree = "<group>"; };
 		6C8A49462EFCA2CF00D1648E /* Sheffield_S5_7AU.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = Sheffield_S5_7AU.gpx; sourceTree = "<group>"; };
 		6CA4D88E2EE6145800FFA65F /* WalkingWR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WalkingWR.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -22,6 +26,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				Services/GoogleMapsServiceDeduplicationTests.swift,
 			);
 			target = 6CA4D88D2EE6145800FFA65F /* WalkingWR */;
 		};
@@ -46,6 +51,7 @@
 				6C96776D2EEA2F9900DDB3B5 /* FirebaseMessaging in Frameworks */,
 				6C9677322EE9B7D700DDB3B5 /* FirebaseCore in Frameworks */,
 				6C9677302EE9B7CE00DDB3B5 /* FirebaseFirestore in Frameworks */,
+				6C96776E2EEA2F9900DDB3B5 /* FirebaseStorage in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -62,7 +68,10 @@
 		6CA4D8852EE6145800FFA65F = {
 			isa = PBXGroup;
 			children = (
+				6C7C9FD82F39FBD90067D7EA /* WF1.gpx */,
+				6C7C9FD92F39FD5E0067D7EA /* WF1.gpx */,
 				6C8A49462EFCA2CF00D1648E /* Sheffield_S5_7AU.gpx */,
+				6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */,
 				6CA4D8902EE6145800FFA65F /* WalkingWR */,
 				6C96772E2EE9B7CE00DDB3B5 /* Frameworks */,
 				6CA4D88F2EE6145800FFA65F /* Products */,
@@ -100,6 +109,7 @@
 				6C96772F2EE9B7CE00DDB3B5 /* FirebaseFirestore */,
 				6C9677312EE9B7D700DDB3B5 /* FirebaseCore */,
 				6C96776C2EEA2F9900DDB3B5 /* FirebaseMessaging */,
+				6C96776F2EEA2F9900DDB3B5 /* FirebaseStorage */,
 			);
 			productName = WalkingWR;
 			productReference = 6CA4D88E2EE6145800FFA65F /* WalkingWR.app */;
@@ -285,18 +295,21 @@
 		};
 		6CA4D89A2EE6145900FFA65F /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 276;
+				CURRENT_PROJECT_VERSION = 383;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WalkingWR/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = WaitWell;
+				INFOPLIST_KEY_EBIRD_API_KEY = "$(EBIRD_API_KEY)";
+				INFOPLIST_KEY_GRAPHHOPPER_API_KEY = "$(GRAPHHOPPER_API_KEY)";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need camera access to take photos of nature during your walks.";
 				INFOPLIST_KEY_NSHealthClinicalHealthRecordsShareUsageDescription = "Health data helps track your walking progress.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "We'd like to track your steps during walks to show your activity progress.";
@@ -305,6 +318,8 @@
 				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data helps us count your steps during walks.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "We save photos you take during your walks to your photo library.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to select photos.";
+				INFOPLIST_KEY_OPEN_ROUTE_SERVICE_API_KEY = "$(OPEN_ROUTE_SERVICE_API_KEY)";
+				INFOPLIST_KEY_ORS_BASE_URL = "$(ORS_BASE_URL)";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -314,7 +329,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.93;
+				MARKETING_VERSION = 2.1.27;
 				PRODUCT_BUNDLE_IDENTIFIER = com.nhs.WalkingWR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -329,18 +344,21 @@
 		};
 		6CA4D89B2EE6145900FFA65F /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 276;
+				CURRENT_PROJECT_VERSION = 383;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WalkingWR/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = WaitWell;
+				INFOPLIST_KEY_EBIRD_API_KEY = "$(EBIRD_API_KEY)";
+				INFOPLIST_KEY_GRAPHHOPPER_API_KEY = "$(GRAPHHOPPER_API_KEY)";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need camera access to take photos of nature during your walks.";
 				INFOPLIST_KEY_NSHealthClinicalHealthRecordsShareUsageDescription = "Health data helps track your walking progress.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "We'd like to track your steps during walks to show your activity progress.";
@@ -349,6 +367,8 @@
 				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data helps us count your steps during walks.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "We save photos you take during your walks to your photo library.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "We need access to your photo library to select photos.";
+				INFOPLIST_KEY_OPEN_ROUTE_SERVICE_API_KEY = "$(OPEN_ROUTE_SERVICE_API_KEY)";
+				INFOPLIST_KEY_ORS_BASE_URL = "$(ORS_BASE_URL)";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -358,7 +378,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.93;
+				MARKETING_VERSION = 2.1.27;
 				PRODUCT_BUNDLE_IDENTIFIER = com.nhs.WalkingWR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -421,6 +441,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 6C96772D2EE9B71D00DDB3B5 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseMessaging;
+		};
+		6C96776F2EEA2F9900DDB3B5 /* FirebaseStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6C96772D2EE9B71D00DDB3B5 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseStorage;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

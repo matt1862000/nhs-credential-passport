@@ -201,6 +201,20 @@ struct ClinicianSelectionView: View {
                                                         )
                                                     }
                                                     
+                                                    // Focus route pre-gen on this clinician's duration
+                                                    let recDuration = RoutePreGenService.recommendedDuration(forDelay: clinician.currentWaitMinutes)
+                                                    if let location = locationHelper.currentLocation {
+                                                        let pois = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: location.coordinate, radiusMeters: 2500)
+                                                        RoutePreGenService.shared.focusOnDuration(
+                                                            recDuration,
+                                                            pois: pois,
+                                                            clinicians: viewModel.availableClinicians,
+                                                            location: location.coordinate
+                                                        )
+                                                    } else {
+                                                        RoutePreGenService.shared.focusOnDuration(recDuration)
+                                                    }
+                                                    
                                                     // v1.9.56: Show appointment time picker instead of immediate dismiss
                                                     pendingClinician = clinician
                                                     // Default to next quarter hour

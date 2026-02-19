@@ -1,0 +1,9 @@
+rules_version = '2';
+service firebase.storage {
+  // Path in rules = object path in bucket (e.g. "prepopulated_pois_S1.json" at root)
+  // Not the REST URL path /b/{bucket}/o/...
+  match /{fileName} {
+    allow read: if fileName.matches('^prepopulated_pois.*\\.json$');
+    allow write: if false;
+  }
+}

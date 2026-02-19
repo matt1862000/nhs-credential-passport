@@ -1,0 +1,478 @@
+postcode	placeId	name	latitude	longitude	types	vicinity	source
+S7	osm_1034787261	11:11:00	53.3660322	-1.5073975	beauty	Ecclesall Road	osm
+S7	osm_335826365	35th Sheffield Scout Group (St. Oswalds)	53.355309	-1.4904498	scout_hut		osm
+S7	osm_234589375	765 Dental Care	53.3532534	-1.4859484	dentist	Abbeydale Road	osm
+S7	osm_169825477	Abbey Friar	53.3463712	-1.49665	fast_food	Abbeydale Road	osm
+S7	osm_97857581	Abbey Hand Car Wash	53.3562034	-1.484829	car_wash	Abbeydale Road	osm
+S7	osm_6169238229	Abbey Lane Post Office	53.3390472	-1.4824464	post_office	Abbey Lane	osm
+S7	osm_169907493	Abbey Lane Primary School	53.3381031	-1.4851041	school	Sheffield	osm
+S7	osm_107059759	Abbey Lane Surgery	53.3390989	-1.4831171	doctors		osm
+S7	osm_137534572	Abbeydale DIY & Door Centre	53.3567193	-1.4842777	doityourself	Abbeydale Road	osm
+S7	osm_249762933	Abbeydale Pharmacy	53.3546684	-1.4854171	pharmacy	Abbeydale Road	osm
+S7	osm_225004554	Abbeydale Shoe Repairs	53.3463506	-1.4966945	Shoe repairs & key cutting	Abbeydale Road	osm
+S7	osm_228865000	Abbeydale Supermarket	53.3535347	-1.4857966	convenience	Abbeydale Road	osm
+S7	osm_237397373	Abbeymoor Veterinary Centre	53.3390526	-1.4826106	veterinary		osm
+S7	osm_137534587	Abbott's Cookshop	53.3566889	-1.4843147	kitchen	Abbeydale Road	osm
+S7	osm_101521231	All Saints Hall	53.3572284	-1.5117079	community_centre	Ringinglow Road	osm
+S7	osm_9532315068	Alter	53.3665179	-1.5067149	clothes		osm
+S7	osm_1265232237	A.M. News	53.3544885	-1.4854563	newsagent	Abbeydale Road	osm
+S7	osm_11559431272	Amazon Locker - Pumpkin	53.3645466	-1.5072014	parcel_locker		osm
+S7	osm_11559425667	Amazon Locker - valentine	53.363222	-1.5086415	parcel_locker		osm
+S7	osm_1034567302	Andrew Boyden-Hare	53.3554305	-1.5265158	optician	Ringinglow Road	osm
+S7	osm_1034567315	Andrew Jones Acupuncture & Massage Clinic	53.3549594	-1.5265172	clinic	Ringinglow Road	osm
+S7	osm_1258873982	Apollo Interiors	53.3385895	-1.4824166	kitchen	Meadowhead	osm
+S7	osm_212403862	Archer Road Beer Stop	53.3489007	-1.4869166	alcohol	Archer Road	osm
+S7	osm_172529184	Archer Road MOT Centre	53.3502717	-1.488802	car_repair		osm
+S7	osm_1044349422	Away We Go	53.3534009	-1.5014764	cafe	Montrose Road	osm
+S7	osm_1225522400	Badmaash Bites	53.3535918	-1.4857739	restaurant	Abbeydale Road	osm
+S7	osm_1047311174	Banner Cross Garage	53.3617412	-1.5102962	car_repair	Murray Road	osm
+S7	osm_1036613985	Banner Cross Health Hub	53.362247	-1.5085415	pharmacy		osm
+S7	osm_100484152	Banner Cross Methodist Church	53.3602507	-1.5086187	place_of_worship	Ecclesall Road South	osm
+S7	osm_1024363300	Banner Cross News	53.3610399	-1.5079731	newsagent	Ecclesall Road	osm
+S7	osm_1115605316	Banner Cross Pharmacy	53.356284	-1.5109258	pharmacy	Ecclesall Road South	osm
+S7	osm_1024363297	Banner Cross Post Office	53.3609022	-1.5079074	post_office	Ecclesall Road	osm
+S7	osm_1027444387	Banner Cross Shoe Shop	53.3610753	-1.5084809	shoes		osm
+S7	osm_1027444388	Banner Crust	53.3611305	-1.5084996	bakery	Ecclesall Road	osm
+S7	osm_32447037	Barbers Field	53.3435029	-1.4819385	park		osm
+S7	osm_832022571	Barmouth Court Antiques Centre	53.3534318	-1.4881433	antiques		osm
+S7	osm_232923055	Batty's	53.3428021	-1.4782366	butcher	Chesterfield Road	osm
+S7	osm_13186765501	Bean Blvd	53.3606718	-1.5082539	cafe	Ecclesall Road	osm
+S7	osm_1041664531	Beautiful Nails	53.3641138	-1.5082722	beauty	Ecclesall Road	osm
+S7	osm_1265069216	Bench.	53.3592101	-1.487761	restaurant	Nether Edge Road	osm
+S7	osm_168832813	Bensons for Beds	53.3471057	-1.4897115	bed	Archer Road Retail Park	osm
+S7	osm_112349124	Bents Green Methodist Church	53.3547968	-1.5269894	place_of_worship		osm
+S7	osm_12986656794	Beyond Nails & Beauty	53.3682411	-1.5247508	beauty	Oakbrook Road	osm
+S7	osm_237675306	Big Tree	53.3411081	-1.4790678	pub	Chesterfield Road	osm
+S7	osm_100650712	Bingham Park	53.3655279	-1.5192315	park		osm
+S7	osm_906997713	Bishops Caribbean Bistro	53.3519103	-1.4669485	restaurant	Lees Hall Avenue	osm
+S7	osm_95697054	Bishop's House	53.3513067	-1.4702685	museum	Norton Lees Lane	osm
+S7	osm_237014967	Blood lust	53.3437744	-1.4783218	tattoo		osm
+S7	osm_234164612	Bloom Sheffield	53.3453694	-1.4782521	community_centre	Chesterfield Road	osm
+S7	osm_9532315070	Bloomcore	53.3665736	-1.5066795	florist		osm
+S7	osm_1265232234	Bloomers	53.3543662	-1.4854817	cafe	Abbeydale Road	osm
+S7	osm_2513077205	Blooms	53.33913	-1.4835525	florist	Abbey Lane	osm
+S7	osm_240649338	Blue Car School of Motoring	53.3435576	-1.4717657	driving_school	Cavill Road	osm
+S7	osm_107056060	Blue Cross Pet Clinic	53.3459463	-1.4946235	veterinary		osm
+S7	osm_7096530790	Borgo Antica Osteria	53.3681568	-1.521412	restaurant	Oakbrook Road	osm
+S7	osm_1067642421	Boudoir Hair	53.3715019	-1.5220574	hairdresser	Fulwood Road	osm
+S7	osm_173291041	Braids	53.3571243	-1.4837456	hairdresser	Abbeydale Road	osm
+S7	osm_170398879	Bramdale Fireplaces	53.3463471	-1.4792438	hardware		osm
+S7	osm_107056049	Bretheren's Meeting Room	53.345371	-1.4945217	place_of_worship		osm
+S7	osm_107058682	Brewmart	53.3393281	-1.4837844	brewing_supplies		osm
+S7	osm_361249240	Brindley Meeting Rooms	53.3479988	-1.4698507	community_centre		osm
+S7	osm_1115605317	Bruno Espresso Bar	53.3563127	-1.5108798	cafe	Ecclesall Road South	osm
+S7	osm_244957340	Bullseye	53.3507953	-1.4884601	car_parts	Abbeydale Road	osm
+S7	osm_97839426	Byron House	53.3586414	-1.4885527	pub	Nether Edge Road	osm
+S7	osm_1265069215	Cafe #9	53.3591235	-1.4878607	cafe	Nether Edge Road	osm
+S7	osm_244063925	Cafe Me'n'u	53.3408646	-1.4785973	cafe	Chesterfield Road	osm
+S7	osm_232923056	Café O Yes	53.3430053	-1.4782453	cafe	Chesterfield Road	osm
+S7	osm_105513926	Canton Orchard	53.3715665	-1.5204943	restaurant	Fulwood Road	osm
+S7	osm_237014963	Canton Wok	53.3456691	-1.4783566	fast_food	Chesterfield Road	osm
+S7	osm_31116535	Carter Knowle Junior School	53.3524927	-1.491668	school	Carter Knowle Road	osm
+S7	osm_170785054	Carterknowle Medical Centre	53.354026	-1.486288	doctors	Abbeydale Road	osm
+S7	osm_100374734	Carterknowle Methodist Church	53.354566	-1.4862861	place_of_worship	Abbeydale Road	osm
+S7	osm_566424879	Carterknowle Park	53.3504284	-1.4983108	park		osm
+S7	osm_103594775	Carterknowle Seventh Day Adventist Church	53.3523038	-1.4954922	place_of_worship		osm
+S7	osm_237837649	Cash Express	53.3414363	-1.4781492	second_hand		osm
+S7	osm_100374557	Cavendish Motor Company	53.3549632	-1.4861823	car_repair	Edgedale Road	osm
+S7	osm_437084183	Centre for Dentistry	53.3455545	-1.4925324	dentist	Sheffield	osm
+S7	osm_135856443	Chach Spark	53.3571321	-1.48315	fast_food	Abbeydale Road	osm
+S7	osm_118345674	Champion & Emmett	53.3483927	-1.5217139	car_repair	Ecclesall Road South	osm
+S7	osm_169825476	Chan's	53.3470237	-1.4958896	restaurant	Abbeydale Road	osm
+S7	osm_170785120	Charlie Brown's	53.3529872	-1.4872776	car_repair		osm
+S7	osm_102893302	Chatanooga	53.3408971	-1.4785722	fast_food	Chesterfield Road	osm
+S7	osm_22939371	Chelsea Park	53.3586194	-1.5013227	park		osm
+S7	osm_233959704	Cherry	53.3422718	-1.478251	massage	Chesterfield Road	osm
+S7	osm_234587612	Chesworth Cues	53.3520104	-1.4875533	sports	Abbeydale Road	osm
+S7	osm_1134334605	Chilito	53.3457715	-1.4789252	fast_food	Chesterfield Road	osm
+S7	osm_1115605315	Chocolate Bar	53.3562519	-1.5110191	confectionery	Ecclesall Road South	osm
+S7	osm_1067642415	Chris Beech Quality Meats	53.3713565	-1.5224251	butcher	Fulwood Road	osm
+S7	osm_1033222954	Christine Clarke Clinic	53.361752	-1.5085508	beauty	Ecclesall Road	osm
+S7	osm_1059691346	Claire Beaumont	53.3676763	-1.5252138	beauty	Hangingwater Road	osm
+S7	osm_4436249007	Clarrie's Kitchen	53.3663888	-1.5069453	cafe	Ecclesall Road	osm
+S7	osm_31063343	Clifford All Saints C of E Primary School	53.3570692	-1.516615	school	Ringinglow Road	osm
+S7	osm_7096599096	Clive Foot	53.3640108	-1.5106662	hairdresser		osm
+S7	osm_1041664538	CM Dental Care	53.3646439	-1.5077038	dentist	Ecclesall Road	osm
+S7	osm_2420774218	Cob and Crumb	53.3504937	-1.4843504	fast_food	Woodseats Road	osm
+S7	osm_101520891	Collins & Ball	53.3577609	-1.5104212	dentist	Ecclesall Road South	osm
+S7	osm_1134334608	Cousin's Barber	53.3458806	-1.4789541	hairdresser	Chesterfield Road	osm
+S7	osm_9532315065	Crooked Claw Tattoo	53.366422	-1.5068877	tattoo		osm
+S7	osm_108259816	Crumb	53.3463064	-1.4970089	restaurant	Abbeydale Road	osm
+S7	osm_1028112236	Crystal Barber	53.3619289	-1.5080595	hairdresser		osm
+S7	osm_1254711447	D. G. Autos	53.3393771	-1.4833253	car_repair		osm
+S7	osm_437084187	Dance Unlimited	53.3471746	-1.4898676	dance	Archer Drive	osm
+S7	osm_1346870086	David Pierce Pocket Park	53.3600002	-1.4888215	park		osm
+S7	osm_232926592	Days to Remember	53.3423739	-1.4777478	stationery		osm
+S7	osm_1067642418	De Mar Hair Studio	53.3714324	-1.5222313	hairdresser	Fulwood Road	osm
+S7	osm_3881761408	Derbyshire Lane Fish Bar	53.3441798	-1.4714696	fast_food	Derbyshire Lane	osm
+S7	osm_361261073	Derbyshire Lane Pharmacy	53.3459301	-1.4727204	pharmacy	Derbyshire Lane	osm
+S7	osm_361261053	Derbyshire Lane Service Station	53.3437245	-1.4712871	car_repair	Derbyshire Lane	osm
+S7	osm_232923046	Dessert Mania	53.3425517	-1.4782511	confectionery	Chesterfield Road	osm
+S7	osm_2513077210	Diane Lukeman Designs	53.33914	-1.4834348	kitchen	Abbey Lane	osm
+S7	osm_137534580	Discount Office Furniture Centre	53.3565356	-1.4844899	furniture	Abbeydale Road	osm
+S7	osm_117707987	Dobcroft Infant School	53.3477168	-1.5089823	school	Pingle Road	osm
+S7	osm_248524964	DOK	53.3554335	-1.485096	kitchen	Abbeydale Road	osm
+S7	osm_102464426	Dos Amigos	53.3434645	-1.4785568	restaurant	The Dale	osm
+S7	osm_232923061	Double Dragon	53.3428397	-1.4782382	fast_food	Chesterfield Road	osm
+S7	osm_101978978	Double Six Youth Club	53.3460709	-1.4784029	community_centre	Scarsdale Road	osm
+S7	osm_237014961	Dream Doors	53.3433648	-1.4778506	kitchen		osm
+S7	osm_1033222953	Drew Decor Store	53.3617122	-1.5085541	interior_decoration	Ecclesall Road	osm
+S7	osm_345331315	Dry Cleaning Coin Launder	53.3643117	-1.5069147	dry_cleaning		osm
+S7	osm_1029043854	Dysh	53.3655517	-1.5077277	cafe	Ecclesall Road	osm
+S7	osm_72713753	Ecclesall All Saints	53.3567941	-1.5120425	place_of_worship		osm
+S7	osm_1115605318	Ecclesall Fisheries	53.3563437	-1.5108282	seafood	Ecclesall Road South	osm
+S7	osm_1033353293	Ecclesall Garage	53.3600792	-1.5105228	car_repair		osm
+S7	osm_78217193	Ecclesall Library	53.3554243	-1.5128843	library	Ecclesall Road South	osm
+S7	osm_11704536509	Ecclesall Lighting & Electrical Supplies	53.3631433	-1.507503	lighting		osm
+S7	osm_345877340	Ecclesall Medical Centre	53.3541703	-1.5131278	doctors		osm
+S7	osm_24635871	Ecclesall Primary School	53.3587672	-1.5195905	school	High Storrs Road	osm
+S7	osm_345878920	Ecclesall War Memorial	53.356151	-1.5120666	monument		osm
+S7	osm_1029043855	Eccy's	53.3656146	-1.5076893	fast_food	Ecclesall Road	osm
+S7	osm_1265069220	Edge Dental Studio	53.3595184	-1.4874756	dentist	Nether Edge Road	osm
+S7	osm_138139009	Edgedale Motors	53.355571	-1.4848321	car	Abbeydale Road	osm
+S7	osm_169825528	E.H. Middleton & Sons Decorators	53.3464108	-1.4967832	paint		osm
+S7	osm_1041664529	Elaine Davison	53.3640369	-1.508284	hairdresser	Ecclesall Road	osm
+S7	osm_237397370	Electronic Cigarette World	53.3430072	-1.4778662	e-cigarette	Chesterfield Road	osm
+S7	osm_131973535	Elite Wax Group	53.3460872	-1.4964229	beauty	Abbeydale Road	osm
+S7	osm_2513077201	Empire Barbers	53.3391072	-1.4837116	hairdresser		osm
+S7	osm_237014960	Envy	53.3434479	-1.477886	clothes		osm
+S7	osm_170785122	Eric Gilberts	53.3528651	-1.4869531	carpet		osm
+S7	osm_589648827	Esso	53.3631202	-1.5085175	fuel		osm
+S7	osm_257799183	Explore Learning	53.3642347	-1.5083103	prep_school	Ecclesall Road	osm
+S7	osm_232923054	FABLE	53.3429211	-1.4782417	charity	Chesterfield Road	osm
+S7	osm_1033222951	Faces by AS Aesthetics	53.3616291	-1.5086123	beauty	Ecclesall Road	osm
+S7	osm_6512728529	Falkland House Surgery	53.3605353	-1.514531	doctors		osm
+S7	osm_169850287	Farmfoods	53.3495504	-1.4795055	frozen_food	Chesterfield Road	osm
+S7	osm_225712473	Fast Signs	53.3460355	-1.4945598	sign		osm
+S7	osm_1059691341	Feathers & Lashes	53.3684394	-1.5245439	hairdresser	Oakbrook Road	osm
+S7	osm_832022562	Fine Fittings Company	53.354016	-1.4857243	interior_decoration		osm
+S7	osm_1028112235	Fired Arts	53.3618867	-1.5080623	cafe	Ecclesall Road	osm
+S7	osm_140731928	Firehouse Fitness	53.3469572	-1.4893738	fitness_centre	Archer Road	osm
+S7	osm_11449298656	Fixation	53.3464338	-1.4965662	beauty		osm
+S7	osm_1034567303	Focus & Move	53.3554709	-1.5264241	fitness_centre	Ringinglow Road	osm
+S7	osm_12986656795	Follow The Clothes	53.3682361	-1.52469	clothes	Oakbrook Road	osm
+S7	osm_249762926	Food Target	53.3547254	-1.4854099	restaurant	Abbeydale Road	osm
+S7	osm_1077213020	Foothills	53.354523	-1.48682	outdoor	Edgedale Road	osm
+S7	osm_1134160598	Formula One Autocentres	53.3397632	-1.4809959	car_repair		osm
+S7	osm_229191063	Freedom Hair	53.3392995	-1.48233	hairdresser	Abbey Lane	osm
+S7	osm_437084179	Fresh Kitchen	53.34567	-1.4926451	cafe		osm
+S7	osm_812171966	G P C Dental Studio	53.3542908	-1.4868207	dentist		osm
+S7	osm_10553109978	Gallery 33	53.3390962	-1.4837913	jewelry		osm
+S7	osm_1027444382	Gather Hair Collective	53.3608145	-1.5084176	hairdresser		osm
+S7	osm_361261048	GB News	53.3434498	-1.4711779	newsagent		osm
+S7	osm_1258873983	Gents Division	53.3385451	-1.4823905	hairdresser	Meadowhead	osm
+S7	osm_1115605313	Gifted	53.3562144	-1.5111315	gift	Ecclesall Road South	osm
+S7	osm_1334319589	Gilmours Coffee Shop	53.3641174	-1.5100659	cafe	Greystones Road	osm
+S7	osm_237397369	Glistening Kicks	53.3429613	-1.4778568	shoe_repair	Chesterfield Road	osm
+S7	osm_1024363299	Golden Cuts	53.360998	-1.5079541	hairdresser	Ecclesall Road	osm
+S7	osm_1024363306	Gourmet Curry House	53.3613478	-1.5080569	restaurant	Ecclesall Road	osm
+S7	osm_170398877	Graham	53.347454	-1.48004	doityourself		osm
+S7	osm_121637284	Graves Park	53.335847	-1.4715494	park		osm
+S7	osm_1334319580	Greystones Medical Centre	53.3637647	-1.5104412	doctors		osm
+S7	osm_31062226	Greystones Primary School	53.3632844	-1.5112497	school	Sheffield	osm
+S7	osm_237837654	Guzzle MicroPub	53.3404417	-1.4789551	pub	Chesterfield Road	osm
+S7	osm_232923064	H Boldock	53.3427218	-1.4782324	seafood		osm
+S7	osm_101264378	H20 Bathroom Solutions	53.3446537	-1.4777397	bathroom_furnishing	Chesterfield Road	osm
+S7	osm_234771165	Hadfields	53.3549321	-1.4858831	doityourself		osm
+S7	osm_1059691333	Hair by Hauser & Hughes	53.3684163	-1.5241472	hairdresser	Oakbrook Road	osm
+S7	osm_1034787260	Hair Healers	53.3660059	-1.5074215	hairdresser	Ecclesall Road	osm
+S7	osm_1059691334	Hair & Scalp Consultancy	53.3684212	-1.5242211	hairdresser	Oakbrook Road	osm
+S7	osm_1034787265	Hairess	53.3661501	-1.5072804	hairdresser		osm
+S7	osm_1027444380	Halmark Goldsmiths	53.3607191	-1.5083264	jewelry		osm
+S7	osm_1024363307	Halo Nails	53.3613868	-1.5080574	beauty	Ecclesall Road	osm
+S7	osm_10876398054	Hangingwater	53.3680121	-1.524758	convenience	Hangingwater Road	osm
+S7	osm_232926595	Hannah Nails	53.3422553	-1.4778461	beauty		osm
+S7	osm_9532315064	Hare on the Park	53.3663497	-1.5070182	hairdresser		osm
+S7	osm_131973525	Harley Street Cosmetic	53.3460977	-1.4963243	cosmetics	Abbeydale Road	osm
+S7	osm_1028112234	Harpers Fashion	53.361841	-1.5080664	clothes		osm
+S7	osm_1024363305	Hause of Skin	53.3613065	-1.5080525	beauty	Ecclesall Road	osm
+S7	osm_232923045	Haybrook	53.3433188	-1.4782589	estate_agent		osm
+S7	osm_12986656800	Head Gardener	53.3682146	-1.5243415	hairdresser	Oakbrook Road	osm
+S7	osm_244063933	Headfunk	53.3402103	-1.4790731	hairdresser	Chesterfield Road	osm
+S7	osm_9532315075	Headlines Elite @ The Park	53.3666873	-1.5074418	hairdresser		osm
+S7	osm_100663059	Heavenly Body	53.3646124	-1.516384	beauty	Greystones Road	osm
+S7	osm_106098295	High Storrs School	53.3574208	-1.5245602	school	High Storrs Road	osm
+S7	osm_112366126	Hill Medical	53.3557711	-1.51184	clinic	Ecclesall Road South	osm
+S7	osm_170398874	Hi-Q	53.3479195	-1.4803246	tyres		osm
+S7	osm_1033222947	Holt	53.3614579	-1.5085671	restaurant	Ecclesall Road	osm
+S7	osm_31116750	Holt House Infant School	53.3506813	-1.4905672	school	Bannerdale Road	osm
+S7	osm_113888169	Holy Trinity, Millhouses	53.3470848	-1.500144	place_of_worship		osm
+S7	osm_236687109	Home & Garden DIY	53.3393462	-1.482598	doityourself	Abbey Lane	osm
+S7	osm_13094140480	Home Instead	53.3534424	-1.5016282	estate_agent		osm
+S7	osm_107056022	Honda	53.3444068	-1.4939607	car	Archer Road	osm
+S7	osm_1024363302	Hong Kong Garden	53.3611843	-1.5080347	restaurant	Ecclesall Road	osm
+S7	osm_2513077208	Hoopers	53.3390798	-1.4839795	hairdresser		osm
+S7	osm_1036613991	hq	53.3622541	-1.5079989	hairdresser		osm
+S7	osm_249762927	Hugos	53.354846	-1.4854144	pet_grooming	Abbeydale Road	osm
+S7	osm_765138879	Hutcliffe Wood Crematorium	53.3416917	-1.4918746	crematorium		osm
+S7	osm_6163857473	Hype	53.3388663	-1.4814877	hairdresser		osm
+S7	osm_5782850045	Ibbotson Wheel Marker Post	53.3674533	-1.5218916	memorial		osm
+S7	osm_830816846	Indigo Sun	53.3469431	-1.4910893	beauty	Archer Road	osm
+S7	osm_244063942	Inframe	53.3407336	-1.4787187	frame	Chesterfield Road	osm
+S7	osm_11559425666	InPost Locker - Texaco Banner Cross	53.3629478	-1.5086758	parcel_locker		osm
+S7	osm_237014966	Inspire hair studio	53.3435504	-1.4778648	hairdresser		osm
+S7	osm_1134334604	Italian Pasta Express	53.3457277	-1.4789098	restaurant	Chesterfield Road	osm
+S7	osm_1027444381	Itchy Pig	53.3607684	-1.5083473	pub	Ecclesall Road	osm
+S7	osm_249762923	Jamia Al-Furqaan	53.3548865	-1.4854116	community_centre	Abbeydale Road	osm
+S7	osm_9532315066	JD Kitchen	53.3664568	-1.5068142	fast_food		osm
+S7	osm_170785392	John Bee	53.3535031	-1.4868765	car_repair		osm
+S7	osm_1033222955	Jude	53.3617948	-1.5085719	hairdresser	Ecclesall Road	osm
+S7	osm_1047311172	Jukeboxes Direct	53.3618666	-1.5102616	electronics	Huntingtower Road	osm
+S7	osm_235872673	K News	53.3444134	-1.4784984	newsagent		osm
+S7	osm_7612332662	Kate Campbell Fitness	53.347885	-1.5215511	fitness_centre		osm
+S7	osm_1036613988	Katie Peckett	53.3624533	-1.5085388	florist		osm
+S7	geograph_2575133	Kenwood  Hall Hotel	53.363931	-1.489791	geograph		geograph
+S7	osm_360976645	Key News & Stores	53.3525192	-1.4786394	convenience	Derbyshire Lane	osm
+S7	osm_234589373	Kia's Pastaria	53.3533568	-1.485907	restaurant	Abbeydale Road	osm
+S7	osm_243193218	Kids around the world	53.3438079	-1.4784103	yes		osm
+S7	osm_98215441	Kings Centre	53.3582552	-1.4939382	place_of_worship		osm
+S7	osm_12986656799	Kip McGrath	53.3682187	-1.5244066	prep_school	Oakbrook Road	osm
+S7	osm_1041664536	Kitchen Craft Design	53.3644832	-1.507773	kitchen	Ecclesall Road	osm
+S7	osm_1134334607	Kitchen King	53.3458398	-1.4789644	restaurant	Chesterfield Road	osm
+S7	osm_232923051	Kito's	53.3427664	-1.4782351	restaurant	Chesterfield Road	osm
+S7	osm_1044349420	Knab Farm Shop	53.3533789	-1.5013083	greengrocer	Montrose Road	osm
+S7	osm_1036613984	Knowles & Son	53.3621647	-1.5085204	shoe_repair		osm
+S7	osm_249762930	Koko Nail Bar	53.3548051	-1.485374	beauty	Abbeydale Road	osm
+S7	osm_205729680	Kollective	53.3596447	-1.4876959	cafe	Nether Edge Road	osm
+S7	osm_1034567314	Kringle	53.3549719	-1.5266013	cafe	Ringinglow Road	osm
+S7	osm_100662982	KTN Food & Wine	53.3645531	-1.516547	convenience	Greystones Road	osm
+S7	osm_233959710	L J Opticians	53.3420017	-1.4783115	optician	Chesterfield Road	osm
+S7	osm_3084195415	La Coppola	53.3681637	-1.521181	cafe	Oakbrook Road	osm
+S7	osm_1028112233	La Luna	53.361794	-1.508071	restaurant	Ecclesall Road	osm
+S7	osm_1034567305	Le Crunch	53.3554996	-1.5262847	greengrocer	Ringinglow Road	osm
+S7	osm_5791923091	Leather Wheel Marker Post	53.3634891	-1.5269916	memorial		osm
+S7	osm_22958305	Lees Hall Golf Club	53.3447618	-1.4564082	golf_course	Hemsworth Road	osm
+S7	osm_9844700481	Little Free Library	53.3628731	-1.5007785	public_bookcase		osm
+S7	osm_1258873978	Loaf	53.3388498	-1.4823045	hairdresser	Meadowhead	osm
+S7	osm_1027444385	Lock Up Barber	53.3609732	-1.5084381	hairdresser		osm
+S7	osm_1073224908	Lotte on the edge	53.3609538	-1.4934344	cafe	Union Road	osm
+S7	osm_12986656796	Lovely Pear	53.3682361	-1.5246203	cafe	Oakbrook Road	osm
+S7	osm_234771160	Lowes Paint & Wallpaper Supplies	53.3551395	-1.4858805	doityourself	Abbeydale Road	osm
+S7	osm_361261047	Ludlow Home & Garden Supplies	53.3433653	-1.4711647	garden_centre		osm
+S7	osm_169825478	Majestic	53.3468602	-1.4960637	alcohol	Abbeydale Road	osm
+S7	osm_1034787262	Manzilspice	53.3662653	-1.5071494	restaurant	Ecclesall Road	osm
+S7	osm_1225505067	Marco's	53.340537	-1.4793811	restaurant	Chesterfield Road	osm
+S7	osm_1059691335	Mark Bujko Designs	53.3684263	-1.5242905	kitchen	Oakbrook Road	osm
+S7	osm_100482368	Marmadukes - The Sorting Office	53.3635333	-1.5084449	cafe	Ecclesall Road	osm
+S7	osm_234771164	Martyn Kemp	53.3548819	-1.4858824	optician	Abbeydale Road	osm
+S7	osm_9532315067	Mason's Barbershop	53.3664902	-1.506764	hairdresser		osm
+S7	osm_135856446	Mavi Ruya	53.3570129	-1.483303	restaurant	Abbeydale Road	osm
+S7	osm_9532315069	Mayde	53.3665446	-1.5066864	beauty		osm
+S7	osm_1059691337	McAvoy & Beardsmore	53.3684303	-1.5244219	jewelry	Oakbrook Road	osm
+S7	osm_906997714	Me Me	53.3519043	-1.467024	beauty	Lees Hall Avenue	osm
+S7	osm_1067642413	Medispa S10	53.3712266	-1.5226485	clinic	Fulwood Road	osm
+S7	osm_32214738	Meersbrook Bank Primary School	53.3539873	-1.4795904	school	Sheffield	osm
+S7	osm_564075872	Mercia School	53.351455	-1.4978427	school	Carter Knowle Road	osm
+S7	osm_233408766	Mesters Tap	53.3438554	-1.4783381	bar	Chesterfield Road	osm
+S7	osm_113856471	Millhouses Dental	53.3470684	-1.4978787	dentist		osm
+S7	osm_169825479	Millhouses Methodist Church	53.3460683	-1.4978999	place_of_worship		osm
+S7	osm_22948359	Millhouses Park	53.3411471	-1.502188	park		osm
+S7	osm_117705020	Millhouses Park Cafe	53.3417554	-1.5021309	cafe	Abbeydale Road South	osm
+S7	osm_108259793	Millhouses Park Garage	53.3458267	-1.4960652	car_repair		osm
+S7	osm_6534361990	Millhouses Park Kiosk	53.3415709	-1.5014169	cafe		osm
+S7	osm_131973534	Millhouses Post Office	53.3462658	-1.4961621	post_office	Abbeydale Road	osm
+S7	osm_169825480	Millhouses Vets4Pets	53.3469633	-1.4959539	veterinary		osm
+S7	osm_97856601	Mini Works	53.3519429	-1.4842871	sports_centre	Sheffield	osm
+S7	osm_1236102252	Mola Dental	53.346899	-1.4911462	dentist	Archer Road	osm
+S7	osm_235872670	Molly Limpets	53.3437366	-1.4783134	clothes	Chesterfield Road	osm
+S7	osm_236687113	Monks	53.339315	-1.4824089	hairdresser	Abbey Lane	osm
+S7	osm_1274236060	Monument Coffee	53.3562756	-1.5122609	cafe	Ecclesall Road South	osm
+S7	osm_257547581	Moorgate Acoustics	53.3458834	-1.4784135	hifi	Chesterfield Road	osm
+S7	osm_232923062	Moorview	53.34319	-1.4782539	hairdresser		osm
+S7	osm_1029043858	More Posh than Dosh	53.3657674	-1.5075953	clothes	Ecclesall Road	osm
+S7	osm_1047311171	Mortons	53.3618705	-1.5104039	dry_cleaning	Huntingtower Road	osm
+S7	osm_102884288	Mount View Methodist Church	53.3437495	-1.4707434	place_of_worship	Derbyshire Lane	osm
+S7	osm_233959715	Mr Personality	53.3421601	-1.4782656	tattoo	Chesterfield Road	osm
+S7	osm_32216228	Mundella Primary School	53.344752	-1.4707098	school	Sheffield	osm
+S7	osm_97863239	N Grayson	53.3503207	-1.4847585	car_repair	Ulverston Road	osm
+S7	osm_11704521759	nailbar	53.3638737	-1.5070896	beauty		osm
+S7	osm_107059720	Nathan Richardson Hair	53.3389173	-1.4823747	hairdresser	Abbey Lane	osm
+S7	osm_169819588	Neon Fish	53.3456226	-1.4965216	restaurant	Archer Road	osm
+S7	osm_1024363303	Neptune's	53.3612236	-1.5080387	fast_food	Ecclesall Road	osm
+S7	osm_125825883	Nether Edge Bowling Club	53.3594336	-1.4884067	sports_centre		osm
+S7	osm_205729681	Nether Edge Garage	53.3597511	-1.488584	car_repair	Machon Bank Road	osm
+S7	osm_1265069218	Nether Edge Lauderette and Dry Cleaning Centre	53.3592703	-1.4876506	laundry	Nether Edge Road	osm
+S7	osm_7315547624	Nether Edge Road Post Office	53.3562553	-1.4842699	post_office	Abbeydale Road	osm
+S7	osm_5782850046	Nether Spurgear Wheel Marker Post	53.3687964	-1.5150322	memorial		osm
+S7	osm_1244696777	New Jasmine House	53.3482132	-1.521808	fast_food	Ecclesall Road South	osm
+S7	osm_1041664532	New Zing Vaa	53.3641539	-1.508323	fast_food	Ecclesall Road	osm
+S7	osm_23058044	Newfield Secondary School & Talbot Special School	53.346634	-1.4593277	school	Lees Hall Road	osm
+S7	osm_249762925	North Town	53.3549507	-1.4854073	restaurant	Abbeydale Road	osm
+S7	osm_2541971210	Northern Domestic Appliances	53.3519391	-1.4871031	appliance		osm
+S7	osm_207582813	Notre Dame City Learning Centre	53.3723921	-1.5184434	school		osm
+S7	osm_1059691336	Oakbrook Electrical	53.3684315	-1.5243554	electrical	Oakbrook Road	osm
+S7	osm_3084195412	Oakbrook Independent Coffee Co	53.3681181	-1.5216899	cafe	Oakbrook Road	osm
+S7	osm_322127788	Oakbrook Pharmacy	53.368249	-1.5248185	pharmacy		osm
+S7	osm_233959703	Off Licence	53.3423093	-1.4782461	alcohol	Chesterfield Road	osm
+S7	osm_237397371	Off the Rails	53.3390732	-1.4827543	clothes		osm
+S7	osm_1029043861	Olive	53.3658868	-1.5075124	restaurant	Ecclesall Road	osm
+S7	osm_169819591	Olive House	53.3458143	-1.4968453	restaurant	Abbeydale Road South	osm
+S7	osm_1348015100	On Fire Inc	53.3663376	-1.5063707	fireplace	Ecclesall Road	osm
+S7	osm_170751699	On The Spot Tyres	53.3543477	-1.4852289	tyres	Sheffield	osm
+S7	osm_234589374	Oriental Rug Shop	53.3532965	-1.4859321	carpet	Abbeydale Road	osm
+S7	osm_113888256	Park Veterinary Hospital	53.3451044	-1.4987144	veterinary		osm
+S7	osm_1027444389	Party Parlour	53.3611739	-1.5085148	party		osm
+S7	osm_1024363304	Pat O'Brien	53.3612649	-1.5080475	butcher	Ecclesall Road	osm
+S7	osm_234589376	Patchwork Garden	53.3531125	-1.4860041	fabric	Abbeydale Road	osm
+S7	osm_1034787264	Peak Studio	53.3661818	-1.5072563	fitness_centre		osm
+S7	osm_364810269	Peak Veteinary Practice	53.3429492	-1.4762301	veterinary		osm
+S7	osm_249762932	Pennywise Dry Cleaners	53.3550163	-1.485403	dry_cleaning	Abbeydale Road	osm
+S7	osm_244063937	Perfect Fit	53.3401324	-1.4791008	clothes	Chesterfield Road	osm
+S7	osm_1036613987	Persian Bakery	53.3623929	-1.5084863	bakery	Ecclesall Road	osm
+S7	osm_169825513	Pet Company	53.3465463	-1.4964221	pet_supplies		osm
+S7	osm_7490456745	Petalis	53.3681982	-1.5242866	florist		osm
+S7	osm_102464287	Pingley Court Care Home	53.3433932	-1.4790682	social_facility	The Dale	osm
+S7	osm_1225522397	Pink Infinity	53.3528785	-1.4861122	beauty		osm
+S7	osm_1041664537	Piri Fino	53.3646439	-1.5077038	restaurant	Ecclesall Road	osm
+S7	osm_1028112237	Pizza Triangle	53.3619691	-1.5080316	fast_food	Ecclesall Road	osm
+S7	osm_225004555	Pizzeria Picco	53.3463095	-1.4968796	restaurant	Abbeydale Road	osm
+S7	osm_6130564105	Play Cafe	53.3644538	-1.5069293	cafe		osm
+S7	osm_170751705	PLM Auto Centre	53.3540936	-1.4837467	car_repair	Rydal Road	osm
+S7	osm_237397366	Poseidon	53.3390638	-1.4826947	fast_food	Abbey Lane	osm
+S7	osm_1258873977	Premier Community	53.3391088	-1.4829367	mobility	Abbey Lane	osm
+S7	osm_11704519137	Prime Bathrooms	53.3635468	-1.5073961	bathroom_furnishing		osm
+S7	osm_102788560	Prince Of Wales	53.3456615	-1.4725088	pub	Derbyshire Lane	osm
+S7	osm_232926598	Property Plus	53.3422164	-1.4778504	estate_agent		osm
+S7	osm_1217817646	Puckafood	53.3563377	-1.4847305	cafe	Abbeydale Road	osm
+S7	osm_234587615	Put Me Back on My Bike	53.3521709	-1.4874316	bicycle	Abbeydale Road	osm
+S7	osm_102464494	Pyramid	53.3438327	-1.477693	carpet		osm
+S7	osm_361260943	R & R Fresh Foods	53.344027	-1.4714052	deli	Derbyshire Lane	osm
+S7	osm_1059691339	Rafters	53.3684516	-1.5245456	restaurant	Oakbrook Road	osm
+S7	osm_1067642411	Ranmoor Bawarchi	53.3711995	-1.522877	restaurant	Fulwood Road	osm
+S7	osm_1067642417	Ranmoor Deli	53.3714117	-1.5222866	deli	Fulwood Road	osm
+S7	osm_1067642419	Ranmoor Friery	53.3714485	-1.5221886	fast_food	Fulwood Road	osm
+S7	osm_12609334861	Ranmoor War Memorial	53.3722276	-1.520905	memorial		osm
+S7	osm_170785204	Rawson Bathrooms	53.3531687	-1.4866637	bathrooms	Abbeydale Road	osm
+S7	osm_7315547621	Raxet Retail	53.356233	-1.4842131	convenience	Abbeydale Road	osm
+S7	osm_9355199220	Redbrick	53.3462003	-1.4962143	estate_agent		osm
+S7	osm_1034787267	Rejuvé	53.3660764	-1.5073665	beauty	Ecclesall Road	osm
+S7	osm_113853574	Robin Hood	53.3463635	-1.4976874	pub	Millhouses Lane	osm
+S7	osm_1044349421	Rounds News	53.3533894	-1.5013897	newsagent	Montrose Road	osm
+S7	osm_1024363301	Russell Hutton	53.3611126	-1.5080143	kitchen	Ecclesall Road	osm
+S7	osm_1034567304	S11 Carpets & Flooring	53.3554861	-1.5263779	carpet	Ringinglow Road	osm
+S7	osm_237837645	S8 Barbers	53.3405015	-1.4789706	hairdresser		osm
+S7	osm_1225522407	Sabino's	53.3538021	-1.4857189	hairdresser	Abbeydale Road	osm
+S7	osm_234587610	Saint Luke's	53.3519379	-1.4876786	charity	Abbeydale Road	osm
+S7	osm_235872671	Saint Luke's Hospice Shop	53.3439323	-1.478482	charity	Chesterfield Road	osm
+S7	osm_61652421	Saint Peter and Saint Oswald	53.3513846	-1.4889119	place_of_worship		osm
+S7	osm_234589377	Saints	53.3531932	-1.485972	doctors	Abbeydale Road	osm
+S7	osm_12986656797	Salon Twenty Seven by Sam Reece	53.3682297	-1.524546	hairdresser	Oakbrook Road	osm
+S7	osm_2541971215	Scissorhands	53.3520467	-1.4868623	hairdresser		osm
+S7	osm_237397367	Scissors	53.3429119	-1.4778495	hairdresser	Chesterfield Road	osm
+S7	osm_244063938	Seagraves	53.3407945	-1.4786459	hairdresser	Chesterfield Road	osm
+S7	osm_234587611	Seraphins of Abbeydale	53.3519721	-1.4876275	cafe	Abbeydale Road	osm
+S7	osm_234771161	Sharps Fruits	53.3550678	-1.4858838	greengrocer		osm
+S7	osm_101265759	Sheffield Chiropractic Clinic	53.3416986	-1.4779604	doctors	Chesterfield Road	osm
+S7	osm_2519937492	Sheffield Ju Jitsu	53.3535089	-1.4831711	sports_centre		osm
+S7	osm_97856618	Sheffield South Delivery Office	53.3509241	-1.484169	post_depot	Woodseats Road	osm
+S7	osm_1077213021	Sheffield Sustainable Kitchens	53.3545307	-1.4866106	kitchen	Edgedale Road	osm
+S7	osm_100658379	Sheffield Tae Kwon Do	53.3637831	-1.5122313	dojo	Dobbin Hill	osm
+S7	osm_244234956	Sheffield Venetian Blind Co	53.3546492	-1.4801251	window_blind		osm
+S7	osm_106078264	Shepherd Wheel	53.3645599	-1.5245543	museum	Sheffield	osm
+S7	osm_1033222952	Shuttercraft	53.3616719	-1.5085567	curtain	Ecclesall Road	osm
+S7	osm_2513077212	Skin Expert	53.3391226	-1.4836051	yes		osm
+S7	osm_6534365917	Skyhook	53.3457253	-1.4940009	fitness_centre		osm
+S7	osm_97856623	Smiths Autos	53.3557119	-1.4815593	car_repair		osm
+S7	osm_1077213022	Soul Fire Studios	53.3545251	-1.4866911	fitness_centre	Edgedale Road	osm
+S7	osm_234164613	Spinks	53.3456161	-1.4783258	bakery		osm
+S7	osm_906997715	Spinning Discs	53.351896	-1.4671302	music	Lees Hall Avenue	osm
+S7	osm_1924959068	Spoon	53.3394264	-1.4832986	restaurant	Abbey Lane	osm
+S7	osm_1265232235	Spotlight Hair & Beauty	53.3544096	-1.4854764	hairdresser	Abbeydale Road	osm
+S7	osm_107058782	St Chad's	53.3398704	-1.486087	place_of_worship		osm
+S7	osm_100658324	St Gabriel's Church	53.363595	-1.5124822	place_of_worship		osm
+S7	osm_73277241	St John's Ranmoor	53.372433	-1.5211907	place_of_worship		osm
+S7	osm_96866282	St Paul's	53.3499637	-1.4729723	place_of_worship		osm
+S7	osm_31316525	St Wilfrid's Catholic Primary School	53.3481214	-1.504049	school	Millhouses Lane	osm
+S7	osm_100476773	St William of York	53.3637379	-1.5077489	place_of_worship		osm
+S7	osm_1067642420	StarmoreBoss	53.3714681	-1.5221289	wine	Fulwood Road	osm
+S7	osm_173301954	Starprint	53.3566433	-1.4836745	printing	Abbeydale Road	osm
+S7	osm_11704536866	stylebar	53.3639659	-1.5069371	hairdresser		osm
+S7	osm_169825538	Styr Bistro	53.3464022	-1.4966137	restaurant	Abbeydale Road	osm
+S7	osm_236687110	Super Retro Video Games	53.3393275	-1.4824851	video_games	Abbey Lane	osm
+S7	osm_7089276200	Sushi Gormet	53.3450661	-1.493428	fast_food	Archer Road	osm
+S7	osm_169825527	Sweeney Hair	53.3464826	-1.4965016	hairdresser		osm
+S7	osm_1134334609	Sykes Stairlifts	53.3459358	-1.4789722	yes	Chesterfield Road	osm
+S7	osm_6163882707	TacoMex	53.3460534	-1.4964817	fast_food	Abbeydale Road	osm
+S7	osm_1244696778	Takdir	53.3482587	-1.5217895	fast_food	Ecclesall Road South	osm
+S7	osm_1059691345	Tasty House	53.3676326	-1.5252229	restaurant	Hangingwater Road	osm
+S7	osm_6283112026	Tesco	53.3470321	-1.4932074	cafe	Abbeydale Drive	osm
+S7	osm_244063940	That Place	53.340416	-1.4789744	fast_food	Chesterfield Road	osm
+S7	osm_107058779	The Abbey	53.3392635	-1.4817533	pub	Chesterfield Road	osm
+S7	osm_1028112230	The Banner Cross	53.361585	-1.508092	pub	Ecclesall Road	osm
+S7	osm_1067642416	The Beauty Clinic	53.3713871	-1.5223598	beauty	Fulwood Road	osm
+S7	osm_235872674	The Boston Arms	53.3444657	-1.4785062	pub	Chesterfield Road	osm
+S7	osm_97863256	The box room	53.3526275	-1.4860006	hairdresser		osm
+S7	osm_131973526	The Brook	53.3461265	-1.4962359	cafe	Abbeydale Road	osm
+S7	osm_101274656	The Chantrey Arms	53.3430911	-1.477851	pub	Chesterfield Road	osm
+S7	osm_103893114	The Cherry Tree	53.3535493	-1.5019272	pub	Carter Knowle Avenue	osm
+S7	osm_132545162	The Climbing Works	53.3518538	-1.4849995	sports_centre	Little London Road	osm
+S7	osm_96866422	The Cross Scythes	53.3488114	-1.4768733	pub	Derbyshire Lane	osm
+S7	osm_1027444391	The Dark Horse	53.3612648	-1.5085627	pub	Ecclesall Road	osm
+S7	osm_106888152	The Florentine	53.3730151	-1.519274	pub	Tapton Park Road	osm
+S7	osm_249762929	The Front Room	53.3547666	-1.4854044	hairdresser	Abbeydale Road	osm
+S7	osm_100658266	The Greystones	53.3642321	-1.5161437	pub	Greystones Road	osm
+S7	osm_1027444384	The Hair Rooms	53.3609261	-1.5084215	hairdresser		osm
+S7	osm_245166215	The Herd	53.3406531	-1.4795821	food_court	Holmhirst Road	osm
+S7	osm_137534579	The Kitchen Store	53.3566194	-1.4844323	kitchen	Abbeydale Road	osm
+S7	osm_830816847	The Laundry Club	53.3468434	-1.4912172	laundry	Archer Road	osm
+S7	osm_108259812	The Millhouses	53.3470356	-1.4951844	pub	Abbeydale Road	osm
+S7	osm_232923053	The Money Shop	53.343232	-1.4782555	yes		osm
+S7	osm_102884275	The Mount Pleasant	53.3419168	-1.4705579	pub	Derbyshire Lane	osm
+S7	osm_1115605306	The Prince of Wales	53.3564132	-1.5106423	pub	Ecclesall Road South	osm
+S7	osm_105521567	The Ranmoor Inn	53.3717566	-1.5212336	pub	Fulwood Road	osm
+S7	osm_1027444386	The Salon	53.3610278	-1.5084638	beauty		osm
+S7	osm_1115605314	The Silver Hill Larder	53.3562338	-1.511064	cheese	Ecclesall Road South	osm
+S7	osm_103705071	The Sportsman	53.3440526	-1.4681831	pub	Harvey Clough Road	osm
+S7	osm_205729689	the Studio	53.3595902	-1.4877562	hairdresser		osm
+S7	osm_98002519	The Union	53.3611682	-1.4930284	pub	Union Road	osm
+S7	osm_113887867	The Waggon & Horses	53.3429388	-1.5007405	pub	Abbeydale Road South	osm
+S7	osm_100476763	The Wildcard	53.3637996	-1.5083659	bar	Ecclesall Road	osm
+S7	osm_361261072	The Wine Seller	53.3458849	-1.4726189	convenience		osm
+S7	osm_1059691340	The Wonky Labrador	53.368435	-1.524485	pub	Oakbrook Road	osm
+S7	osm_101264384	The Woodseats Palace	53.344115	-1.4785726	pub	Chesterfield Road	osm
+S7	osm_235872668	Therapy Hair and Beauty	53.3443678	-1.4784662	beauty		osm
+S7	osm_2446809746	Think Sandwich	53.3393622	-1.4830453	cafe	Abbey Lane	osm
+S7	osm_247283395	Tiago	53.3506157	-1.4887688	jewelry		osm
+S7	osm_244063934	Tiffin Spice	53.3407677	-1.4786999	restaurant	Chesterfield Road	osm
+S7	osm_1027444383	Timber Windows of Sheffield	53.3608633	-1.5084798	yes		osm
+S7	osm_1027444390	Tokyo Thai	53.3612115	-1.5085153	restaurant	Ecclesall Road	osm
+S7	osm_1134160599	Toolstation	53.3398831	-1.4807794	doityourself		osm
+S7	osm_228865001	Totally Fabulash	53.3526409	-1.4863739	beauty	Abbeydale Road	osm
+S7	osm_1047311170	Tower Garage	53.3618747	-1.5105704	car_repair	Huntingtower Road	osm
+S7	osm_234587614	Town Wok	53.3520952	-1.4875033	fast_food	Abbeydale Road	osm
+S7	osm_5840018597	TU	53.3454378	-1.4934514	clothes		osm
+S7	osm_9532315063	Turnip & Thyme	53.3663225	-1.5070626	restaurant	Ecclesall Road	osm
+S7	osm_232923057	Unit 1 Homewares	53.3429653	-1.4782436	variety_store	Chesterfield Road	osm
+S7	osm_1041664528	Urban Choola	53.3639862	-1.5083914	restaurant	Ecclesall Road	osm
+S7	osm_248525261	Vamp	53.3571766	-1.4831011	clothes	Abbeydale Road	osm
+S7	osm_2513077215	Vanity	53.3390898	-1.4838887	beauty		osm
+S7	osm_244234954	Veritas Health Centre	53.3546171	-1.4802011	doctors		osm
+S7	osm_1034787259	Via Veneto	53.3659705	-1.5074607	fashion_accessories	Ecclesall Road	osm
+S7	osm_1024363308	Victoria Bath	53.3614497	-1.5080608	bathroom_furnishing	Ecclesall Road	osm
+S7	osm_1952984362	Victoria Obelisk	53.3677716	-1.5096673	memorial		osm
+S7	osm_101274775	Viraaj	53.3428425	-1.4777767	restaurant	Chesterfield Road	osm
+S7	osm_1034787266	Wax inc	53.3661027	-1.5073196	beauty		osm
+S7	osm_170785207	We Buy Any Car	53.3535797	-1.4864688	car	Abbeydale Road	osm
+S7	osm_1067642414	West 10	53.3712558	-1.5225472	bar	Fulwood Road	osm
+S7	osm_1265069219	Wickwire	53.3594336	-1.4874596	yes	Nether Edge Road	osm
+S7	osm_233737897	Williams Electrical	53.3418277	-1.4778971	electronics	Chesterfield Road	osm
+S7	osm_589649468	Wood Funeral Service	53.3634309	-1.5084149	funeral_directors		osm
+S7	osm_170398875	Woodseats Baptist Church	53.3476507	-1.4803524	place_of_worship		osm
+S7	osm_364804485	Woodseats Dental Care	53.3415082	-1.4808162	dentist		osm
+S7	osm_233959708	Woodseats Dog Grooming Salon	53.3419184	-1.4783806	pet_grooming	Chesterfield Road	osm
+S7	osm_364808419	Woodseats Evangelical Church	53.3403499	-1.482968	place_of_worship		osm
+S7	osm_233959714	Woodseats Fisheries	53.34212	-1.4782742	fast_food	Chesterfield Road	osm
+S7	osm_233959702	Woodseats Kebab	53.3423501	-1.4782404	fast_food	Chesterfield Road	osm
+S7	osm_237675308	Woodseats Laundrette	53.3410602	-1.4784235	laundry	Chesterfield Road	osm
+S7	osm_107058749	Woodseats Library, Doctor's Surgery and Lloyds Pharmacy	53.339967	-1.4802985	library		osm
+S7	osm_364804483	Woodseats Methodist Church	53.3413081	-1.481088	place_of_worship	Holmhirst Road	osm
+S7	osm_101264371	Woodseats Police Station	53.3442049	-1.4778768	police		osm
+S7	osm_207330545	Woodseats Post Office	53.343484	-1.4778896	post_office	Chesterfield Road	osm
+S7	osm_32447322	Woodseats Primary School	53.3448327	-1.479168	school	Chesterfield Road	osm
+S7	osm_240139877	Woodseats Road Motor Company	53.345811	-1.4811102	car		osm
+S7	osm_101978877	Woodseats Social Club	53.3462375	-1.4816755	community_centre		osm
+S7	osm_82623422	Yard Ball	53.3560502	-1.4826628	sports_centre	Little London Road	osm
+S7	osm_1225522402	YAY!	53.353677	-1.4857437	confectionery	Abbeydale Road	osm
+S7	osm_239869372	Your Kids Arround the World	53.3422995	-1.477841	charity		osm
+S7	osm_256972421	Zeds	53.3593874	-1.487538	greengrocer	Nether Edge Road	osm
+S7	osm_3723408438	Zoe's Cafe	53.3432133	-1.4707623	cafe		osm

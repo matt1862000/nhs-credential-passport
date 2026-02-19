@@ -28,7 +28,7 @@ struct WalkingMapView: View {
                     // User location
                     UserAnnotation()
                     
-                    // Clinic marker
+                    // Clinic marker (stable id avoids "invalid reuse after initialization failure")
                     Annotation("Clinic", coordinate: clinicCoordinate) {
                         ZStack {
                             Circle()
@@ -38,9 +38,10 @@ struct WalkingMapView: View {
                                 .font(.title2)
                                 .foregroundColor(.white)
                         }
+                        .id("clinic")
                     }
                     
-                    // Next waypoint marker (if on a route)
+                    // Next waypoint marker (if on a route) — stable id for conditional annotation
                     if let nextWaypoint = nextWaypointCoordinate() {
                         Annotation("Next Stop", coordinate: nextWaypoint) {
                             ZStack {
@@ -51,20 +52,35 @@ struct WalkingMapView: View {
                                     .font(.title2)
                                     .foregroundColor(.white)
                             }
+                            .id("nextStop")
                         }
                     }
                     
                     // Discovery markers along the route
+                    // Name rendered as part of view so it's always visible
                     ForEach(viewModel.selectedRoute?.qrMarkers ?? [], id: \.id) { marker in
-                        Annotation(marker.name, coordinate: marker.coordinate) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.mintGreen)
-                                    .frame(width: 32, height: 32)
-                                Image(systemName: "mappin")
-                                    .font(.caption)
-                                    .foregroundColor(.white)
+                        Annotation("", coordinate: marker.coordinate) {
+                            VStack(spacing: 2) {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.mintGreen)
+                                        .frame(width: 32, height: 32)
+                                    Image(systemName: "mappin")
+                                        .font(.caption)
+                                        .foregroundColor(.white)
+                                }
+                                Text(marker.name)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.primary)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(.ultraThinMaterial)
+                                    )
                             }
+                            .id(marker.id)
                         }
                     }
                     
@@ -306,7 +322,7 @@ struct EmbeddedWalkMapView: View {
     // v1.6.28: Opt-in step tracking state
     // Initialize to true if user has previously opted in and Motion is authorized
     @State private var isStepTrackingEnabled: Bool = false
-    @State private var showMotionExplainer: Bool = false
+    @Binding var showMotionExplainer: Bool  // Lifted so ActiveWalkView bottom pill can present sheet
     
     // v1.9.0: Turn navigation enhancements
     @State private var isApproachingTurn: Bool = false
@@ -415,9 +431,21 @@ struct EmbeddedWalkMapView: View {
     // Automatically handles both MapKit routes and Google Directions API polylines
     // Google polylines are decoded via WalkingRoute.routePath (uses PolylineDecoder)
     private var polylineToShow: [CLLocationCoordinate2D] {
-        guard let currentRoute = viewModel.walkSession.currentRoute,
+        let cur = viewModel.walkSession.currentRoute
+        guard let currentRoute = cur,
               currentRoute.routePath.count >= 2,
               !isShowingReturnRoute else { return [] }
+        
+        // When user tapped "Head Home", the return path is drawn via returnSegment (blue); skip main polyline
+        if viewModel.isHeadingBack { return [] }
+        
+        // IMPORTANT: Never show straight-line fallback — only show real polylines.
+        // When walk starts instantly before Google/MapKit refresh, the route has no encoded polyline.
+        // Drawing straight lines between markers looks broken. Instead, show nothing until
+        // the background refresh delivers a real polyline (map still shows markers + user position).
+        if !currentRoute.hasPolyline {
+            return []
+        }
         
         // If viewing a waypoint in carousel, show route segment
         if let viewingId = viewingWaypointId,
@@ -439,12 +467,13 @@ struct EmbeddedWalkMapView: View {
                 if viewModel.visitedMarkerIds.count == currentRoute.qrMarkers.count && currentRoute.qrMarkers.count > 0 {
                     return []
                 } else {
-                    return calculateStaticLegPolyline(
+                    let calculated = calculateStaticLegPolyline(
                         fullPath: currentRoute.routePath,  // Works with Google polylines (already decoded)
                         markers: currentRoute.qrMarkers,
                         visitedIds: viewModel.visitedMarkerIds,
                         startLocation: viewModel.walkSession.startLocation
                     )
+                    return calculated
                 }
             }
         } else {
@@ -466,9 +495,36 @@ struct EmbeddedWalkMapView: View {
     // Works with both MapKit routes and Google Directions polylines
     // Google polylines are decoded via currentRoute.routePath
     private var returnSegment: [CLLocationCoordinate2D] {
-        guard isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId,
-              let currentRoute = viewModel.walkSession.currentRoute,
-              let lastWaypoint = currentRoute.qrMarkers.last,
+        let cond = isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId || viewModel.isHeadingBack
+        guard cond else { return [] }
+        
+        // When user tapped "Head Home", ViewModel replaced currentRoute with the return route
+        // (current → home). Use that path, or a minimal current→start line if route not yet updated.
+        if viewModel.isHeadingBack {
+            let path: [CLLocationCoordinate2D]
+            if let currentRoute = viewModel.walkSession.currentRoute, currentRoute.routePath.count >= 2 {
+                path = currentRoute.routePath
+            } else if let currentCoord = viewModel.locationService.currentLocation?.coordinate,
+                      let startCoord = viewModel.walkSession.startLocation {
+                path = [currentCoord, startCoord]
+            } else {
+                return []
+            }
+            // Don't draw a zero-length line when already at start (same point twice or <1m apart)
+            if path.count >= 2,
+               let a = path.first, let b = path.last,
+               CLLocation(latitude: a.latitude, longitude: a.longitude).distance(from: CLLocation(latitude: b.latitude, longitude: b.longitude)) < 1 {
+                return []
+            }
+            return path
+        }
+        
+        guard let currentRoute = viewModel.walkSession.currentRoute,
+              currentRoute.routePath.count >= 2 else {
+            return []
+        }
+        
+        guard let lastWaypoint = currentRoute.qrMarkers.last,
               let startLocation = viewModel.walkSession.startLocation ?? currentRoute.routePath.first else {
             return []
         }
@@ -491,7 +547,6 @@ struct EmbeddedWalkMapView: View {
             polyline.getCoordinates(&coords, range: NSRange(location: 0, length: pointCount))
             return coords
         } else if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
-            // Fallback: Use cached return route polyline
             return viewModel.cachedReturnRoutePolyline
         }
         
@@ -523,64 +578,82 @@ struct EmbeddedWalkMapView: View {
     // MARK: - Body Components (extracted to reduce complexity)
     private var mapView: some View {
         Map(position: $cameraPosition) {
-            // User Location
+            // User Location (stable id for reuse)
             if let location = viewModel.locationService.currentLocation {
                 Annotation("You", coordinate: location.coordinate) {
                     PulsatingLocationDot()
+                        .id("you")
                 }
             } else {
                 UserAnnotation()
             }
             
-            // Start/End Marker
+            // Start/End Marker (stable id for reuse)
             if let startPoint = viewModel.walkSession.startLocation ?? viewModel.walkSession.currentRoute?.routePath.first {
                 Annotation("Start/End", coordinate: startPoint) {
                     ZStack {
                         Circle().fill(Color.blue).frame(width: 28, height: 28)
                         Circle().fill(Color.white).frame(width: 12, height: 12)
                     }
+                    .id("startEnd")
                 }
             }
             
-            // Active Route Polyline
+            // Active Route Polyline — only when a real polyline exists (not straight-line fallback)
             if let currentRoute = viewModel.walkSession.currentRoute,
-               currentRoute.routePath.count >= 2,
+               currentRoute.hasPolyline,
+               !polylineToShow.isEmpty,
                !isShowingReturnRoute {
                 MapPolyline(coordinates: polylineToShow)
                     .stroke(currentRoute.color, lineWidth: 4)
             }
             
-            // Waypoints
+            // Waypoints (stable id per marker avoids invalid reuse)
+            // Name rendered as part of view so it's always visible
             if !markers.isEmpty {
                 ForEach(Array(markers.enumerated()), id: \.element.id) { index, marker in
                     let isVisited = visitedIds.contains(marker.id)
                     let isNext = !isVisited && !markers.prefix(index).contains(where: { !visitedIds.contains($0.id) })
-                    Annotation(marker.name, coordinate: marker.coordinate) {
-                        WaypointMarkerView(
-                            name: marker.name,
-                            index: index + 1,
-                            isNext: isNext,
-                            isVisited: isVisited
-                        )
+                    Annotation("", coordinate: marker.coordinate) {
+                        VStack(spacing: 2) {
+                            WaypointMarkerView(
+                                name: marker.name,
+                                index: index + 1,
+                                isNext: isNext,
+                                isVisited: isVisited
+                            )
+                            Text(marker.name)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule()
+                                        .fill(.ultraThinMaterial)
+                                )
+                        }
+                        .id(marker.id)
                     }
                 }
             }
             
-            // Return Route Polyline
-            if isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId {
+            // Return Route Polyline (also when user tapped "Head Home" so we use return path + blue styling)
+            if isShowingReturnRoute || viewingWaypointId == Self.returnToStartWaypointId || viewModel.isHeadingBack {
                 MapPolyline(coordinates: returnSegment)
                     .stroke(Color.blue, lineWidth: 5)
             }
             
-            // Cached Route Preview (passive)
+            // Cached Route Preview (passive) — only when a real polyline exists
             if let previewRoute = cachedRoute,
                viewModel.walkSession.currentRoute == nil,
+               previewRoute.hasPolyline,
                !previewRoute.routePath.isEmpty {
                 MapPolyline(coordinates: previewRoute.routePath)
                     .stroke(previewRoute.color, lineWidth: 4)
             }
             
-            // Cached POIs (passive)
+            // Cached POIs (passive) — stable id per marker
             if let cachedMarkers = cachedPOIs,
                viewModel.walkSession.currentRoute == nil {
                 ForEach(cachedMarkers, id: \.id) { marker in
@@ -591,6 +664,7 @@ struct EmbeddedWalkMapView: View {
                             isNext: false,
                             isVisited: false
                         )
+                        .id(marker.id)
                     }
                 }
             }
@@ -605,12 +679,19 @@ struct EmbeddedWalkMapView: View {
         }
     }
     
+    /// Resolved pill value: effectiveDisplayDurationMinutesForPill ?? currentRoute?.durationMinutes ?? 15 (so we can log when it changes).
+    private var pillDisplayMinutes: Int {
+        viewModel.effectiveDisplayDurationMinutesForPill ?? viewModel.walkSession.currentRoute?.durationMinutes ?? 15
+    }
+    
     private var topOverlay: some View {
         VStack {
             HStack(alignment: .top) {
                 CompactStatusRing(
-                    walkDurationMinutes: viewModel.walkSession.currentRoute?.durationMinutes ?? 15,
+                    pillContext: "active_walk",
+                    walkDurationMinutes: pillDisplayMinutes,
                     walkStartTime: viewModel.walkSession.startTime,
+                    showMinsLeft: viewModel.hasReceivedGoogleRefreshForPill,
                     healthKitService: viewModel.healthKitService,
                     isStepTrackingEnabled: $isStepTrackingEnabled,
                     showMotionExplainer: $showMotionExplainer,
@@ -626,6 +707,15 @@ struct EmbeddedWalkMapView: View {
                         }
                     }
                 )
+                .id("compactStatusRing") // Stable identity so Google refresh (objectWillChange) doesn't recreate pill and reset Track steps / mins left state
+                .onChange(of: pillDisplayMinutes) { _, newMin in
+                    let eff = viewModel.effectiveDisplayDurationMinutesForPill ?? -1
+                    let routeMin = viewModel.walkSession.currentRoute?.durationMinutes ?? -1
+                    print("PILL | [active_walk] DISPLAY value changed to \(newMin) min (effective=\(eff) routeDuration=\(routeMin) → passing to pill)")
+                }
+                .onAppear {
+                    print("PILL | [active_walk] EmbeddedWalkMapView.topOverlay onAppear — pillDisplayMinutes=\(pillDisplayMinutes) effective=\(viewModel.effectiveDisplayDurationMinutesForPill ?? -1) routeDuration=\(viewModel.walkSession.currentRoute?.durationMinutes ?? -1)")
+                }
                 
                 Spacer()
                 
@@ -653,11 +743,37 @@ struct EmbeddedWalkMapView: View {
         VStack {
             Spacer()
             
-            if let currentRoute = viewModel.walkSession.currentRoute {
+            if viewModel.isLoadingDelayChangeRoute {
+                // In-place loading: same slot as next-stop card, map stays interactive
+                HStack(spacing: 12) {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .tealAccent))
+                        .scaleEffect(1.0)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Finding a new route — this may take a minute.")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        Text("Keep walking your current route in the meantime.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 90)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(colorScheme == .dark ? Color(.systemGray6) : Color.white)
+                        .shadow(color: Color.black.opacity(0.15), radius: 4, y: 2)
+                )
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            } else if let currentRoute = viewModel.walkSession.currentRoute {
                 WaypointCarousel(
-                    markers: currentRoute.qrMarkers,
+                    markers: viewModel.isHeadingBack ? [] : currentRoute.qrMarkers,
                     visitedIds: viewModel.visitedMarkerIds,
-                    startLocation: currentRoute.routePath.first,
+                    startLocation: viewModel.walkSession.startLocation ?? currentRoute.routePath.first,
                     onTapWaypoint: { coordinate in
                         zoomToWaypoint(coordinate)
                     },
@@ -686,8 +802,55 @@ struct EmbeddedWalkMapView: View {
                 onReturnNow: {
                     viewModel.showDelayChangeOverlay = false
                     calculateReturnRoute()
-                }
+                },
+                onUpdateRoute: {
+                    viewModel.requestNewRouteForDelayChange()
+                },
+                isLoading: viewModel.isLoadingDelayChangeRoute
             )
+        }
+    }
+    
+    @ViewBuilder
+    private var delayChangeErrorOverlay: some View {
+        if let error = viewModel.delayChangeRouteError {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+                .onTapGesture { viewModel.clearDelayChangeRouteError() }
+            VStack(spacing: 16) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.title)
+                    .foregroundColor(.orange)
+                Text(error)
+                    .font(.subheadline)
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                HStack(spacing: 12) {
+                    Button("Head back") {
+                        viewModel.clearDelayChangeRouteError()
+                        viewModel.userTappedHeadBack()
+                    }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(Color.blue)
+                    .cornerRadius(10)
+                    Button("OK") {
+                        viewModel.clearDelayChangeRouteError()
+                    }
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
+                    .background(Color.orange)
+                    .cornerRadius(10)
+                }
+            }
+            .padding(24)
+            .background(RoundedRectangle(cornerRadius: 16).fill(Color(UIColor.systemBackground)))
+            .padding(.horizontal, 40)
         }
     }
     
@@ -697,6 +860,7 @@ struct EmbeddedWalkMapView: View {
             topOverlay
             bottomOverlay
             delayOverlay
+            delayChangeErrorOverlay
         }
         // ----------------------
         // Overlay (non-blocking)
@@ -733,6 +897,7 @@ struct EmbeddedWalkMapView: View {
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm:ss.SSS"
             let timeString = formatter.string(from: timestamp)
+            #if DEBUG
             print("🔍 [MOTION DEBUG] [\(timeString)] 🟢 EmbeddedWalkMapView: showMotionExplainer changed from \(oldValue) to \(newValue)")
             if newValue {
                 print("🔍 [MOTION DEBUG] [\(timeString)]   ⚠️ Attempting to present MotionPermissionExplainerSheet")
@@ -743,6 +908,7 @@ struct EmbeddedWalkMapView: View {
                     print("🔍 [MOTION DEBUG] [\(timeString)]     [\(index)] \(symbol)")
                 }
             }
+            #endif
         }
         .onAppear {
             let appearTime = Date()
@@ -814,6 +980,7 @@ struct EmbeddedWalkMapView: View {
         // Interaction detection handled via onMapCameraChange only
         // v1.9.0: Auto-zoom when approaching turn (within 30m)
         .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
+            guard !viewModel.mapStayCenteredOnRoute else { return }
             guard let location = newLocation,
                   let nextTurnCoord = viewModel.locationService.nextTurnCoordinate else {
                 isApproachingTurn = false
@@ -844,6 +1011,11 @@ struct EmbeddedWalkMapView: View {
         .onChange(of: viewModel.locationService.heading) { _, newHeading in
             guard let heading = newHeading?.trueHeading else { return }
             handleHeading(heading)
+        }
+        // When direction step advances (waypoint reached, e.g. return turn), re-orient map to direction of travel
+        .onChange(of: viewModel.locationService.currentDirectionIndex) { oldIndex, newIndex in
+            guard oldIndex != newIndex else { return }
+            reorientMapToDirectionOfTravel()
         }
         // v1.9.13: Update cached leg polyline when waypoint changes (not during view rendering)
         .onChange(of: viewModel.visitedMarkerIds.count) { _, _ in
@@ -883,20 +1055,147 @@ struct EmbeddedWalkMapView: View {
                         isShowingReturnRoute = true
                     }
                     if returnRoute == nil {
-                        calculateReturnRoute()
+                        // Defer return route so marker arrival sheet can present first (avoid race)
+                        if viewModel.showMarkerArrivalPrompt {
+                            DebugLogger.shared.log("Return route DEFERRED: marker arrival sheet is showing - will retry in 2.5s", category: "RETURN_ROUTE")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                if returnRoute == nil && viewModel.walkSession.currentRoute != nil {
+                                    DebugLogger.shared.log("Return route: running deferred calculation", category: "RETURN_ROUTE")
+                                    calculateReturnRoute()
+                                }
+                            }
+                        } else {
+                            DebugLogger.shared.log("Return route: all waypoints visited, calculating now", category: "RETURN_ROUTE")
+                            calculateReturnRoute()
+                        }
                     }
                 }
             }
         }
+        // Invalidate leg and waypoint polyline caches when route is replaced (e.g. MapKit/Google refresh) so we don't draw stale straight lines
+        .onChange(of: viewModel.walkSession.currentRoute?.id) { _, _ in
+            cachedCurrentLegPolyline = nil
+            cachedLegPolylineForWaypoint = nil
+            waypointRoutePolyline = nil
+        }
         // Note: Motion permission explainer is now presented by CompactStatusRing
+    }
+    
+    /// Region that fits route path + POIs with padding (no auto-follow).
+    private func regionForRouteWithPadding(_ route: WalkingRoute, paddingFactor: Double = 1.5) -> MKCoordinateRegion {
+        var lats = route.routePath.map { $0.latitude }
+        var lngs = route.routePath.map { $0.longitude }
+        for marker in route.qrMarkers {
+            lats.append(marker.coordinate.latitude)
+            lngs.append(marker.coordinate.longitude)
+        }
+        guard !lats.isEmpty, !lngs.isEmpty,
+              let minLat = lats.min(), let maxLat = lats.max(),
+              let minLng = lngs.min(), let maxLng = lngs.max() else {
+            return MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 53.38, longitude: -1.47),
+                span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+            )
+        }
+        let center = CLLocationCoordinate2D(
+            latitude: (minLat + maxLat) / 2,
+            longitude: (minLng + maxLng) / 2
+        )
+        let latSpan = (maxLat - minLat) * paddingFactor
+        let lngSpan = (maxLng - minLng) * paddingFactor
+        return MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(latitudeDelta: max(0.008, latSpan), longitudeDelta: max(0.008, lngSpan))
+        )
     }
     
     /// Play the intro camera animation sequence with very smooth, slow transitions
     private func playIntroAnimation() {
-        guard let currentRoute = viewModel.walkSession.currentRoute,
-              let firstWaypoint = currentRoute.qrMarkers.first?.coordinate,
+        let stayCentered = viewModel.mapStayCenteredOnRoute
+        
+        guard let currentRoute = viewModel.walkSession.currentRoute else {
+            hasPlayedIntro = true
+            cameraPosition = .userLocation(fallback: .automatic)
+            calculateRoute()
+            return
+        }
+        
+        // When staying centered on route (Let's Go): same smooth three-phase as non-stayCentered (verySlowAnimation, 4s/8s/11s)
+        if stayCentered {
+            hasPlayedIntro = true
+            showingIntroOverlay = true
+            isProgrammaticCameraUpdate = true
+            lastProgrammaticUpdateTime = Date()
+            let region = regionForRouteWithPadding(currentRoute, paddingFactor: 1.5)
+            let verySlowAnimation = Animation.easeInOut(duration: 2.5)
+            guard let firstWaypoint = currentRoute.qrMarkers.first?.coordinate else {
+                // No waypoints — show full route briefly, then switch to auto-follow
+                introPhase = .showingFullRoute
+                withAnimation(verySlowAnimation) { cameraPosition = .region(region) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    // v2.2: Enable auto-follow for 0-waypoint routes too
+                    introPhase = .followingUser
+                    viewModel.mapStayCenteredOnRoute = false
+                    if let loc = viewModel.locationService.currentLocation {
+                        let heading: CLLocationDirection = viewModel.locationService.heading?.trueHeading ?? 0
+                        let cam = MapCamera(centerCoordinate: loc.coordinate, distance: 150.0, heading: heading, pitch: 0)
+                        currentZoomLevel = 150.0
+                        currentZoom = 150.0
+                        currentCameraState = cam
+                        currentCamera = cam
+                        lastLocation = loc.coordinate
+                        lastCameraUpdateLocation = loc.coordinate
+                        isProgrammaticCameraUpdate = true
+                        lastProgrammaticUpdateTime = Date()
+                        withAnimation(.easeInOut(duration: 2.0)) { cameraPosition = .camera(cam) }
+                    }
+                    withAnimation(.easeOut(duration: 0.5)) { showingIntroOverlay = false }
+                    calculateRoute()
+                }
+                return
+            }
+            // Phase 1: Your first destination (same timing as non-stayCentered)
+            introPhase = .showingFirstWaypoint
+            withAnimation(verySlowAnimation) {
+                cameraPosition = .region(MKCoordinateRegion(center: firstWaypoint, latitudinalMeters: 100, longitudinalMeters: 100))
+            }
+            // Phase 2: Your route (after 4 seconds)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+                guard !userInteractedWithMap else { return }
+                introPhase = .showingFullRoute
+                withAnimation(verySlowAnimation) { cameraPosition = .region(region) }
+            }
+            // Phase 3: Your location (after 8 seconds) — enable continuous auto-follow
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
+                guard !userInteractedWithMap else { return }
+                introPhase = .followingUser
+                // v2.2: Clear mapStayCenteredOnRoute so handleLocation/handleHeading/reorientMapToDirectionOfTravel
+                // can continuously track the user. Without this, the camera only gets set once and never follows.
+                viewModel.mapStayCenteredOnRoute = false
+                if let loc = viewModel.locationService.currentLocation {
+                    let heading: CLLocationDirection = viewModel.locationService.heading?.trueHeading ?? 0
+                    let cam = MapCamera(centerCoordinate: loc.coordinate, distance: 150.0, heading: heading, pitch: 0)
+                    currentZoomLevel = 150.0
+                    currentZoom = 150.0
+                    currentCameraState = cam
+                    currentCamera = cam
+                    lastLocation = loc.coordinate
+                    lastCameraUpdateLocation = loc.coordinate
+                    isProgrammaticCameraUpdate = true
+                    lastProgrammaticUpdateTime = Date()
+                    withAnimation(verySlowAnimation) { cameraPosition = .camera(cam) }
+                }
+            }
+            // Hide overlay (after 11 seconds)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 11.0) {
+                withAnimation(.easeOut(duration: 1.0)) { showingIntroOverlay = false }
+                if !userInteractedWithMap { calculateRoute() }
+            }
+            return
+        }
+        
+        guard let firstWaypoint = currentRoute.qrMarkers.first?.coordinate,
               viewModel.locationService.currentLocation != nil else {
-            // No waypoints or location, skip intro
             hasPlayedIntro = true
             cameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
             calculateRoute()
@@ -1112,8 +1411,35 @@ struct EmbeddedWalkMapView: View {
         }
     }
     
-    /// v1.9.10: Show full route overview briefly, then return to camera-following mode
+    /// v1.9.10: Show full route overview briefly, then return to current location (compass/location button)
     private func showFullRouteThenFollow() {
+        // When staying centered on route (Let's Go): show full route, then after 2s zoom back to current location
+        if viewModel.mapStayCenteredOnRoute {
+            if let currentRoute = viewModel.walkSession.currentRoute {
+                let region = regionForRouteWithPadding(currentRoute, paddingFactor: 1.5)
+                isProgrammaticCameraUpdate = true
+                lastProgrammaticUpdateTime = Date()
+                withAnimation(.easeInOut(duration: 1.0)) {
+                    cameraPosition = .region(region)
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                guard let location = viewModel.locationService.currentLocation else { return }
+                let heading = viewModel.locationService.heading?.trueHeading ?? currentCamera?.heading ?? 0
+                let zoom: Double = 150.0
+                let camera = MapCamera(centerCoordinate: location.coordinate, distance: zoom, heading: heading, pitch: currentCamera?.pitch ?? 0)
+                currentZoomLevel = zoom
+                currentCamera = camera
+                currentCameraState = camera
+                isProgrammaticCameraUpdate = true
+                lastProgrammaticUpdateTime = Date()
+                withAnimation(.easeInOut(duration: 1.0)) {
+                    cameraPosition = .camera(camera)
+                }
+            }
+            return
+        }
+        
         // v1.9.16: Clear user interaction flag and reset timer state when compass button is pressed
         // This ensures we can zoom back to current position after showing full route
         // CRITICAL: Cancel auto-resume timer FIRST to prevent race conditions
@@ -1328,6 +1654,7 @@ struct EmbeddedWalkMapView: View {
     
     // MARK: - Camera Updates
     private func handleLocation(_ location: CLLocation) {
+        guard !viewModel.mapStayCenteredOnRoute else { return }
         guard introPhase == .followingUser else { return }
         guard !userInteracting, !inInteractionGrace, !justResumed else { return }
         
@@ -1347,6 +1674,7 @@ struct EmbeddedWalkMapView: View {
     
     private func handleHeading(_ newHeading: CLLocationDirection) {
         // --- Safety checks ---
+        guard !viewModel.mapStayCenteredOnRoute else { return }
         guard introPhase == .followingUser, !userInteracting, !justResumed else { return }
         guard let current = currentCamera else { return }
 
@@ -1465,6 +1793,12 @@ struct EmbeddedWalkMapView: View {
             
             if !viewModel.isUsingReturnDirections {
                 if !viewModel.cachedReturnDirections.isEmpty, let currentRoute = viewModel.walkSession.currentRoute {
+                    // #region agent log
+                    let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "message": "SWITCHED_TO_RETURN_DIRECTIONS", "hypothesisId": "H5", "location": "WalkingMapView.swift:viewReturnToStart", "data": ["reason": "tapReturnToStart_cached"] as [String: Any]]
+                    if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) { line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                    DebugLogger.shared.log("AGENT SWITCHED_TO_RETURN_DIRECTIONS reason=tapReturnToStart_cached", category: "AGENT_RETURN_LEG")
+                    // #endregion
+                    viewModel.didSwitchToReturnDirections()
                     viewModel.isUsingReturnDirections = true
                     let cachedPolyline = viewModel.cachedReturnRoutePolyline
                     viewModel.locationService.startDirectionMonitoring(
@@ -1582,6 +1916,34 @@ struct EmbeddedWalkMapView: View {
     // v1.9.13: Helper to update camera heading smoothly
     private func updateCameraHeading(to heading: CLLocationDirection, at coordinate: CLLocationCoordinate2D) {
         updateCamera(location: coordinate, heading: heading)
+    }
+    
+    /// Bearing from one coordinate to another in degrees [0, 360). North = 0, clockwise.
+    private func bearing(from fromCoord: CLLocationCoordinate2D, to toCoord: CLLocationCoordinate2D) -> CLLocationDirection {
+        let lat1 = fromCoord.latitude * .pi / 180
+        let lon1 = fromCoord.longitude * .pi / 180
+        let lat2 = toCoord.latitude * .pi / 180
+        let lon2 = toCoord.longitude * .pi / 180
+        let dLon = lon2 - lon1
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        let b = atan2(y, x) * 180 / .pi
+        return (b + 360).truncatingRemainder(dividingBy: 360)
+    }
+    
+    /// When direction step advances (e.g. waypoint reached, return leg), orient map toward next target so "up" is direction of travel.
+    private func reorientMapToDirectionOfTravel() {
+        guard !viewModel.mapStayCenteredOnRoute else { return }
+        guard introPhase == .followingUser, !userInteractedWithMap else { return }
+        guard let location = viewModel.locationService.currentLocation else { return }
+        guard let nextTurn = viewModel.locationService.nextTurnCoordinate else { return }
+        let userCoord = location.coordinate
+        let heading = bearing(from: userCoord, to: nextTurn)
+        isProgrammaticCameraUpdate = true
+        lastProgrammaticUpdateTime = Date()
+        withAnimation(.easeInOut(duration: 0.6)) {
+            updateCameraHeading(to: heading, at: userCoord)
+        }
     }
     
     // MARK: - Interaction
@@ -2036,8 +2398,8 @@ struct EmbeddedWalkMapView: View {
         return segment
     }
     
-    /// Calculate return route from last waypoint to start using MapKit (fallback)
-    /// Only called if extraction from routePath fails
+    /// Calculate return route from last waypoint to start using Google Directions API
+    /// v2.1.0: Uses live Google Directions (ToS compliant - no caching)
     private func calculateReturnRouteFromLastWaypoint() {
         guard let currentRoute = viewModel.walkSession.currentRoute,
               let lastWaypoint = currentRoute.qrMarkers.last,
@@ -2046,122 +2408,109 @@ struct EmbeddedWalkMapView: View {
             return
         }
         
-        // Don't recalculate if we already have this route
-        if returnRoute != nil {
-            print("📍 Return route already calculated, using existing")
+        // Don't recalculate if we already have directions
+        if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
+            print("📍 Return route already available, using existing")
             return
         }
         
-        print("📍 Fallback: Calculating return route from last waypoint to start using MapKit...")
+        print("📍 Calculating return route from last waypoint to start via Google Directions...")
         isShowingReturnRoute = true
         
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: lastWaypoint.coordinate))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: startPoint))
-        request.transportType = .walking
-        
-        let directions = MKDirections(request: request)
-        // v1.9.16: Capture main actor-isolated properties before Sendable closure
-        let hasCachedReturnRoute = viewModel.hasCachedReturnRoute
-        let cachedReturnRoutePolyline = viewModel.cachedReturnRoutePolyline
-        directions.calculate { [self] response, error in
-            if let error = error {
-                print("⚠️ Return route calculation failed: \(error.localizedDescription)")
-                // Fallback to cached route if available
-                if hasCachedReturnRoute && !cachedReturnRoutePolyline.isEmpty {
-                    print("✅ Falling back to cached return route")
+        // v2.1.0: Use live Google Directions API (no MapKit caching for ToS compliance)
+        Task {
+            if let result = await GoogleMapsService.shared.getReturnDirectionsLive(
+                from: lastWaypoint.coordinate,
+                to: startPoint
+            ) {
+                await MainActor.run {
+                    print("✅ Live return directions from last waypoint: \(result.directions.count) steps, \(result.polyline.count) points")
+                    
+                    // Store for this session (in-memory only, not persisted)
+                    self.viewModel.cachedReturnDirections = result.directions
+                    self.viewModel.cachedReturnRoutePolyline = result.polyline
+                    self.viewModel.hasCachedReturnRoute = true
+                    
+                    // Switch to return route directions
+                    if !result.directions.isEmpty {
+                        // #region agent log
+                        let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "message": "SWITCHED_TO_RETURN_DIRECTIONS", "hypothesisId": "H5", "location": "WalkingMapView.swift:calculateReturnRouteFromLastWaypoint", "data": ["reason": "liveFromLastWaypoint"] as [String: Any]]
+                        if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) { line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                        DebugLogger.shared.log("AGENT SWITCHED_TO_RETURN_DIRECTIONS reason=liveFromLastWaypoint", category: "AGENT_RETURN_LEG")
+                        // #endregion
+                        self.viewModel.didSwitchToReturnDirections()
+                        self.viewModel.isUsingReturnDirections = true
+                        self.viewModel.locationService.startDirectionMonitoring(
+                            directions: result.directions,
+                            routePath: result.polyline,
+                            skipPassedWaypoints: true
+                        )
+                        DebugLogger.shared.log("Switched to return route directions (from last waypoint): \(result.directions.count) steps", category: "RETURN_ROUTE")
+                    }
                 }
-                return
-            }
-            
-            if let route = response?.routes.first {
-                DispatchQueue.main.async {
-                    print("✅ Return route calculated via MapKit: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
-                    self.returnRoute = route
+            } else {
+                await MainActor.run {
+                    DebugLogger.shared.log("Google Directions failed for return route - navigation may be limited", category: "RETURN_ROUTE")
                 }
             }
         }
     }
     
     /// Calculate walking directions from current location back to starting point
-    /// v1.9.16: Calculate return route with offline fallback
-    /// Strategy: Show cached route immediately, then try fresh calculation if online
+    /// v2.1.0: Uses live Google Directions API (ToS compliant - no caching)
     private func calculateReturnRoute() {
-        // Don't recalculate if we already have a return route
-        guard returnRoute == nil else {
-            print("📍 Return route already calculated, skipping...")
-            return
-        }
-        
         guard let currentLocation = viewModel.locationService.currentLocation,
               let currentRoute = viewModel.walkSession.currentRoute,
-              let startPoint = currentRoute.routePath.first else {
+              let startPoint = viewModel.walkSession.startLocation ?? currentRoute.routePath.first else {
             print("📍 Cannot calculate return route - missing location or start point")
             return
         }
         
-        print("📍 Calculating return route to start point...")
+        print("📍 Calculating return route to start point via Google Directions...")
         isShowingReturnRoute = true
         
-        // STEP 1: If we have a cached return route, show it immediately (works offline)
-        if viewModel.hasCachedReturnRoute && !viewModel.cachedReturnRoutePolyline.isEmpty {
-            print("📍 Using cached return route (showing immediately)")
-            applyCachedReturnRoute()
-        }
-        
-        // STEP 2: Try to recalculate from actual location (if online, more accurate)
-        print("📍 Attempting fresh return route calculation from actual location...")
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: currentLocation.coordinate))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: startPoint))
-        request.transportType = .walking
-        
-        let directions = MKDirections(request: request)
-        // v1.9.16: Capture main actor-isolated properties before Sendable closure
-        let hasCachedRoute = viewModel.hasCachedReturnRoute
-        directions.calculate { response, error in
-            
-            if let error = error {
-                print("⚠️ Fresh return route calculation failed: \(error.localizedDescription)")
-                // If we don't have cached route, show error
-                if !hasCachedRoute {
-                    print("❌ No cached route available - return route unavailable")
-                } else {
-                    print("✅ Falling back to cached return route (offline mode)")
-                }
-                return
-            }
-            
-            if let route = response?.routes.first {
-                DispatchQueue.main.async {
-                    print("✅ Fresh return route calculated: \(route.expectedTravelTime / 60) min, \(route.distance) meters")
+        // v2.1.0: Use live Google Directions API (no caching for ToS compliance)
+        Task {
+            if let result = await GoogleMapsService.shared.getReturnDirectionsLive(
+                from: currentLocation.coordinate,
+                to: startPoint
+            ) {
+                await MainActor.run {
+                    print("✅ Live return directions received: \(result.directions.count) steps, \(result.polyline.count) points")
                     
-                    // Use the fresh route (more accurate from actual location)
-                    self.returnRoute = route
-                    
-                    // Extract directions and polyline
-                    let returnDirections = self.extractDirectionsFromMKRoute(route)
-                    self.viewModel.cachedReturnDirections = returnDirections
-                    
-                    let polyline = route.polyline
-                    let pointCount = polyline.pointCount
-                    var returnPath = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
-                    polyline.getCoordinates(&returnPath, range: NSRange(location: 0, length: pointCount))
-                    
-                    // Update cache with fresh route
-                    self.viewModel.cachedReturnRoutePolyline = returnPath
+                    // Store for this session (in-memory only, not persisted)
+                    self.viewModel.cachedReturnDirections = result.directions
+                    self.viewModel.cachedReturnRoutePolyline = result.polyline
                     self.viewModel.hasCachedReturnRoute = true
                     
                     // Switch to return route directions
-                    if !returnDirections.isEmpty {
+                    if !result.directions.isEmpty {
+                        // #region agent log
+                        let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "message": "SWITCHED_TO_RETURN_DIRECTIONS", "hypothesisId": "H5", "location": "WalkingMapView.swift:calculateReturnRoute", "data": ["reason": "liveFromCurrentLocation"] as [String: Any]]
+                        if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) { line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                        DebugLogger.shared.log("AGENT SWITCHED_TO_RETURN_DIRECTIONS reason=liveFromCurrentLocation", category: "AGENT_RETURN_LEG")
+                        // #endregion
+                        self.viewModel.didSwitchToReturnDirections()
                         self.viewModel.isUsingReturnDirections = true
                         self.viewModel.locationService.startDirectionMonitoring(
-                            directions: returnDirections,
-                            routePath: returnPath,
-                            skipPassedWaypoints: true  // v1.9.65: Mid-walk switch, skip passed waypoints
+                            directions: result.directions,
+                            routePath: result.polyline,
+                            skipPassedWaypoints: true
                         )
-                        print("📍 Switched to fresh return route directions: \(returnDirections.count) steps")
+                        DebugLogger.shared.log("Switched to return route directions (from current location): \(result.directions.count) steps", category: "RETURN_ROUTE")
                     }
+                }
+            } else {
+                await MainActor.run {
+                    DebugLogger.shared.log("Google Directions failed - using route polyline for visual (no turn-by-turn)", category: "RETURN_ROUTE")
+                    // Fall back to just showing the route segment without turn-by-turn directions
+                    // #region agent log
+                    let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "message": "SWITCHED_TO_RETURN_DIRECTIONS", "hypothesisId": "H5", "location": "WalkingMapView.swift:calculateReturnRoute_fallback", "data": ["reason": "googleFailed"] as [String: Any]]
+                    if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) { line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                    DebugLogger.shared.log("AGENT SWITCHED_TO_RETURN_DIRECTIONS reason=googleFailed", category: "AGENT_RETURN_LEG")
+                    // #endregion
+                    self.viewModel.didSwitchToReturnDirections()
+                    self.viewModel.isUsingReturnDirections = true
                 }
             }
         }
@@ -2176,6 +2525,12 @@ struct EmbeddedWalkMapView: View {
             return
         }
         
+        // #region agent log
+        let payload: [String: Any] = ["timestamp": Int(Date().timeIntervalSince1970 * 1000), "message": "SWITCHED_TO_RETURN_DIRECTIONS", "hypothesisId": "H5", "location": "WalkingMapView.swift:applyCachedReturnRoute", "data": ["reason": "applyCached"] as [String: Any]]
+        if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) { line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+        DebugLogger.shared.log("AGENT SWITCHED_TO_RETURN_DIRECTIONS reason=applyCached", category: "AGENT_RETURN_LEG")
+        // #endregion
+        viewModel.didSwitchToReturnDirections()
         // Apply cached directions and start monitoring
         viewModel.isUsingReturnDirections = true
         viewModel.locationService.startDirectionMonitoring(
@@ -2222,7 +2577,7 @@ struct EmbeddedWalkMapView: View {
             // Format distance
             let distanceText: String
             if stepDistance < 1000 {
-                distanceText = "\(stepDistance) m"
+                distanceText = "\(stepDistance)m"
             } else {
                 distanceText = String(format: "%.1f km", Double(stepDistance) / 1000.0)
             }
@@ -2585,7 +2940,7 @@ struct WaypointCarousel: View {
                 }
             }
             
-            // Swipeable cards
+            // Swipeable cards (stable id per page to avoid invalid reuse)
             TabView(selection: $selectedIndex) {
                 // Waypoint cards
                 ForEach(Array(unvisitedMarkers.enumerated()), id: \.element.marker.id) { cardIndex, item in
@@ -2602,6 +2957,7 @@ struct WaypointCarousel: View {
                         colorScheme: colorScheme
                     )
                     .tag(cardIndex)
+                    .id(item.marker.id)
                 }
                 
                 // Return to Start card (final)
@@ -2617,6 +2973,7 @@ struct WaypointCarousel: View {
                     colorScheme: colorScheme
                 )
                 .tag(unvisitedMarkers.count)
+                .id("returnToStart")
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .frame(height: 90)
@@ -3117,8 +3474,11 @@ private struct CombinedStatusBannerContent: View {
 /// Compact pill showing walk time remaining (delay shown in top banner)
 /// Alternates with steps prompt when steps not enabled
 struct CompactStatusRing: View {
+    var pillContext: String = "unknown"
     let walkDurationMinutes: Int
     let walkStartTime: Date?
+    /// When false, pill never shows "X mins left" until Google has refreshed; can still show "Track steps?" when step permission not granted.
+    var showMinsLeft: Bool = true
 
     @ObservedObject var healthKitService: HealthKitService
     @Binding var isStepTrackingEnabled: Bool
@@ -3131,14 +3491,8 @@ struct CompactStatusRing: View {
     @State private var isMotionDenied: Bool = false
     @State private var isPedometerAvailable: Bool = false
 
-    // v1.9.33: If Motion is already authorized, don't alternate - just show "Time left"
-    // User will see HealthKit offer at end of walk
-    private var shouldAlternate: Bool {
-        !isStepTrackingEnabled &&
-        isPedometerAvailable &&
-        !isMotionDenied &&
-        !isMotionAuthorized // If Motion authorized, skip "Track steps?" prompt
-    }
+    // No longer alternate with "Track steps?" — steps CTA is now the bottom "Track Steps" pill only.
+    private var shouldAlternate: Bool { false }
 
     private var showStepsOnly: Bool {
         // Note: hasClinicianSelected is passed as parameter, not from healthKitService
@@ -3147,8 +3501,10 @@ struct CompactStatusRing: View {
 
     var body: some View {
         CompactStatusPillContent(
+            pillContext: pillContext,
             walkDurationMinutes: walkDurationMinutes,
             walkStartTime: walkStartTime,
+            showMinsLeft: showMinsLeft,
             shouldAlternate: shouldAlternate,
             showStepsOnly: showStepsOnly,
             isStepsEnabled: isStepTrackingEnabled,
@@ -3156,6 +3512,10 @@ struct CompactStatusRing: View {
             healthKitService: healthKitService,
             onEnableSteps: onEnableSteps
         )
+        .id(walkDurationMinutes) // Force pill to re-sync when duration changes (fixes stale "75" when Google returns 55)
+        .onChange(of: walkDurationMinutes) { oldMin, newMin in
+            print("PILL | [\(pillContext)] CompactStatusRing received walkDurationMinutes \(oldMin) → \(newMin)")
+        }
         .onAppear {
             // Cache motion status on appear to avoid accessing during rendering
             // These values are computed properties, so we cache them once on appear
@@ -3163,6 +3523,7 @@ struct CompactStatusRing: View {
             isMotionAuthorized = healthKitService.isMotionAuthorized
             isMotionDenied = healthKitService.isMotionDenied
             isPedometerAvailable = healthKitService.isPedometerAvailable
+            print("PILL | [\(pillContext)] CompactStatusRing onAppear — walkDurationMinutes=\(walkDurationMinutes)")
             print("🟢 CompactStatusRing: onAppear - shouldAlternate=\(shouldAlternate), isStepTrackingEnabled=\(isStepTrackingEnabled), showStepsOnly=\(showStepsOnly)")
         }
     }
@@ -3170,8 +3531,11 @@ struct CompactStatusRing: View {
 
 // MARK: - CompactStatusPillContent (Child pill view)
 private struct CompactStatusPillContent: View {
+    let pillContext: String
     let walkDurationMinutes: Int
     let walkStartTime: Date?
+    /// When false, never show "X mins left"; show placeholder until Google has refreshed. "Track steps?" can still show.
+    var showMinsLeft: Bool = true
     let shouldAlternate: Bool
     var showStepsOnly: Bool = false
     var isStepsEnabled: Bool = false
@@ -3186,21 +3550,34 @@ private struct CompactStatusPillContent: View {
     @State private var showingStepsPrompt: Bool = false
     @State private var walkRemaining: Int = 0
     @State private var timerTask: Task<Void, Never>?
+    @State private var instanceTag: String = ""
 
     var body: some View {
         Group {
             if showingStepsPrompt && shouldAlternate {
                 stepsPillView
                     .transition(.opacity.combined(with: .scale))
-            } else {
+            } else if showMinsLeft {
                 infoPillView
+                    .transition(.opacity.combined(with: .scale))
+            } else {
+                waitingForRefreshPillView
                     .transition(.opacity.combined(with: .scale))
             }
         }
         .animation(.easeInOut(duration: 0.6), value: showingStepsPrompt)
-        .onAppear {
-            print("🟢 CompactStatusPillContent: onAppear - shouldAlternate=\(shouldAlternate), isStepsEnabled=\(isStepsEnabled), showStepsOnly=\(showStepsOnly)")
+        .onChange(of: walkRemaining) { oldVal, newVal in
+            print("PILL | [\(pillContext)] VISIBLE 'mins left' changed to \(newVal) (was \(oldVal)) — user sees this number on screen")
+        }
+        .onChange(of: walkDurationMinutes) { oldMin, newMin in
+            print("PILL | [\(pillContext)] CompactStatusPillContent onChange walkDurationMinutes \(oldMin) → \(newMin) — calling updatePillState")
             updatePillState()
+        }
+        .onAppear {
+            if instanceTag.isEmpty { instanceTag = UUID().uuidString.prefix(8).description }
+            print("PILL | [\(pillContext)] CompactStatusPillContent onAppear instance=\(instanceTag) walkDurationMinutes=\(walkDurationMinutes) walkRemaining=\(walkRemaining) (before updatePillState)")
+            updatePillState()
+            print("PILL | [\(pillContext)] CompactStatusPillContent onAppear after updatePillState — walkRemaining=\(walkRemaining) (this is what user sees as 'X mins left')")
             // Start 5-second timer
             timerTask = Task {
                 print("🟢 CompactStatusPillContent: Timer task started")
@@ -3230,16 +3607,22 @@ private struct CompactStatusPillContent: View {
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm:ss.SSS"
             let timeString = formatter.string(from: timestamp)
+            #if DEBUG
             print("🔍 [MOTION DEBUG] [\(timeString)] 🔵 stepsPillView tapped - Motion authorized: \(healthKitService.isMotionAuthorized)")
+            #endif
             
             // If Motion is already authorized, enable steps directly (this will trigger HealthKit permission)
             if healthKitService.isMotionAuthorized {
+                #if DEBUG
                 print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ Motion already authorized - enabling steps directly (will trigger HealthKit permission)")
+                #endif
                 DispatchQueue.main.async {
                     onEnableSteps()
                 }
             } else {
+                #if DEBUG
                 print("🔍 [MOTION DEBUG] [\(timeString)]   ⚠️ Motion not authorized - showing explainer sheet")
+                #endif
                 // Force binding update on next run loop to avoid conflicts with Timer/animations
                 DispatchQueue.main.async {
                     showMotionExplainer = true
@@ -3270,48 +3653,47 @@ private struct CompactStatusPillContent: View {
         .contentShape(Capsule())
     }
 
-    // MARK: - Info Pill (Time Left)
+    // MARK: - Info Pill (Time Left) — display only, not tappable
     private var infoPillView: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "figure.walk")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(urgencyColor)
+            Text("\(walkRemaining)")
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .foregroundColor(urgencyColor)
+                .monospacedDigit()
+            Text("mins left")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(urgencyColor.opacity(0.9))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            Capsule()
+                .fill(colorScheme == .dark ? Color.darkCardBackground : Color.white.opacity(0.95))
+                .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.3 : 0.1), radius: 4, y: 2)
+        )
+    }
+
+    // MARK: - Waiting for Google refresh (no mins left until refreshed)
+    private var waitingForRefreshPillView: some View {
         Button(action: {
-            print("🔵 infoPillView TAPPED - isStepsEnabled=\(isStepsEnabled)")
-            let timestamp = Date()
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm:ss.SSS"
-            let timeString = formatter.string(from: timestamp)
-            
             if !isStepsEnabled {
-                print("🔍 [MOTION DEBUG] [\(timeString)] 🔵 infoPillView tapped - Motion authorized: \(healthKitService.isMotionAuthorized)")
-                
-                // If Motion is already authorized, enable steps directly (this will trigger HealthKit permission)
                 if healthKitService.isMotionAuthorized {
-                    print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ Motion already authorized - enabling steps directly (will trigger HealthKit permission)")
-                    DispatchQueue.main.async {
-                        onEnableSteps()
-                    }
+                    DispatchQueue.main.async { onEnableSteps() }
                 } else {
-                    print("🔍 [MOTION DEBUG] [\(timeString)]   ⚠️ Motion not authorized - showing explainer sheet")
-                    print("🔵 Setting showMotionExplainer = true")
-                    // Force binding update on next run loop to avoid conflicts with Timer/animations
-                    DispatchQueue.main.async {
-                        showMotionExplainer = true
-                        print("🔵 showMotionExplainer after async set: \(showMotionExplainer)")
-                    }
+                    DispatchQueue.main.async { showMotionExplainer = true }
                 }
-            } else {
-                print("🔵 Button disabled - steps already enabled")
             }
         }) {
             HStack(spacing: 6) {
                 Image(systemName: "figure.walk")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(urgencyColor)
-                Text("\(walkRemaining)")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundColor(urgencyColor)
-                    .monospacedDigit()
-                Text("mins left")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(urgencyColor.opacity(0.9))
+                    .foregroundColor(colorScheme == .dark ? .tealAccent : Color(red: 0.0, green: 0.45, blue: 0.45))
+                Text("Calculating time left")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(colorScheme == .dark ? .tealAccent.opacity(0.9) : Color(red: 0.0, green: 0.45, blue: 0.45).opacity(0.9))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -3323,7 +3705,6 @@ private struct CompactStatusPillContent: View {
         }
         .buttonStyle(.plain)
         .contentShape(Capsule())
-        .disabled(isStepsEnabled) // non-tappable if steps enabled
     }
 
     // MARK: - Urgency color based on remaining minutes
@@ -3349,13 +3730,19 @@ private struct CompactStatusPillContent: View {
 
     // MARK: - Update pill state (flip logic & remaining time)
     private func updatePillState() {
-        // Update walk remaining
+        // Update walk remaining (this is what the user actually sees as "X mins left")
+        let newRemaining: Int
         if let start = walkStartTime {
             let elapsedMinutes = Int(Date().timeIntervalSince(start) / 60)
-            walkRemaining = max(0, walkDurationMinutes - elapsedMinutes)
+            newRemaining = max(0, walkDurationMinutes - elapsedMinutes)
         } else {
-            walkRemaining = walkDurationMinutes
+            newRemaining = walkDurationMinutes
         }
+        if walkRemaining != newRemaining {
+            let elapsed = walkStartTime.map { Int(Date().timeIntervalSince($0) / 60) } ?? -1
+            print("PILL | [\(pillContext)] updatePillState: walkRemaining \(walkRemaining) → \(newRemaining) (walkDurationMinutes=\(walkDurationMinutes) elapsed=\(elapsed)) — user will see \(newRemaining) mins left")
+        }
+        walkRemaining = newRemaining
 
         // ✅ Do not flip while sheet is showing - prevents Timer conflicts
         guard !showMotionExplainer else {
@@ -3503,13 +3890,16 @@ private struct DelayBannerContent: View {
 }
 
 // MARK: - Delay Change Overlay (v1.6.11)
-/// Full-screen overlay shown when delay changes mid-walk
+/// Full-screen overlay shown when delay changes mid-walk. Optional onUpdateRoute: when provided, shows "Extend my walk" / "Get shorter route" CTA.
 struct DelayChangeOverlay: View {
     let oldMinutes: Int
     let newMinutes: Int
     let isIncrease: Bool
     let onDismiss: () -> Void
     let onReturnNow: () -> Void
+    /// When set, primary CTA updates the route (new waypoints/duration); called then overlay is dismissed for loading.
+    var onUpdateRoute: (() -> Void)? = nil
+    var isLoading: Bool = false
     
     @State private var isAnimating = false
     
@@ -3523,7 +3913,7 @@ struct DelayChangeOverlay: View {
             Color.black.opacity(0.6)
                 .ignoresSafeArea()
                 .onTapGesture {
-                    onDismiss()
+                    if !isLoading { onDismiss() }
                 }
             
             // Content card
@@ -3596,8 +3986,44 @@ struct DelayChangeOverlay: View {
                 
                 // Action buttons
                 VStack(spacing: 12) {
-                    if !isIncrease {
-                        // Show "Take Me Back" for decrease
+                    if let onUpdate = onUpdateRoute {
+                        Button(action: {
+                            onUpdate()
+                        }) {
+                            HStack {
+                                if isLoading {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                } else {
+                                    Image(systemName: isIncrease ? "map.fill" : "arrow.down.right.and.arrow.up.left")
+                                    Text(isIncrease ? "Extend my walk" : "Get shorter route")
+                                }
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(isIncrease ? Color.green : Color.orange)
+                            .cornerRadius(12)
+                        }
+                        .disabled(isLoading)
+                    }
+                    
+                    if !isIncrease, onUpdateRoute != nil {
+                        Button(action: onReturnNow) {
+                            HStack {
+                                Image(systemName: "arrow.uturn.backward")
+                                Text("Take Me Back")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.orange.opacity(0.8))
+                            .cornerRadius(12)
+                        }
+                        .disabled(isLoading)
+                    } else if !isIncrease {
                         Button(action: onReturnNow) {
                             HStack {
                                 Image(systemName: "arrow.uturn.backward")
@@ -3621,6 +4047,7 @@ struct DelayChangeOverlay: View {
                             .background(isIncrease ? Color.green : Color.gray.opacity(0.2))
                             .cornerRadius(12)
                     }
+                    .disabled(isLoading)
                 }
                 .padding(.horizontal)
             }
@@ -3922,7 +4349,9 @@ struct MotionPermissionExplainer: View {
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm:ss.SSS"
             let timeString = formatter.string(from: timestamp)
+            #if DEBUG
             print("🔍 [MOTION DEBUG] [\(timeString)] 📋 MotionPermissionExplainerSheet.onAppear()")
+            #endif
         }
     }
 }

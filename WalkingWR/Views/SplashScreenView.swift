@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct SplashScreenView: View {
-    // Create ViewModel early so data starts loading immediately
-    @StateObject private var viewModel = WaitingRoomViewModel()
+    // Create ViewModel early so data starts loading immediately (inject mapsService for delay-change route refresh).
+    @StateObject private var viewModel = WaitingRoomViewModel(mapsService: GoogleMapsService.shared)
     
     @State private var minimumTimeElapsed = false
     @State private var logoOpacity = 0.0
@@ -65,6 +65,8 @@ struct SplashScreenView: View {
                 withAnimation(.easeOut(duration: 0.8).delay(0.4)) {
                     improvingLivesOpacity = 1.0
                 }
+                
+                // Pre-populated POI DB is downloaded when we get first location (MainTabView), not here
                 
                 // Set minimum time elapsed after 2.5 seconds
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {

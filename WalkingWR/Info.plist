@@ -26,9 +26,23 @@
 	<string>AIzaSyB4ArGM5beRSeInpW-P3q1SFbS_lrQ0jx8</string>
 	<key>GEMINI_API_KEY</key>
 	<string>AIzaSyDxMzPL_-enELjtzPWBNGoWbPjTmPGeZ_c</string>
+	<key>GEOGRAPH_API_KEY</key>
+	<string>df200a5f61</string>
+	<key>OPEN_ROUTE_SERVICE_API_KEY</key>
+	<string>$(OPEN_ROUTE_SERVICE_API_KEY)</string>
+	<key>ORS_BASE_URL</key>
+	<string>$(ORS_BASE_URL)</string>
+	<key>GRAPHHOPPER_API_KEY</key>
+	<string>$(GRAPHHOPPER_API_KEY)</string>
+	<key>EBIRD_API_KEY</key>
+	<string>$(EBIRD_API_KEY)</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>CFBundleShortVersionString</key>
+	<string>2.1.27</string>
+	<key>CFBundleVersion</key>
+	<string>383</string>
 </dict>
 </plist>

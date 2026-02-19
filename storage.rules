@@ -1,0 +1,9 @@
+rules_version = '2';
+// Allow public read for POI JSON files so the app and Google Sheets can download them.
+// Path in rules = object name at bucket root (e.g. prepopulated_pois_S1.json).
+service firebase.storage {
+  match /{fileName} {
+    allow read: if fileName.matches('^prepopulated_pois.*\\.json$');
+    allow write: if false;
+  }
+}

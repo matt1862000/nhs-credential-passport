@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CoreLocation
 
 struct MainTabView: View {
     // ViewModel is passed in from SplashScreenView (already loaded data)
@@ -53,44 +54,31 @@ struct MainTabView: View {
                             Label("Delay", systemImage: "clock.fill")
                         }
                         .tag(0)
+                        .id(0) // Stable identity to avoid "invalid reuse after initialization failure" when switching tabs
                     
                     RouteSelectionView(viewModel: viewModel, showLocalRoutePicker: $showLocalRoutePicker)
                         .tabItem {
                             Label("Walk", systemImage: "figure.walk")
                         }
                         .tag(1)
+                        .id(1)
                     
                     WellbeingView(viewModel: viewModel, selectedCategory: $wellbeingCategory, selectedExercise: $wellbeingExercise)
                         .tabItem {
                             Label("Wellbeing", systemImage: "heart.fill")
                         }
                         .tag(2)
+                        .id(2)
                     
                     ProfileView(viewModel: viewModel, healthKitService: viewModel.healthKitService)
                         .tabItem {
                             Label("Progress", systemImage: "trophy.fill")
                         }
                         .tag(3)
+                        .id(3)
                 }
                 .tint(.tealAccent)
                 .transition(.opacity)
-                // v1.6.45: Handle batch test notifications - need to switch tabs first
-                .onReceive(NotificationCenter.default.publisher(for: .runBatchTest)) { _ in
-                    print("📬 MainTabView received runBatchTest - switching to Walk tab")
-                    selectedTab = 1  // Switch to Walk tab
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        // Forward to RouteSelectionView via the internal notification
-                        NotificationCenter.default.post(name: .runBatchTestInternal, object: nil)
-                    }
-                }
-                .onReceive(NotificationCenter.default.publisher(for: .runSingleLocationTest)) { notification in
-                    print("📬 MainTabView received runSingleLocationTest - switching to Walk tab")
-                    selectedTab = 1  // Switch to Walk tab
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        // Forward with userInfo
-                        NotificationCenter.default.post(name: .runSingleLocationTestInternal, object: nil, userInfo: notification.userInfo)
-                    }
-                }
             }
         }
         .animation(.easeInOut(duration: 0.5), value: showOnboarding)
@@ -152,10 +140,71 @@ struct MainTabView: View {
                 }
             }
         }
+        .onAppear {
+            // Trigger prepop on appear if we already have location (onChange doesn't fire for initial value)
+            if let loc = viewModel.locationService.currentLocation {
+                Task {
+                    await PrePopulatedPOIService.shared.downloadDatabaseIfNeeded(userLocation: loc.coordinate)
+                    ensurePOIsReadyForLocation(loc.coordinate)
+                    tryStartRoutePreGen(at: loc.coordinate)
+                }
+            }
+        }
+        .onChange(of: viewModel.locationService.currentLocation) { _, newLocation in
+            guard let loc = newLocation else { return }
+            // Cancel pre-gen if user moved significantly
+            if let preGenLoc = RoutePreGenService.shared.preGeneratedAtLocation {
+                let moved = CLLocation(latitude: loc.coordinate.latitude, longitude: loc.coordinate.longitude)
+                    .distance(from: CLLocation(latitude: preGenLoc.latitude, longitude: preGenLoc.longitude))
+                if moved > 50 {
+                    RoutePreGenService.shared.cancelAndClear()
+                }
+            }
+            Task {
+                await PrePopulatedPOIService.shared.downloadDatabaseIfNeeded(userLocation: loc.coordinate)
+                ensurePOIsReadyForLocation(loc.coordinate)
+                tryStartRoutePreGen(at: loc.coordinate)
+            }
+        }
+        // When clinician list updates (Firebase snapshot), try to start pre-gen if POIs already ready
+        .onChange(of: viewModel.availableClinicians.count) { _, _ in
+            if let loc = viewModel.locationService.currentLocation {
+                tryStartRoutePreGen(at: loc.coordinate)
+            }
+        }
         // Global delay alerts - use the reusable modifier
         .delayAlerts(viewModel: viewModel)
     }
     
+    /// Try to start route pre-generation for all clinician durations.
+    /// Only starts if POIs are available (from pre-pop DB) and clinicians are loaded.
+    private func tryStartRoutePreGen(at coordinate: CLLocationCoordinate2D) {
+        let clinicians = viewModel.availableClinicians
+        guard !clinicians.isEmpty else { return }
+        // Check if POIs are available from pre-pop DB
+        guard let pois = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: coordinate, radiusMeters: 2500), pois.count >= 15 else { return }
+        RoutePreGenService.shared.startPreGenForAllClinicians(pois: pois, clinicians: clinicians, location: coordinate)
+    }
+    
+    /// When we have location, ensure POIs are ready for route generation. Prefer cache and pre-pop DB to avoid a live API call.
+    private func ensurePOIsReadyForLocation(_ coordinate: CLLocationCoordinate2D) {
+        // 1. Prefer cached POIs (no API call)
+        if let cached = POICacheService.shared.getCachedPOIs(near: coordinate), !cached.isEmpty {
+            GoogleMapsService.shared.setEarlyPrefetchedPOIs(cached, for: coordinate)
+            return
+        }
+        // 2. Prefer pre-populated DB POIs (no API call)
+        let radiusMeters = 2500.0
+        if let dbPOIs = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: coordinate, radiusMeters: radiusMeters), !dbPOIs.isEmpty {
+            GoogleMapsService.shared.setEarlyPrefetchedPOIs(dbPOIs, for: coordinate)
+            return
+        }
+        // 3. No cache or pre-pop — do live fetch (only if we have API key)
+        if GoogleMapsService.shared.hasAPIKey {
+            GoogleMapsService.shared.prefetchPOIsEarly(location: coordinate)
+        }
+    }
+
     private func checkForPendingPushNotification() {
         print("📱 checkForPendingPushNotification called - pending: \(AppDelegate.pendingNotification != nil)")
         

@@ -21,6 +21,24 @@ class RouteCacheService {
     private let matchRadiusMeters: Double = 10 // 10m - very tight since route start/end must match user position
     private let cacheExpiryHours: Double = 24 // Routes expire after 24 hours
     
+    // MARK: - Session (ToS: Apple/Google routes & POI kept only per session, not persisted)
+    //
+    // Session = one app process lifetime, location-bound:
+    // - Storage: in-memory only (sessionOnlyCache, sessionCrossBucketPool); never written to disk.
+    // - Valid while: app is running AND user is within 50m of where routes were generated.
+    // - Ends when: (1) app process is terminated, or (2) user moves >50m → session cache is cleared.
+    // Cancel / dismissing the route sheet does NOT end the session; same location can reuse cache.
+    
+    /// Session-only cache for live-generated routes (not persisted; ToS). Reused when user taps Generate again without moving.
+    /// Keyed by rounded 5-min duration so pre-gen for multiple durations can coexist.
+    private var sessionOnlyCache: [Int: (latitude: Double, longitude: Double, routes: [CachedRouteWithMetadata])] = [:]
+    
+    /// Session-only cross-bucket pool: out-of-band routes keyed by duration bucket (e.g. 15, 25). Survives Cancel so 15 min route from a 20 min run can be used when user comes back and selects 15 min.
+    private var sessionCrossBucketPool: [Int: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)]] = [:]
+    
+    /// Location where session routes were generated (used to detect stale cache after Cancel + move).
+    private var sessionLocation: CLLocationCoordinate2D?
+    
     private init() {}
     
     // MARK: - Duration Rounding
@@ -29,6 +47,45 @@ class RouteCacheService {
     /// e.g., 42min → 40min, 37min → 35min, 33min → 35min
     static func roundToNearest5Minutes(_ duration: Int) -> Int {
         return ((duration + 2) / 5) * 5  // +2 ensures proper rounding (not just floor)
+    }
+    
+    // MARK: - Primary POI Detection (v1.9.52)
+    
+    /// Generic POI keywords that shouldn't be treated as primary attractions
+    private static let genericPOIKeywords = [
+        "footpath", "path", "road", "street", "lane", "avenue", "close", "drive",
+        "bench", "bin", "post box", "telephone", "bollard", "sign", "lamp",
+        "looking", "towards", "junction", "crossing", "corner"
+    ]
+    
+    /// Extract the primary POI from a list of cached places
+    /// The primary POI is the first meaningful (non-generic) location
+    static func extractPrimaryPOI(from places: [CachedPlace]) -> String? {
+        for place in places {
+            let cleanedName = GoogleMapsService.cleanPOIDisplayName(place.name).lowercased()
+            
+            // Skip if too short (likely just a grid reference)
+            guard cleanedName.count >= 3 else { continue }
+            
+            // Skip generic POIs
+            let isGeneric = genericPOIKeywords.contains { cleanedName.contains($0) }
+            if isGeneric { continue }
+            
+            // Found a meaningful POI - this is our primary
+            return cleanedName
+        }
+        
+        // Fallback: use first POI if no meaningful one found
+        return places.first.map { GoogleMapsService.cleanPOIDisplayName($0.name).lowercased() }
+    }
+    
+    /// Check if two routes share the same primary POI
+    static func hasSamePrimaryPOI(_ route1: [CachedPlace], _ route2: [CachedPlace]) -> Bool {
+        guard let primary1 = extractPrimaryPOI(from: route1),
+              let primary2 = extractPrimaryPOI(from: route2) else {
+            return false
+        }
+        return primary1 == primary2
     }
     
     // MARK: - Cache Entry Structure
@@ -159,19 +216,80 @@ class RouteCacheService {
         let description: String?
         let directions: [WalkingDirection]?  // v1.6.45: Cached directions for instant load
         var isDeadZoneFallback: Bool = false  // v1.6.39: True if route is 70-74% (closest available)
+        var isFromPrePopulatedDatabase: Bool = false  // True when from PrePopulatedPOIService; route is first waypoint → … → first, we prepend GPS→first when displaying
     }
     
     /// Check if we have cached routes for this location and duration
     /// Returns cached routes WITH their Gemini names/descriptions if within 10m and same duration (rounded to 5min), nil otherwise
     /// Also validates that cached routes are within tolerance (80-120%, or 75-125% for edge cases)
     /// NEW: If exact duration not found, checks adjacent slots (±5, ±10, ±15 min) for valid routes
-    func getCachedRoutes(near location: CLLocationCoordinate2D, durationMinutes: Int) -> [CachedRouteWithMetadata]? {
+    /// PRIORITY 0: Checks pre-populated database first (fastest, no API calls)
+    /// - Parameter consumeSessionCrossBucket: When `true` (default), cross-bucket pool entries are consumed (removed from pool).
+    ///   Pass `false` from background pre-generation so routes stay in the pool for a later user-initiated request.
+    func getCachedRoutes(near location: CLLocationCoordinate2D, durationMinutes: Int, consumeSessionCrossBucket: Bool = true) -> [CachedRouteWithMetadata]? {
+        // 🎯 PRIORITY 0: Session-only cache FIRST (user's actual routes this session, including +1 additions)
+        // Session cache represents what the user just saw — takes priority over prepop DB.
+        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
+        if let session = sessionOnlyCache[roundedDuration] {
+            let sessionCoord = CLLocationCoordinate2D(latitude: session.latitude, longitude: session.longitude)
+            let distance = distanceBetween(sessionCoord, location)
+            if distance <= matchRadiusMeters && !session.routes.isEmpty {
+                print("📦 SESSION CACHE HIT! \(session.routes.count) route(s) for \(durationMinutes)min at this location (instant reuse)")
+                return session.routes
+            }
+        }
+        
+        // 🎯 PRIORITY 0.5: Session cross-bucket pool — e.g. user chose 20 min, got 10 min routes (stored in pool); cancel then choose 10 min → instant.
+        if consumeSessionCrossBucket {
+            // User-initiated path: consume (remove) matching routes from the pool
+            if let crossBucketRoutes = getAndConsumeSessionCrossBucketRoutes(for: durationMinutes, near: location), !crossBucketRoutes.isEmpty {
+                print("📦 SESSION CROSS-BUCKET HIT! \(crossBucketRoutes.count) route(s) for \(durationMinutes)min (from earlier duration this session)")
+                return crossBucketRoutes
+            }
+        } else {
+            // Background pre-generation path: peek only, leave pool intact for later user request
+            if let crossBucketRoutes = getSessionCrossBucketRoutesPeek(for: durationMinutes, near: location), !crossBucketRoutes.isEmpty {
+                print("📦 SESSION CROSS-BUCKET PEEK: \(crossBucketRoutes.count) route(s) available for \(durationMinutes)min (pool unchanged)")
+                return crossBucketRoutes
+            }
+        }
+        
+        // 🎯 PRIORITY 1: Check pre-populated database (fastest for first-time generation, no API calls)
+        if let prePopulatedRoutes = PrePopulatedPOIService.shared.getPrePopulatedRoutes(near: location, durationMinutes: durationMinutes) {
+            print("📦 PRE-POPULATED ROUTES HIT! Found \(prePopulatedRoutes.count) routes from pre-populated database")
+            
+            // v1.9.60: Filter out routes containing restricted POIs (playcare, nursery, etc.)
+            // This catches routes in the database that include restricted POIs
+            let filteredRoutes = prePopulatedRoutes.filter { routeWithMeta in
+                let hasRestrictedPOI = routeWithMeta.route.places.contains { place in
+                    GoogleMapsService.shared.isRestrictedPOI(place)
+                }
+                if hasRestrictedPOI {
+                    let routeName = routeWithMeta.name ?? "Unnamed"
+                    let restrictedPOIs = routeWithMeta.route.places.filter { GoogleMapsService.shared.isRestrictedPOI($0) }
+                    let restrictedNames = restrictedPOIs.map { $0.name }.joined(separator: ", ")
+                    print("📦 🏫 Filtered pre-populated route '\(routeName)' - contains restricted POI(s): \(restrictedNames)")
+                }
+                return !hasRestrictedPOI
+            }
+            
+            let restrictedFilteredCount = prePopulatedRoutes.count - filteredRoutes.count
+            if restrictedFilteredCount > 0 {
+                print("📦 🏫 Filtered \(restrictedFilteredCount) pre-populated route(s) containing restricted POIs")
+            }
+            
+            // Only return if we still have valid routes after filtering
+            if !filteredRoutes.isEmpty {
+                return filteredRoutes
+            } else {
+                print("📦 ⚠️ All pre-populated routes contained restricted POIs - falling back to regular cache")
+            }
+        }
+        
+        // 🎯 PRIORITY 1: Check regular cache
         let cached = loadCache()
         
-        // Round to nearest 5 minutes for consistent caching (e.g., 42min → 40min)
-        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
-        
-        // Calculate tolerance for the REQUESTED duration
+        // Calculate tolerance for the REQUESTED duration (roundedDuration already set above)
         let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
         let minPercent = isEdgeCase ? 0.75 : 0.80
         let maxPercent = isEdgeCase ? 1.25 : 1.20
@@ -298,75 +416,15 @@ class RouteCacheService {
     }
     
     /// Cache routes for a location and duration (rounded to nearest 5 minutes)
-    /// v1.6.45: Now also caches directions for instant load
+    /// v2.1.0: DISABLED for ToS compliance - dynamically generated routes use MapKit polylines
+    /// which cannot be cached per Apple's Terms of Service.
+    /// Only pre-populated database routes are available (via PrePopulatedPOIService).
     func cacheRoutes(_ routes: [GeneratedRoute], at location: CLLocationCoordinate2D, durationMinutes: Int, names: [String?] = [], descriptions: [String?] = [], directions: [[WalkingDirection]] = []) {
-        var cached = loadCache()
-        
-        // Round to nearest 5 minutes for consistent caching
-        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
-        
-        // Remove expired entries
-        cached = cached.filter { !$0.isExpired }
-        
-        // Remove any existing entry for this location/duration (using rounded)
-        cached = cached.filter { entry in
-            let distance = distanceBetween(entry.coordinate, location)
-            return !(distance <= matchRadiusMeters && entry.durationMinutes == roundedDuration)
-        }
-        
-        // Convert routes to cached format (cache ALL routes - no duplicate filtering)
-        var cachedRoutes: [CachedRoute] = []
-        
-        for (index, route) in routes.enumerated() {
-            // v1.6.45: Cache directions if provided
-            let routeDirections: [CachedDirection]? = directions.indices.contains(index) && !directions[index].isEmpty
-                ? directions[index].map { CachedDirection.from($0) }
-                : nil
-            
-            cachedRoutes.append(CachedRoute(
-                places: route.places.map { place in
-                    CachedPlace(
-                        placeId: place.placeId,
-                        name: place.name,
-                        latitude: place.coordinate.latitude,
-                        longitude: place.coordinate.longitude,
-                        types: place.types ?? [],
-                        vicinity: place.vicinity
-                    )
-                },
-                polyline: route.polyline,
-                distanceMeters: route.distanceMeters,
-                durationSeconds: route.durationSeconds,
-                name: names.indices.contains(index) ? names[index] : nil,
-                description: descriptions.indices.contains(index) ? descriptions[index] : nil,
-                directions: routeDirections
-            ))
-        }
-        
-        // If no routes to cache, skip
-        guard !cachedRoutes.isEmpty else {
-            print("📦 Route Cache: No routes to cache")
-            return
-        }
-        
-        // Add new entry (using rounded duration)
-        let newEntry = CachedRouteSet(
-            latitude: location.latitude,
-            longitude: location.longitude,
-            durationMinutes: roundedDuration,
-            routes: cachedRoutes,
-            createdAt: Date()
-        )
-        cached.append(newEntry)
-        
-        // Trim to max size (remove oldest first)
-        if cached.count > maxCachedRouteSets {
-            cached.sort { $0.createdAt > $1.createdAt }
-            cached = Array(cached.prefix(maxCachedRouteSets))
-        }
-        
-        saveCache(cached)
-        print("📦 Route Cache: Saved \(cachedRoutes.count) routes for \(roundedDuration)min (requested \(durationMinutes)min) at (\(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude)))")
+        // v2.1.0: Route caching disabled for ToS compliance
+        // Dynamically generated routes use MapKit polylines which cannot be cached
+        // Pre-populated routes are already in the database and don't need to be cached here
+        print("📦 Route Cache: Skipping cache (ToS compliance - routes use MapKit polylines)")
+        print("📦 Route Cache: \(routes.count) routes available for this session only")
     }
     
     /// Clear all cached routes
@@ -379,166 +437,245 @@ class RouteCacheService {
     }
     
     /// Merge new routes into existing cache (smart quality-based update)
-    /// - If new route has >50% overlap with existing, replace ONLY if new route has better quality
-    /// - If new route is unique (<50% overlap with all), add it if under limit or better than worst
-    /// - Quality = duration accuracy + POI variety - skip penalty
-    /// Returns: (added: Int, replaced: Int) counts
+    /// v2.1.0: Persist disabled for ToS; we still update session-only cache so Cancel → Generate again is instant.
     func mergeRoutes(_ routes: [GeneratedRoute], at location: CLLocationCoordinate2D, durationMinutes: Int, names: [String?] = [], descriptions: [String?] = [], directions: [[WalkingDirection]] = []) -> (added: Int, replaced: Int) {
-        var cached = loadCache()
-        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
-        
-        // Remove expired entries
-        cached = cached.filter { !$0.isExpired }
-        
-        // Find existing entry for this location/duration
-        let existingIndex = cached.firstIndex { entry in
-            let distance = distanceBetween(entry.coordinate, location)
-            return distance <= matchRadiusMeters && entry.durationMinutes == roundedDuration
-        }
-        
-        var existingRoutes: [CachedRoute] = existingIndex != nil ? cached[existingIndex!].routes : []
-        var added = 0
-        var replaced = 0
-        var skipped = 0
-        
-        print("📦 ═══════════════════════════════════════════════════════════")
-        print("📦 MERGE START: \(routes.count) new routes → cache (existing: \(existingRoutes.count), max: \(maxRoutesPerDuration))")
-        for (i, r) in routes.enumerated() {
-            let pois = r.places.map { $0.name }.joined(separator: " → ")
-            print("📦   New[\(i+1)]: \(r.durationSeconds/60)min - \(pois)")
-        }
-        for (i, r) in existingRoutes.enumerated() {
-            let pois = r.places.map { $0.name }.joined(separator: " → ")
-            print("📦   Existing[\(i+1)]: \(r.durationMinutes)min (skip:\(r.skipCount)) - \(pois)")
-        }
-        print("📦 ───────────────────────────────────────────────────────────")
-        
-        for (index, route) in routes.enumerated() {
-            let newPlaceIds = Set(route.places.map { $0.placeId })
-            let routeName = names.indices.contains(index) ? (names[index] ?? "Route \(index + 1)") : "Route \(index + 1)"
-            let poiNames = route.places.map { $0.name }.joined(separator: " → ")
-            
-            // Find existing route with highest overlap
-            var highestOverlap = 0.0
-            var highestOverlapIndex: Int? = nil
-            
-            for (existingIdx, existing) in existingRoutes.enumerated() {
-                let existingPlaceIds = Set(existing.places.map { $0.placeId })
-                let overlap = newPlaceIds.intersection(existingPlaceIds).count
-                let overlapPercent = Double(overlap) / Double(max(1, newPlaceIds.count))
-                if overlapPercent > highestOverlap {
-                    highestOverlap = overlapPercent
-                    highestOverlapIndex = existingIdx
-                }
-            }
-            
-            // Create cached route
-            let routeDirections: [CachedDirection]? = directions.indices.contains(index) && !directions[index].isEmpty
-                ? directions[index].map { CachedDirection.from($0) }
-                : nil
-            
-            let newCachedRoute = CachedRoute(
-                places: route.places.map { place in
-                    CachedPlace(
-                        placeId: place.placeId,
-                        name: place.name,
-                        latitude: place.coordinate.latitude,
-                        longitude: place.coordinate.longitude,
-                        types: place.types ?? [],
-                        vicinity: place.vicinity
-                    )
-                },
-                polyline: route.polyline,
-                distanceMeters: route.distanceMeters,
-                durationSeconds: route.durationSeconds,
-                name: names.indices.contains(index) ? names[index] : nil,
-                description: descriptions.indices.contains(index) ? descriptions[index] : nil,
-                directions: routeDirections,
-                skipCount: 0,
-                createdAt: Date()
+        // Session-only: store so same location + duration reuses routes this session (no disk persist for ToS)
+        let rounded = RouteCacheService.roundToNearest5Minutes(durationMinutes)
+        let meta: [CachedRouteWithMetadata] = zip(zip(routes, names), zip(descriptions, directions)).map { arg in
+            let ((r, name), (desc, dirs)) = arg
+            return CachedRouteWithMetadata(
+                route: r,
+                name: name,
+                description: desc,
+                directions: dirs.isEmpty ? nil : dirs,
+                isDeadZoneFallback: false,
+                isFromPrePopulatedDatabase: false
             )
-            
-            let newQuality = newCachedRoute.qualityScore(targetDurationMinutes: roundedDuration)
-            
-            if highestOverlap > 0.50, let replaceIdx = highestOverlapIndex {
-                // Route has high overlap - only replace if new route is BETTER quality
-                let existingQuality = existingRoutes[replaceIdx].qualityScore(targetDurationMinutes: roundedDuration)
-                
-                if newQuality > existingQuality {
-                    let oldName = existingRoutes[replaceIdx].name ?? "Unnamed"
-                    existingRoutes[replaceIdx] = newCachedRoute
-                    replaced += 1
-                    print("📦   🔄 '\(routeName)' (\(poiNames)) REPLACED '\(oldName)' (quality \(Int(newQuality)) > \(Int(existingQuality)), \(Int(highestOverlap * 100))% overlap)")
+        }
+        if !meta.isEmpty {
+            sessionOnlyCache[rounded] = (latitude: location.latitude, longitude: location.longitude, routes: meta)
+            sessionLocation = location
+            print("📦 Session cache updated: \(meta.count) route(s) for \(rounded)min (this session only)")
+        }
+        return (0, 0)
+    }
+    
+    /// Save live-generated routes to session-only cache (full set). Called when generation completes so Cancel → Generate reuses them.
+    func setSessionRoutes(_ routes: [CachedRouteWithMetadata], at location: CLLocationCoordinate2D, durationMinutes: Int) {
+        guard !routes.isEmpty else { return }
+        let rounded = RouteCacheService.roundToNearest5Minutes(durationMinutes)
+        sessionOnlyCache[rounded] = (latitude: location.latitude, longitude: location.longitude, routes: routes)
+        sessionLocation = location
+        print("📦 Session cache set: \(routes.count) route(s) for \(rounded)min (this session only)")
+    }
+    
+    /// Clear session-only cache and cross-bucket pool (e.g. when user moves >50m so we don't serve stale routes).
+    func clearSessionCache() {
+        let hadSession = !sessionOnlyCache.isEmpty
+        let hadPool = !sessionCrossBucketPool.isEmpty
+        sessionOnlyCache.removeAll()
+        sessionCrossBucketPool.removeAll()
+        sessionLocation = nil
+        if hadSession || hadPool {
+            print("📦 Session cache cleared (same-duration + cross-bucket pool)")
+        }
+    }
+    
+    /// If the session cache was created far from the given location, clear it and return true. Otherwise return false.
+    /// Call this before checking the cache so stale routes from a different location aren't served.
+    @discardableResult
+    func clearSessionCacheIfLocationChanged(from currentLocation: CLLocationCoordinate2D, threshold: Double = 50) -> Bool {
+        guard let stored = sessionLocation else { return false }
+        let distance = distanceBetween(stored, currentLocation)
+        if distance > threshold {
+            print("📦 Session cache is \(Int(distance))m from current location (>\(Int(threshold))m) — clearing stale session cache")
+            clearSessionCache()
+            return true
+        }
+        return false
+    }
+    
+    // MARK: - Session cross-bucket pool (other durations)
+    
+    /// Store an out-of-band route in the session cross-bucket pool so it can be used when user later selects that duration (even after Cancel).
+    func addToSessionCrossBucket(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool, currentBucket: Int) {
+        let actualDuration = route.durationMinutes
+        let bucket = RouteCacheService.roundToNearest5Minutes(actualDuration)
+        guard bucket != currentBucket else { return }
+        guard bucket >= 5 && bucket <= 60 else { return }
+        
+        let newSig = Set(data.places.map { $0.placeId })
+        if let existing = sessionCrossBucketPool[bucket] {
+            if existing.contains(where: { Set($0.data.places.map { $0.placeId }) == newSig }) { return }
+            if existing.count >= 5 { return }
+        }
+        
+        sessionCrossBucketPool[bucket, default: []].append((route: route, data: data, isFromGoogle: isFromGoogle))
+        let total = sessionCrossBucketPool.values.reduce(0) { $0 + $1.count }
+        print("[ROUTE_DEBUG] 🔄 Session cross-bucket: stored '\(route.name)' (\(actualDuration)min) → \(bucket)min bucket (pool: \(total) routes)")
+    }
+    
+    /// In-band check for cache: 80–120% duration (75–125% for edge buckets) and minimum distance. Matches RouteSelectionView so cross-bucket routes returned from getCachedRoutes are valid for display.
+    private static func isRouteInBandForCache(_ route: WalkingRoute, targetDuration: Int) -> Bool {
+        let rounded = RouteCacheService.roundToNearest5Minutes(targetDuration)
+        let isEdge = rounded <= 5 || rounded >= 55
+        let minPercent = isEdge ? 0.75 : 0.80
+        let maxPercent = isEdge ? 1.25 : 1.20
+        let minAcc = Int(Double(rounded) * minPercent)
+        let maxAcc = Int(Double(rounded) * maxPercent)
+        let durationOk = route.durationMinutes >= minAcc && route.durationMinutes <= maxAcc
+        let minDist = max(200, rounded * 50)
+        let distanceOk = route.distanceMeters >= minDist
+        return durationOk && distanceOk
+    }
+    
+    /// Take in-band routes from the session cross-bucket pool for the given target duration and location; convert to cache format and remove from pool. Returns nil if no session location or not near session; otherwise returns routes (may be empty if pool had none in-band).
+    /// Used by getCachedRoutes so that e.g. 20 min selection that produced 10 min routes makes 10 min instantly available when user cancels and selects 10 min.
+    private func getAndConsumeSessionCrossBucketRoutes(for targetDuration: Int, near location: CLLocationCoordinate2D) -> [CachedRouteWithMetadata]? {
+        let sessionCoord: CLLocationCoordinate2D?
+        if let firstSession = sessionOnlyCache.values.first {
+            sessionCoord = CLLocationCoordinate2D(latitude: firstSession.latitude, longitude: firstSession.longitude)
+        } else if let loc = sessionLocation {
+            sessionCoord = loc
+        } else {
+            sessionCoord = nil
+        }
+        guard let coord = sessionCoord else { return nil }
+        if distanceBetween(coord, location) > matchRadiusMeters { return nil }
+        
+        let entries = consumeSessionCrossBucket(for: targetDuration) { route, sel in
+            Self.isRouteInBandForCache(route, targetDuration: sel)
+        }
+        guard !entries.isEmpty else { return nil }
+        
+        let meta = entries.map { entry in
+            CachedRouteWithMetadata(
+                route: entry.data,
+                name: entry.route.name,
+                description: entry.route.description,
+                directions: entry.route.walkingDirections.isEmpty ? nil : entry.route.walkingDirections,
+                isDeadZoneFallback: false,
+                isFromPrePopulatedDatabase: false
+            )
+        }
+        return meta
+    }
+    
+    /// Peek at in-band routes from the session cross-bucket pool WITHOUT consuming them. Same location/in-band logic as getAndConsumeSessionCrossBucketRoutes but the pool is left untouched.
+    private func getSessionCrossBucketRoutesPeek(for targetDuration: Int, near location: CLLocationCoordinate2D) -> [CachedRouteWithMetadata]? {
+        let sessionCoord: CLLocationCoordinate2D?
+        if let firstSession = sessionOnlyCache.values.first {
+            sessionCoord = CLLocationCoordinate2D(latitude: firstSession.latitude, longitude: firstSession.longitude)
+        } else if let loc = sessionLocation {
+            sessionCoord = loc
+        } else {
+            sessionCoord = nil
+        }
+        guard let coord = sessionCoord else { return nil }
+        if distanceBetween(coord, location) > matchRadiusMeters { return nil }
+        
+        let entries = peekSessionCrossBucket(for: targetDuration) { route, sel in
+            Self.isRouteInBandForCache(route, targetDuration: sel)
+        }
+        guard !entries.isEmpty else { return nil }
+        
+        let meta = entries.map { entry in
+            CachedRouteWithMetadata(
+                route: entry.data,
+                name: entry.route.name,
+                description: entry.route.description,
+                directions: entry.route.walkingDirections.isEmpty ? nil : entry.route.walkingDirections,
+                isDeadZoneFallback: false,
+                isFromPrePopulatedDatabase: false
+            )
+        }
+        return meta
+    }
+    
+    /// Take in-band routes from the session cross-bucket pool for the given target duration (target bucket ±5). Only in-band entries are removed from the pool.
+    func consumeSessionCrossBucket(for targetDuration: Int, isInBand: (WalkingRoute, Int) -> Bool) -> [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] {
+        let targetBucket = RouteCacheService.roundToNearest5Minutes(targetDuration)
+        let bucketsToCheck = [targetBucket, targetBucket - 5, targetBucket + 5].filter { $0 >= 5 && $0 <= 60 }
+        var result: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
+        
+        for bucket in bucketsToCheck {
+            guard var pooled = sessionCrossBucketPool[bucket], !pooled.isEmpty else { continue }
+            var kept: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
+            for entry in pooled {
+                if isInBand(entry.route, targetDuration) {
+                    result.append(entry)
                 } else {
-                    skipped += 1
-                    print("📦   ⏭️ '\(routeName)' (\(poiNames)) SKIPPED - lower quality (\(Int(newQuality)) ≤ \(Int(existingQuality)))")
+                    kept.append(entry)
                 }
-            } else {
-                // Unique route - add if under limit, or replace worst if better
-                if existingRoutes.count < maxRoutesPerDuration {
-                    existingRoutes.append(newCachedRoute)
-                    added += 1
-                    print("📦   ➕ '\(routeName)' (\(poiNames)) ADDED (quality: \(Int(newQuality)), overlap: \(Int(highestOverlap * 100))%)")
-                } else {
-                    // At limit - find worst quality route and replace if new is better
-                    var worstIndex = 0
-                    var worstQuality = existingRoutes[0].qualityScore(targetDurationMinutes: roundedDuration)
-                    
-                    for (idx, existing) in existingRoutes.enumerated() {
-                        let quality = existing.qualityScore(targetDurationMinutes: roundedDuration)
-                        if quality < worstQuality {
-                            worstQuality = quality
-                            worstIndex = idx
-                        }
-                    }
-                    
-                    if newQuality > worstQuality {
-                        let oldName = existingRoutes[worstIndex].name ?? "Unnamed"
-                        existingRoutes[worstIndex] = newCachedRoute
-                        replaced += 1
-                        print("📦   🔄 '\(routeName)' (\(poiNames)) REPLACED worst '\(oldName)' (quality \(Int(newQuality)) > \(Int(worstQuality)))")
-                    } else {
-                        skipped += 1
-                        print("📦   ⏭️ '\(routeName)' (\(poiNames)) SKIPPED - at limit (quality \(Int(newQuality)) ≤ worst \(Int(worstQuality)))")
-                    }
+            }
+            sessionCrossBucketPool[bucket] = kept.isEmpty ? nil : kept
+        }
+        
+        if !result.isEmpty {
+            print("[ROUTE_DEBUG] 🔄 Session cross-bucket: consumed \(result.count) route(s) for \(targetDuration)min")
+        }
+        return result
+    }
+    
+    /// Peek at in-band routes in the session cross-bucket pool WITHOUT removing them. Same bucket/in-band logic as consumeSessionCrossBucket but non-mutating.
+    func peekSessionCrossBucket(for targetDuration: Int, isInBand: (WalkingRoute, Int) -> Bool) -> [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] {
+        let targetBucket = RouteCacheService.roundToNearest5Minutes(targetDuration)
+        let bucketsToCheck = [targetBucket, targetBucket - 5, targetBucket + 5].filter { $0 >= 5 && $0 <= 60 }
+        var result: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
+        
+        for bucket in bucketsToCheck {
+            guard let pooled = sessionCrossBucketPool[bucket], !pooled.isEmpty else { continue }
+            for entry in pooled {
+                if isInBand(entry.route, targetDuration) {
+                    result.append(entry)
                 }
             }
         }
         
-        // Update or create cache entry
-        let newEntry = CachedRouteSet(
-            latitude: location.latitude,
-            longitude: location.longitude,
-            durationMinutes: roundedDuration,
-            routes: existingRoutes,
-            createdAt: Date()
-        )
-        
-        if let idx = existingIndex {
-            cached[idx] = newEntry
-        } else {
-            cached.append(newEntry)
+        if !result.isEmpty {
+            print("[ROUTE_DEBUG] 🔄 Session cross-bucket: peeked \(result.count) route(s) for \(targetDuration)min (pool unchanged)")
         }
-        
-        // Trim to max size
-        if cached.count > maxCachedRouteSets {
-            cached.sort { $0.createdAt > $1.createdAt }
-            cached = Array(cached.prefix(maxCachedRouteSets))
+        return result
+    }
+    
+    /// For safety net: get the N routes from the pool closest to selectedDuration (for fallback when we have fewer than targetInBandRoutes). Removes them from the pool.
+    /// Only considers routes within 50–150% of selectedDuration; prefers in-band (80–120%) then by duration proximity.
+    func takeSessionCrossBucketFallbackCandidates(needed: Int, selectedDuration: Int) -> [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] {
+        var all: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
+        for (_, pooled) in sessionCrossBucketPool {
+            all.append(contentsOf: pooled)
         }
-        
-        saveCache(cached)
-        let skippedText = skipped > 0 ? ", \(skipped) skipped (lower quality)" : ""
-        print("📦 ───────────────────────────────────────────────────────────")
-        print("📦 MERGE COMPLETE: \(added) added, \(replaced) replaced\(skippedText)")
-        print("📦 Final cache (\(existingRoutes.count) routes):")
-        for (i, r) in existingRoutes.enumerated() {
-            let pois = r.places.map { $0.name }.joined(separator: " → ")
-            let quality = Int(r.qualityScore(targetDurationMinutes: roundedDuration))
-            print("📦   [\(i+1)] \(r.name ?? "Unnamed") - \(r.durationMinutes)min (quality:\(quality)) - \(pois)")
+        guard !all.isEmpty else { return [] }
+        let minDur = Int(Double(selectedDuration) * 0.50)
+        let maxDur = Int(Double(selectedDuration) * 1.50)
+        let inBandMin = Int(Double(selectedDuration) * 0.80)
+        let inBandMax = Int(Double(selectedDuration) * 1.20)
+        all = all.filter { $0.route.durationMinutes >= minDur && $0.route.durationMinutes <= maxDur }
+        guard !all.isEmpty else { return [] }
+        all.sort { a, b in
+            let aInBand = a.route.durationMinutes >= inBandMin && a.route.durationMinutes <= inBandMax
+            let bInBand = b.route.durationMinutes >= inBandMin && b.route.durationMinutes <= inBandMax
+            if aInBand != bInBand { return aInBand }
+            return abs(a.route.durationMinutes - selectedDuration) < abs(b.route.durationMinutes - selectedDuration)
         }
-        print("📦 ═══════════════════════════════════════════════════════════")
-        
-        return (added, replaced)
+        let taken = Array(all.prefix(needed))
+        let takenSigs = Set(taken.map { Set($0.data.places.map { $0.placeId }) })
+        for bucket in sessionCrossBucketPool.keys {
+            sessionCrossBucketPool[bucket] = sessionCrossBucketPool[bucket]?.filter { entry in
+                !takenSigs.contains(Set(entry.data.places.map { $0.placeId }))
+            }
+            if sessionCrossBucketPool[bucket]?.isEmpty == true { sessionCrossBucketPool[bucket] = nil }
+        }
+        if !taken.isEmpty {
+            print("[ROUTE_DEBUG] 🔄 Session cross-bucket: took \(taken.count) fallback candidate(s) for \(selectedDuration)min")
+        }
+        return taken
+    }
+    
+    /// Pool size for logging (e.g. "15min: 2, 25min: 1").
+    func sessionCrossBucketPoolSummary() -> String {
+        guard !sessionCrossBucketPool.isEmpty else { return "" }
+        return sessionCrossBucketPool.sorted(by: { $0.key < $1.key }).map { "\($0.key)min: \($0.value.count)" }.joined(separator: ", ")
     }
     
     /// v1.6.46: Increment skip count for a route (user shuffled past it)

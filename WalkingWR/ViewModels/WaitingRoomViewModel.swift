@@ -29,6 +29,8 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var showWaitTimeDecreasedAlert: Bool = false
     @Published var waitTimeChangeInfo: (oldMinutes: Int, newMinutes: Int, isIncrease: Bool)?
     @Published var showDelayChangeOverlay: Bool = false  // v1.6.11: In-map overlay when walking
+    /// Don't show delay-change overlay for this many seconds after walk start (route loading + intro animation).
+    private let delayOverlayGracePeriodSeconds: Int = 20
     @Published var showPreWalkWellbeing: Bool = false
     @Published var showPostWalkWellbeing: Bool = false
     
@@ -43,6 +45,89 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var currentMarker: QRMarker? = nil
     @Published var visitedMarkerIds: Set<UUID> = []
     
+    /// v2.1.x: Explicit duration for "mins left" pill so it doesn't revert after Google refresh (avoids stale currentRoute reads on re-render).
+    @Published var displayDurationMinutesForPill: Int? = nil
+    /// Google lock: once true (set in updateCurrentRoute when first refresh runs), must never be set back to false except in endWalk().
+    /// startWalk() must never unlock; only endWalk() resets it so the next walk can start with a fresh pill.
+    @Published var hasReceivedGoogleRefreshForPill: Bool = false
+    /// When lock is set, fallback so pill never reverts to currentRoute if displayDurationMinutesForPill is ever nil (e.g. binding glitch).
+    private var lastKnownPillMinutes: Int? = nil
+    
+    /// Pre-pop duration adjust: when we dropped waypoints (over target), offer user to switch to shorter route.
+    @Published var pendingAdjustedRoute: WalkingRoute? = nil
+    @Published var showAdjustRouteAlert: Bool = false
+    
+    /// When true, map stays centered on route with padding and does not auto-snap to user location (Let's Go flow).
+    @Published var mapStayCenteredOnRoute: Bool = false
+    
+    /// Delay-change route refresh: loading and error state for "Extend my walk" / "Get shorter route".
+    @Published var isLoadingDelayChangeRoute: Bool = false
+    @Published var delayChangeRouteError: String? = nil
+    
+    private static let pillDisplayMinutesKey = "pillDisplayDurationMinutes"
+    private static let pillLockKey = "pillHasReceivedGoogleRefresh"
+    
+    private static func persistPillState(minutes: Int, locked: Bool) {
+        UserDefaults.standard.set(minutes, forKey: pillDisplayMinutesKey)
+        UserDefaults.standard.set(locked, forKey: pillLockKey)
+    }
+    
+    /// Call when walk ends or when hasActiveWalk is cleared (crash/background) so next session starts fresh.
+    static func clearPersistedPillState() {
+        UserDefaults.standard.removeObject(forKey: pillDisplayMinutesKey)
+        UserDefaults.standard.removeObject(forKey: pillLockKey)
+        print("PILL | clearPersistedPillState: persisted pill cleared (walk ended or crash/background)")
+    }
+    
+    /// Value the pill should show: once locked, never fall back to currentRoute so 73→77 never reverts to 73.
+    var effectiveDisplayDurationMinutesForPill: Int? {
+        if let v = displayDurationMinutesForPill { return v }
+        if hasReceivedGoogleRefreshForPill, let v = lastKnownPillMinutes { return v }
+        return nil
+    }
+    
+    // MARK: - Context-aware 50% / 80% alerts (remaining time → primary action and message)
+    /// Remaining outbound minutes (time left on current leg). Used to decide whether to suggest Head back or Keep walking.
+    var remainingOutboundMinutes: Int? {
+        guard walkSession.isActive else { return nil }
+        let durationMinutes = effectiveDisplayDurationMinutesForPill ?? walkSession.currentRoute?.durationMinutes ?? 10
+        let durationSec = Double(durationMinutes * 60)
+        let remaining = max(0, durationSec - Double(walkSession.elapsedSeconds))
+        return Int(remaining / 60)
+    }
+    
+    /// Threshold (minutes): when remaining ≤ this, suggest Head back as primary; otherwise Keep walking primary.
+    private static let suggestHeadBackThresholdMinutes: Int = 2
+    
+    /// When true, user has little time left → Head back should be primary on 50% alert.
+    var halfwayAlertSuggestHeadBack: Bool {
+        (remainingOutboundMinutes ?? 99) <= Self.suggestHeadBackThresholdMinutes
+    }
+    
+    /// Message for 50% alert: softer when plenty of time, more direct when time is tight.
+    var halfwayAlertMessage: String {
+        if halfwayAlertSuggestHeadBack {
+            return "You're around halfway. Consider heading back soon to stay on time for your appointment."
+        }
+        return "You're halfway. You can keep walking or head back whenever you're ready."
+    }
+    
+    /// When true, user has little time left → Head back should be primary on 80% alert.
+    var returnNowAlertSuggestHeadBack: Bool {
+        (remainingOutboundMinutes ?? 99) <= Self.suggestHeadBackThresholdMinutes
+    }
+    
+    /// Message for 80% alert: context-aware.
+    var returnNowAlertMessage: String {
+        if returnNowAlertSuggestHeadBack {
+            return "You've completed 80% of your walk. Consider heading back soon to stay on time."
+        }
+        return "You're nearly done with your walk. Head back to the clinic whenever you're ready."
+    }
+
+    // v2.1.7: Track last waypoint activation time to prevent rapid multiple activations
+    private var lastWaypointActivationTime: Date?
+    
     // v1.9.13: Home arrival detection
     @Published var showHomeArrivalPrompt: Bool = false
     @Published var hasReachedHome: Bool = false
@@ -54,14 +139,21 @@ class WaitingRoomViewModel: ObservableObject {
     
     // v1.9.83: Store arrival instruction to show when close to destination
     private var arrivalInstruction: WalkingDirection? = nil
+    /// Map direction index -> marker ID for waypoint steps (so we only advance to next step when that waypoint is activated). Cleared in endWalk.
+    private var directionIndexToMarkerId: [Int: UUID] = [:]
     
     // v1.9.16: Cached return route for offline fallback
     @Published var cachedReturnRoutePolyline: [CLLocationCoordinate2D] = []
     @Published var hasCachedReturnRoute: Bool = false
+    /// When true, user tapped "Head back" and we switched to return route; skip 80% and 100% overlays. Reset in endWalk.
+    private(set) var isHeadingBack: Bool = false
     
     // v1.9.17: Walking alerts control
     @Published var walkingAlertsEnabled: Bool = true
     private var alertAutoDismissTimer: Timer?
+    
+    /// Freeze diagnostic: logs every 10s during a walk so we can see last activity if the app freezes (no crash).
+    private var walkHeartbeatTimer: Timer?
     
     // Clinician selection
     @Published var availableClinicians: [Clinician] = []
@@ -97,9 +189,12 @@ class WaitingRoomViewModel: ObservableObject {
     let notificationService = NotificationService.shared
     let locationService = LocationService()
     let firebaseService = FirebaseService()
+    /// Optional; when nil, delay-change route refresh uses GoogleMapsService.shared.
+    private var mapsService: GoogleMapsService?
     
     // MARK: - Initialization
-    init() {
+    init(mapsService: GoogleMapsService? = nil) {
+        self.mapsService = mapsService
         // Check if notifications should auto-reset (new day = new appointment)
         let savedNotificationDate = UserDefaults.standard.object(forKey: "notificationsEnabledDate") as? Date
         let isNewDay = !Calendar.current.isDateInToday(savedNotificationDate ?? Date.distantPast)
@@ -357,7 +452,9 @@ class WaitingRoomViewModel: ObservableObject {
         for firebaseData in firebaseClinicians {
             let clinician = createClinicianFromFirebase(firebaseData)
             result.append(clinician)
+            #if DEBUG
             print("✅ Built clinician from Firebase: \(clinician.fullTitle) - \(clinician.currentWaitMinutes)min")
+            #endif
         }
         
         availableClinicians = result
@@ -425,7 +522,9 @@ class WaitingRoomViewModel: ObservableObject {
                 let isWalking = walkSession.isActive
                 
                 // Check for delay changes and notify
+                #if DEBUG
                 print("🔍 Firebase update: previous=\(previousDelay), new=\(newDelay), isFirst=\(isFirstFirebaseUpdate), suppress=\(AppDelegate.suppressInAppAlertsFlag), pending=\(AppDelegate.pendingNotification != nil)")
+                #endif
                 
                 // Skip first Firebase update (it's just syncing on app launch, not a real-time change)
                 if isFirstFirebaseUpdate {
@@ -464,10 +563,14 @@ class WaitingRoomViewModel: ObservableObject {
                                 }
                                 waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: true)
                                 
-                                // v1.6.11: Show in-map overlay if walking, otherwise standard alert
+                                // v1.6.11: Show in-map overlay if walking, otherwise standard alert. Defer until after route/animations (grace period).
                                 if isWalking {
-                                    showDelayChangeOverlay = true
-                                    print("🗺️ SHOWING MAP OVERLAY: Delay increased \(previousDelay) → \(newDelay) min (walking)")
+                                    if walkSession.elapsedSeconds >= delayOverlayGracePeriodSeconds {
+                                        showDelayChangeOverlay = true
+                                        print("🗺️ SHOWING MAP OVERLAY: Delay increased \(previousDelay) → \(newDelay) min (walking)")
+                                    } else {
+                                        print("🗺️ DEFERRING delay overlay (elapsed \(walkSession.elapsedSeconds)s < \(delayOverlayGracePeriodSeconds)s grace)")
+                                    }
                                 } else {
                                     showWaitTimeIncreasedAlert = true
                                     print("⚠️ SHOWING ALERT: Delay increased \(previousDelay) → \(newDelay) min")
@@ -483,10 +586,14 @@ class WaitingRoomViewModel: ObservableObject {
                                 }
                                 waitTimeChangeInfo = (oldMinutes: previousDelay, newMinutes: newDelay, isIncrease: false)
                                 
-                                // v1.6.11: Show in-map overlay if walking, otherwise standard alert
+                                // v1.6.11: Show in-map overlay if walking, otherwise standard alert. Defer until after route/animations (grace period).
                                 if isWalking {
-                                    showDelayChangeOverlay = true
-                                    print("🗺️ SHOWING MAP OVERLAY: Delay decreased \(previousDelay) → \(newDelay) min (walking)")
+                                    if walkSession.elapsedSeconds >= delayOverlayGracePeriodSeconds {
+                                        showDelayChangeOverlay = true
+                                        print("🗺️ SHOWING MAP OVERLAY: Delay decreased \(previousDelay) → \(newDelay) min (walking)")
+                                    } else {
+                                        print("🗺️ DEFERRING delay overlay (elapsed \(walkSession.elapsedSeconds)s < \(delayOverlayGracePeriodSeconds)s grace)")
+                                    }
                                 } else {
                                     showWaitTimeDecreasedAlert = true
                                     print("✅ SHOWING ALERT: Delay decreased \(previousDelay) → \(newDelay) min")
@@ -511,13 +618,17 @@ class WaitingRoomViewModel: ObservableObject {
                     DispatchQueue.global(qos: .utility).async {
                         Messaging.messaging().subscribe(toTopic: topic) { error in
                             if error == nil {
+                                #if DEBUG
                                 print("🔔 Confirmed subscription to: \(topic)")
+                                #endif
                             }
                         }
                     }
                 }
                 
+                #if DEBUG
                 print("🔄 Updated selected clinician: \(updatedData.fullName) - all fields refreshed")
+                #endif
             } else {
                 // Selected clinician is NOT in Firebase anymore - clinic has ended
                 isClinicEnded = true
@@ -592,6 +703,192 @@ class WaitingRoomViewModel: ObservableObject {
         selectedRoute = route
     }
     
+    /// v2.1.1: Update current route with refreshed data (e.g., after background Google/MapKit fetch)
+    /// Updates both selectedRoute and walkSession.currentRoute so map refreshes automatically.
+    /// When resetDirectionIndex is true (e.g. Head back), directions start from step 0.
+    /// - Parameter caller: Short label for logging (e.g. "Let's Go initial") — filter logs by [POLYLINE_UPDATE] to see what triggered each change.
+    func updateCurrentRoute(_ route: WalkingRoute, sourceIsGoogle: Bool = false, resetDirectionIndex: Bool = false, caller: String? = nil) {
+        let incomingMin = route.durationMinutes
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let ts = formatter.string(from: Date())
+        let callerLabel = caller ?? "unknown"
+        print("🔄 [POLYLINE_UPDATE] [\(ts)] caller=\(callerLabel) route='\(route.name)' polylinePoints=\(route.routePath.count) directions=\(route.walkingDirections.count) durationMin=\(route.durationMinutes) sourceIsGoogle=\(sourceIsGoogle)")
+        print("PILL | updateCurrentRoute ENTRY isActive=\(walkSession.isActive) incoming=\(incomingMin)min display=\(displayDurationMinutesForPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) lock=\(hasReceivedGoogleRefreshForPill) sourceIsGoogle=\(sourceIsGoogle) route.name=\(route.name)")
+        selectedRoute = route
+        if walkSession.isActive {
+            walkSession.currentRoute = route
+            let currentPill = displayDurationMinutesForPill
+            let alreadyLocked = hasReceivedGoogleRefreshForPill
+            let shouldUpdatePill = sourceIsGoogle || !alreadyLocked
+            if shouldUpdatePill {
+                displayDurationMinutesForPill = incomingMin
+                hasReceivedGoogleRefreshForPill = true
+                lastKnownPillMinutes = incomingMin
+                Self.persistPillState(minutes: incomingMin, locked: true)
+                print("PILL | updateCurrentRoute: pill SET display=\(incomingMin) lastKnown=\(incomingMin) lock=true (\(sourceIsGoogle ? "Google source of truth" : "first refresh"))")
+            } else {
+                print("PILL | updateCurrentRoute: pill LOCKED display=\(currentPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) — IGNORING incoming \(incomingMin)min (MapKit, waiting for Google)")
+            }
+            // v2.1.1: Update direction monitoring with new directions
+            if !route.walkingDirections.isEmpty {
+                // Safeguard: for single-waypoint routes (e.g. extend), ensure arrival step shows "Waypoint 1 (Name)" not "Arrive at the destination"
+                var directionsToUse = route.walkingDirections
+                if route.qrMarkers.count == 1,
+                   let name = route.qrMarkers.first?.name,
+                   let idx = directionsToUse.firstIndex(where: { d in
+                       let l = d.instruction.lowercased()
+                       return (l.contains("arrive") || l.contains("destination")) && !d.instruction.contains("Waypoint")
+                   }) {
+                    let orig = directionsToUse[idx].instruction
+                    // v2.2: Simplified — no left/right side, just "Arrive at Waypoint"
+                    directionsToUse[idx] = WalkingDirection(
+                        instruction: "Arrive at Waypoint 1 (\(name))",
+                        distance: directionsToUse[idx].distance,
+                        distanceMeters: directionsToUse[idx].distanceMeters,
+                        duration: directionsToUse[idx].duration,
+                        maneuver: "arrive"
+                    )
+                    print("REFRESH_FALLBACK | Single-waypoint safeguard: replaced '\(orig.prefix(40))...' with Arrive at Waypoint 1 (\(name))")
+                }
+                if resetDirectionIndex {
+                    locationService.startDirectionMonitoring(directions: directionsToUse, routePath: route.routePath, skipPassedWaypoints: false)
+                } else {
+                    locationService.updateDirections(directionsToUse, routePath: route.routePath)
+                }
+                // Keep cached directions in sync so banner and expanded list show the new instructions (e.g. after delay-change route refresh).
+                cachedOriginalDirections = directionsToUse
+                // #region agent log — waypoint directions diagnostic (filter Xcode by WAYPOINT_DIAG)
+                let wpCountUpdate = directionsToUse.filter { $0.instruction.contains("Arrive at Waypoint") }.count
+                print("WAYPOINT_DIAG updateCurrentRoute | route='\(route.name)' waypoints=\(route.qrMarkers.count) names=[\(route.qrMarkers.map { $0.name }.joined(separator: ", "))] | directions=\(directionsToUse.count) waypointLines=\(wpCountUpdate)")
+                let updatePayload: [String: Any] = ["location": "WaitingRoomViewModel:updateCurrentRoute:diag", "message": "route update waypoint diagnostic", "data": ["routeName": route.name, "expectedWaypoints": route.qrMarkers.count, "waypointNames": route.qrMarkers.map { $0.name }, "directionCount": directionsToUse.count, "waypointLineCount": wpCountUpdate], "timestamp": Int(Date().timeIntervalSince1970 * 1000), "hypothesisId": "A"]
+                if let updateData = try? JSONSerialization.data(withJSONObject: updatePayload), let updateLine = String(data: updateData, encoding: .utf8) { updateLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+                // #endregion
+            }
+            objectWillChange.send()
+        } else {
+            print("PILL | updateCurrentRoute: walk not active — route/selectedRoute updated but pill NOT touched (display=\(displayDurationMinutesForPill ?? -1) lock=\(hasReceivedGoogleRefreshForPill))")
+        }
+        print("🔄 [ROUTE UPDATE] Route updated: '\(route.name)' with \(route.walkingDirections.count) directions, \(route.routePath.count) polyline points, \(route.durationMinutes)min")
+    }
+    
+    /// Pre-pop duration adjust: offer user to switch to shorter route when we dropped waypoints (over target).
+    /// Alert is shown only after the transition animation (fullScreenCover + map) has finished.
+    func offerAdjustedRoute(_ route: WalkingRoute) {
+        pendingAdjustedRoute = route
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 600_000_000) // 0.6s — wait for animation to finish
+            if pendingAdjustedRoute != nil {
+                showAdjustRouteAlert = true
+            }
+        }
+    }
+    
+    /// Apply an adjusted route (shorter or longer) and update "mins left" pill to match. Use when user accepts shortened route or when we auto-apply a longer adjusted route.
+    func applyAdjustedRouteAndUpdatePill(_ route: WalkingRoute) {
+        displayDurationMinutesForPill = route.durationMinutes
+        lastKnownPillMinutes = route.durationMinutes
+        Self.persistPillState(minutes: route.durationMinutes, locked: true)
+        updateCurrentRoute(route, caller: "applyAdjustedRouteAndUpdatePill")
+    }
+    
+    func acceptAdjustedRoute() {
+        if let r = pendingAdjustedRoute {
+            applyAdjustedRouteAndUpdatePill(r)
+        }
+        pendingAdjustedRoute = nil
+        showAdjustRouteAlert = false
+    }
+    
+    func declineAdjustedRoute() {
+        pendingAdjustedRoute = nil
+        showAdjustRouteAlert = false
+    }
+    
+    // MARK: - Delay-change route refresh
+    
+    /// Request a new route from current location with duration derived from new delay (extend or shorten). Updates pill and directions on success. Call when user taps "Extend my walk" or "Get shorter route" on the delay overlay.
+    /// When extending: preserves current route's waypoints and refreshes directions/polyline (so all waypoint names stay). When shortening or no current route: generates a new route.
+    func requestNewRouteForDelayChange() {
+        guard walkSession.isActive else { return }
+        let service = mapsService ?? GoogleMapsService.shared
+        guard let location = locationService.currentLocation?.coordinate else {
+            delayChangeRouteError = "Location unavailable. Keep walking your current route."
+            return
+        }
+        let isIncrease = waitTimeChangeInfo?.isIncrease ?? true
+        let newMinutes = waitTimeChangeInfo?.newMinutes ?? waitTimeInfo.estimatedMinutes
+        let buffer = isIncrease ? 5 : 8
+        let targetDurationMinutes = max(10, min(45, newMinutes - buffer))
+        
+        isLoadingDelayChangeRoute = true
+        delayChangeRouteError = nil
+        showDelayChangeOverlay = false
+        
+        Task {
+            // Timeout after 60 seconds; only set timeout message if still loading (work didn't finish first)
+            _ = Task {
+                try? await Task.sleep(nanoseconds: 60_000_000_000) // 60 seconds
+                await MainActor.run {
+                    if isLoadingDelayChangeRoute {
+                        isLoadingDelayChangeRoute = false
+                        if delayChangeRouteError == nil {
+                            delayChangeRouteError = "We couldn't find a new route within 60 seconds. Keep walking your current route or head back to the clinic."
+                        }
+                    }
+                }
+            }
+            
+            do {
+                print("REFRESH_FALLBACK | Delay-change: targetDuration=\(targetDurationMinutes)min (newMinutes=\(newMinutes), buffer=\(buffer), isIncrease=\(isIncrease))")
+                
+                // Always generate a new route for the target duration (both extend and shorten). New time = new route.
+                let generated = try await service.generateRouteTopologySafe(
+                    from: location,
+                    targetDurationMinutes: targetDurationMinutes,
+                    difficulty: nil,
+                    excludePlaceIds: [],
+                    excludePOIs: []
+                )
+                print("REFRESH_FALLBACK | Delay-change: generator returned places=\(generated.places.count) [\(generated.places.map { $0.name }.joined(separator: ", "))]")
+                let walkingRoute = RouteConversionHelper.walkingRoute(
+                    from: generated,
+                    origin: location,
+                    name: isIncrease ? "Extended route" : "Shorter route",
+                    description: isIncrease ? "Route extended for extra time." : "Shorter route to head back sooner."
+                )
+                
+                print("REFRESH_FALLBACK | Delay-change: requesting route refresh (Google prioritised, then MapKit if quota/denied) — waypoints=\(walkingRoute.qrMarkers.count)")
+                guard let refreshed = await service.refreshRouteWithGoogleOnly(route: walkingRoute, userLocation: location) else {
+                    await MainActor.run {
+                        if isLoadingDelayChangeRoute {
+                            delayChangeRouteError = "Couldn't update route. Keep walking your current route or head back."
+                            isLoadingDelayChangeRoute = false
+                        }
+                    }
+                    return
+                }
+                await MainActor.run {
+                    updateCurrentRoute(refreshed, sourceIsGoogle: true, resetDirectionIndex: true, caller: "delayChangeRoute")
+                    isLoadingDelayChangeRoute = false
+                    delayChangeRouteError = nil
+                }
+            } catch {
+                await MainActor.run {
+                    if isLoadingDelayChangeRoute {
+                        delayChangeRouteError = "Couldn't find a new route. Keep walking your current route or head back."
+                        isLoadingDelayChangeRoute = false
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Clear delay-change route error (e.g. when user dismisses the message).
+    func clearDelayChangeRouteError() {
+        delayChangeRouteError = nil
+    }
+    
     // MARK: - Permission Requests (Just-in-Time)
     
     /// Request permissions needed for walking - called when user starts a walk
@@ -619,6 +916,14 @@ class WaitingRoomViewModel: ObservableObject {
     // MARK: - Walk Session Management
     func startWalk() {
         guard let route = selectedRoute else { return }
+        let routeMin = route.durationMinutes
+        print("PILL | startWalk ENTRY selectedRoute.duration=\(routeMin)min display=\(displayDurationMinutesForPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) lock=\(hasReceivedGoogleRefreshForPill) isActive=\(walkSession.isActive)")
+        
+        // If already on a walk, do nothing — prevents overwriting Google-refreshed route/pill when startWalk is triggered again (e.g. re-render)
+        if walkSession.isActive {
+            print("PILL | startWalk: SKIPPED (already active) — pill stays display=\(displayDurationMinutesForPill ?? -1) lock=\(hasReceivedGoogleRefreshForPill)")
+            return
+        }
         
         // v1.6.29: Removed requestWalkPermissions() - no longer request HealthKit here
         // Step tracking is now fully opt-in via the Steps card during the walk
@@ -627,8 +932,26 @@ class WaitingRoomViewModel: ObservableObject {
         walkSession.isActive = true
         walkSession.startTime = Date()
         walkSession.currentRoute = route
+        // Pre-pop routes: durationMinutes is route-only; add travel-to-start for pill/halfway
+        let totalMinutes = route.durationMinutes + (route.travelToStartMinutes ?? 0)
+        // When route has 0 duration (bug/race), use pill/display so "10 min" choice is respected for pill and halfway
+        let effectiveMinutes = totalMinutes > 0 ? totalMinutes : (displayDurationMinutesForPill ?? lastKnownPillMinutes ?? 10)
+        let startMin = totalMinutes > 0 ? totalMinutes : effectiveMinutes
+        if totalMinutes <= 0 {
+            print("PILL | startWalk: totalMinutes=\(totalMinutes) (route=\(route.durationMinutes) + travel=\(route.travelToStartMinutes ?? 0)), using effectiveMinutes=\(effectiveMinutes) for pill and halfway")
+        }
+        // Only set pill when starting fresh (no refresh yet). Never unlock: hasReceivedGoogleRefreshForPill is only set to false in endWalk().
+        if !hasReceivedGoogleRefreshForPill {
+            displayDurationMinutesForPill = startMin
+            lastKnownPillMinutes = startMin
+            Self.persistPillState(minutes: startMin, locked: false)
+            print("PILL | startWalk: pill SET display=\(startMin) lastKnown=\(startMin) lock=false (OSM/cache; lock will be set when first refresh runs)")
+        } else {
+            print("PILL | startWalk: pill LOCKED — NOT overwriting display=\(displayDurationMinutesForPill ?? -1) with route \(startMin)min (Google lock never cleared here)")
+        }
         walkSession.startLocation = locationService.currentLocation?.coordinate  // v1.6.48: Snap Start/End to user's actual GPS position
         walkSession.halfwayAlertSent = false
+        print("[HALFWAY] startWalk cameFromWalkNotification=\(AppDelegate.cameFromWalkNotification)")
         walkSession.returnNowAlertSent = false
         walkSession.walkCompleteAlertSent = false
         walkSession.stepsThisSession = 0
@@ -647,16 +970,22 @@ class WaitingRoomViewModel: ObservableObject {
         // v1.9.17: Reset walking alerts for new walk
         walkingAlertsEnabled = true
         
-        // Calculate return time (halfway point of route duration)
-        let halfwaySeconds = Double(route.durationMinutes * 60) / 2
+        // Calculate return time (halfway point of route duration). Use effectiveMinutes (route or pill fallback) so "10 min" choice is respected.
+        let rawHalfway = Double(effectiveMinutes * 60) / 2
+        let halfwaySeconds = max(60.0, rawHalfway)
         walkSession.estimatedReturnTime = Date().addingTimeInterval(halfwaySeconds)
         
         // v1.6.30: Step tracking is now opt-in via the Steps card during walk
-        // Auto-start if user has previously opted in (trust UserDefaults flag)
+        // Auto-start if (1) user has previously opted in, or (2) Motion is already authorized at walk start
+        // so steps count without requiring a tap (avoids "Motion enabled but 0 steps" when user expected counting)
         let autoEnabled = UserDefaults.standard.bool(forKey: "stepTrackingAutoEnabled")
         print("🚶 startWalk - stepTrackingAutoEnabled: \(autoEnabled)")
-        if autoEnabled {
-            print("🚶 Auto-starting step observation, setting stepTrackingWasEnabled = true")
+        if autoEnabled || motionWasAuthorizedAtWalkStart {
+            if !autoEnabled {
+                print("🚶 Motion already authorized at walk start - auto-starting step observation")
+            } else {
+                print("🚶 Auto-starting step observation, setting stepTrackingWasEnabled = true")
+            }
             healthKitService.startObservingSteps(from: Date())
             stepTrackingWasEnabled = true
         }
@@ -666,11 +995,52 @@ class WaitingRoomViewModel: ObservableObject {
         DebugLogger.shared.log("🚶🚶🚶 WALK STARTED 🚶🚶🚶", category: "WALK_LIFECYCLE")
         DebugLogger.shared.log("Route: \(route.name), Duration: \(route.durationMinutes) min, Waypoints: \(route.qrMarkers.count)", category: "WALK_LIFECYCLE")
         
+        // Freeze diagnostic: heartbeat every 10s so we can see last activity if app freezes (logs to DebugLogs in Documents)
+        walkHeartbeatTimer?.invalidate()
+        walkHeartbeatTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
+            guard let self = self, self.walkSession.isActive else { return }
+            let dist = Int(self.locationService.distanceWalked)
+            let name = self.walkSession.currentRoute?.name ?? "?"
+            DebugLogger.shared.log("walk_heartbeat route=\(name) distanceWalked=\(dist)m", category: "FREEZE_DIAG")
+            print("[WALKED_DIST] heartbeat route=\(name) distanceWalked=\(dist)m")
+        }
+        if let t = walkHeartbeatTimer { RunLoop.main.add(t, forMode: .common) }
+        
+        // Map opens centered on route with padding; no auto-follow (Let's Go flow)
+        mapStayCenteredOnRoute = true
+        
         // Start location tracking (requests permission if needed)
         locationService.startTracking()
         
         // v1.9.15: Cache original directions for offline use
         cachedOriginalDirections = route.walkingDirections
+        // #region agent log
+        let dirs = route.walkingDirections
+        let destinationOrWaypoint = dirs.filter { $0.instruction.lowercased().contains("destination") || $0.instruction.contains("Waypoint") }
+        let payload: [String: Any] = [
+            "location": "WaitingRoomViewModel:startWalk:cachedDirs",
+            "message": "directions cached for display",
+            "data": [
+                "count": dirs.count,
+                "samples": destinationOrWaypoint.prefix(5).map { String($0.instruction.prefix(70)) }
+            ],
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "hypothesisId": "E"
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) {
+            line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+        }
+        #if DEBUG
+        print("WAYPOINT_DIR WaitingRoomViewModel:startWalk:cachedDirs | directions cached for display | count=\(dirs.count) samples=\(destinationOrWaypoint.prefix(5).map { String($0.instruction.prefix(70)) })")
+        #endif
+        // #endregion
+        // #region agent log — waypoint directions diagnostic (filter Xcode by WAYPOINT_DIAG)
+        let waypointNames = route.qrMarkers.map { $0.name }
+        let waypointLineCount = dirs.filter { $0.instruction.contains("Arrive at Waypoint") }.count
+        print("WAYPOINT_DIAG startWalk | expected waypoints=\(route.qrMarkers.count) names=[\(waypointNames.joined(separator: ", "))] | directions=\(dirs.count) waypointLines=\(waypointLineCount)")
+        let diagPayload: [String: Any] = ["location": "WaitingRoomViewModel:startWalk:diag", "message": "waypoint diagnostic", "data": ["expectedWaypoints": route.qrMarkers.count, "waypointNames": waypointNames, "directionCount": dirs.count, "waypointLineCount": waypointLineCount], "timestamp": Int(Date().timeIntervalSince1970 * 1000), "hypothesisId": "E"]
+        if let diagData = try? JSONSerialization.data(withJSONObject: diagPayload), let diagLine = String(data: diagData, encoding: .utf8) { diagLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
+        // #endregion
         cachedReturnDirections = []
         isUsingReturnDirections = false
         
@@ -757,6 +1127,17 @@ class WaitingRoomViewModel: ObservableObject {
                 DebugLogger.shared.log("📍 Return journey starts at filtered direction index: \(returnJourneyStartIndex!) (original arrival index: \(arrivalIndexInOriginal))", category: "DIRECTION_MONITORING")
             }
             
+            // Build mapping: direction index -> marker ID for waypoint steps (first Waypoint = first marker, etc.)
+            directionIndexToMarkerId = [:]
+            var waypointCount = 0
+            for (index, dir) in filteredDirections.enumerated() {
+                if dir.instruction.contains("Arrive at Waypoint"),
+                   waypointCount < route.qrMarkers.count {
+                    directionIndexToMarkerId[index] = route.qrMarkers[waypointCount].id
+                    waypointCount += 1
+                }
+            }
+            
             locationService.startDirectionMonitoring(
                 directions: filteredDirections,
                 routePath: route.routePath,
@@ -766,13 +1147,20 @@ class WaitingRoomViewModel: ObservableObject {
                     guard let self = self,
                           let lastMarker = route.qrMarkers.last else { return false }
                     return self.visitedMarkerIds.contains(lastMarker.id)
+                },
+                canAdvanceFromDirectionIndex: { [weak self] index in
+                    guard let self = self else { return true }
+                    if let markerId = self.directionIndexToMarkerId[index] {
+                        return self.visitedMarkerIds.contains(markerId)
+                    }
+                    return true
                 }
             )
         }
         
         // Schedule notifications
-        notificationService.sendWalkStartedNotification(routeName: route.name, duration: route.durationMinutes)
-        scheduleWalkNotifications(routeDuration: route.durationMinutes)
+        notificationService.sendWalkStartedNotification(routeName: route.name, duration: effectiveMinutes)
+        scheduleWalkNotifications(routeDuration: effectiveMinutes)
         
         // Start session timer
         startSessionTimer()
@@ -784,16 +1172,20 @@ class WaitingRoomViewModel: ObservableObject {
     }
     
     func endWalk(completed: Bool) {
+        // Log immediately so we can see order vs home arrival / sheet (search for [HOME] and [WALK_LIFECYCLE])
+        DebugLogger.shared.log("endWalk(completed: \(completed)) CALLED - showHomeArrivalPrompt=\(showHomeArrivalPrompt) hasReachedHome=\(hasReachedHome)", category: "HOME")
         // v1.9.79: Log walk end
-        DebugLogger.shared.log("🏁🏁🏁 WALK ENDED 🏁🏁🏁 - Completed: \(completed)", category: "WALK_LIFECYCLE")
+        DebugLogger.shared.log("WALK ENDED - Completed: \(completed)", category: "WALK_LIFECYCLE")
         if let route = walkSession.currentRoute {
             DebugLogger.shared.log("Final stats - Distance: \(Int(locationService.distanceWalked))m, Duration: \(walkSession.elapsedTime) seconds", category: "WALK_LIFECYCLE")
+            print("[WALKED_DIST] endWalk completed=\(completed) finalDistance=\(Int(locationService.distanceWalked))m duration=\(walkSession.elapsedTime)s")
         }
         let timestamp = Date()
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: timestamp)
         
+        #if DEBUG
         print("🔍 [MOTION DEBUG] [\(timeString)] 🏁 endWalk(completed: \(completed)) CALLED")
         print("🔍 [MOTION DEBUG] [\(timeString)]   stepTrackingWasEnabled: \(stepTrackingWasEnabled)")
         print("🔍 [MOTION DEBUG] [\(timeString)]   Current Motion auth status: \(healthKitService.isMotionAuthorized ? "authorized" : "not authorized")")
@@ -801,8 +1193,16 @@ class WaitingRoomViewModel: ObservableObject {
         Thread.callStackSymbols.prefix(10).enumerated().forEach { index, symbol in
             print("🔍 [MOTION DEBUG] [\(timeString)]     [\(index)] \(symbol)")
         }
+        #endif
         
         walkSession.isActive = false
+        
+        // Prevent "reached home" sheet from appearing after user has already ended the walk
+        showHomeArrivalPrompt = false
+        hasReachedHome = true  // so checkHomeArrival won't fire again
+        
+        walkHeartbeatTimer?.invalidate()
+        walkHeartbeatTimer = nil
         
         // v1.7.5: Clear flag so app knows walk has ended
         UserDefaults.standard.set(false, forKey: "hasActiveWalk")
@@ -818,7 +1218,9 @@ class WaitingRoomViewModel: ObservableObject {
         userProgress.recordSteps(walkSession.stepsThisSession)
         
         // Stop tracking
+        #if DEBUG
         print("🔍 [MOTION DEBUG] [\(timeString)]   🛑 About to call healthKitService.stopObserving()")
+        #endif
         healthKitService.stopObserving()
         locationService.stopTracking()
         notificationService.cancelAllWalkingNotifications()
@@ -827,18 +1229,28 @@ class WaitingRoomViewModel: ObservableObject {
         // Prompt for post-walk wellbeing score
         // v1.9.34: Motion permission is now requested AFTER anxiety check dismisses (in RouteSelectionView onDismiss)
         if completed && userProgress.anxietyLevelBefore != nil {
+            #if DEBUG
             print("🔍 [MOTION DEBUG] [\(timeString)]   📋 Setting showPostWalkWellbeing = true")
+            #endif
             showPostWalkWellbeing = true
         } else {
+            #if DEBUG
             print("🔍 [MOTION DEBUG] [\(timeString)]   📋 NOT showing post-walk wellbeing (completed: \(completed), anxietyLevelBefore: \(userProgress.anxietyLevelBefore != nil))")
+            #endif
         }
         
         // Reset session
         walkSession.startTime = nil
         walkSession.currentRoute = nil
+        print("PILL | endWalk: clearing pill (was display=\(displayDurationMinutesForPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) lock=\(hasReceivedGoogleRefreshForPill))")
+        displayDurationMinutesForPill = nil
+        hasReceivedGoogleRefreshForPill = false
+        lastKnownPillMinutes = nil
+        Self.clearPersistedPillState()
         selectedRoute = nil
         visitedMarkerIds = []
         currentMarker = nil
+        lastWaypointActivationTime = nil // v2.1.7: Reset activation timer
         
         // v1.9.15: Reset cached directions
         cachedOriginalDirections = []
@@ -851,58 +1263,207 @@ class WaitingRoomViewModel: ObservableObject {
         // v1.9.16: Reset cached return route
         cachedReturnRoutePolyline = []
         hasCachedReturnRoute = false
+        isHeadingBack = false
+        directionIndexToMarkerId = [:]
+        
+        mapStayCenteredOnRoute = false
         
         // v1.6.28: Reset step tracking flag for next walk
         // (stepTrackingWasEnabled is used to determine if HealthKit offer should be shown)
         // Note: We don't reset it here because we need it for the post-walk flow
         // It will be reset at the start of the next walk
         
+        #if DEBUG
         print("🔍 [MOTION DEBUG] [\(timeString)]   ✅ endWalk() completed")
+        #endif
     }
     
-    // v1.9.16: Pre-calculate return route from last waypoint to start (for offline fallback)
+    // v2.1.0: Pre-calculation of return route DISABLED for ToS compliance
+    // MapKit directions cannot be cached. Return directions will be fetched live
+    // from Google Directions API when user reaches the last waypoint.
     private func preCalculateReturnRoute(route: WalkingRoute) {
-        guard let lastWaypoint = route.qrMarkers.last,
-              let startPoint = route.routePath.first else {
-            print("📍 Cannot pre-calculate return route - missing waypoint or start point")
+        // v2.1.0: DISABLED - no MapKit caching for ToS compliance
+        // Return directions will be fetched live when user reaches last waypoint
+        print("📍 Return route will be fetched live via Google when needed (ToS compliance)")
+        hasCachedReturnRoute = false
+    }
+    
+    /// Called when user taps "Head back" on 50% or 80% overlay. Switches to return route (current → origin) and skips 80%/100% overlays.
+    func userTappedHeadBack() {
+        print("🏠 [HEAD HOME] userTappedHeadBack() — setting isHeadingBack=true, fetching return route")
+        isHeadingBack = true
+        didSwitchToReturnDirections()
+        fetchAndSwitchToReturnRoute()
+    }
+    
+    /// Call when switching to return leg (directions or route). Dismisses 50%/80% overlays and cancels pending progress notifications so user doesn't see "head back" while already heading back.
+    func didSwitchToReturnDirections() {
+        showHalfwayAlert = false
+        showReturnNowAlert = false
+        cancelAlertAutoDismissTimer()
+        notificationService.cancelProgressNotifications()
+    }
+    
+    /// Fetch route from current location → origin and switch map/directions to it.
+    /// Uses Google Directions API first (street-following route); falls back to MapKit if Google fails.
+    private func fetchAndSwitchToReturnRoute() {
+        guard let currentCoord = locationService.currentLocation?.coordinate,
+              let originCoord = walkSession.startLocation,
+              let currentRoute = walkSession.currentRoute else {
+            print("🏠 [HEAD HOME] fetchAndSwitchToReturnRoute — SKIP: missing location or route")
             return
         }
+        let distanceToStart = CLLocation(latitude: currentCoord.latitude, longitude: currentCoord.longitude)
+            .distance(from: CLLocation(latitude: originCoord.latitude, longitude: originCoord.longitude))
+        print("🏠 [HEAD HOME] fetchAndSwitchToReturnRoute — current=(\(String(format: "%.5f", currentCoord.latitude)), \(String(format: "%.5f", currentCoord.longitude))), start=(\(String(format: "%.5f", originCoord.latitude)), \(String(format: "%.5f", originCoord.longitude))), distanceToStart=\(Int(distanceToStart))m")
         
-        print("📍 Pre-calculating return route from last waypoint to start...")
-        
-        let request = MKDirections.Request()
-        request.source = MKMapItem(placemark: MKPlacemark(coordinate: lastWaypoint.coordinate))
-        request.destination = MKMapItem(placemark: MKPlacemark(coordinate: startPoint))
-        request.transportType = .walking
-        
-        let directions = MKDirections(request: request)
-        directions.calculate { [weak self] response, error in
-            guard let self = self else { return }
-            
-            if let error = error {
-                print("⚠️ Pre-calculate return route error: \(error.localizedDescription) - will try fresh calculation when needed")
+        Task { @MainActor in
+            // If already at start, use a minimal route so the line is short (not to the first waypoint)
+            if distanceToStart < 25 {
+                let minimalPolyline = [currentCoord, originCoord]
+                let encodedPolyline = encodePolylineForReturnRoute(minimalPolyline)
+                let returnRoute = WalkingRoute(
+                    name: currentRoute.name,
+                    description: currentRoute.description,
+                    durationMinutes: 1,
+                    distanceMeters: Int(distanceToStart),
+                    difficulty: currentRoute.difficulty,
+                    isIndoor: currentRoute.isIndoor,
+                    isAccessible: currentRoute.isAccessible,
+                    landmarks: currentRoute.landmarks,
+                    icon: currentRoute.icon,
+                    color: currentRoute.color,
+                    qrMarkers: currentRoute.qrMarkers,
+                    routeType: currentRoute.routeType,
+                    encodedPolyline: encodedPolyline,
+                    walkingDirections: [WalkingDirection(instruction: "You're at the start", distance: "0m", distanceMeters: 0, duration: "", maneuver: "arrive")],
+                    usedOSRMRouting: false,
+                    isFromPrePopulatedDatabase: currentRoute.isFromPrePopulatedDatabase
+                )
+                updateCurrentRoute(returnRoute, resetDirectionIndex: true, caller: "headHome_minimal")
+                print("🏠 [HEAD HOME] Route updated: MINIMAL (already at start) — polyline points=2, from current to start")
                 return
             }
             
-            if let route = response?.routes.first {
-                DispatchQueue.main.async {
-                    // Extract polyline
-                    let polyline = route.polyline
-                    let pointCount = polyline.pointCount
-                    var returnPath = [CLLocationCoordinate2D](repeating: CLLocationCoordinate2D(), count: pointCount)
-                    polyline.getCoordinates(&returnPath, range: NSRange(location: 0, length: pointCount))
-                    
-                    // Cache polyline and directions
-                    self.cachedReturnRoutePolyline = returnPath
-                    
-                    let returnDirections = self.extractDirectionsFromMKRoute(route)
-                    self.cachedReturnDirections = returnDirections
-                    self.hasCachedReturnRoute = true
-                    
-                    print("✅ Pre-calculated return route cached: \(route.expectedTravelTime / 60) min, \(route.distance) meters, \(returnDirections.count) steps")
+            // Try Google Directions first for a street-following return route
+            print("🏠 [HEAD HOME] Requesting return route from Google Directions...")
+            if let result = await GoogleMapsService.shared.getReturnDirectionsLive(from: currentCoord, to: originCoord) {
+                let encodedPolyline = encodePolylineForReturnRoute(result.polyline)
+                let returnRoute = WalkingRoute(
+                    name: currentRoute.name,
+                    description: currentRoute.description,
+                    durationMinutes: max(1, result.totalDurationSeconds / 60),
+                    distanceMeters: result.totalDistanceMeters,
+                    difficulty: currentRoute.difficulty,
+                    isIndoor: currentRoute.isIndoor,
+                    isAccessible: currentRoute.isAccessible,
+                    landmarks: currentRoute.landmarks,
+                    icon: currentRoute.icon,
+                    color: currentRoute.color,
+                    qrMarkers: currentRoute.qrMarkers,
+                    routeType: currentRoute.routeType,
+                    encodedPolyline: encodedPolyline,
+                    walkingDirections: result.directions.isEmpty ? currentRoute.walkingDirections : result.directions,
+                    usedOSRMRouting: false,
+                    isFromPrePopulatedDatabase: currentRoute.isFromPrePopulatedDatabase
+                )
+                updateCurrentRoute(returnRoute, resetDirectionIndex: true, caller: "headHome_google")
+                let first = result.polyline.first.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
+                let last = result.polyline.last.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
+                print("🏠 [HEAD HOME] Route updated: GOOGLE — polyline points=\(result.polyline.count), first=(\(first)), last=(\(last))")
+                return
+            }
+            
+            // Fallback to MapKit if Google fails (e.g. no API key, quota, or network)
+            print("🏠 [HEAD HOME] Google failed or unavailable — using MapKit fallback")
+            let request = MKDirections.Request()
+            request.source = MKMapItem(placemark: MKPlacemark(coordinate: currentCoord))
+            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: originCoord))
+            request.transportType = .walking
+            
+            let directions = MKDirections(request: request)
+            directions.calculate { [weak self] response, error in
+                guard let self = self else { return }
+                if let error = error {
+                    print("🚶 [HEAD BACK] MapKit return route failed: \(error.localizedDescription)")
+                    return
+                }
+                guard let mkRoute = response?.routes.first else {
+                    print("🚶 [HEAD BACK] MapKit returned no route")
+                    return
+                }
+                let polylineCoords = self.polylineCoordinates(from: mkRoute.polyline)
+                guard !polylineCoords.isEmpty else {
+                    print("🚶 [HEAD BACK] No polyline coordinates")
+                    return
+                }
+                let encodedPolyline = self.encodePolylineForReturnRoute(polylineCoords)
+                let walkingDirs = self.extractDirectionsFromMKRoute(mkRoute)
+                let returnRoute = WalkingRoute(
+                    name: currentRoute.name,
+                    description: currentRoute.description,
+                    durationMinutes: max(1, Int(mkRoute.expectedTravelTime / 60)),
+                    distanceMeters: Int(mkRoute.distance),
+                    difficulty: currentRoute.difficulty,
+                    isIndoor: currentRoute.isIndoor,
+                    isAccessible: currentRoute.isAccessible,
+                    landmarks: currentRoute.landmarks,
+                    icon: currentRoute.icon,
+                    color: currentRoute.color,
+                    qrMarkers: currentRoute.qrMarkers,
+                    routeType: currentRoute.routeType,
+                    encodedPolyline: encodedPolyline,
+                    walkingDirections: walkingDirs.isEmpty ? currentRoute.walkingDirections : walkingDirs,
+                    usedOSRMRouting: false,
+                    isFromPrePopulatedDatabase: currentRoute.isFromPrePopulatedDatabase
+                )
+                Task { @MainActor in
+                    self.updateCurrentRoute(returnRoute, resetDirectionIndex: true, caller: "headHome_mapkit")
+                    let first = polylineCoords.first.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
+                    let last = polylineCoords.last.map { "\(String(format: "%.5f", $0.latitude)),\(String(format: "%.5f", $0.longitude))" } ?? "nil"
+                    print("🏠 [HEAD HOME] Route updated: MAPKIT — polyline points=\(polylineCoords.count), first=(\(first)), last=(\(last))")
                 }
             }
         }
+    }
+    
+    private func polylineCoordinates(from polyline: MKPolyline) -> [CLLocationCoordinate2D] {
+        let count = polyline.pointCount
+        guard count > 0 else { return [] }
+        var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: count)
+        polyline.getCoordinates(&coords, range: NSRange(location: 0, length: count))
+        return coords
+    }
+    
+    private func encodePolylineForReturnRoute(_ coordinates: [CLLocationCoordinate2D]) -> String {
+        var encoded = ""
+        var prevLat = 0, prevLng = 0
+        for coord in coordinates {
+            let lat = Int(round(coord.latitude * 1e5))
+            let lng = Int(round(coord.longitude * 1e5))
+            encoded += encodePolylineSignedNumber(lat - prevLat)
+            encoded += encodePolylineSignedNumber(lng - prevLng)
+            prevLat = lat
+            prevLng = lng
+        }
+        return encoded
+    }
+    
+    private func encodePolylineSignedNumber(_ num: Int) -> String {
+        var sgn = num << 1
+        if num < 0 { sgn = ~sgn }
+        return encodePolylineNumber(sgn)
+    }
+    
+    private func encodePolylineNumber(_ num: Int) -> String {
+        var n = num
+        var result = ""
+        while n >= 0x20 {
+            result += String(UnicodeScalar((0x20 | (n & 0x1f)) + 63)!)
+            n >>= 5
+        }
+        result += String(UnicodeScalar(n + 63)!)
+        return result
     }
     
     // v1.9.16: Extract walking directions from MKRoute steps (helper for pre-calculation)
@@ -932,7 +1493,7 @@ class WaitingRoomViewModel: ObservableObject {
             
             let distanceText: String
             if stepDistance < 1000 {
-                distanceText = "\(stepDistance) m"
+                distanceText = "\(stepDistance)m"
             } else {
                 distanceText = String(format: "%.1f km", Double(stepDistance) / 1000.0)
             }
@@ -1000,12 +1561,28 @@ class WaitingRoomViewModel: ObservableObject {
         // Update elapsed time
         walkSession.updateElapsedTime()
         
+        // Refresh steps from pedometer every 5 seconds; live CMPedometer callbacks can be delayed/batched so steps stay 0
+        if stepTrackingWasEnabled, walkSession.elapsedSeconds > 0, walkSession.elapsedSeconds % 5 == 0 {
+            healthKitService.refreshSessionStepsFromPedometer()
+        }
         // Update steps from pedometer/HealthKit (real-time)
         walkSession.stepsThisSession = healthKitService.stepCount
         
-        // Use pedometer distance if available, otherwise use GPS
+        // Use pedometer distance if available; otherwise keep GPS-derived distance (do not overwrite with 0 when stepCount is 0 — pedometer can lag or be zero while user is walking).
+        // Sanity: don't overwrite GPS with pedometer when GPS suggests we're barely moving and pedometer is much larger (phone jitter / hand movement counted as distance).
         if healthKitService.distance > 0 {
-            locationService.distanceWalked = healthKitService.distance
+            let prev = locationService.distanceWalked
+            let pedometerM = healthKitService.distance
+            let elapsed = walkSession.elapsedSeconds
+            let maxPlausibleM = Double(max(elapsed, 1)) * 2.5 // 2.5 m/s max
+            let gpsSuggestsStationary = prev < 5
+            let pedometerMuchLarger = pedometerM > 10 && pedometerM > prev + 8
+            if pedometerM <= maxPlausibleM && !(gpsSuggestsStationary && pedometerMuchLarger) {
+                locationService.distanceWalked = pedometerM
+                print("[WALKED_DIST] set from HealthKit: \(Int(pedometerM))m (was GPS \(Int(prev))m)")
+            } else if gpsSuggestsStationary && pedometerMuchLarger {
+                print("[WALKED_DIST] keeping GPS \(Int(prev))m (pedometer \(Int(pedometerM))m likely phone jitter)")
+            }
         }
         
         #if targetEnvironment(simulator)
@@ -1014,6 +1591,7 @@ class WaitingRoomViewModel: ObservableObject {
             let elapsedMinutes = Double(walkSession.elapsedSeconds) / 60.0
             walkSession.stepsThisSession = Int(elapsedMinutes * 100)
             locationService.distanceWalked = elapsedMinutes * 80
+            print("[WALKED_DIST] simulator: set to \(Int(elapsedMinutes * 80))m (elapsed \(walkSession.elapsedSeconds)s)")
         }
         #endif
         
@@ -1026,28 +1604,33 @@ class WaitingRoomViewModel: ObservableObject {
         // Force view update for nested observable
         objectWillChange.send()
         
-        // Check for halfway point (50%)
-        if !walkSession.halfwayAlertSent,
+        // Check for halfway point (50%). Skip if finding new route, or already on return leg (directions or user chose Head back).
+        let elapsed = walkSession.elapsedSeconds
+        if !isLoadingDelayChangeRoute, !isUsingReturnDirections, !isHeadingBack,
+           !walkSession.halfwayAlertSent,
+           elapsed >= 60,
            let returnTime = walkSession.estimatedReturnTime,
            Date() >= returnTime {
+            let cameFrom = AppDelegate.cameFromWalkNotification
+            print("[HALFWAY] entered returnTime=\(returnTime) walkingAlertsEnabled=\(walkingAlertsEnabled) cameFromWalkNotification=\(cameFrom)")
             if walkingAlertsEnabled {
                 walkSession.halfwayAlertSent = true
                 
                 // Only show in-app alert if NOT coming from a push notification tap
-                if !AppDelegate.cameFromWalkNotification {
-                    print("🚶 Showing halfway alert (50%)")
+                if !cameFrom {
+                    print("[HALFWAY] showing in-app overlay (showHalfwayAlert=true)")
                     showHalfwayAlert = true
                     startAlertAutoDismissTimer(for: \.showHalfwayAlert)
                 } else {
-                    print("📱 Skipping halfway in-app alert - user came from push notification")
+                    print("[HALFWAY] skipping in-app overlay (cameFromWalkNotification=true)")
                 }
             } else {
-                print("🔕 Halfway alert blocked - walkingAlertsEnabled = false")
+                print("[HALFWAY] blocked walkingAlertsEnabled=false")
             }
         }
         
-        // Check for return now point (80%) - independent check
-        if walkSession.progress >= 0.8 && walkSession.progress < 1.0 {
+        // Check for return now point (80%) - skip if finding new route or already on return leg (directions or user chose Head back)
+        if !isLoadingDelayChangeRoute, !isHeadingBack, !isUsingReturnDirections, walkSession.progress >= 0.8 && walkSession.progress < 1.0 {
             // Only show if not already shown and alerts are enabled
             if !walkSession.returnNowAlertSent {
                 if walkingAlertsEnabled {
@@ -1068,8 +1651,11 @@ class WaitingRoomViewModel: ObservableObject {
             }
         }
         
-        // Check if walk is complete (100%) - independent check
-        if walkSession.progress >= 1.0 {
+        // Check if walk is complete (100%) - skip if finding new route or already on return leg; when on return with all waypoints visited, rely on home arrival instead.
+        let onReturnWithAllVisited = (selectedRoute.map { route in
+            route.qrMarkers.count > 0 && visitedMarkerIds.count == route.qrMarkers.count
+        } ?? false) && isUsingReturnDirections
+        if !isLoadingDelayChangeRoute, !isHeadingBack, !isUsingReturnDirections, walkSession.progress >= 1.0, !onReturnWithAllVisited {
             // Only show if not already shown and alerts are enabled
             if !walkSession.walkCompleteAlertSent {
                 if walkingAlertsEnabled {
@@ -1097,6 +1683,10 @@ class WaitingRoomViewModel: ObservableObject {
         guard let route = selectedRoute,
               let userLocation = locationService.currentLocation else { return }
         
+        // v2.2: Don't manipulate directions/state while marker arrival sheet is showing
+        // This prevents rapid state mutations from interfering with SwiftUI sheet presentation
+        guard !showMarkerArrivalPrompt else { return }
+        
         // Get route path for dynamic radius calculation
         let routePath = route.routePath
         
@@ -1114,18 +1704,19 @@ class WaitingRoomViewModel: ObservableObject {
                 // Temporarily add arrival instruction to cached directions so banner can show it
                 if !cachedOriginalDirections.contains(where: { $0.id == arrivalInst.id }) {
                     cachedOriginalDirections.append(arrivalInst)
-                    // Set direction index to show the arrival instruction
+                    // Set direction index only if within LocationService's waypoint list (avoid index out of range crash)
                     let arrivalIndex = cachedOriginalDirections.count - 1
-                    locationService.currentDirectionIndex = arrivalIndex
-                    DebugLogger.shared.log("📍 Showing arrival instruction - within \(Int(distanceToLastMarker))m of final destination (index: \(arrivalIndex))", category: "ARRIVAL")
+                    let safeIndex = min(arrivalIndex, locationService.safeMaxDirectionIndex)
+                    locationService.currentDirectionIndex = safeIndex
+                    DebugLogger.shared.log("📍 Showing arrival instruction - within \(Int(distanceToLastMarker))m of final destination (index: \(safeIndex), requested: \(arrivalIndex))", category: "ARRIVAL")
                 }
             } else {
                 // Remove arrival instruction if we're further away
                 if let arrivalIndex = cachedOriginalDirections.firstIndex(where: { $0.id == arrivalInst.id }) {
                     cachedOriginalDirections.remove(at: arrivalIndex)
-                    // Reset direction index if it was pointing to the arrival instruction
+                    // Reset direction index if it was pointing to the arrival instruction; clamp to service's valid range
                     if locationService.currentDirectionIndex >= cachedOriginalDirections.count {
-                        locationService.currentDirectionIndex = max(0, cachedOriginalDirections.count - 1)
+                        locationService.currentDirectionIndex = min(max(0, cachedOriginalDirections.count - 1), locationService.safeMaxDirectionIndex)
                     }
                 }
             }
@@ -1135,7 +1726,7 @@ class WaitingRoomViewModel: ObservableObject {
                let arrivalIndex = cachedOriginalDirections.firstIndex(where: { $0.id == arrivalInst.id }) {
                 cachedOriginalDirections.remove(at: arrivalIndex)
                 if locationService.currentDirectionIndex >= cachedOriginalDirections.count {
-                    locationService.currentDirectionIndex = max(0, cachedOriginalDirections.count - 1)
+                    locationService.currentDirectionIndex = min(max(0, cachedOriginalDirections.count - 1), locationService.safeMaxDirectionIndex)
                 }
             }
         }
@@ -1156,28 +1747,64 @@ class WaitingRoomViewModel: ObservableObject {
                 routePath: routePath
             )
             
+            // v2.1.7: Prevent rapid multiple waypoint activations (safeguard for close waypoints)
+            let minTimeBetweenActivations: TimeInterval = 30.0 // 30 seconds
+            let timeSinceLastActivation = lastWaypointActivationTime.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
+            let canActivate = timeSinceLastActivation >= minTimeBetweenActivations
+            
             if userDistanceToMarker < activationRadius {
-                print("📍 Waypoint activated: \(marker.name) (distance: \(Int(userDistanceToMarker))m, radius: \(Int(activationRadius))m)")
+                // Check if another waypoint was activated recently
+                if !canActivate {
+                    DebugLogger.shared.log("Waypoint activation BLOCKED: \(marker.name) (distance: \(Int(userDistanceToMarker))m, radius: \(Int(activationRadius))m) - too soon after last activation (\(String(format: "%.1f", timeSinceLastActivation))s < \(minTimeBetweenActivations)s)", category: "WAYPOINT")
+                    continue // Skip this waypoint, check next one
+                }
+                
+                let isLast = marker.id == route.qrMarkers.last?.id
+                DebugLogger.shared.log("Waypoint ACTIVATED: \(marker.name) (distance: \(Int(userDistanceToMarker))m, radius: \(Int(activationRadius))m) isLast=\(isLast) contentType=\(marker.contentType.rawValue)", category: "WAYPOINT")
+                lastWaypointActivationTime = Date() // Track activation time
                 currentMarker = marker
                 visitedMarkerIds.insert(marker.id)
+                // #region agent log
+                if marker.id == route.qrMarkers.last?.id {
+                    let payload: [String: Any] = [
+                        "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+                        "message": "LAST_MARKER_VISITED",
+                        "hypothesisId": "H3",
+                        "location": "WaitingRoomViewModel.swift:checkWaypointArrival",
+                        "data": ["markerName": marker.name, "markerId": marker.id.uuidString, "distanceToMarker": userDistanceToMarker] as [String: Any]
+                    ]
+                    if let data = try? JSONSerialization.data(withJSONObject: payload), let line = String(data: data, encoding: .utf8) {
+                        line.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log")
+                    }
+                    DebugLogger.shared.log("AGENT LAST_MARKER_VISITED markerName=\"\(marker.name)\" markerId=\(marker.id) distanceToMarker=\(String(format: "%.1f", userDistanceToMarker))m", category: "AGENT_RETURN_LEG")
+                }
+                // #endregion
                 walkSession.markersScanned.append(marker)
                 userProgress.qrScansCompleted += 1
                 userProgress.todayQRScansCompleted += 1
                 userProgress.addPoints(marker.pointsValue)
                 
                 // v1.9.84: If this is the last marker, clear arrival instruction for return leg
-                if marker.id == route.qrMarkers.last?.id, let arrivalInst = arrivalInstruction {
+                if isLast, let arrivalInst = arrivalInstruction {
                     // Remove arrival instruction from cached directions
                     if let arrivalIndex = cachedOriginalDirections.firstIndex(where: { $0.id == arrivalInst.id }) {
                         cachedOriginalDirections.remove(at: arrivalIndex)
-                        DebugLogger.shared.log("🧹 Cleared arrival instruction - reached final destination, preparing for return leg", category: "ARRIVAL")
+                        DebugLogger.shared.log("Cleared arrival instruction - reached final destination, preparing for return leg", category: "ARRIVAL")
                     }
                     // Clear the stored arrival instruction so it doesn't interfere with return directions
                     arrivalInstruction = nil
                 }
                 
-                // Show the photo prompt
-                showMarkerArrivalPrompt = true
+                // v2.2: Show the marker arrival sheet after a small delay.
+                // SwiftUI needs a moment to process the visitedMarkerIds change (which triggers
+                // map checkmark update, polyline recalculation, etc.) before presenting a sheet.
+                // Without this delay, the sheet presentation can be silently dropped.
+                DebugLogger.shared.log("Waypoint visited — will show arrival sheet for '\(marker.name)' in 0.5s (visited=\(visitedMarkerIds.count)/\(route.qrMarkers.count))", category: "ARRIVAL")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    guard let self = self else { return }
+                    self.showMarkerArrivalPrompt = true
+                    DebugLogger.shared.log("Set showMarkerArrivalPrompt=true for marker '\(marker.name)'", category: "ARRIVAL")
+                }
                 
                 // Send notification
                 notificationService.sendMarkerArrivalNotification(markerName: marker.name)
@@ -1197,26 +1824,50 @@ class WaitingRoomViewModel: ObservableObject {
               let userLocation = locationService.currentLocation,
               let startLocation = walkSession.startLocation ?? route.routePath.first,
               !hasReachedHome,
-              walkSession.isActive else { return }
+              !showMarkerArrivalPrompt,  // v2.2: Don't show home sheet while marker sheet is up
+              walkSession.isActive else {
+            if selectedRoute == nil || locationService.currentLocation == nil { return }
+            if hasReachedHome { return }
+            if showMarkerArrivalPrompt { return }  // v2.2: Wait for marker sheet to dismiss
+            if !walkSession.isActive { DebugLogger.shared.log("checkHomeArrival SKIP: walkSession.isActive=false", category: "HOME"); return }
+            return
+        }
         
-        // CRITICAL: Only check for home arrival if ALL waypoints have been visited
-        // This ensures we're at the END of the walk, not the beginning
-        guard visitedMarkerIds.count == route.qrMarkers.count,
-              route.qrMarkers.count > 0 else { return }
+        // CRITICAL: Only check for home arrival if ALL waypoints have been visited (or route has no waypoints).
+        // This ensures we're at the END of the walk, not the beginning.
+        // v2.2: Routes with 0 markers (e.g. locally generated walks) should still detect home arrival.
+        let allWaypointsVisited = route.qrMarkers.isEmpty || visitedMarkerIds.count == route.qrMarkers.count
+        guard allWaypointsVisited else { return }
         
-        // Additional check: Ensure we've been walking for at least 30 seconds
-        // This prevents false triggers if user starts near home
-        guard walkSession.elapsedSeconds >= 30 else { return }
+        // Additional check: Ensure we've been walking for at least 30 seconds (60s for 0-marker routes
+        // to ensure the user has actually gone out and come back, not just started near home).
+        let minElapsed: Int = route.qrMarkers.isEmpty ? 60 : 30
+        guard walkSession.elapsedSeconds >= minElapsed else { return }
+        
+        // v2.2: For 0-marker routes, also require the user to have walked at least 100m
+        // to prevent false triggers from GPS drift at the start
+        if route.qrMarkers.isEmpty {
+            guard locationService.distanceWalked >= 100 else { return }
+        }
         
         let startPoint = CLLocation(latitude: startLocation.latitude, longitude: startLocation.longitude)
         let distanceToHome = userLocation.distance(from: startPoint)
+        if distanceToHome < 50 && distanceToHome >= 30 {
+            DebugLogger.shared.log("checkHomeArrival: approaching (distance: \(Int(distanceToHome))m, need <30m)", category: "HOME")
+        }
         
         // v1.9.15: Use actual start location, not route end point
         // Activate when within 30 meters of start location
         if distanceToHome < 30 {
-            print("🏠 Home arrival detected at END of walk! (distance: \(Int(distanceToHome))m, elapsed: \(walkSession.elapsedSeconds)s, waypoints visited: \(visitedMarkerIds.count)/\(route.qrMarkers.count))")
+            DebugLogger.shared.log("Home arrival DETECTED (distance: \(Int(distanceToHome))m, elapsed: \(walkSession.elapsedSeconds)s, waypoints: \(visitedMarkerIds.count)/\(route.qrMarkers.count)) - will show home arrival sheet in 0.5s", category: "HOME")
             hasReachedHome = true
-            showHomeArrivalPrompt = true
+            
+            // v2.2: Small delay to let SwiftUI settle before presenting sheet
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self = self else { return }
+                self.showHomeArrivalPrompt = true
+                DebugLogger.shared.log("Set showHomeArrivalPrompt=true", category: "HOME")
+            }
             
             // v1.9.13: Cancel all walking notifications when reaching start/end point
             notificationService.cancelAllWalkingNotifications()

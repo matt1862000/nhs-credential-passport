@@ -1,0 +1,124 @@
+postcode	placeId	name	latitude	longitude	types	vicinity	source
+WF2 0GU	osm_424771984	Al Fresco	53.6882295	-1.5293623	fast_food	Wellington Street	osm
+WF2 0GU	osm_385011889	Alverthorpe Conservative Club	53.6887175	-1.5310846	pub	Green Lane	osm
+WF2 0GU	osm_385011907	Alverthorpe Garage	53.6892429	-1.5311797	car_repair	Batley Road	osm
+WF2 0GU	osm_23636494	Alverthorpe St Paul's CofE (VA) School	53.6907213	-1.5319497	school	St Paul's Drive	osm
+WF2 0GU	osm_386198771	Alverthorpe Working Mens Club	53.6853129	-1.5336393	pub	Flanshaw Lane	osm
+WF2 0GU	osm_1409575448	Alverthorpe & Wrenthorpe Meadows LNR	53.6915285	-1.5238315	nature_reserve		osm
+WF2 0GU	osm_1312323637	Amazon DLS4	53.6857156	-1.5473575	post_depot		osm
+WF2 0GU	osm_5543102046	Ardsley House	53.7179108	-1.5377359	social_facility	Royston Hill	osm
+WF2 0GU	osm_4476730855	Blue Marlin Fisheries	53.6892542	-1.5311107	fast_food	Batley Road	osm
+WF2 0GU	osm_618317492	BP Manor Service Station	53.7205085	-1.5395467	fuel	Bradford Road	osm
+WF2 0GU	osm_154325731	Cardigan House	53.711495	-1.5392739	police		osm
+WF2 0GU	osm_154604873	Carr Gate Garden Centre	53.715341	-1.5322502	garden_centre	Bradford Road	osm
+WF2 0GU	osm_154604928	Carr Gate WMC	53.7116405	-1.5287648	pub	Lawns Lane	osm
+WF2 0GU	osm_385144690	Chantry Vets	53.6894752	-1.530811	veterinary	Batley Road	osm
+WF2 0GU	osm_618321995	China And Thai Express	53.72129	-1.540449	fast_food	Bradford Road	osm
+WF2 0GU	osm_384026141	Conroyds Fish and Chips	53.6972686	-1.5235932	fast_food	Wrenthorpe Road	osm
+WF2 0GU	osm_649223180	Country Kitchen	53.7013036	-1.5522725	fast_food	Batley Road	osm
+WF2 0GU	osm_627812326	Curry Pot	53.6885985	-1.5296009	fast_food	Batley Road	osm
+WF2 0GU	osm_6007297509	Cyrus Guys	53.7217589	-1.5467602	cafe	Bradford Road	osm
+WF2 0GU	osm_384026443	Declans	53.7039652	-1.5206019	furniture	Bradford Road	osm
+WF2 0GU	osm_581021480	Driver Training Area	53.7116478	-1.5418402	driver_training		osm
+WF2 0GU	osm_607348093	DVSA Wakefield Test Center	53.6840005	-1.5475186	driver_training		osm
+WF2 0GU	osm_618279655	East Ardsley Community Centre	53.7239917	-1.5381653	public_building	Main Street	osm
+WF2 0GU	osm_618322885	East Ardsley Conservative Club	53.7216899	-1.5401193	pub	Chapel Street	osm
+WF2 0GU	osm_5491637290	East Ardsley Express	53.723488	-1.5382643	convenience	Main Street	osm
+WF2 0GU	osm_6007297511	East Ardsley Luncheon Club	53.7240196	-1.5382254	cafe	Main Street	osm
+WF2 0GU	osm_676052003	East Ardsley Post Office	53.7214175	-1.5413415	post_office	Bradford Road	osm
+WF2 0GU	osm_654714568	Esso	53.6811055	-1.5485863	car_wash		osm
+WF2 0GU	osm_386212317	Flanshaw Lodge	53.6825379	-1.5339139	nursing_home	Flanshaw Lane	osm
+WF2 0GU	osm_386212294	Flanshaw United Reformed Church	53.6829033	-1.5340406	place_of_worship	Wakefield	osm
+WF2 0GU	osm_6331294928	Fusion Hair Studio	53.7215367	-1.5466757	hairdresser		osm
+WF2 0GU	osm_6128632675	Gardener's Retreat Restaurant	53.7151659	-1.5319351	cafe	Bradford Road	osm
+WF2 0GU	osm_7222570175	GJH Commercial Vehicle Services Ltd	53.6863583	-1.5400465	car_repair		osm
+WF2 0GU	osm_405512394	Hall Cliffe Primary School	53.6976097	-1.5285426	school	Wrenthorpe Lane	osm
+WF2 0GU	osm_26651454	Highfield School	53.6983951	-1.5809797	school	Gawthorpe Lane	osm
+WF2 0GU	osm_404427491	Hill Top Primary Academy	53.7165191	-1.5763736	school	Batley Road	osm
+WF2 0GU	osm_391005300	Holiday Inn	53.6810643	-1.5500837	hotel	Queens Drive	osm
+WF2 0GU	osm_94776877	Hong Kong Vegan	53.7011806	-1.5182334	fast_food	Bradford Road	osm
+WF2 0GU	osm_5570653737	JB's Cafe & Bistro	53.6846993	-1.5612817	cafe	Wakefield Road	osm
+WF2 0GU	osm_23735756	Jerry Clay Academy	53.6996821	-1.5303541	school	Wakefield	osm
+WF2 0GU	osm_384835774	Kirkhamgate Fisheries	53.699274	-1.5515682	fast_food	Batley Road	osm
+WF2 0GU	osm_384363798	Kirkhamgate Village Hall	53.7020666	-1.5520093	community_centre	Brandy Carr Road	osm
+WF2 0GU	geograph_1760503	Kirkhamgate Village Hall, Brandy Carr Road	53.701965	-1.551756	geograph		geograph
+WF2 0GU	osm_384857481	Kowloon	53.6900055	-1.532614	fast_food	Batley Road	osm
+WF2 0GU	osm_384856629	Kylies Sandwich Bar & Custom Cakes	53.6899764	-1.5325781	fast_food	Batley Road	osm
+WF2 0GU	osm_384363840	Lindale Methodist Church	53.7020261	-1.5522275	place_of_worship	Brandy Carr Road	osm
+WF2 0GU	osm_2047042265	Lofthouse Colliery Disaster Memorial	53.6947868	-1.5411759	memorial		osm
+WF2 0GU	osm_4344141	Low Laithes Golf Course	53.6890912	-1.5469038	golf_course		osm
+WF2 0GU	osm_3649661208	Main Street Fisheries	53.7216704	-1.5389452	fast_food	Main Street	osm
+WF2 0GU	osm_3649681932	Methodist Church	53.721399	-1.5398439	place_of_worship		osm
+WF2 0GU	osm_424772125	Mill View Stores	53.6879658	-1.5312296	convenience	Flanshaw Lane	osm
+WF2 0GU	osm_385144671	NAV Mini Market	53.688579	-1.5287447	convenience	Batley Road	osm
+WF2 0GU	osm_154325728	NPAS 31 - Carr Gate	53.7110137	-1.5390263	police		osm
+WF2 0GU	osm_6007297510	One Stop Coffee Shop	53.7239673	-1.5382201	cafe	Main Street	osm
+WF2 0GU	osm_384363575	Oriental Chef	53.7018589	-1.5524514	fast_food	Brandy Carr Road	osm
+WF2 0GU	osm_607348088	Ossett Fire Station	53.6844545	-1.5466991	fire_station		osm
+WF2 0GU	osm_26181922	Ossett Flushdyke Junior and Infant School	53.6856064	-1.5623037	school	Wakefield Road	osm
+WF2 0GU	osm_286705256	Ossett WMC	53.685923	-1.574129	pub		osm
+WF2 0GU	osm_23860747	Outwood Primary Academy Kirkhamgate	53.7014547	-1.5503791	school	Brandy Carr Road	osm
+WF2 0GU	osm_385011910	Phoenix Young People's Centre	53.688888	-1.5302374	community_centre	Batley Road	osm
+WF2 0GU	osm_405512398	Pinderfields Hospital PRU	53.7012059	-1.5220263	school	Wakefield	osm
+WF2 0GU	osm_385144945	Pizza Ferrara	53.6896755	-1.5313375	fast_food	Batley Road	osm
+WF2 0GU	osm_12063464643	Pumaspeed	53.6892061	-1.5302859	car_parts		osm
+WF2 0GU	osm_618323832	R H Binks And Sons	53.7214491	-1.5415461	butcher	Bradford Road	osm
+WF2 0GU	osm_386220671	Ramada	53.6829322	-1.5504417	hotel	Fryers Way	osm
+WF2 0GU	osm_618321673	Restyle Fitness	53.721438	-1.5388662	pub	Thorpe Road	osm
+WF2 0GU	osm_96076173	Royal Spice	53.6970498	-1.5159478	restaurant	Wakefield	osm
+WF2 0GU	osm_384835819	Shawfold Cars	53.6994122	-1.551754	car	Wakefield	osm
+WF2 0GU	osm_450799774	Shell Select	53.6816156	-1.5482803	convenience	Wakefield Road	osm
+WF2 0GU	osm_654714569	Shine hand car wash	53.6810769	-1.5487738	car_wash		osm
+WF2 0GU	osm_23735768	Silcoates School	53.6947387	-1.5255763	school	Silcoates Lane	osm
+WF2 0GU	osm_582483095	Silkwood Farm	53.6833899	-1.5461815	restaurant	Mothers Way	osm
+WF2 0GU	osm_907108144	Spot on Dog Grooming	53.7029066	-1.521963	pet_grooming		osm
+WF2 0GU	osm_26181962	Spring Mill Golf Course	53.681385	-1.5618991	golf_course	Queens Drive	osm
+WF2 0GU	osm_384025966	St Annes	53.7009008	-1.5235711	place_of_worship		osm
+WF2 0GU	osm_613101649	St Michaels Church	53.7233966	-1.5436105	place_of_worship	Church Lane	osm
+WF2 0GU	osm_386177440	Sun Bo	53.6885935	-1.5297272	fast_food	Batley Road	osm
+WF2 0GU	osm_384181813	Sunnyhill Stores	53.6979611	-1.5338958	convenience	Wrenthorpe Lane	osm
+WF2 0GU	osm_618323831	Tania's Barbershop	53.7214312	-1.5414302	hairdresser	Bradford Road	osm
+WF2 0GU	osm_759175712	Tardis	53.7128234	-1.5360848	artwork		osm
+WF2 0GU	osm_618321629	The Bay Horse	53.720676	-1.5389442	pub	Bradford Road	osm
+WF2 0GU	osm_385011894	The Blue Light	53.6893012	-1.531772	pub	Green Lane	osm
+WF2 0GU	osm_6331294926	The Dental Studio	53.7217605	-1.5465282	dentist	Bradford Road	osm
+WF2 0GU	osm_386198776	The Eagle	53.6835149	-1.5339514	pub	Flanshaw Lane	osm
+WF2 0GU	osm_86920957	The Glynn Living	53.6958625	-1.515105	residential_home	Bradford Road	osm
+WF2 0GU	osm_451903435	The Lawrence	53.7054249	-1.521917	nursing_home	Bradford Raod	osm
+WF2 0GU	osm_154604878	The Malt Shovel	53.7120441	-1.5303328	pub	Bradford Road	osm
+WF2 0GU	osm_6331294927	The Mens Room	53.7215375	-1.5467575	hairdresser		osm
+WF2 0GU	osm_903429669	The New Albion	53.6885791	-1.5308559	pub	Flanshaw Lane	osm
+WF2 0GU	osm_336710430	The New Pot Oil	53.6983745	-1.5253503	pub	Wrenthorpe Road	osm
+WF2 0GU	osm_384025953	The New Wheel	53.6989332	-1.5249385	pub	Wrenthorpe Road	osm
+WF2 0GU	osm_536890510	The Quad	53.7078643	-1.5131931	schoolyard		osm
+WF2 0GU	osm_384363576	The Star Inn	53.7026154	-1.5534696	pub	Batley Road	osm
+WF2 0GU	osm_336710432	The Well Church (Elim Pentecostal)	53.6997559	-1.5258173	place_of_worship	School Lane	osm
+WF2 0GU	osm_92893467	The Wheel	53.7039868	-1.5199877	pub	Bradford Road	osm
+WF2 0GU	osm_6123612857	The Wren Cafe	53.6975692	-1.5220316	cafe	Valley Crescent	osm
+WF2 0GU	osm_336574339	tillybods	53.7042499	-1.5208466	fast_food	Bradford Road	osm
+WF2 0GU	osm_240917688	Total Fitness	53.6825171	-1.5468815	fitness_centre	Fryers Way	osm
+WF2 0GU	osm_731208648	Toyota Vantage	53.6810301	-1.5460036	car	Goldsmith Avenue	osm
+WF2 0GU	osm_384026208	Valley Cresent Day Centre	53.6975718	-1.5220325	community_centre	Valley Crescent	osm
+WF2 0GU	osm_682451695	Vic's Cafe	53.7081693	-1.5174717	cafe	Wakefield	osm
+WF2 0GU	geograph_5746151	Village Hall, Kirkhamgate	53.702056	-1.552058	geograph		geograph
+WF2 0GU	osm_384835937	Village Stores	53.7012809	-1.5521777	convenience	Batley Road	osm
+WF2 0GU	osm_23624074	Wakefield Flanshaw Junior and Infant School	53.685741	-1.523159	school	Wakefield	osm
+WF2 0GU	osm_258601810	War Memorial	53.7015422	-1.5525859	monument		osm
+WF2 0GU	geograph_5960720	War memorial in Kirkhamgate.	53.701609	-1.55282	geograph		geograph
+WF2 0GU	geograph_6410976	War Memorial, Kirkhamgate	53.701519	-1.552669	geograph		geograph
+WF2 0GU	geograph_5746125	War Memorial on Batley Road, Kirkhamgate	53.701519	-1.552669	geograph		geograph
+WF2 0GU	osm_13467873970	West Ardsley Book Exchange	53.7172373	-1.5711856	public_bookcase		osm
+WF2 0GU	osm_586661142	West Ardsley Community Centre	53.7157128	-1.5768305	community_centre	Batley Road	osm
+WF2 0GU	osm_598267154	West Ardsley Methodist Church	53.7137064	-1.5725096	place_of_worship	Haigh Moor Road	osm
+WF2 0GU	osm_386177451	West Villa	53.6866591	-1.5255169	nursing_home	Batley Road	osm
+WF2 0GU	osm_338295147	West Yorkshire Police Bishopgarth House	53.7125026	-1.5362931	police	Wakefield	osm
+WF2 0GU	osm_450630235	West Yorkshire Police Learning & Development Centre	53.7126629	-1.5389902	police		osm
+WF2 0GU	osm_3649661198	White Rose Sandwich Co.	53.721345	-1.541126	fast_food	Bradford Road	osm
+WF2 0GU	osm_401749289	Wrenthorpe Academy	53.7011828	-1.5207488	school	Wakefield	osm
+WF2 0GU	osm_310531255	Wrenthorpe Club	53.7032726	-1.5220078	pub	Wrenthorpe Road	osm
+WF2 0GU	osm_907108141	Wrenthorpe Dental Care	53.69883	-1.5259006	dentist		osm
+WF2 0GU	osm_384025955	Wrenthorpe Methodist Church	53.7000188	-1.5242592	place_of_worship	Wakefield	osm
+WF2 0GU	osm_23862757	Wrenthorpe Park & Alverthorpe Meadows	53.6927267	-1.5218795	park		osm
+WF2 0GU	osm_384026218	Wrenthorpe Post Office	53.6973101	-1.5237532	post_office	Wrenthorpe Road	osm
+WF2 0GU	osm_4396865240	Wrenthorpe Potovens	53.698281	-1.5257701	artwork		osm
+WF2 0GU	osm_336710642	Wrenthorpe Village Hall	53.6984788	-1.5258073	community_centre	Wakefield	osm

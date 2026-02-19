@@ -15,48 +15,63 @@ import CoreLocation
 struct PolylineDecoder {
     /// Decodes an encoded polyline string into an array of coordinates
     /// Based on Google's Polyline Algorithm: https://developers.google.com/maps/documentation/utilities/polylinealgorithm
+    /// Uses Int64 throughout to avoid overflow traps on malformed or extreme input; returns [] on error.
     static func decode(_ encodedPolyline: String) -> [CLLocationCoordinate2D] {
         var coordinates: [CLLocationCoordinate2D] = []
-        var index = encodedPolyline.startIndex
-        var lat = 0
-        var lng = 0
+        let bytes = Array(encodedPolyline.utf8)
+        let count = bytes.count
+        if count == 0 { return [] }
+        var pos = 0
+        var lat: Int64 = 0
+        var lng: Int64 = 0
         
-        while index < encodedPolyline.endIndex {
-            // Decode latitude
-            var result = 0
+        /// Read one byte; returns nil if out of bounds or outside Google's encoding range (63–126).
+        func readByte() -> Int? {
+            if pos < 0 || pos >= count { return nil }
+            let b = Int(bytes[pos])
+            pos += 1
+            if b < 63 || b > 126 { return nil } // Invalid for Google polyline
+            return b - 63
+        }
+        
+        /// Decode one signed value (lat or lng). Uses Int64 to avoid overflow; returns nil if malformed.
+        func decodeValue() -> Int64? {
+            var result: Int64 = 0
             var shift = 0
-            var byte: Int
-            
+            var byte = 0
             repeat {
-                byte = Int(encodedPolyline[index].asciiValue! - 63)
-                index = encodedPolyline.index(after: index)
-                result |= (byte & 0x1F) << shift
+                guard shift < 35 else { return nil }
+                guard let b = readByte() else { return nil }
+                byte = b
+                result |= Int64(byte & 0x1F) << shift
                 shift += 5
-            } while byte >= 0x20 && index < encodedPolyline.endIndex
+            } while byte >= 0x20
+            let signed = ((result & 1) != 0) ? ~(result >> 1) : (result >> 1)
+            return signed
+        }
+        
+        /// Reasonable delta range (1e5 degrees ≈ 1000+ km per step) to avoid runaway accumulation.
+        let maxDelta: Int64 = 10_000_000
+        /// Valid microdegrees so accumulated lat/lng never overflow Int64 and stay within geo range.
+        let latMin: Int64 = -90 * 100_000
+        let latMax: Int64 =  90 * 100_000
+        let lngMin: Int64 = -180 * 100_000
+        let lngMax: Int64 =  180 * 100_000
+        
+        while pos >= 0 && pos < count {
+            guard let deltaLat = decodeValue() else { break }
+            if pos >= count { break }
+            if abs(deltaLat) > maxDelta { break }
+            lat = min(max(lat &+ deltaLat, latMin), latMax)
             
-            let deltaLat = ((result & 1) != 0) ? ~(result >> 1) : (result >> 1)
-            lat += deltaLat
+            guard let deltaLng = decodeValue() else { break }
+            if abs(deltaLng) > maxDelta { break }
+            lng = min(max(lng &+ deltaLng, lngMin), lngMax)
             
-            // Decode longitude
-            result = 0
-            shift = 0
-            
-            repeat {
-                guard index < encodedPolyline.endIndex else { break }
-                byte = Int(encodedPolyline[index].asciiValue! - 63)
-                index = encodedPolyline.index(after: index)
-                result |= (byte & 0x1F) << shift
-                shift += 5
-            } while byte >= 0x20 && index < encodedPolyline.endIndex
-            
-            let deltaLng = ((result & 1) != 0) ? ~(result >> 1) : (result >> 1)
-            lng += deltaLng
-            
-            let coordinate = CLLocationCoordinate2D(
-                latitude: Double(lat) / 1e5,
-                longitude: Double(lng) / 1e5
-            )
-            coordinates.append(coordinate)
+            let latDeg = Double(lat) / 1e5
+            let lngDeg = Double(lng) / 1e5
+            guard latDeg >= -90, latDeg <= 90, lngDeg >= -180, lngDeg <= 180 else { break }
+            coordinates.append(CLLocationCoordinate2D(latitude: latDeg, longitude: lngDeg))
         }
         
         return coordinates
@@ -411,14 +426,23 @@ struct WalkingRoute: Identifiable, Hashable {
     let encodedPolyline: String?  // Google Maps encoded polyline for accurate route display
     let walkingDirections: [WalkingDirection]  // Turn-by-turn directions
     let usedOSRMRouting: Bool  // v1.6.46: Track if polyline came from OSRM (driving profile)
+    /// True when route came from pre-populated database; used for duration-adjust (add/drop waypoints) after Let's Go.
+    let isFromPrePopulatedDatabase: Bool
+    /// When set (pre-pop), walk time to first waypoint. Preview shows durationMinutes (route only); pill uses durationMinutes + this.
+    let travelToStartMinutes: Int?
     
-    // Default initializer with backwards compatibility
+    /// Alias for encodedPolyline (used by route creation and map display)
+    var trimmed: String? { encodedPolyline }
+    
+    // Default initializer with backwards compatibility (trimmed is alias for encodedPolyline)
     init(name: String, description: String, durationMinutes: Int, distanceMeters: Int,
          difficulty: RouteDifficulty, isIndoor: Bool, isAccessible: Bool,
          landmarks: [String], icon: String, color: Color, qrMarkers: [QRMarker],
-         routeType: RouteType = .curated, encodedPolyline: String? = nil,
+         routeType: RouteType = .curated, encodedPolyline: String? = nil, trimmed trimVal: String? = nil,
          walkingDirections: [WalkingDirection] = [],
-         usedOSRMRouting: Bool = false) {
+         usedOSRMRouting: Bool = false,
+         isFromPrePopulatedDatabase: Bool = false,
+         travelToStartMinutes: Int? = nil) {
         self.name = name
         self.description = description
         self.durationMinutes = durationMinutes
@@ -431,18 +455,34 @@ struct WalkingRoute: Identifiable, Hashable {
         self.color = color
         self.qrMarkers = qrMarkers
         self.routeType = routeType
-        self.encodedPolyline = encodedPolyline
+        self.encodedPolyline = encodedPolyline ?? trimVal
         self.walkingDirections = walkingDirections
         self.usedOSRMRouting = usedOSRMRouting
+        self.isFromPrePopulatedDatabase = isFromPrePopulatedDatabase
+        self.travelToStartMinutes = travelToStartMinutes
+    }
+    
+    /// True when route has a real encoded polyline (not just straight lines between markers)
+    var hasPolyline: Bool {
+        if let polyline = encodedPolyline, !polyline.isEmpty { return true }
+        return false
     }
     
     /// Decoded route path coordinates for map display
     /// Uses Google's encoded polyline if available, otherwise falls back to marker coordinates
     var routePath: [CLLocationCoordinate2D] {
         if let polyline = encodedPolyline, !polyline.isEmpty {
-            return PolylineDecoder.decode(polyline)
+            let decoded = PolylineDecoder.decode(polyline)
+            // Only log anomalies (low point count) to avoid main-thread spam during walks
+            if decoded.count < 5 {
+                print("⚠️ [POLYLINE DEBUG] '\(name)': Low point count (\(decoded.count) points) - may show incorrect path")
+            }
+            return decoded
         }
-        // Fallback to marker coordinates if no polyline
+        // Fallback to marker coordinates if no polyline - log once per route, not every read
+        #if DEBUG
+        print("🚨 [POLYLINE DEBUG] '\(name)': NO POLYLINE - falling back to straight lines between \(qrMarkers.count) markers!")
+        #endif
         return qrMarkers.map { $0.coordinate }
     }
     
@@ -464,6 +504,16 @@ struct WalkingRoute: Identifiable, Hashable {
         return Int(Double(distanceMeters) / 0.76)
     }
     
+    /// Approximate minutes added by breathing-exercise (and similar) triggers at waypoints (~1 min per trigger). Used for total time display.
+    var triggerStopsMinutes: Int {
+        qrMarkers.filter { $0.contentType == .breathingExercise }.count
+    }
+    
+    /// Total display duration in minutes (walking + trigger stops). Use when showing "total time" to the user.
+    var totalDisplayMinutes: Int {
+        durationMinutes + triggerStopsMinutes
+    }
+    
     var isCurated: Bool {
         routeType == .curated
     }
@@ -474,6 +524,32 @@ struct WalkingRoute: Identifiable, Hashable {
     
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
+    }
+    
+    /// Cap displayed duration when unreasonably high for distance (e.g. 25 min for 1 km). Distance-based only: assumes ~80 m/min walking speed with 15% buffer. Used by preview and by diagnostic.
+    func withDurationSanityCap(targetDurationMinutes: Int? = nil) -> WalkingRoute {
+        guard distanceMeters > 200 else { return self }
+        let maxPlausible = max(1, Int(Double(distanceMeters) / 80.0 * 1.15))
+        guard durationMinutes > maxPlausible else { return self }
+        return WalkingRoute(
+            name: name,
+            description: description,
+            durationMinutes: min(durationMinutes, maxPlausible),
+            distanceMeters: distanceMeters,
+            difficulty: difficulty,
+            isIndoor: isIndoor,
+            isAccessible: isAccessible,
+            landmarks: landmarks,
+            icon: icon,
+            color: color,
+            qrMarkers: qrMarkers,
+            routeType: routeType,
+            trimmed: trimmed,
+            walkingDirections: walkingDirections,
+            usedOSRMRouting: usedOSRMRouting,
+            isFromPrePopulatedDatabase: isFromPrePopulatedDatabase,
+            travelToStartMinutes: travelToStartMinutes
+        )
     }
 }
 
@@ -1228,123 +1304,6 @@ extension WalkingRoute {
             ],
             routeType: .indoor,
             encodedPolyline: nil
-        ),
-        
-        // Indoor Route 2: NGH Link Corridor Walk (10 min)
-        WalkingRoute(
-            name: "NGH Corridor Explorer",
-            description: "A 10-minute walk through the Northern General Hospital link corridors. Follow the coloured floor lines and signage. Great for a longer indoor stretch.",
-            durationMinutes: 10,
-            distanceMeters: 500,
-            difficulty: .easy,
-            isIndoor: true,
-            isAccessible: true,
-            landmarks: ["Longley Centre", "Link Corridor", "Main Hospital", "Atrium Area", "Return via Link"],
-            icon: "arrow.triangle.swap",
-            color: .tealAccent,
-            qrMarkers: [
-                QRMarker(
-                    code: "NGH_IN1",
-                    name: "Link Corridor Start",
-                    location: "Leaving Longley Centre",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4108, longitude: -1.4598),
-                    contentType: .breathingExercise,
-                    content: WellbeingContent(title: "Walking Meditation", description: "As you walk through the corridor, focus on each step.", icon: "figure.walk", duration: 60, steps: ["Walk at a comfortable pace", "Feel each footstep on the floor", "Notice the rhythm of your walking", "Let your thoughts come and go"]),
-                    pointsValue: 15
-                ),
-                QRMarker(
-                    code: "NGH_IN2",
-                    name: "Hospital Art",
-                    location: "Main Corridor",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4105, longitude: -1.4585),
-                    contentType: .gratitudePrompt,
-                    content: WellbeingContent(title: "Art Appreciation", description: "NHS hospitals often display local artwork. Take a moment to notice any art, photos, or displays on the walls.", icon: "photo.artframe", duration: nil, steps: nil),
-                    pointsValue: 15
-                ),
-                QRMarker(
-                    code: "NGH_IN3",
-                    name: "Atrium Rest",
-                    location: "Near Seating Area",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4102, longitude: -1.4575),
-                    contentType: .breathingExercise,
-                    content: WellbeingContent.breathingExercises[1],
-                    pointsValue: 15
-                ),
-                QRMarker(
-                    code: "NGH_IN4",
-                    name: "Return Journey",
-                    location: "Heading Back",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4106, longitude: -1.4590),
-                    contentType: .miniChallenge,
-                    content: WellbeingContent(title: "Posture Check", description: "Good posture while walking helps reduce tension and improves mood.", icon: "figure.stand", duration: 30, steps: ["Stand tall, shoulders back", "Relax your jaw and face", "Take a deep breath", "Continue walking with awareness"]),
-                    pointsValue: 15
-                )
-            ],
-            routeType: .indoor,
-            encodedPolyline: nil
-        ),
-        
-        // Indoor Route 3: NGH Discovery Walk (15 min)
-        WalkingRoute(
-            name: "NGH Discovery Walk",
-            description: "A 15-minute exploration of Northern General Hospital's main buildings via the link corridors. Look for the café, shop, and chapel along the way. Follow floor signage.",
-            durationMinutes: 15,
-            distanceMeters: 800,
-            difficulty: .moderate,
-            isIndoor: true,
-            isAccessible: true,
-            landmarks: ["Longley Centre", "Main Link Corridor", "Hospital Shop", "Café Area", "Chapel", "Return via Ground Floor"],
-            icon: "map.fill",
-            color: .mintGreen,
-            qrMarkers: [
-                QRMarker(
-                    code: "NGH_D1",
-                    name: "Journey Start",
-                    location: "Longley Centre Exit",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4108, longitude: -1.4598),
-                    contentType: .breathingExercise,
-                    content: WellbeingContent.breathingExercises[2],
-                    pointsValue: 20
-                ),
-                QRMarker(
-                    code: "NGH_D2",
-                    name: "Shop Stop",
-                    location: "Near Hospital Shop",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4100, longitude: -1.4580),
-                    contentType: .digitalTip,
-                    content: WellbeingContent(title: "Hydration Reminder", description: "Staying hydrated helps with concentration and reduces anxiety. Consider grabbing a drink if you pass the shop or café.", icon: "drop.fill", duration: nil, steps: nil),
-                    pointsValue: 20
-                ),
-                QRMarker(
-                    code: "NGH_D3",
-                    name: "Café Corner",
-                    location: "Near Café Seating",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4098, longitude: -1.4570),
-                    contentType: .gratitudePrompt,
-                    content: WellbeingContent.gratitudePrompts[1],
-                    pointsValue: 20
-                ),
-                QRMarker(
-                    code: "NGH_D4",
-                    name: "Quiet Reflection",
-                    location: "Near Chapel",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4095, longitude: -1.4565),
-                    contentType: .breathingExercise,
-                    content: WellbeingContent(title: "Moment of Peace", description: "Hospital chapels and quiet rooms are open to everyone, regardless of faith. They offer a peaceful space for reflection.", icon: "hands.sparkles.fill", duration: 60, steps: ["Find a quiet spot", "Sit comfortably if possible", "Close your eyes briefly", "Take 5 slow, deep breaths", "Set an intention for your day"]),
-                    pointsValue: 25
-                ),
-                QRMarker(
-                    code: "NGH_D5",
-                    name: "Homeward Bound",
-                    location: "Return Corridor",
-                    coordinate: CLLocationCoordinate2D(latitude: 53.4105, longitude: -1.4592),
-                    contentType: .miniChallenge,
-                    content: WellbeingContent(title: "Counting Steps", description: "Can you count your steps back to The Longley Centre? It's a simple mindfulness exercise.", icon: "number", duration: nil, steps: ["Start counting from 1", "If you lose count, start again", "Notice how this focuses your mind", "Celebrate when you arrive back!"]),
-                    pointsValue: 25
-                )
-            ],
-            routeType: .indoor,
-            encodedPolyline: nil
         )
     ]
     
@@ -1449,3 +1408,4 @@ extension Badge {
         Badge(name: "Digital Pioneer", description: "Complete all 5 digital skills", icon: "iphone", color: .tealAccent, requirement: .digitalSkills(5))
     ]
 }
+
