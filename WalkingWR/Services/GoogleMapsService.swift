@@ -3836,6 +3836,15 @@ class GoogleMapsService: ObservableObject {
         }
     }
     
+    /// Test Geograph API (for Settings → Test API Keys). Uses a fixed UK coordinate.
+    func testGeographAPI() async -> (Bool, String) {
+        guard !geographApiKey.isEmpty else { return (false, "No API key") }
+        let location = CLLocationCoordinate2D(latitude: 53.38, longitude: -1.47)
+        let results = await searchGeographForPOIs(location: location, radiusMeters: 1000)
+        // If we get here without throwing, the request succeeded; empty results still mean key worked
+        return (true, "OK (\(results.count) results)")
+    }
+    
     /// Helper to parse Geograph API results into PlaceResult objects
     private func parseGeographResults(jsonArray: [[String: Any]], location: CLLocationCoordinate2D, radiusMeters: Int, sourceLabel: String = "") -> [PlaceResult] {
         var results: [PlaceResult] = []
@@ -5594,6 +5603,41 @@ class GoogleMapsService: ObservableObject {
             }
         default:
             return (false, "Unknown API: \(name)")
+        }
+    }
+    
+    /// Test Google Maps (Directions) API key with one minimal request (for Settings → Test API Keys).
+    func testGoogleMapsAPI() async -> (Bool, String) {
+        guard hasAPIKey else { return (false, "No API key") }
+        let origin = CLLocationCoordinate2D(latitude: 53.38, longitude: -1.47)
+        let destination = CLLocationCoordinate2D(latitude: 53.381, longitude: -1.471)
+        var urlString = "https://maps.googleapis.com/maps/api/directions/json?"
+        urlString += "origin=\(String(format: "%.6f,%.6f", origin.latitude, origin.longitude))"
+        urlString += "&destination=\(String(format: "%.6f,%.6f", destination.latitude, destination.longitude))"
+        urlString += "&mode=walking"
+        urlString += "&key=\(apiKey)"
+        guard let url = URL(string: urlString) else {
+            return (false, "Invalid URL")
+        }
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 10
+            if let bundleId = Bundle.main.bundleIdentifier {
+                request.setValue(bundleId, forHTTPHeaderField: "X-Ios-Bundle-Identifier")
+            }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return (false, "Non-HTTP response") }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let status = json["status"] as? String else {
+                return (false, "Invalid response")
+            }
+            if status == "OK" {
+                return (true, "OK")
+            }
+            let errMsg = (json["error_message"] as? String) ?? status
+            return (false, errMsg)
+        } catch {
+            return (false, error.localizedDescription)
         }
     }
     

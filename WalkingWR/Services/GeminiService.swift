@@ -179,6 +179,21 @@ class GeminiService {
         return templateContent
     }
     
+    /// Test Gemini API connectivity (for Settings → Test API Keys).
+    /// Sends a minimal prompt and returns (success, message).
+    func testConnection() async -> (Bool, String) {
+        guard !apiKey.isEmpty else { return (false, "No API key") }
+        do {
+            if let response = try await callGemini(prompt: "Reply with only the word OK.") {
+                let ok = response.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().contains("OK")
+                return (ok, ok ? "OK" : response)
+            }
+            return (false, "Empty response")
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
+    
     /// Privacy-safe template-based name and description generation
     /// Only references POIs far from start location to protect user's home area
     func generateTemplateContent(

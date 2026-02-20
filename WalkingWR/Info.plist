@@ -23,11 +23,11 @@
 		<string>location</string>
 	</array>
 	<key>GOOGLE_MAPS_API_KEY</key>
-	<string>AIzaSyB4ArGM5beRSeInpW-P3q1SFbS_lrQ0jx8</string>
+	<string>$(GOOGLE_MAPS_API_KEY)</string>
 	<key>GEMINI_API_KEY</key>
-	<string>AIzaSyDxMzPL_-enELjtzPWBNGoWbPjTmPGeZ_c</string>
+	<string>$(GEMINI_API_KEY)</string>
 	<key>GEOGRAPH_API_KEY</key>
-	<string>df200a5f61</string>
+	<string>$(GEOGRAPH_API_KEY)</string>
 	<key>OPEN_ROUTE_SERVICE_API_KEY</key>
 	<string>$(OPEN_ROUTE_SERVICE_API_KEY)</string>
 	<key>ORS_BASE_URL</key>
@@ -43,6 +43,6 @@
 	<key>CFBundleShortVersionString</key>
 	<string>2.1.27</string>
 	<key>CFBundleVersion</key>
-	<string>395</string>
+	<string>398</string>
 </dict>
 </plist>

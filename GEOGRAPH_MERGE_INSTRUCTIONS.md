@@ -548,10 +548,10 @@ print("📊 Sources: Google=\(googleCount), Apple=\(appleCount), OSM=\(osmCount)
 
 ## API Key Example
 
-In `Info.plist`:
+In `Info.plist` (values come from Secrets.xcconfig at build time):
 ```xml
 <key>GEOGRAPH_API_KEY</key>
-<string>df200a5f61</string>
+<string>$(GEOGRAPH_API_KEY)</string>
 ```
 
-**Note**: Replace with your actual API key from Geograph.org.uk
+**Note**: Set `GEOGRAPH_API_KEY` in Secrets.xcconfig (or get your key from Geograph.org.uk). For Python scripts, set the `GEOGRAPH_API_KEY` environment variable.

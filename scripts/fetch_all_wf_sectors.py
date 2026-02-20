@@ -9,6 +9,7 @@ Usage:
 
 import json
 import math
+import os
 import sys
 import time
 import urllib.error
@@ -22,7 +23,8 @@ WF_DISTRICTS = list(range(1, 18))  # WF1 through WF17
 SECTORS_TO_TRY = list(range(0, 10))  # 0-9 for each district
 RADIUS_METERS = 2500
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-GEOGRAPH_API_KEY = "df200a5f61"
+# Set GEOGRAPH_API_KEY env var or leave empty to skip Geograph (get key from https://www.geograph.org.uk/help/api)
+GEOGRAPH_API_KEY = os.environ.get("GEOGRAPH_API_KEY", "")
 GEOGRAPH_BASE_URL = "https://api.geograph.org.uk/syndicator.php"
 OSM_MIRRORS = [
     "https://overpass-api.de/api/interpreter",

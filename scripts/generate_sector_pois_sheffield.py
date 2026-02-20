@@ -15,6 +15,7 @@ Usage:
 import argparse
 import json
 import math
+import os
 import re
 import sys
 import time
@@ -46,7 +47,8 @@ KNOWN_SECTORS_BY_DISTRICT = {}
 STREETLIST_BASE_URL = "https://www.streetlist.co.uk/s/"
 RADIUS_METERS = 2500
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-GEOGRAPH_API_KEY = "df200a5f61"
+# Set GEOGRAPH_API_KEY env var or leave empty to skip Geograph (get key from https://www.geograph.org.uk/help/api)
+GEOGRAPH_API_KEY = os.environ.get("GEOGRAPH_API_KEY", "")
 GEOGRAPH_BASE_URL = "https://api.geograph.org.uk/syndicator.php"
 OSM_MIRRORS = [
     "https://overpass-api.de/api/interpreter",

@@ -4414,11 +4414,15 @@ struct LocalRoutePickerSheet: View {
                         }
                         // #endregion
                         
-                        // When 30s fallback already showed route 1: add main as route 2 instead of replacing
+                        // When 30s fallback already showed route 1: add main as route 2 only if duration is 50–150% of target
                         if currentRouteIsFromGoogle30sFallback {
                             let mainPlaceIds = Set(filteredResult.places.map { $0.placeId })
                             let fallbackPlaceIds = allRoutes.first.map { Set($0.data.places.map { $0.placeId }) } ?? []
-                            if mainPlaceIds != fallbackPlaceIds {
+                            let mainMin = displayRoute.durationMinutes
+                            let minOk = max(1, Int(Double(selectedDuration) * 0.5))
+                            let maxOk = Int(Double(selectedDuration) * 1.5)
+                            let mainIn50_150 = (mainMin >= minOk && mainMin <= maxOk)
+                            if mainPlaceIds != fallbackPlaceIds && mainIn50_150 {
                                 let cappedDisplay = Self.applyDurationSanityCap(displayRoute, targetDurationMinutes: selectedDuration)
                                 let isShortRoute = deduplicatedResult.durationMinutes < Int(Double(selectedDuration) * 0.50)
                                 allRoutes.append((route: cappedDisplay, data: deduplicatedResult, isDeadZoneFallback: isShortRoute, isFromGoogle: mainRoutePreviewSource == "google"))
@@ -4437,6 +4441,8 @@ struct LocalRoutePickerSheet: View {
                                 RouteCacheService.shared.setSessionRoutes(liveSessionMeta, at: userLocation.coordinate, durationMinutes: selectedDuration)
                                 logRoutePreviewSummary()
                                 print("[ROUTE_GEN] ⏱️ [30s FALLBACK] Main route added as route 2 (fallback stays route 1) — total \(allRoutes.count) routes")
+                            } else if mainPlaceIds != fallbackPlaceIds && !mainIn50_150 {
+                                print("[ROUTE_GEN] ⏱️ [30s FALLBACK] Main route not added as route 2 — duration \(mainMin)min outside 50–150% of \(selectedDuration)min [\(minOk)–\(maxOk)min]")
                             } else {
                                 print("[ROUTE_GEN] ⏱️ [30s FALLBACK] Main route duplicate of fallback — not adding")
                             }

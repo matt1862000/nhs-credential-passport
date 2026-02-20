@@ -22,6 +22,7 @@ IMPORTANT:
 """
 
 import json
+import os
 import requests
 import time
 import math
@@ -54,8 +55,8 @@ OSM_MIRRORS = [
     "https://overpass.openstreetmap.ru/api/interpreter",
 ]
 
-# Geograph API (optional - requires API key)
-GEOGRAPH_API_KEY = "df200a5f61"  # Get from https://www.geograph.org.uk/help/api
+# Geograph API (optional - set GEOGRAPH_API_KEY env var or leave empty to skip)
+GEOGRAPH_API_KEY = os.environ.get("GEOGRAPH_API_KEY", "")  # Get from https://www.geograph.org.uk/help/api
 GEOGRAPH_BASE_URL = "https://api.geograph.org.uk/syndicator.php"
 
 # OSRM routing service (free, open-source)
