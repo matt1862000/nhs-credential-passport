@@ -7457,6 +7457,146 @@ struct LocalRoutePickerSheet: View {
                 }
             }
             let routeCountAfterCrossBucket = await MainActor.run { allRoutes.count }
+            var inBandAfterCrossBucket = await MainActor.run { inBandRouteCount() }
+            
+            // Throttled background phase: MapKit + OSRM + GraphHopper (no HeiGIT), only when well under rate limit
+            if inBandAfterCrossBucket < targetInBandRoutes {
+                print("[ROUTE_GEN] Throttled MapKit+OSRM+GraphHopper phase starting (inBand < 2, no HeiGIT)")
+                let maxThrottledAttempts = 3
+                let throttledSpacingNanoseconds: UInt64 = 17_000_000_000  // 17s between attempts
+                let throttledTimeCap: TimeInterval = 90
+                var throttledAttempt = 0
+                while throttledAttempt < maxThrottledAttempts {
+                    if Date().timeIntervalSince(preGenTaskStart) >= throttledTimeCap {
+                        print("[ROUTE_GEN] Throttled phase time cap (\(Int(throttledTimeCap))s) — stopping")
+                        break
+                    }
+                    let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
+                    if shouldCancel {
+                        print("[ROUTE_GEN] Throttled phase cancelled (user action)")
+                        break
+                    }
+                    while await MainActor.run(body: { isGeneratingAdditionalRoute }) {
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    }
+                    var canRun = await mapsService.canRunThrottledBackgroundMapKit()
+                    if !canRun {
+                        try? await Task.sleep(nanoseconds: 12_000_000_000)
+                        canRun = await mapsService.canRunThrottledBackgroundMapKit()
+                        if !canRun {
+                            print("[ROUTE_GEN] Throttled attempt \(throttledAttempt + 1) skipped (rate limit)")
+                            throttledAttempt += 1
+                            continue
+                        }
+                    }
+                    throttledAttempt += 1
+                    let excludedPlaceIds = await MainActor.run { shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) } }
+                    let excludedPOIs = await MainActor.run { allRoutes.flatMap { $0.data.places } }
+                    let currentRouteCount = await MainActor.run { allRoutes.count }
+                    let preferMulti = currentRouteCount >= 1 && currentRouteCount <= 3 && selectedDuration >= 30
+                    let poisForThrottled = await MainActor.run { prefetchedPOIs.isEmpty ? nil : prefetchedPOIs }
+                    mapsService.skipHeiGITForBackground = true
+                    defer { mapsService.skipHeiGITForBackground = false }
+                    do {
+                        let result = try await mapsService.generateLocalRoute(
+                            from: userLocation.coordinate,
+                            targetDurationMinutes: selectedDuration,
+                            difficulty: nil,
+                            excludePlaceIds: excludedPlaceIds,
+                            excludePOIs: excludedPOIs,
+                            prefetchedPOIs: poisForThrottled,
+                            preferMultiWaypoint: preferMulti
+                        )
+                        guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else { continue }
+                        let isUnique = await MainActor.run { isRouteTrulyUnique(places: result.places, distanceMeters: result.distanceMeters) }
+                        if !isUnique { continue }
+                        let markers = await MainActor.run { createMarkersFromPlaces(result.places, origin: userLocation.coordinate) }
+                        guard !markers.isEmpty else { continue }
+                        var directions = await MainActor.run { extractWalkingDirections(from: result.legs, waypoints: result.places) }
+                        if directions.isEmpty && !result.places.isEmpty {
+                            let waypointCoords = result.places.map { $0.coordinate }
+                            let waypointNames = result.places.map { $0.name }
+                            directions = await mapsService.getMapKitDirectionsForRoute(
+                                origin: userLocation.coordinate,
+                                waypoints: waypointCoords,
+                                destination: userLocation.coordinate,
+                                waypointNames: waypointNames
+                            )
+                        }
+                        let templateName = "\(result.durationMinutes) min walk"
+                        let templateDescription = "A short walk from start and back."
+                        let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
+                        var route = WalkingRoute(
+                            name: templateName,
+                            description: templateDescription,
+                            durationMinutes: max(1, result.durationMinutes),
+                            distanceMeters: result.distanceMeters,
+                            difficulty: routeDifficulty,
+                            isIndoor: false,
+                            isAccessible: true,
+                            landmarks: ["Start"] + result.places.map { $0.name } + ["Return"],
+                            icon: "location.fill",
+                            color: .tealAccent,
+                            qrMarkers: markers,
+                            routeType: .local,
+                            trimmed: result.polyline,
+                            walkingDirections: directions,
+                            usedOSRMRouting: result.usedOSRM
+                        )
+                        var cappedRoute = Self.applyDurationSanityCap(route, targetDurationMinutes: selectedDuration)
+                        let useWideBandBypass = await MainActor.run { !hasEnoughInBandRoutes() && !Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) && Self.isRouteInWideBand(cappedRoute, selectedDuration: selectedDuration) }
+                        let isInBand = Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) || useWideBandBypass
+                        if isInBand {
+                            let waypointInfos = result.places.map { GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity) }
+                            let aiContent = await GeminiService.shared.generateRouteContent(waypoints: waypointInfos, durationMinutes: route.durationMinutes, distanceMeters: route.distanceMeters, difficulty: nil)
+                            let routeWithGemini = WalkingRoute(
+                                name: aiContent.name,
+                                description: aiContent.description,
+                                durationMinutes: route.durationMinutes,
+                                distanceMeters: route.distanceMeters,
+                                difficulty: route.difficulty,
+                                isIndoor: route.isIndoor,
+                                isAccessible: route.isAccessible,
+                                landmarks: route.landmarks,
+                                icon: route.icon,
+                                color: route.color,
+                                qrMarkers: route.qrMarkers,
+                                routeType: route.routeType,
+                                trimmed: route.trimmed,
+                                walkingDirections: route.walkingDirections,
+                                usedOSRMRouting: route.usedOSRMRouting,
+                                isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase,
+                                travelToStartMinutes: route.travelToStartMinutes
+                            )
+                            cappedRoute = Self.applyDurationSanityCap(routeWithGemini, targetDurationMinutes: selectedDuration)
+                        }
+                        let deduplicatedResult = await MainActor.run { mapsService.finalizeRouteDedupForView(result) }
+                        await MainActor.run {
+                            let useWideBandBypassLocal = !hasEnoughInBandRoutes() && !Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) && Self.isRouteInWideBand(cappedRoute, selectedDuration: selectedDuration)
+                            let added = appendRouteIfAllowed(route: cappedRoute, data: deduplicatedResult, isFromGoogle: result.usedGoogleDirections, source: "throttled-mapkit-osrm-gh", bypassInBandCap: useWideBandBypassLocal)
+                            if added {
+                                registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
+                                let placeIds = Set(result.places.map { $0.placeId })
+                                shownPlaceIdSets.append(placeIds)
+                                print("[ROUTE_GEN] Throttled phase added route (\(inBandRouteCount())/\(targetInBandRoutes) in-band)")
+                                if inBandRouteCount() >= targetInBandRoutes && isPreGeneratingRoutes {
+                                    isPreGeneratingRoutes = false
+                                    preGenerationComplete = true
+                                    print("[ROUTE_GEN] Loading indicator dismissed (in-band reached via throttled phase)")
+                                }
+                            }
+                        }
+                    } catch {
+                        print("[ROUTE_GEN] Throttled phase attempt error: \(error.localizedDescription)")
+                    }
+                    inBandAfterCrossBucket = await MainActor.run { inBandRouteCount() }
+                    if inBandAfterCrossBucket >= targetInBandRoutes { break }
+                    if throttledAttempt < maxThrottledAttempts {
+                        try? await Task.sleep(nanoseconds: throttledSpacingNanoseconds)
+                    }
+                }
+                print("[ROUTE_GEN] Throttled phase ended — \(inBandAfterCrossBucket)/\(targetInBandRoutes) in-band")
+            }
             
             if routeCountAfterCrossBucket < 2 && mapsService.hasAPIKey && inBandBeforeFallback < targetInBandRoutes {
                 print("⚠️ Only \(routeCountAfterCrossBucket) routes found - calling Google API for more POIs...")

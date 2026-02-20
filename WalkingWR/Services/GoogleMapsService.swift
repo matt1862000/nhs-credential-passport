@@ -939,6 +939,9 @@ class GoogleMapsService: ObservableObject {
     /// v2.1.15: When true, skip MapKit and use only free APIs (OSRM/ORS/GH). Set by RoutePreGenService when MapKit quota is capped.
     var forceSkipMapKit = false
     
+    /// When true, skip HeiGIT (ORS) only in routing; use MapKit + OSRM + GraphHopper. Set during throttled background pregen.
+    var skipHeiGITForBackground = false
+    
     /// Launch-args cache (read once; UserDefaults is read every time so you can toggle at runtime).
     private static let launchArgsForceFreeRoutingAPIs: Bool = {
         let args = ProcessInfo.processInfo.arguments.map { $0.trimmingCharacters(in: .whitespaces) }
@@ -5664,6 +5667,13 @@ class GoogleMapsService: ObservableObject {
         return shouldPause
     }
     
+    /// Throttled background phase: run only when well under rate limit (e.g. count < 20) to leave headroom for user actions.
+    private let mapKitThrottledPhaseMaxCount = 20
+    func canRunThrottledBackgroundMapKit() async -> Bool {
+        let status = await rateLimiter.checkAndCleanup(limit: mapKitRateLimit, window: mapKitRateLimitWindow)
+        return status.currentCount < mapKitThrottledPhaseMaxCount
+    }
+    
     // MARK: - On-Device Duration Estimator (P0 FIX)
     // Pre-screens candidates without calling routing engines
     // Uses straight-line distance × road factor × walking speed
@@ -6363,8 +6373,8 @@ class GoogleMapsService: ObservableObject {
         
         if useOSRM {
             // Prefer ORS (HeiGIT) when we have proxy or key — more reliable than public OSRM (which often times out).
-            // Order: ORS → OSRM → GraphHopper → MapKit
-            if canUseOpenRouteService {
+            // Order: ORS → OSRM → GraphHopper → MapKit. Skip ORS when skipHeiGITForBackground (throttled phase).
+            if !skipHeiGITForBackground && canUseOpenRouteService {
                 do {
                     let orsResult = try await getOpenRouteServiceWalkingDirections(
                         origin: origin,
@@ -6477,7 +6487,7 @@ class GoogleMapsService: ObservableObject {
         let mapKitWouldWait = rateLimitStatus.shouldWait || rateLimitStatus.currentCount >= 36
         if !forceMapKitRouting && haveORSOrGH && (mapKitWouldWait || forceSkipMapKit || isOSRMCircuitBreakerOpen) {
             print("[ROUTE_FLOW] stage=routing MapKit_rate_limit=\(rateLimitStatus.currentCount)_50 circuit_breaker=\(isOSRMCircuitBreakerOpen) fallback=ORS_GraphHopper")
-            if canUseOpenRouteService {
+            if !skipHeiGITForBackground && canUseOpenRouteService {
                 do {
                     let orsResult = try await getOpenRouteServiceWalkingDirections(
                         origin: origin,
