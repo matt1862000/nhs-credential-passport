@@ -14,8 +14,12 @@ private let lastBirdsUD = "bird_spotting_last_birds"
 private let lastPlaceNameUD = "bird_spotting_last_place"
 
 /// In-memory cache keyed by rounded region + month. Also persists last list for restore on next open.
+/// List size is capped so the UI never shows more than this many species from the downloaded list.
 final class BirdSpottingCache {
     static let shared = BirdSpottingCache()
+
+    /// Max species in the main list (e.g. "Download 10 birds"). Enforced on read and write.
+    static let maxListSize = 10
 
     private var store: [String: [BirdInfo]] = [:]
     private let queue = DispatchQueue(label: "BirdSpottingCache", attributes: .concurrent)
@@ -29,20 +33,24 @@ final class BirdSpottingCache {
     }
 
     func get(key: String) -> [BirdInfo]? {
-        queue.sync { store[key] }
+        queue.sync {
+            store[key].map { Array($0.prefix(Self.maxListSize)) }
+        }
     }
 
     func set(key: String, birds: [BirdInfo]) {
+        let capped = Array(birds.prefix(Self.maxListSize))
         queue.async(flags: .barrier) { [weak self] in
-            self?.store[key] = birds
+            self?.store[key] = capped
         }
     }
 
     /// Save the last downloaded list so we can show it when the user opens Bird Spotting again.
     func saveLast(key: String, birds: [BirdInfo], placeName: String?) {
-        guard !birds.isEmpty else { return }
+        let capped = Array(birds.prefix(Self.maxListSize))
+        guard !capped.isEmpty else { return }
         do {
-            let data = try JSONEncoder().encode(birds)
+            let data = try JSONEncoder().encode(capped)
             UserDefaults.standard.set(key, forKey: lastKeyUD)
             UserDefaults.standard.set(data, forKey: lastBirdsUD)
             UserDefaults.standard.set(placeName, forKey: lastPlaceNameUD)
@@ -59,7 +67,8 @@ final class BirdSpottingCache {
             return nil
         }
         do {
-            let birds = try JSONDecoder().decode([BirdInfo].self, from: data)
+            let decoded = try JSONDecoder().decode([BirdInfo].self, from: data)
+            let birds = Array(decoded.prefix(Self.maxListSize))
             guard !birds.isEmpty else { return nil }
             let placeName = UserDefaults.standard.string(forKey: lastPlaceNameUD)
             return (birds, placeName)

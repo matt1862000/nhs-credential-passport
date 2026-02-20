@@ -1686,14 +1686,15 @@ struct BirdSpottingView: View {
                  seasonalNote: "Winter visitor (Oct-Mar)", isYearRound: false, summerOnly: false, winterOnly: true)
     ]
 
-    /// Birds to show: dynamic list from API or static list filtered by current season.
+    /// Birds to show: dynamic list from API or static list filtered by current season. Capped to birdSpottingSpeciesLimit.
     private var displayedBirds: [BirdInfo] {
         if useStaticFallback {
             let isSummer = currentMonth >= 4 && currentMonth <= 9
             let isWinter = currentMonth <= 3 || currentMonth >= 10
-            return Self.staticFallbackBirds.filter { b in
+            let filtered = Self.staticFallbackBirds.filter { b in
                 b.isYearRound || (b.summerOnly && isSummer) || (b.winterOnly && isWinter)
             }
+            return Array(filtered.prefix(Self.birdSpottingSpeciesLimit))
         }
         return birds
     }
@@ -1788,7 +1789,7 @@ struct BirdSpottingView: View {
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.primary)
-                            Text("Get the top 10 species reported near you in the last month. Tick them off as you spot them.")
+                            Text("Get the top \(Self.birdSpottingSpeciesLimit) species reported near you in the last month. Tick them off as you spot them. You can add more by taking a photo or choosing from your gallery.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1811,14 +1812,12 @@ struct BirdSpottingView: View {
         .cornerRadius(16)
     }
 
-    /// Count text for header: "X/Y" where Y = main list + also spotted (e.g. 1/21).
+    /// Count text for header: "X/Y" where Y = main (downloaded) list only, so it's always 0/10 after download.
+    /// Gallery/photo birds appear in "Also spotted" below and are not included in this number.
     private var spotCountText: String {
         let mainSpotted = displayedBirds.filter { isSpotted($0) }.count
         let mainTotal = displayedBirds.count
-        let extra = extraSpottedBirdNames.count
-        let totalSpotted = mainSpotted + extra
-        let totalBirds = mainTotal + extra
-        return "\(totalSpotted)/\(totalBirds)"
+        return "\(mainSpotted)/\(mainTotal)"
     }
 
     private var seasonalBirdsForHighlights: [BirdInfo] {
@@ -1856,71 +1855,75 @@ struct BirdSpottingView: View {
     }
 
     private static let birdSpotLogTag = "[BIRD_SPOT]"
+    /// Number of species to download and show (must match UI copy "top N species").
+    private static let birdSpottingSpeciesLimit = 10
 
     private func loadBirds() async {
         let coord = await MainActor.run { locationService?.currentLocation?.coordinate }
         let key = APIKeys.ebird
         let month = Calendar.current.component(.month, from: Date())
         let staticKey = "bird_static_\(month)"
+        let staticCapped = Array(Self.staticFallbackBirds.prefix(Self.birdSpottingSpeciesLimit))
         if coord == nil {
-            print("\(Self.birdSpotLogTag) no location, using static list")
+            print("\(Self.birdSpotLogTag) no location, using static list (\(staticCapped.count))")
             await MainActor.run {
-                birds = Self.staticFallbackBirds
+                birds = staticCapped
                 useStaticFallback = true
                 placeName = nil
                 isLoading = false
                 loadError = nil
             }
-            BirdSpottingCache.shared.set(key: staticKey, birds: Self.staticFallbackBirds)
-            BirdSpottingCache.shared.saveLast(key: staticKey, birds: Self.staticFallbackBirds, placeName: nil)
+            BirdSpottingCache.shared.set(key: staticKey, birds: staticCapped)
+            BirdSpottingCache.shared.saveLast(key: staticKey, birds: staticCapped, placeName: nil)
             return
         }
         if key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            print("\(Self.birdSpotLogTag) no eBird API key, using static list")
+            print("\(Self.birdSpotLogTag) no eBird API key, using static list (\(staticCapped.count))")
             await MainActor.run {
-                birds = Self.staticFallbackBirds
+                birds = staticCapped
                 useStaticFallback = true
                 placeName = nil
                 isLoading = false
                 loadError = nil
             }
-            BirdSpottingCache.shared.set(key: staticKey, birds: Self.staticFallbackBirds)
-            BirdSpottingCache.shared.saveLast(key: staticKey, birds: Self.staticFallbackBirds, placeName: nil)
+            BirdSpottingCache.shared.set(key: staticKey, birds: staticCapped)
+            BirdSpottingCache.shared.saveLast(key: staticKey, birds: staticCapped, placeName: nil)
             return
         }
         let coordinate = coord!
         let cacheKey = BirdSpottingCache.shared.cacheKey(coordinate: coordinate, month: month)
         if let cached = BirdSpottingCache.shared.get(key: cacheKey), !cached.isEmpty {
-            print("\(Self.birdSpotLogTag) cache hit: \(cached.count) birds")
+            let capped = Array(cached.prefix(Self.birdSpottingSpeciesLimit))
+            print("\(Self.birdSpotLogTag) cache hit: \(cached.count) birds, using first \(capped.count)")
             await MainActor.run {
-                birds = cached
+                birds = capped
                 useStaticFallback = false
                 isLoading = false
                 loadError = nil
             }
             await updatePlaceName(for: coordinate)
             let pName = await MainActor.run { placeName }
-            BirdSpottingCache.shared.saveLast(key: cacheKey, birds: cached, placeName: pName)
+            BirdSpottingCache.shared.set(key: cacheKey, birds: capped)
+            BirdSpottingCache.shared.saveLast(key: cacheKey, birds: capped, placeName: pName)
             return
         }
         print("\(Self.birdSpotLogTag) fetching eBird + EOL…")
         await MainActor.run { isLoading = true; loadError = nil }
         let speciesList = await EBirdService.shared.fetchRecentSpecies(coordinate: coordinate, daysBack: 30)
         if speciesList.isEmpty {
-            print("\(Self.birdSpotLogTag) eBird returned 0 species, using static list")
+            print("\(Self.birdSpotLogTag) eBird returned 0 species, using static list (\(staticCapped.count))")
             await MainActor.run {
-                birds = Self.staticFallbackBirds
+                birds = staticCapped
                 useStaticFallback = true
                 placeName = nil
                 isLoading = false
                 loadError = nil
             }
-            BirdSpottingCache.shared.set(key: staticKey, birds: Self.staticFallbackBirds)
-            BirdSpottingCache.shared.saveLast(key: staticKey, birds: Self.staticFallbackBirds, placeName: nil)
+            BirdSpottingCache.shared.set(key: staticKey, birds: staticCapped)
+            BirdSpottingCache.shared.saveLast(key: staticKey, birds: staticCapped, placeName: nil)
             return
         }
-        let limit = min(10, speciesList.count)
-        let slice = Array(speciesList.prefix(limit))
+        let slice = Array(speciesList.prefix(Self.birdSpottingSpeciesLimit))
 
         // Show list immediately with placeholders so birds appear as each one loads
         let placeholders: [BirdInfo] = slice.map { sp in
@@ -2006,10 +2009,11 @@ struct BirdSpottingView: View {
         }
 
         let finalBirds = await MainActor.run { birds }
-        BirdSpottingCache.shared.set(key: cacheKey, birds: finalBirds)
+        let capped = Array(finalBirds.prefix(Self.birdSpottingSpeciesLimit))
+        BirdSpottingCache.shared.set(key: cacheKey, birds: capped)
         let pName = await MainActor.run { placeName }
-        BirdSpottingCache.shared.saveLast(key: cacheKey, birds: finalBirds, placeName: pName)
-        print("\(Self.birdSpotLogTag) all \(finalBirds.count) birds loaded")
+        BirdSpottingCache.shared.saveLast(key: cacheKey, birds: capped, placeName: pName)
+        print("\(Self.birdSpotLogTag) all \(capped.count) birds loaded")
     }
 
     private func updatePlaceName(for coordinate: CLLocationCoordinate2D) async {
@@ -2042,9 +2046,10 @@ struct BirdSpottingView: View {
             key = "bird_static_\(month)"
         }
         if let cached = BirdSpottingCache.shared.get(key: key), !cached.isEmpty {
-            print("\(Self.birdSpotLogTag) restore from in-memory cache: \(cached.count) birds")
+            let capped = Array(cached.prefix(Self.birdSpottingSpeciesLimit))
+            print("\(Self.birdSpotLogTag) restore from in-memory cache: \(cached.count) birds, using first \(capped.count)")
             await MainActor.run {
-                birds = cached
+                birds = capped
                 useStaticFallback = (key.hasPrefix("bird_static_"))
                 loadError = nil
             }
@@ -2054,9 +2059,10 @@ struct BirdSpottingView: View {
             return
         }
         if let (restored, pName) = BirdSpottingCache.shared.getLast(currentKey: key) {
-            print("\(Self.birdSpotLogTag) restore from persisted list: \(restored.count) birds")
+            let capped = Array(restored.prefix(Self.birdSpottingSpeciesLimit))
+            print("\(Self.birdSpotLogTag) restore from persisted list: \(restored.count) birds, using first \(capped.count)")
             await MainActor.run {
-                birds = restored
+                birds = capped
                 useStaticFallback = (key.hasPrefix("bird_static_"))
                 placeName = pName
                 loadError = nil
@@ -2176,9 +2182,6 @@ struct BirdSpottingView: View {
                                         Text(bird.name)
                                             .fontWeight(.medium)
                                         Spacer()
-                                        Text(bird.seasonalNote)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
                                     }
                                     .padding(.vertical, 4)
                                 }
@@ -2234,7 +2237,7 @@ struct BirdSpottingView: View {
 
                     if !extraSpottedBirdNames.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Also spotted")
+                            Text("Also spotted (+\(extraSpottedBirdNames.count) from photos)")
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.secondary)
@@ -2481,7 +2484,7 @@ struct BirdSpottingView: View {
                     setSpotted(listBird, true)
                     print("\(Self.birdSpotLogTag) addToSpotted: also marked list '\(listBird.name)' (in '\(result.commonName)')")
                 }
-                print("\(Self.birdSpotLogTag) addToSpotted: new '\(result.commonName)' (not in 10) → added to Also spotted, codes=\(result.speciesCode ?? "nil")")
+                print("\(Self.birdSpotLogTag) addToSpotted: new '\(result.commonName)' (not in \(Self.birdSpottingSpeciesLimit)) → added to Also spotted, codes=\(result.speciesCode ?? "nil")")
             }
         }
         let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
@@ -2584,11 +2587,6 @@ struct BirdCard: View {
                         Text(bird.name)
                             .font(.headline)
                             .foregroundColor(.primary)
-                        if !bird.seasonalNote.isEmpty {
-                            Text(bird.seasonalNote)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
                     }
                     
                     Spacer()
