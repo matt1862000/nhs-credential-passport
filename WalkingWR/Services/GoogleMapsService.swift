@@ -6412,12 +6412,13 @@ class GoogleMapsService: ObservableObject {
         // Throttle: log at most once per 5s to avoid I/O spam when evaluating many legs/candidates
         if Self.shouldPrintRouteFlowFreeAPI() {
             let orsFirst = useOSRM && canUseOpenRouteService
-            print("[ROUTE_FLOW] stage=free_api \(useOSRM ? (orsFirst ? "ORS_first_then_OSRM" : "OSRM") : "skip(\(osrmReason))") ORS=\(canUseOpenRouteService ? "yes" : "no") GH_key=\(graphHopperApiKey.isEmpty ? "no" : "yes")")
+            print("[ROUTE_FLOW] stage=free_api \(useOSRM ? (orsFirst ? "ORS_first_then_GH_then_OSRM" : "OSRM") : "skip(\(osrmReason))") ORS=\(canUseOpenRouteService ? "yes" : "no") GH_key=\(graphHopperApiKey.isEmpty ? "no" : "yes")")
         }
         
         if useOSRM {
             // Prefer ORS (HeiGIT) when we have proxy or key — more reliable than public OSRM (which often times out).
-            // Order: ORS → OSRM → GraphHopper → MapKit. Skip ORS when skipHeiGITForBackground (throttled phase).
+            // Order: ORS → (on ORS fail) GraphHopper → OSRM → MapKit. When ORS hits limits we use GraphHopper before OSRM to spread load.
+            // Skip ORS when skipHeiGITForBackground (throttled phase).
             if !skipHeiGITForBackground && canUseOpenRouteService {
                 do {
                     let orsResult = try await getOpenRouteServiceWalkingDirections(
@@ -6444,10 +6445,40 @@ class GoogleMapsService: ObservableObject {
                     orsDirResult.routingSourceUsed = "OpenRouteService"
                     return orsDirResult
                 } catch {
-                    print("🛤️ OpenRouteService (primary) failed: \(error.localizedDescription), trying OSRM then GraphHopper...")
+                    print("🛤️ OpenRouteService (primary) failed: \(error.localizedDescription), trying GraphHopper then OSRM...")
+                    // When ORS hits limits, try GraphHopper before OSRM so we spread load instead of sending everything to OSRM
+                    if !graphHopperApiKey.isEmpty {
+                        do {
+                            let ghResult = try await getGraphHopperWalkingDirections(
+                                origin: origin,
+                                destination: destination,
+                                waypoints: waypoints
+                            )
+                            let leg = DirectionsLeg(
+                                distance: DirectionsValue(text: formatDistance(ghResult.distance), value: ghResult.distance),
+                                duration: DirectionsValue(text: formatDuration(ghResult.duration), value: ghResult.duration),
+                                startAddress: nil,
+                                endAddress: nil,
+                                steps: nil
+                            )
+                            let encodedPolyline = encodePolyline(ghResult.polyline)
+                            print("🛤️ GraphHopper success (after ORS failed): \(ghResult.distance)m, \(ghResult.duration / 60)min")
+                            var ghDirResult = DirectionsResult(
+                                legs: [leg],
+                                overviewPolyline: OverviewPolyline(points: encodedPolyline),
+                                summary: nil,
+                                warnings: nil,
+                                waypointOrder: optimizedWaypointOrder
+                            )
+                            ghDirResult.routingSourceUsed = "GraphHopper"
+                            return ghDirResult
+                        } catch {
+                            print("🛤️ GraphHopper failed after ORS: \(error.localizedDescription), trying OSRM...")
+                        }
+                    }
                 }
             }
-            // OSRM for all legs at once (when ORS not used or failed)
+            // OSRM for all legs at once (when ORS not used or failed or GraphHopper failed)
             recordOSRMCall()
             let needsCalibration = shouldCalibrateOSRM()
             print("🗺️ Using OSRM for directions (MapKit near limit)\(needsCalibration ? " + calibrating" : "")")
