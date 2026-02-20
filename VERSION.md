@@ -4,7 +4,7 @@
 
 **Last Stable Release:** `1.9.15 (Build 186)`
 
-**Current Version:** `2.1.19 (Build 313)`
+**Current Version:** `2.1.20 (Build 397)`
 
 The current codebase contains experimental changes and should **NOT** be used for production releases.
 
@@ -12,7 +12,11 @@ The current codebase contains experimental changes and should **NOT** be used fo
 
 ## Version History
 
-### 2.1.19 (Build 313) - Current
+### 2.1.20 (Build 397) - Current
+- Road snap: replicate Overpass preferred-road logic on ORS (address-derived road name → Overpass snap); when Overpass fails for those waypoints, fall back to Google Snap to Roads
+- Previous: 2.1.19 (Build 396)
+
+### 2.1.19 (Build 313)
 - Pre-populated routes: drop 1 (first/middle/last waypoint) then drop 2 (single waypoint) when route too long; single-waypoint from area POIs (e.g. Oriental Chef); distance-dependent walking path factor (1.5 / 1.35 / 1.25) for duration estimates
 - Previous: 2.1.18 (Build 312)
 

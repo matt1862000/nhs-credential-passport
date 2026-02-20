@@ -7978,14 +7978,59 @@ class GoogleMapsService: ObservableObject {
     }
     
     // MARK: - Optimistic hybrid: ORS Snap V2 first, then Overpass, then Google, then ORS retry (HeiGIT)
+    /// Applies Overpass preferred-road override: for waypoints with an address-derived road name, snaps to that road via Overpass; others keep base coordinate.
+    /// When Overpass fails for a preferred-road waypoint, falls back to Google Snap to Roads for that waypoint.
+    private func applyPreferredRoadOverride(route: WalkingRoute, rawWaypoints: [CLLocationCoordinate2D], baseSnapped: [CLLocationCoordinate2D]) async -> [CLLocationCoordinate2D] {
+        typealias PreferredSnapResult = (index: Int, coord: CLLocationCoordinate2D?, hadPreferredRoad: Bool)
+        let preferredResults = await withTaskGroup(of: PreferredSnapResult.self) { group in
+            for (index, _) in rawWaypoints.enumerated() {
+                group.addTask {
+                    let marker = route.qrMarkers[index]
+                    let roadName = self.extractRoadName(from: marker.location)
+                    guard let roadName = roadName else { return (index, nil, false) }
+                    let nearCoord = rawWaypoints[index]
+                    if let preferredPoint = await self.findNearestRoadPointWithFallback(near: nearCoord, radiusMeters: 100, preferredRoadName: roadName) {
+                        let distance = CLLocation(latitude: nearCoord.latitude, longitude: nearCoord.longitude)
+                            .distance(from: CLLocation(latitude: preferredPoint.latitude, longitude: preferredPoint.longitude))
+                        if distance > 10 {
+                            print("🛤️ [ROAD SNAP] Waypoint \(index+1) '\(marker.name)' overridden to preferred road '\(roadName)' (\(Int(distance))m)")
+                        }
+                        return (index, preferredPoint, true)
+                    }
+                    return (index, nil, true)
+                }
+            }
+            var results: [PreferredSnapResult] = []
+            for await result in group { results.append(result) }
+            return results.sorted { $0.index < $1.index }
+        }
+        var final = baseSnapped
+        for (index, preferredCoord, _) in preferredResults {
+            if let coord = preferredCoord { final[index] = coord }
+        }
+        // Where Overpass had a preferred road but failed, try Google Snap to Roads for those waypoints
+        let failedPreferredIndices = preferredResults.filter { $0.hadPreferredRoad && $0.coord == nil }.map(\.index)
+        if !failedPreferredIndices.isEmpty, !apiKey.isEmpty {
+            let failedPath = failedPreferredIndices.map { rawWaypoints[$0] }
+            if let googleSnapped = await snapPathToRoadsGoogle(path: failedPath), googleSnapped.count == failedPath.count {
+                for (offset, idx) in failedPreferredIndices.enumerated() {
+                    final[idx] = googleSnapped[offset]
+                }
+                print("🛤️ [ROAD SNAP] Overpass preferred-road failed for \(failedPreferredIndices.count) waypoint(s) — applied Google Snap to Roads fallback")
+            }
+        }
+        return final
+    }
+
     /// Snaps waypoints to roads: ORS Snap V2 first when key available; else Overpass per-waypoint; if any fail, Google batch; if Google fails, ORS Snap V2 retry; else Overpass partial.
     /// Returns snapped waypoints in same order as route.qrMarkers. Empty array if route has no waypoints.
     func snapWaypointsToRoads(route: WalkingRoute) async -> [CLLocationCoordinate2D] {
         let rawWaypoints = route.qrMarkers.map { $0.coordinate }
         guard !rawWaypoints.isEmpty else { return [] }
         if ORSService.shared.hasAPIKey, let orsSnapped = await ORSService.shared.fetchSnapV2(coordinates: rawWaypoints, radiusMeters: 100) {
-            print("[WALK_REFRESH] 🛤️ [ROAD SNAP] Waypoint snapping complete (\(orsSnapped.count) waypoints) — ORS Snap V2")
-            return orsSnapped
+            let final = await applyPreferredRoadOverride(route: route, rawWaypoints: rawWaypoints, baseSnapped: orsSnapped)
+            print("[WALK_REFRESH] 🛤️ [ROAD SNAP] Waypoint snapping complete (\(final.count) waypoints) — ORS Snap V2 + Overpass preferred-road override")
+            return final
         }
         typealias SnapResult = (index: Int, coord: CLLocationCoordinate2D, overpassSucceeded: Bool)
         let overpassResults = await withTaskGroup(of: SnapResult.self) { group in
@@ -8023,8 +8068,9 @@ class GoogleMapsService: ObservableObject {
             return googleSnapped
         }
         if ORSService.shared.hasAPIKey, let orsRetry = await ORSService.shared.fetchSnapV2(coordinates: rawWaypoints, radiusMeters: 100) {
-            print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(orsRetry.count) waypoints) — ORS Snap V2 retry (HeiGIT)")
-            return orsRetry
+            let finalRetry = await applyPreferredRoadOverride(route: route, rawWaypoints: rawWaypoints, baseSnapped: orsRetry)
+            print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(finalRetry.count) waypoints) — ORS Snap V2 retry (HeiGIT) + Overpass preferred-road override")
+            return finalRetry
         }
         let fallback = overpassResults.map { $0.coord }
         print("🛤️ [ROAD SNAP] Waypoint snapping complete (\(fallback.count) waypoints) — Overpass (some unchanged, Google and ORS retry failed)")
