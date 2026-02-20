@@ -1,0 +1,1077 @@
+{
+  "version": 2,
+  "lastUpdated": "2026-02-14T19:36:34.543753Z",
+  "postcodeAreas": [
+    {
+      "postcode": "B99",
+      "centerLatitude": 52.49595,
+      "centerLongitude": -1.89421,
+      "radiusMeters": 2500,
+      "sectors": [
+        {
+          "sector": "B99 1",
+          "centerLatitude": 52.49595,
+          "centerLongitude": -1.89421,
+          "pois": [
+            {
+              "placeId": "geograph_3818892",
+              "name": "Newtown Shopping Centre, Newtown",
+              "latitude": 52.497151,
+              "longitude": -1.896553,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5278240",
+              "name": "Baldwin House",
+              "latitude": 52.496163,
+              "longitude": -1.897292,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_386086",
+              "name": "Cobbles Beneath The Surface Of Bracebridge Street",
+              "latitude": 52.49436,
+              "longitude": -1.892435,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_386074",
+              "name": "Norton Factory Plaque",
+              "latitude": 52.49436,
+              "longitude": -1.892435,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_234749",
+              "name": "Another Derelict Factory",
+              "latitude": 52.497061,
+              "longitude": -1.896848,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5416944",
+              "name": "High Street, Newtown",
+              "latitude": 52.497959,
+              "longitude": -1.895225,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5275736",
+              "name": "Southern End Of The Crocodile Works Development",
+              "latitude": 52.496792,
+              "longitude": -1.897585,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5278243",
+              "name": "The Summer Lane Church Of Christ",
+              "latitude": 52.496343,
+              "longitude": -1.89788,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3373487",
+              "name": "Flats And Shops, North End Of Summer Lane B19",
+              "latitude": 52.496703,
+              "longitude": -1.897732,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2833091",
+              "name": "Crocodile Works, But Now Flats",
+              "latitude": 52.496703,
+              "longitude": -1.89788,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1266041",
+              "name": "All That's Left Of The Crocodile Works, Alma Street",
+              "latitude": 52.497332,
+              "longitude": -1.897584,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5275737",
+              "name": "New Flats In The Crocodile Works",
+              "latitude": 52.497332,
+              "longitude": -1.897731,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5417052",
+              "name": "Mondobongo",
+              "latitude": 52.498588,
+              "longitude": -1.895077,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_234753",
+              "name": "More Closed Down Factories.",
+              "latitude": 52.497063,
+              "longitude": -1.898321,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3818900",
+              "name": "Southbound Carriageway Of High Street, Newtown",
+              "latitude": 52.498678,
+              "longitude": -1.895224,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_43743",
+              "name": "Aston Newtown",
+              "latitude": 52.498858,
+              "longitude": -1.89537,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_677758",
+              "name": "Another Demolition Site In Porchester Street",
+              "latitude": 52.497333,
+              "longitude": -1.898615,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5416936",
+              "name": "The Bartons Arms, Newtown",
+              "latitude": 52.499038,
+              "longitude": -1.895223,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1671637",
+              "name": "The Barton Arms, Newtown",
+              "latitude": 52.499038,
+              "longitude": -1.895223,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5275741",
+              "name": "Os Benchmark - Aston, Bartons Arms",
+              "latitude": 52.499145,
+              "longitude": -1.89509,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5275748",
+              "name": "The Bartons Arms",
+              "latitude": 52.499218,
+              "longitude": -1.89537,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5275739",
+              "name": "The Bartons Arms, Aston",
+              "latitude": 52.499218,
+              "longitude": -1.89537,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206538",
+              "name": "A Birthday Walk For Ozzy (71)",
+              "latitude": 52.495346,
+              "longitude": -1.888603,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2958000",
+              "name": "Tower Block Off New John Street",
+              "latitude": 52.492836,
+              "longitude": -1.896858,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206536",
+              "name": "A Birthday Walk For Ozzy (69)",
+              "latitude": 52.495346,
+              "longitude": -1.888309,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206535",
+              "name": "A Birthday Walk For Ozzy (68)",
+              "latitude": 52.495346,
+              "longitude": -1.888309,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2620584",
+              "name": "Former Telsen Electric Company Ltd Building",
+              "latitude": 52.495346,
+              "longitude": -1.888309,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206540",
+              "name": "A Birthday Walk For Ozzy (72)",
+              "latitude": 52.494627,
+              "longitude": -1.888605,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206533",
+              "name": "A Birthday Walk For Ozzy (67)",
+              "latitude": 52.495795,
+              "longitude": -1.88816,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206532",
+              "name": "A Birthday Walk For Ozzy (66)",
+              "latitude": 52.496244,
+              "longitude": -1.888159,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206537",
+              "name": "A Birthday Walk For Ozzy (70)",
+              "latitude": 52.495076,
+              "longitude": -1.888309,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1890095",
+              "name": "On The Aston Expressway",
+              "latitude": 52.496154,
+              "longitude": -1.888012,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206541",
+              "name": "A Birthday Walk For Ozzy (73)",
+              "latitude": 52.493997,
+              "longitude": -1.888607,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7122283",
+              "name": "New Town Row, Looking Towards Aston",
+              "latitude": 52.492116,
+              "longitude": -1.895681,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206531",
+              "name": "A Birthday Walk For Ozzy (65)",
+              "latitude": 52.496783,
+              "longitude": -1.887716,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206543",
+              "name": "A Birthday Walk For Ozzy (74)",
+              "latitude": 52.493189,
+              "longitude": -1.889198,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7241725",
+              "name": "Westley Richards",
+              "latitude": 52.491846,
+              "longitude": -1.894945,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3307880",
+              "name": "Aston Expressway, Aston Bridge",
+              "latitude": 52.495524,
+              "longitude": -1.887425,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1291182",
+              "name": "A38(m) For Birmingham - Near The End, Birmingham Skyline",
+              "latitude": 52.495075,
+              "longitude": -1.887426,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7122478",
+              "name": "Factory Buildings, Pritchett Street, Birmingham",
+              "latitude": 52.491666,
+              "longitude": -1.894946,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3307871",
+              "name": "Aston Expressway (a38m)",
+              "latitude": 52.493548,
+              "longitude": -1.888313,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_701851",
+              "name": "Offices & Factory In New John Street",
+              "latitude": 52.491843,
+              "longitude": -1.892,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206530",
+              "name": "A Birthday Walk For Ozzy (64)",
+              "latitude": 52.497233,
+              "longitude": -1.88742,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_711468",
+              "name": "Brandauer",
+              "latitude": 52.493198,
+              "longitude": -1.899802,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1890101",
+              "name": "Under Dartmouth Circus",
+              "latitude": 52.49256,
+              "longitude": -1.889494,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206502",
+              "name": "A Birthday Walk For Ozzy (59)",
+              "latitude": 52.498762,
+              "longitude": -1.888447,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7122260",
+              "name": "Former Brandauer Works, New St John Street West, Birmingham",
+              "latitude": 52.492929,
+              "longitude": -1.899803,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206547",
+              "name": "A Birthday Walk For Ozzy (75)",
+              "latitude": 52.492739,
+              "longitude": -1.888904,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3307865",
+              "name": "Birmingham, Dartmouth Circus",
+              "latitude": 52.492829,
+              "longitude": -1.888757,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206507",
+              "name": "A Birthday Walk For Ozzy (60)",
+              "latitude": 52.498762,
+              "longitude": -1.8883,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1434023",
+              "name": "Seagull & Bt Tower",
+              "latitude": 52.491394,
+              "longitude": -1.89259,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2957966",
+              "name": "Clements Public House",
+              "latitude": 52.491306,
+              "longitude": -1.895241,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7122274",
+              "name": "New John Street West, Birmingham",
+              "latitude": 52.493019,
+              "longitude": -1.900245,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206499",
+              "name": "A Birthday Walk For Ozzy (58)",
+              "latitude": 52.499031,
+              "longitude": -1.888299,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206510",
+              "name": "A Birthday Walk For Ozzy (61)",
+              "latitude": 52.498671,
+              "longitude": -1.887564,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206528",
+              "name": "A Birthday Walk For Ozzy (63)",
+              "latitude": 52.497861,
+              "longitude": -1.886829,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206498",
+              "name": "A Birthday Walk For Ozzy (57)",
+              "latitude": 52.499301,
+              "longitude": -1.888299,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3794189",
+              "name": "The Albion At Aston",
+              "latitude": 52.495613,
+              "longitude": -1.886099,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6791912",
+              "name": "Grazebrook Beam Engine, Dartmouth Circus, Birmingham",
+              "latitude": 52.492469,
+              "longitude": -1.888316,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206550",
+              "name": "A Birthday Walk For Ozzy (77)",
+              "latitude": 52.492289,
+              "longitude": -1.888611,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_701861",
+              "name": "New John Street West",
+              "latitude": 52.493109,
+              "longitude": -1.900981,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2782781",
+              "name": "Grazebrook Engine On Dartmouth Circus",
+              "latitude": 52.492379,
+              "longitude": -1.888316,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2278063",
+              "name": "Grazebrook Beam Engine",
+              "latitude": 52.492379,
+              "longitude": -1.888316,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3061842",
+              "name": "Newcomen Society Visit To The Grazebrook Engine",
+              "latitude": 52.492469,
+              "longitude": -1.888169,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2619910",
+              "name": "Grazebrook Beam Engine At Dartmouth Circus, Aston, Birmingham",
+              "latitude": 52.492469,
+              "longitude": -1.888169,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2211838",
+              "name": "Grazebrook Beam Engine, Dartmouth Circus",
+              "latitude": 52.492469,
+              "longitude": -1.888169,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3794217",
+              "name": "A38(m) Aston Expressway",
+              "latitude": 52.492199,
+              "longitude": -1.888611,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1890086",
+              "name": "On The Aston Expressway",
+              "latitude": 52.497951,
+              "longitude": -1.886535,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_256298",
+              "name": "The Hp Sauce Factory",
+              "latitude": 52.497951,
+              "longitude": -1.886535,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3794209",
+              "name": "Boulton & Watt Blowing Engine, Dartmouth Circus, Birmingham",
+              "latitude": 52.492379,
+              "longitude": -1.888169,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2278060",
+              "name": "Grazebrook Engine",
+              "latitude": 52.492199,
+              "longitude": -1.888464,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206525",
+              "name": "A Birthday Walk For Ozzy (62)",
+              "latitude": 52.498401,
+              "longitude": -1.886681,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206495",
+              "name": "A Birthday Walk For Ozzy (56)",
+              "latitude": 52.499751,
+              "longitude": -1.888298,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2956270",
+              "name": "Former Factory On The Corner Of Summer Lane And Brearley Street",
+              "latitude": 52.491759,
+              "longitude": -1.899364,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3794193",
+              "name": "Whitehouse Street, Aston",
+              "latitude": 52.495343,
+              "longitude": -1.885657,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5278238",
+              "name": "Hodgson Tower, Newtown",
+              "latitude": 52.497516,
+              "longitude": -1.902444,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3794201",
+              "name": "Subway Underneath Dartmouth Circus, Birmingham",
+              "latitude": 52.492468,
+              "longitude": -1.887727,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206552",
+              "name": "A Birthday Walk For Ozzy (78)",
+              "latitude": 52.491571,
+              "longitude": -1.889349,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8206548",
+              "name": "A Birthday Walk For Ozzy (76)",
+              "latitude": 52.492109,
+              "longitude": -1.88817,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7122236",
+              "name": "Summer Lane, Birmingham",
+              "latitude": 52.49149,
+              "longitude": -1.89907,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2956374",
+              "name": "J C Newey Patentee",
+              "latitude": 52.49176,
+              "longitude": -1.899806,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6307866",
+              "name": "The A38 Becomes A38(m) In The Expressway Underpass",
+              "latitude": 52.49157,
+              "longitude": -1.888907,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7406706",
+              "name": "105-107 Brearley Street, Birmingham",
+              "latitude": 52.49176,
+              "longitude": -1.899953,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7122247",
+              "name": "Brearley Street, Birmingham",
+              "latitude": 52.49167,
+              "longitude": -1.899806,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1887924",
+              "name": "The Aston Expressway",
+              "latitude": 52.49885,
+              "longitude": -1.886532,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2956291",
+              "name": "Former J C Newey Works",
+              "latitude": 52.49167,
+              "longitude": -1.899953,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8191343",
+              "name": "E J Bowman, Aston",
+              "latitude": 52.494084,
+              "longitude": -1.885661,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_994128",
+              "name": "Birmingham And Fazeley Canal Towards Aston Junction",
+              "latitude": 52.490494,
+              "longitude": -1.891561,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

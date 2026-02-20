@@ -1,0 +1,43 @@
+{
+  "location" : {
+    "lat" : 53.682499999999997,
+    "lng" : -1.4915
+  },
+  "routes" : [
+    {
+      "actualDurationMinutes" : 33,
+      "cappedDisplayMinutes" : 25,
+      "distanceImpliedMin" : 31,
+      "distanceMeters" : 2522,
+      "targetDurationMinutes" : 20,
+      "waypointNames" : [
+        "Sun Lane Leisure"
+      ],
+      "waypoints" : [
+        {
+          "lat" : 53.6828717,
+          "lng" : -1.4922822,
+          "name" : "Sun Lane Leisure"
+        }
+      ]
+    },
+    {
+      "actualDurationMinutes" : 27,
+      "cappedDisplayMinutes" : 27,
+      "distanceImpliedMin" : 23,
+      "distanceMeters" : 1919,
+      "targetDurationMinutes" : 25,
+      "waypointNames" : [
+        "Howdens"
+      ],
+      "waypoints" : [
+        {
+          "lat" : 53.676885300000002,
+          "lng" : -1.4929479000000001,
+          "name" : "Howdens"
+        }
+      ]
+    }
+  ],
+  "timestamp" : "2026-02-11T13:45:18Z"
+}

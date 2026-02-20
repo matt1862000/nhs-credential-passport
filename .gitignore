@@ -76,3 +76,7 @@ serviceAccountKey.json
 
 # Xcode secrets (API keys — copy from Secrets.xcconfig.example)
 Secrets.xcconfig
+
+# Xcode build artifacts
+DerivedData/
+DerivedDataTerminal/

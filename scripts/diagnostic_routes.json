@@ -1,0 +1,299 @@
+{
+  "location" : {
+    "lat" : 53.682499999999997,
+    "lng" : -1.4915
+  },
+  "phases" : {
+    "apiHealth" : {
+      "google" : {
+        "calls" : 4,
+        "failures" : 0,
+        "successRate" : 1
+      },
+      "hasGoogleAPIKey" : true,
+      "osrm" : {
+        "calls" : 0,
+        "timeouts" : 0
+      },
+      "places" : {
+        "calls" : 0,
+        "failures" : 0
+      }
+    },
+    "cancelSave" : {
+      "match" : false,
+      "retrieved" : 0,
+      "stored" : 0
+    },
+    "crossBucketCache" : {
+      "requestedBucket" : 10,
+      "retrieved" : true,
+      "retrievedCount" : 1,
+      "routeDuration" : 13,
+      "stored" : true,
+      "storedBucket" : 15
+    },
+    "deadZoneFallback" : {
+      "naturalDeadZone" : false
+    },
+    "deduplication" : {
+      "buckets" : {
+        "10" : {
+          "avgJaccard" : 0.33000000000000002,
+          "duplicatePairs" : 1,
+          "routeCount" : 3,
+          "uniqueSignatures" : 2
+        }
+      }
+    },
+    "distanceConsistency" : {
+      "avgSpeedMpm" : 80.299999999999997,
+      "flaggedTooFast" : 0,
+      "flaggedTooSlow" : 0,
+      "totalRoutes" : 3
+    },
+    "googleRefresh" : {
+      "directionsPopulated" : true,
+      "durationChanged" : true,
+      "elapsedMs" : 5196,
+      "hasAPIKey" : true,
+      "polylineChanged" : true,
+      "post" : {
+        "directionsCount" : 14,
+        "distance" : 846,
+        "duration" : 11,
+        "polylineLen" : 227
+      },
+      "pre" : {
+        "directionsCount" : 12,
+        "distance" : 702,
+        "duration" : 9,
+        "polylineLen" : 119
+      },
+      "success" : true
+    },
+    "initialGeneration" : {
+      "buckets" : {
+        "10" : {
+          "liveRoutes" : 3,
+          "prepopRoutes" : 0,
+          "routes" : [
+            {
+              "deviationPercent" : 10,
+              "directionsCount" : 12,
+              "distanceMeters" : 702,
+              "durationMinutes" : 9,
+              "generationTimeMs" : 35623,
+              "impliedSpeedMpm" : 78,
+              "inBand" : true,
+              "isDeadZoneFallback" : false,
+              "name" : "Live 1",
+              "polylineLength" : 119,
+              "qrMarkerCount" : 1,
+              "source" : "live",
+              "travelToStartMeters" : 243,
+              "travelToStartMinutes" : 3,
+              "waypointCount" : 1,
+              "waypoints" : [
+                {
+                  "distanceFromOriginMeters" : 243,
+                  "index" : 0,
+                  "lat" : 53.683320500000001,
+                  "lng" : -1.4949238,
+                  "name" : "Cafe 19",
+                  "placeId" : "apple_3849061390510620331",
+                  "types" : [
+                    "cafe"
+                  ]
+                }
+              ]
+            },
+            {
+              "deviationPercent" : 30,
+              "directionsCount" : 11,
+              "distanceMeters" : 1058,
+              "durationMinutes" : 13,
+              "generationTimeMs" : 11314,
+              "impliedSpeedMpm" : 81.400000000000006,
+              "inBand" : false,
+              "isDeadZoneFallback" : false,
+              "name" : "Live 2",
+              "polylineLength" : 89,
+              "qrMarkerCount" : 1,
+              "source" : "live",
+              "travelToStartMeters" : 480,
+              "travelToStartMinutes" : 6,
+              "waypointCount" : 1,
+              "waypoints" : [
+                {
+                  "distanceFromOriginMeters" : 480,
+                  "index" : 0,
+                  "lat" : 53.686816743708413,
+                  "lng" : -1.4915,
+                  "name" : "Scenic North Walk",
+                  "placeId" : "topology_0",
+                  "types" : [
+                    "point_of_interest"
+                  ]
+                }
+              ]
+            },
+            {
+              "deviationPercent" : 30,
+              "directionsCount" : 11,
+              "distanceMeters" : 1058,
+              "durationMinutes" : 13,
+              "generationTimeMs" : 5075,
+              "impliedSpeedMpm" : 81.400000000000006,
+              "inBand" : false,
+              "isDeadZoneFallback" : false,
+              "name" : "Live 3",
+              "polylineLength" : 89,
+              "qrMarkerCount" : 1,
+              "source" : "live",
+              "travelToStartMeters" : 480,
+              "travelToStartMinutes" : 6,
+              "waypointCount" : 1,
+              "waypoints" : [
+                {
+                  "distanceFromOriginMeters" : 480,
+                  "index" : 0,
+                  "lat" : 53.686816743708413,
+                  "lng" : -1.4915,
+                  "name" : "Scenic North Walk",
+                  "placeId" : "topology_0",
+                  "types" : [
+                    "point_of_interest"
+                  ]
+                }
+              ]
+            }
+          ],
+          "timeMs" : 52045
+        }
+      }
+    },
+    "permutation" : {
+      "permutable" : 0,
+      "tested" : 0,
+      "uniqueSignatures" : 0
+    },
+    "plusOneGeneration" : {
+      "results" : [
+        {
+          "bucket" : 15,
+          "deviationPercent" : 26.699999999999999,
+          "distanceMeters" : 946,
+          "durationMinutes" : 11,
+          "impliedSpeedMpm" : 86,
+          "inBand" : false,
+          "success" : true,
+          "timedOut" : false,
+          "timeMs" : 6805,
+          "travelToStartMeters" : 338,
+          "waypointCount" : 1,
+          "waypoints" : [
+            {
+              "distanceFromOriginMeters" : 338,
+              "index" : 0,
+              "lat" : 53.680037499999997,
+              "lng" : -1.494505,
+              "name" : "Trinity Medical Centre",
+              "placeId" : "ChIJXeRKJf9meUgRnEkq09Iag2o",
+              "types" : [
+
+              ]
+            }
+          ]
+        },
+        {
+          "bucket" : 25,
+          "deviationPercent" : 4,
+          "distanceMeters" : 2082,
+          "durationMinutes" : 26,
+          "impliedSpeedMpm" : 80.099999999999994,
+          "inBand" : true,
+          "success" : true,
+          "timedOut" : false,
+          "timeMs" : 8431,
+          "travelToStartMeters" : 557,
+          "waypointCount" : 2,
+          "waypoints" : [
+            {
+              "distanceFromOriginMeters" : 557,
+              "index" : 0,
+              "lat" : 53.685681299999999,
+              "lng" : -1.4980310999999999,
+              "name" : "Wakefield",
+              "placeId" : "ChIJ57kYlQFneUgReRKy6GmEsDE",
+              "types" : [
+
+              ]
+            },
+            {
+              "distanceFromOriginMeters" : 522,
+              "index" : 1,
+              "lat" : 53.682121599999995,
+              "lng" : -1.4993984,
+              "name" : "Holiday Inn Express Wakefield by IHG",
+              "placeId" : "ChIJbe5s0P1meUgRwznBjorC1tQ",
+              "types" : [
+
+              ]
+            }
+          ]
+        },
+        {
+          "bucket" : 40,
+          "deviationPercent" : 0,
+          "distanceMeters" : 3218,
+          "durationMinutes" : 40,
+          "impliedSpeedMpm" : 80.5,
+          "inBand" : true,
+          "success" : true,
+          "timedOut" : false,
+          "timeMs" : 9649,
+          "travelToStartMeters" : 1146,
+          "waypointCount" : 1,
+          "waypoints" : [
+            {
+              "distanceFromOriginMeters" : 1146,
+              "index" : 0,
+              "lat" : 53.683298977413799,
+              "lng" : -1.4741465708148891,
+              "name" : "Scenic East Walk",
+              "placeId" : "topology_85",
+              "types" : [
+                "point_of_interest"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "poiQuality" : {
+      "diversityPerBucket" : {
+        "10" : 1
+      },
+      "junkNames" : [
+
+      ],
+      "junkNamesFound" : 0,
+      "totalPOIs" : 3,
+      "typeDistribution" : {
+        "cafe" : 1,
+        "point_of_interest" : 2
+      }
+    },
+    "travelToStart" : {
+      "avgPercent" : 50.100000000000001,
+      "flaggedRoutes" : 3,
+      "maxPercent" : 60,
+      "totalRoutes" : 3
+    }
+  },
+  "timestamp" : "2026-02-14T10:33:19Z",
+  "totalInBand" : 1,
+  "totalRoutes" : 3,
+  "totalTimeSeconds" : 87.519999999999996
+}

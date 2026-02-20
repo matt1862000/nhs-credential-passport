@@ -1,0 +1,1089 @@
+{
+  "version": 2,
+  "lastUpdated": "2026-02-14T19:29:05.293821Z",
+  "postcodeAreas": [
+    {
+      "postcode": "B80",
+      "centerLatitude": 52.274,
+      "centerLongitude": -1.88901,
+      "radiusMeters": 2500,
+      "sectors": [
+        {
+          "sector": "B80 7",
+          "centerLatitude": 52.274,
+          "centerLongitude": -1.88901,
+          "pois": [
+            {
+              "placeId": "geograph_1904641",
+              "name": "Converted Building (with Sculptures)",
+              "latitude": 52.27401,
+              "longitude": -1.888865,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1904646",
+              "name": "River Arrow",
+              "latitude": 52.27401,
+              "longitude": -1.889597,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8016967",
+              "name": "Ridge And Furrow Near Studley",
+              "latitude": 52.274818,
+              "longitude": -1.88769,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_4904043",
+              "name": "Bench On Castle Road Studley",
+              "latitude": 52.274367,
+              "longitude": -1.886079,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1486071",
+              "name": "Priory Farm, Studley",
+              "latitude": 52.275002,
+              "longitude": -1.892086,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6297992",
+              "name": "Footbridge Over The River Arrow At Studley",
+              "latitude": 52.27581,
+              "longitude": -1.891791,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_4904045",
+              "name": "Junction Castle Road Hardwick Lane Studley",
+              "latitude": 52.273646,
+              "longitude": -1.884762,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6297989",
+              "name": "Bend In The River Arrow At Studley",
+              "latitude": 52.275991,
+              "longitude": -1.892377,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_215831",
+              "name": "Studley Fire Station",
+              "latitude": 52.273511,
+              "longitude": -1.893951,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8016892",
+              "name": "Linear Feature, The Park, Studley",
+              "latitude": 52.270863,
+              "longitude": -1.889019,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6191339",
+              "name": "Field Entrance Off Castle Road, Studley",
+              "latitude": 52.273259,
+              "longitude": -1.883825,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_210142",
+              "name": "Traffic Through Studley That Badly Needs A Bypass",
+              "latitude": 52.274105,
+              "longitude": -1.894434,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6298911",
+              "name": "Former Police Station In Studley",
+              "latitude": 52.273655,
+              "longitude": -1.894435,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2842404",
+              "name": "Redditch, Boundary Sign",
+              "latitude": 52.274285,
+              "longitude": -1.89458,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6191338",
+              "name": "Sign For The Bell Inn, Studley",
+              "latitude": 52.273655,
+              "longitude": -1.894581,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3977245",
+              "name": "One-off — Diy Shop Fascia, Alcester Road, Studley",
+              "latitude": 52.273116,
+              "longitude": -1.894436,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6191340",
+              "name": "Castle Road, Studley",
+              "latitude": 52.272926,
+              "longitude": -1.883591,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6191337",
+              "name": "The Bell Inn, Studley",
+              "latitude": 52.273565,
+              "longitude": -1.894728,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3062032",
+              "name": "The Bell, Studley",
+              "latitude": 52.273386,
+              "longitude": -1.894728,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2054505",
+              "name": "View Of Studley",
+              "latitude": 52.273278,
+              "longitude": -1.894699,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3977277",
+              "name": "Chimneys Of Claremont House, Corner Of Castle Road And Alcester Road, Studley",
+              "latitude": 52.272126,
+              "longitude": -1.893999,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1486035",
+              "name": "Jigsaw House",
+              "latitude": 52.272126,
+              "longitude": -1.893999,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1904592",
+              "name": "Path Along The River",
+              "latitude": 52.271219,
+              "longitude": -1.885354,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2054506",
+              "name": "The Barley Mow, Studley",
+              "latitude": 52.274833,
+              "longitude": -1.894725,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1486062",
+              "name": "Central Studley",
+              "latitude": 52.272846,
+              "longitude": -1.894583,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6191335",
+              "name": "Roundabout On The A435, Studley",
+              "latitude": 52.274555,
+              "longitude": -1.894872,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_4626434",
+              "name": "Roundabout And The Barley Mow Public House Studley",
+              "latitude": 52.274644,
+              "longitude": -1.894872,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7846825",
+              "name": "Aldi Supermarket In Studley",
+              "latitude": 52.275094,
+              "longitude": -1.894724,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2054510",
+              "name": "A435 In Studley",
+              "latitude": 52.275238,
+              "longitude": -1.894739,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3977272",
+              "name": "Co-op Car Park And Alcester Road Shops, Studley",
+              "latitude": 52.272936,
+              "longitude": -1.894876,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7846827",
+              "name": "Barley Mow Pub, Studley",
+              "latitude": 52.274824,
+              "longitude": -1.895018,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_8016903",
+              "name": "River Arrow, The Park, Studley",
+              "latitude": 52.271039,
+              "longitude": -1.885208,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1904650",
+              "name": "Studley Methodist Church",
+              "latitude": 52.272037,
+              "longitude": -1.894292,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3999453",
+              "name": "Dealing With A Flood, High Street, Studley: 2",
+              "latitude": 52.274465,
+              "longitude": -1.895166,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3999447",
+              "name": "Dealing With A Flood, High Street, Studley: 1",
+              "latitude": 52.274465,
+              "longitude": -1.895166,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3977287",
+              "name": "War Memorial, Alcester Road, Studley",
+              "latitude": 52.272037,
+              "longitude": -1.894585,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3977263",
+              "name": "Bed Shop, Marble Alley, Studley",
+              "latitude": 52.273116,
+              "longitude": -1.895315,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6191336",
+              "name": "Redditch Road, Studley",
+              "latitude": 52.274555,
+              "longitude": -1.895458,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1486055",
+              "name": "In Need Of Tlc",
+              "latitude": 52.271407,
+              "longitude": -1.894,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6298915",
+              "name": "Studley War Memorial",
+              "latitude": 52.272037,
+              "longitude": -1.894732,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1902317",
+              "name": "Alcester Road, Studley",
+              "latitude": 52.271227,
+              "longitude": -1.893854,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1485978",
+              "name": "Shops, Studley",
+              "latitude": 52.271227,
+              "longitude": -1.893854,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1486334",
+              "name": "Slice Of History",
+              "latitude": 52.271577,
+              "longitude": -1.883448,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2668156",
+              "name": "River Arrow Scene, Studley",
+              "latitude": 52.271397,
+              "longitude": -1.883595,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1904635",
+              "name": "Warwickshire Farmland",
+              "latitude": 52.273913,
+              "longitude": -1.882123,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1902322",
+              "name": "Pardoe Court, Studley",
+              "latitude": 52.271138,
+              "longitude": -1.894294,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_4904050",
+              "name": "The Old Castle Studley",
+              "latitude": 52.272475,
+              "longitude": -1.88242,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_60157",
+              "name": "The A435 At Studley",
+              "latitude": 52.276802,
+              "longitude": -1.894427,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1731483",
+              "name": "Twists And Turns",
+              "latitude": 52.271577,
+              "longitude": -1.883155,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1904574",
+              "name": "Towards The River",
+              "latitude": 52.270141,
+              "longitude": -1.88565,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1904581",
+              "name": "Bridge Over The River",
+              "latitude": 52.271127,
+              "longitude": -1.88345,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1731503",
+              "name": "Foot Bridge",
+              "latitude": 52.271127,
+              "longitude": -1.88345,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_4904047",
+              "name": "Entrance Gate To The Church Of The Nativity Of The Blessed Virgin Mary Studley",
+              "latitude": 52.271756,
+              "longitude": -1.882715,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6297963",
+              "name": "The Tower Of The Church Of The Nativity Of The Blessed Virgin Mary At Studley",
+              "latitude": 52.271846,
+              "longitude": -1.882422,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1730761",
+              "name": "Church Reflection",
+              "latitude": 52.271846,
+              "longitude": -1.882422,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_162948",
+              "name": "Studley Church",
+              "latitude": 52.270499,
+              "longitude": -1.884184,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_161603",
+              "name": "Footbridge Over The Arrow",
+              "latitude": 52.270499,
+              "longitude": -1.884184,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1904626",
+              "name": "Church Of The Nativity Of The Blessed Virgin Mary - Detail [2]",
+              "latitude": 52.271935,
+              "longitude": -1.882275,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1904623",
+              "name": "Church Of The Nativity Of The Blessed Virgin Mary - Detail [1]",
+              "latitude": 52.271935,
+              "longitude": -1.882275,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2054501",
+              "name": "The Main Road Through Studley",
+              "latitude": 52.270247,
+              "longitude": -1.893461,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_2054514",
+              "name": "A435 Leaving Studley",
+              "latitude": 52.276712,
+              "longitude": -1.895175,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_161605",
+              "name": "The Old Castle, Studley",
+              "latitude": 52.271396,
+              "longitude": -1.882716,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_161604",
+              "name": "Church Of The Nativity Of The Blessed Virgin Mary, Studley",
+              "latitude": 52.271396,
+              "longitude": -1.882716,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7812043",
+              "name": "Studley Parish Church",
+              "latitude": 52.271846,
+              "longitude": -1.882275,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_7668145",
+              "name": "St Mary's Church, Studley",
+              "latitude": 52.271846,
+              "longitude": -1.882275,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6297967",
+              "name": "The South Elevation Of The Church Of The Nativity Of The Blessed Virgin Mary At Studley",
+              "latitude": 52.271846,
+              "longitude": -1.882275,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1904605",
+              "name": "Footpath Meets Road",
+              "latitude": 52.271486,
+              "longitude": -1.882569,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_4904046",
+              "name": "Church Of The Nativity Of The Blessed Virgin Mary Studley",
+              "latitude": 52.271935,
+              "longitude": -1.882128,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1904631",
+              "name": "Church Of The Nativity Of The Blessed Virgin Mary - Detail [3]",
+              "latitude": 52.271935,
+              "longitude": -1.882128,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_4894632",
+              "name": "Alcester A435 Heading North",
+              "latitude": 52.270148,
+              "longitude": -1.893564,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3482502",
+              "name": "Manor House, Studley",
+              "latitude": 52.269878,
+              "longitude": -1.892978,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1902333",
+              "name": "The Manor House, Studley",
+              "latitude": 52.269878,
+              "longitude": -1.892978,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_130985",
+              "name": "Street Scene On The A435 At Studley Village",
+              "latitude": 52.270508,
+              "longitude": -1.894442,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3062037",
+              "name": "The Victoria Works, Studley",
+              "latitude": 52.275006,
+              "longitude": -1.896776,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1918667",
+              "name": "Studley Church",
+              "latitude": 52.271755,
+              "longitude": -1.881982,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_5845797",
+              "name": "Studley Castle: Aerial 2018",
+              "latitude": 52.271935,
+              "longitude": -1.881835,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_4959720",
+              "name": "Redditch Road Studley",
+              "latitude": 52.275096,
+              "longitude": -1.896776,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1902355",
+              "name": "Into Open Fields",
+              "latitude": 52.269156,
+              "longitude": -1.890196,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6192086",
+              "name": "House On Alcester Road, Studley",
+              "latitude": 52.269698,
+              "longitude": -1.892979,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1904583",
+              "name": "River Arrow",
+              "latitude": 52.270767,
+              "longitude": -1.882864,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3062033",
+              "name": "Shakespeare Inn, Studley",
+              "latitude": 52.275365,
+              "longitude": -1.896922,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6192083",
+              "name": "Victorian Postbox On Alcester Road, Studley",
+              "latitude": 52.269608,
+              "longitude": -1.893096,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6974328",
+              "name": "Car Park Footpath",
+              "latitude": 52.271859,
+              "longitude": -1.896637,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_4608992",
+              "name": "Bridleway Along The River Arrow",
+              "latitude": 52.271036,
+              "longitude": -1.882131,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6975033",
+              "name": "The Pool, Medical Centre",
+              "latitude": 52.271409,
+              "longitude": -1.896345,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1902344",
+              "name": "Victorian Pillar Box, Alcester Road",
+              "latitude": 52.269428,
+              "longitude": -1.893126,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_6934738",
+              "name": "St Mary Church",
+              "latitude": 52.269248,
+              "longitude": -1.89254,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_3935061",
+              "name": "St Mary’s Roman Catholic Church, Studley",
+              "latitude": 52.269248,
+              "longitude": -1.892687,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            },
+            {
+              "placeId": "geograph_1902346",
+              "name": "St Mary's, Studley",
+              "latitude": 52.269248,
+              "longitude": -1.892833,
+              "types": [
+                "geograph"
+              ],
+              "vicinity": null,
+              "source": "geograph",
+              "rating": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
