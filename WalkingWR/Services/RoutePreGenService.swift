@@ -483,7 +483,7 @@ final class RoutePreGenService: ObservableObject {
     /// and distance at least 50 m/min implied. Same logic as RouteSelectionView.isRouteInBand.
     static func isRouteInBand(_ route: WalkingRoute, targetDuration: Int) -> Bool {
         let rounded = RouteCacheService.roundToNearest5Minutes(targetDuration)
-        let isEdge = rounded <= 5 || rounded >= 55
+        let isEdge = rounded <= 10 || rounded >= 55
         let minPct = isEdge ? 0.75 : 0.80
         let maxPct = isEdge ? 1.25 : 1.20
         let minAcc = Int(Double(rounded) * minPct)

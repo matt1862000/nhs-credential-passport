@@ -332,8 +332,8 @@ class PrePopulatedPOIGenerator: ObservableObject {
         print("📦 Starting database generation")
         print("📦 ========================================")
         print("📦 Postcode areas: \(postcodeAreas.count)")
-        print("📦 Route durations: 5, 10, 15, 20, 30, 45, 60 minutes")
-        print("📦 Expected routes: ~\(postcodeAreas.count * 7) (some may fail validation)")
+        print("📦 Route durations: 10, 15, 20, 30, 45, 60 minutes")
+        print("📦 Expected routes: ~\(postcodeAreas.count * 6) (some may fail validation)")
         print("📦 ========================================")
         
         // v2.0.3: Fix concurrency - use actor to safely collect results
@@ -418,19 +418,19 @@ class PrePopulatedPOIGenerator: ObservableObject {
                     )
                 }
                 
-                // Generate routes for common durations (5, 10, 15, 20, 30, 45, 60 minutes)
-                print("   🗺️ Generating routes for 7 durations (5, 10, 15, 20, 30, 45, 60 min)...")
+                // Generate routes for common durations (10, 15, 20, 30, 45, 60 minutes)
+                print("   🗺️ Generating routes for 6 durations (10, 15, 20, 30, 45, 60 min)...")
                 // v2.0.3: Fix concurrency - build route groups immutably
                 var routeGroups: [PrePopulatedPOIService.PrePopulatedPOIDatabase.PrePopulatedRoute] = []
-                let durationsToGenerate = [5, 10, 15, 20, 30, 45, 60]
+                let durationsToGenerate = [10, 15, 20, 30, 45, 60]
                 
                 // Process durations sequentially to avoid concurrency issues
                 for (durationIndex, duration) in durationsToGenerate.enumerated() {
                     await MainActor.run {
                         currentDuration = duration
-                        currentStatus = "\(area.postcode): Route \(durationIndex + 1)/7 (\(duration)min)..."
+                        currentStatus = "\(area.postcode): Route \(durationIndex + 1)/6 (\(duration)min)..."
                     }
-                    print("   🗺️ [\(durationIndex + 1)/7] Generating \(duration)min route...")
+                    print("   🗺️ [\(durationIndex + 1)/6] Generating \(duration)min route...")
                     
                     do {
                         // IMPORTANT: Use OSRM for route generation (not MapKit)
@@ -719,11 +719,11 @@ class PrePopulatedPOIGenerator: ObservableObject {
                 longitude: area.centerLongitude
             )
             
-            // Generate routes for common durations (5, 10, 15, 20, 30, 45, 60 minutes)
+            // Generate routes for common durations (10, 15, 20, 30, 45, 60 minutes)
             // IMPORTANT: Use OSRM (not MapKit) - Apple doesn't allow caching MapKit routes
             print("   🗺️ Generating routes using OSRM (OSM data, cacheable)...")
             var routeGroups: [PrePopulatedPOIService.PrePopulatedPOIDatabase.PrePopulatedRoute] = []
-            let durationsToGenerate = [5, 10, 15, 20, 30, 45, 60]
+            let durationsToGenerate = [10, 15, 20, 30, 45, 60]
             
             for duration in durationsToGenerate {
                 await MainActor.run {

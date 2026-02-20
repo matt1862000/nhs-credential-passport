@@ -831,7 +831,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     /// Replicate isRouteInBand logic from RouteSelectionView
     private static func diagnosticIsRouteInBand(durationMinutes: Int, distanceMeters: Int, targetDuration: Int) -> Bool {
         let rounded = RouteCacheService.roundToNearest5Minutes(targetDuration)
-        let isEdgeCase = rounded <= 5 || rounded >= 55
+        let isEdgeCase = rounded <= 10 || rounded >= 55
         let minPct: Double = isEdgeCase ? 0.75 : 0.80
         let maxPct: Double = isEdgeCase ? 1.25 : 1.20
         let minDuration = Int(floor(Double(rounded) * minPct))

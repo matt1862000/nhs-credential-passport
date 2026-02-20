@@ -5921,7 +5921,7 @@ struct LocalRoutePickerSheet: View {
     /// Validity band for requested duration (same as RouteCacheService: 80–120%, edge 75–125%). Applies to all buckets.
     private static func minMaxAcceptableMinutes(for selectedDuration: Int) -> (min: Int, max: Int) {
         let rounded = RouteCacheService.roundToNearest5Minutes(selectedDuration)
-        let isEdge = rounded <= 5 || rounded >= 55
+        let isEdge = rounded <= 10 || rounded >= 55
         let minPercent = isEdge ? 0.75 : 0.80
         let maxPercent = isEdge ? 1.25 : 1.20
         let minAcceptable = Int(Double(rounded) * minPercent)
@@ -5931,7 +5931,7 @@ struct LocalRoutePickerSheet: View {
     
     /// Minimum route distance (m) for a route to count as in-band for the given duration bucket. Prevents short walks (e.g. 800 m) being shown as in-band for long targets. Generalisable to all buckets.
     private static func minDistanceMetersForInBand(for selectedDuration: Int) -> Int {
-        let rounded = max(1, RouteCacheService.roundToNearest5Minutes(selectedDuration))
+        let rounded = max(10, RouteCacheService.roundToNearest5Minutes(selectedDuration))
         return max(200, rounded * 50)  // at least 50 m/min implied
     }
     
@@ -6239,13 +6239,13 @@ struct LocalRoutePickerSheet: View {
         }
     }
     
-    /// Waypoint distance bands (minMult, maxMult) for main out-of-band Google attempts. Distances are duration * mult (meters). Per-bucket so short durations don't get tiny routes and long durations get long enough round-trips. Applies to all buckets (5–60 min).
+    /// Waypoint distance bands (minMult, maxMult) for main out-of-band Google attempts. Distances are duration * mult (meters). Per-bucket so short durations don't get tiny routes and long durations get long enough round-trips. Applies to all buckets (10–60 min).
     /// v2.1: Increased multipliers for 20-30min bucket — previous (20-24) produced 500-600m one-way
     /// which was only ~12min round-trip, well short of 20-30min targets.
     private static func outOfBandWaypointBands(for duration: Int) -> [(minMult: Double, maxMult: Double)] {
         let rounded = RouteCacheService.roundToNearest5Minutes(duration)
         switch rounded {
-        case 5, 10, 15:
+        case 10, 15:
             return [(24, 26), (26, 28), (22, 24)]
         case 20, 25, 30:
             return [(28, 34), (34, 40), (24, 30)]  // v2.1: Wider bands for 2-waypoint routes to hit 20-30min

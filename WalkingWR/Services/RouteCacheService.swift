@@ -43,10 +43,11 @@ class RouteCacheService {
     
     // MARK: - Duration Rounding
     
-    /// Round duration to nearest 5-minute interval for consistent caching
-    /// e.g., 42min → 40min, 37min → 35min, 33min → 35min
+    /// Round duration to nearest 5-minute interval for consistent caching (buckets 10–60 only).
+    /// e.g., 42min → 40min, 37min → 35min, 8min → 10min
     static func roundToNearest5Minutes(_ duration: Int) -> Int {
-        return ((duration + 2) / 5) * 5  // +2 ensures proper rounding (not just floor)
+        let rounded = ((duration + 2) / 5) * 5  // +2 ensures proper rounding (not just floor)
+        return min(60, max(10, rounded))
     }
     
     // MARK: - Primary POI Detection (v1.9.52)
@@ -290,7 +291,7 @@ class RouteCacheService {
         let cached = loadCache()
         
         // Calculate tolerance for the REQUESTED duration (roundedDuration already set above)
-        let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
+        let isEdgeCase = roundedDuration <= 10 || roundedDuration >= 55
         let minPercent = isEdgeCase ? 0.75 : 0.80
         let maxPercent = isEdgeCase ? 1.25 : 1.20
         let minAcceptable = Int(Double(roundedDuration) * minPercent)
@@ -303,7 +304,7 @@ class RouteCacheService {
             roundedDuration - 5, roundedDuration + 5,
             roundedDuration - 10, roundedDuration + 10,
             roundedDuration - 15, roundedDuration + 15
-        ].filter { $0 >= 5 && $0 <= 60 }  // Keep within valid range (min 5 min)
+        ].filter { $0 >= 10 && $0 <= 60 }  // Keep within valid range (10–60 min buckets)
         
         // v1.6.39: Track best dead-zone fallback routes (70-74%) in case no valid routes found
         var deadZoneFallbackRoutes: [CachedRouteWithMetadata] = []
@@ -502,7 +503,7 @@ class RouteCacheService {
         let actualDuration = route.durationMinutes
         let bucket = RouteCacheService.roundToNearest5Minutes(actualDuration)
         guard bucket != currentBucket else { return }
-        guard bucket >= 5 && bucket <= 60 else { return }
+        guard bucket >= 10 && bucket <= 60 else { return }
         
         let newSig = Set(data.places.map { $0.placeId })
         if let existing = sessionCrossBucketPool[bucket] {
@@ -526,7 +527,7 @@ class RouteCacheService {
     /// In-band check for cache: 80–120% duration (75–125% for edge buckets) and minimum distance. Matches RouteSelectionView so cross-bucket routes returned from getCachedRoutes are valid for display.
     private static func isRouteInBandForCache(_ route: WalkingRoute, targetDuration: Int) -> Bool {
         let rounded = RouteCacheService.roundToNearest5Minutes(targetDuration)
-        let isEdge = rounded <= 5 || rounded >= 55
+        let isEdge = rounded <= 10 || rounded >= 55
         let minPercent = isEdge ? 0.75 : 0.80
         let maxPercent = isEdge ? 1.25 : 1.20
         let minAcc = Int(Double(rounded) * minPercent)
@@ -603,7 +604,7 @@ class RouteCacheService {
     /// Take in-band routes from the session cross-bucket pool for the given target duration (target bucket ±5). Only in-band entries are removed from the pool.
     func consumeSessionCrossBucket(for targetDuration: Int, isInBand: (WalkingRoute, Int) -> Bool) -> [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] {
         let targetBucket = RouteCacheService.roundToNearest5Minutes(targetDuration)
-        let bucketsToCheck = [targetBucket, targetBucket - 5, targetBucket + 5].filter { $0 >= 5 && $0 <= 60 }
+        let bucketsToCheck = [targetBucket, targetBucket - 5, targetBucket + 5].filter { $0 >= 10 && $0 <= 60 }
         var result: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
         
         for bucket in bucketsToCheck {
@@ -628,7 +629,7 @@ class RouteCacheService {
     /// Peek at in-band routes in the session cross-bucket pool WITHOUT removing them. Same bucket/in-band logic as consumeSessionCrossBucket but non-mutating.
     func peekSessionCrossBucket(for targetDuration: Int, isInBand: (WalkingRoute, Int) -> Bool) -> [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] {
         let targetBucket = RouteCacheService.roundToNearest5Minutes(targetDuration)
-        let bucketsToCheck = [targetBucket, targetBucket - 5, targetBucket + 5].filter { $0 >= 5 && $0 <= 60 }
+        let bucketsToCheck = [targetBucket, targetBucket - 5, targetBucket + 5].filter { $0 >= 10 && $0 <= 60 }
         var result: [(route: WalkingRoute, data: GeneratedRoute, isFromGoogle: Bool)] = []
         
         for bucket in bucketsToCheck {

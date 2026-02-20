@@ -500,7 +500,7 @@ class PrePopulatedPOIService {
                 
                 // Check exact duration first, then adjacent buckets (±5, ±10) so e.g. a 15min ask can use 10min or 20min DB routes if total is within 80–120%
                 let durationsToCheck = [roundedDuration, roundedDuration - 5, roundedDuration + 5, roundedDuration - 10, roundedDuration + 10]
-                    .filter { $0 >= 5 && $0 <= 60 }
+                    .filter { $0 >= 10 && $0 <= 60 }
                 print("\(Self.telem) DB_QUERY postcode=\(area.postcode) requested=\(durationMinutes) rounded=\(roundedDuration) durationBucketsChecked=[\(durationsToCheck.map { String($0) }.joined(separator: ","))]")
                 
                 // Collect routes; when requireMinWaypoints == 2 (for duration > 10 min), skip single-waypoint routes. Use 0 to allow all.
@@ -540,8 +540,8 @@ class PrePopulatedPOIService {
                             let totalDurationSeconds = routeData.durationSeconds + timeToStartSeconds
                             let totalDurationMinutes = totalDurationSeconds / 60
                             
-                            // Accept only when total is 80–120% of requested (75–125% for edge cases e.g. 5min/55min)
-                            let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
+                            // Accept only when total is 80–120% of requested (75–125% for edge cases e.g. 10min/55min)
+                            let isEdgeCase = roundedDuration <= 10 || roundedDuration >= 55
                             let (minPercent, maxPercent) = isEdgeCase ? (0.75, 1.25) : (0.80, 1.20)
                             let minAcceptableMinutes = Int(Double(roundedDuration) * minPercent)
                             let maxAcceptableMinutes = Int(Double(roundedDuration) * maxPercent)
@@ -876,7 +876,7 @@ class PrePopulatedPOIService {
                     }
                     print("\(Self.telem) DB_CAP postcode=\(area.postcode) before=\(primaryDeduped.count) after=\(capped.count) maxPerBucket=\(maxPrePopulatedRoutesPerBucket) requested=\(roundedDuration)")
                     // Enforce 80–120% band on final list: never return routes below min or above max (e.g. 15min request → 12–18min only)
-                    let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
+                    let isEdgeCase = roundedDuration <= 10 || roundedDuration >= 55
                     let (minPercent, maxPercent) = isEdgeCase ? (0.75, 1.25) : (0.80, 1.20)
                     let minAcceptableMinutes = Int(Double(roundedDuration) * minPercent)
                     let maxAcceptableMinutes = Int(Double(roundedDuration) * maxPercent)
@@ -939,11 +939,11 @@ class PrePopulatedPOIService {
     /// Caller should extend these routes to extendToDuration (e.g. add detour waypoints) and append to the main list.
     /// Does not replace or reduce normal routes; use as an additional source.
     func getLowerBucketRoutesForExtend(near location: CLLocationCoordinate2D, extendToDuration: Int) -> (routes: [RouteCacheService.CachedRouteWithMetadata], candidatePOIs: [PlaceResult])? {
-        guard extendToDuration >= 10 else { return nil }  // Lower bucket would be < 5 min
+        guard extendToDuration >= 15 else { return nil }  // Lower bucket would be < 10 min
         let lowerBucket = extendToDuration - 5
         guard let database = loadDatabase() else { return nil }
         let roundedDuration = RouteCacheService.roundToNearest5Minutes(extendToDuration)
-        let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
+        let isEdgeCase = roundedDuration <= 10 || roundedDuration >= 55
         let (minPercent, _) = isEdgeCase ? (0.75, 1.25) : (0.80, 1.20)
         let minAcceptableMinutes = Int(Double(roundedDuration) * minPercent)  // Routes we want have total < this (short)
         
@@ -1194,7 +1194,7 @@ class PrePopulatedPOIService {
     /// Returns nil if duration is outside band or POI is restricted.
     private func createSingleWaypointRoute(poi: PrePopulatedPOIDatabase.PrePopulatedPOI, location: CLLocationCoordinate2D, roundedDuration: Int) -> RouteCacheService.CachedRouteWithMetadata? {
         let walkingSpeedMperMin = Double(GoogleMapsService.shared.adaptiveWalkingSpeed)
-        let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
+        let isEdgeCase = roundedDuration <= 10 || roundedDuration >= 55
         let (minPercent, maxPercent) = isEdgeCase ? (0.75, 1.25) : (0.80, 1.20)
         let minAcceptableMinutes = Int(Double(roundedDuration) * minPercent)
         let maxAcceptableMinutes = Int(Double(roundedDuration) * maxPercent)
@@ -1245,7 +1245,7 @@ class PrePopulatedPOIService {
         var result: [RouteCacheService.CachedRouteWithMetadata] = []
         var seenPlaceIds = Set<String>()
         let walkingSpeedMperMin = Double(GoogleMapsService.shared.adaptiveWalkingSpeed)
-        let isEdgeCase = roundedDuration <= 5 || roundedDuration >= 55
+        let isEdgeCase = roundedDuration <= 10 || roundedDuration >= 55
         let (minPercent, maxPercent) = isEdgeCase ? (0.75, 1.25) : (0.80, 1.20)
         let minAcceptableMinutes = Int(Double(roundedDuration) * minPercent)
         let maxAcceptableMinutes = Int(Double(roundedDuration) * maxPercent)

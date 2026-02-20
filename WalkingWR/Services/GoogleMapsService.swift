@@ -505,9 +505,10 @@ struct RoutingToggles {
         60: 1.16    // Longest routes: slight reduction (less overshoot observed)
     ]
     
-    /// Get duration bucket (rounds to nearest 5-min bucket)
+    /// Get duration bucket (rounds to nearest 5-min bucket, 10–60 min only)
     static func durationBucket(for minutes: Int) -> Int {
-        return ((minutes + 2) / 5) * 5  // Round to nearest 5
+        let rounded = ((minutes + 2) / 5) * 5  // Round to nearest 5
+        return min(60, max(10, rounded))
     }
     
     /// Get current bias table for telemetry (v2.0.16)
@@ -1522,21 +1523,21 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// Pre-filter POIs to only include those within reasonable duration range
-    /// This prevents "Springwood Cott" (30min round-trip) from being considered for 5min routes
+    /// This prevents "Springwood Cott" (30min round-trip) from being considered for short routes
     func preFilterPOIsByDuration(
         _ pois: [PlaceResult],
         origin: CLLocationCoordinate2D,
         targetDurationMinutes: Int
     ) -> [PlaceResult] {
-        // DURATION-AWARE PRE-FILTER: 
-        // v1.6.12: HARD CUTOFF for 5-minute routes (batch test showed 180% consistently)
+        // DURATION-AWARE PRE-FILTER:
+        // v1.6.12: HARD CUTOFF for shortest-bucket routes (10 min; batch test showed 180% when too loose)
         // The root cause is selection-dominated: we pick wrong POIs, not route wrong
-        // For 5min routes: max 7min estimated round-trip (allows ~40% slack)
+        // For 10min routes: max 7min estimated round-trip (allows ~40% slack)
         
-        // v1.6.21: Revert to tighter 7-min cutoff for 5-min routes
-        // v1.6.15's 10min cap was too loose → 180% accuracy consistently
-        // 7min cap worked better in v1.6.12: allows 40% slack, rejects far POIs
-        if targetDurationMinutes == 5 {
+        // v1.6.21: Revert to tighter 7-min cutoff for 10-min routes
+        // Looser cap was too loose → 180% accuracy consistently
+        // 7min cap: allows 40% slack, rejects far POIs
+        if targetDurationMinutes <= 10 {
             var accepted: [PlaceResult] = []
             var rejected: [(name: String, estimated: Int)] = []
             
@@ -1549,8 +1550,8 @@ class GoogleMapsService: ObservableObject {
                 }
             }
             
-            // Debug: Show accepted candidates for 5-min routes
-            print("🎯 5-MIN CANDIDATES: \(accepted.count) POIs with ≤10min estimated:")
+            // Debug: Show accepted candidates for 10-min (shortest bucket) routes
+            print("🎯 10-MIN CANDIDATES: \(accepted.count) POIs with ≤7min estimated:")
             for poi in accepted.prefix(10) {
                 let est = estimateRoundTripMinutes(from: origin, to: poi)
                 print("   ✅ \(poi.name): ~\(est)min")
@@ -1559,7 +1560,7 @@ class GoogleMapsService: ObservableObject {
                 print("   ... and \(accepted.count - 10) more")
             }
             
-            print("🎯 ⏱️ 5-MIN HARD CUTOFF: Kept \(accepted.count)/\(pois.count) POIs (max 7min round-trip)")
+            print("🎯 ⏱️ 10-MIN HARD CUTOFF: Kept \(accepted.count)/\(pois.count) POIs (max 7min round-trip)")
             if !rejected.isEmpty {
                 print("   ❌ Rejected \(rejected.count) POIs with >7min estimated")
             }
@@ -1575,10 +1576,10 @@ class GoogleMapsService: ObservableObject {
                 print("   🍽️ \(fp.name): ~\(est)min round-trip")
             }
             
-            // v2.0.1: FALLBACK when pre-filter is too aggressive for 5-min routes
+            // v2.0.1: FALLBACK when pre-filter is too aggressive for 10-min routes
             let minimumCandidates = 10
             if accepted.count < minimumCandidates && pois.count >= minimumCandidates {
-                print("🎯 ⚠️ 5-MIN FALLBACK: Only \(accepted.count) candidates (need \(minimumCandidates))")
+                print("🎯 ⚠️ 10-MIN FALLBACK: Only \(accepted.count) candidates (need \(minimumCandidates))")
                 
                 // Sort by estimated time (closest first)
                 let sortedByTime = pois.map { poi -> (poi: PlaceResult, estimated: Int) in
@@ -1591,7 +1592,7 @@ class GoogleMapsService: ObservableObject {
                 
                 let nearestEstimate = sortedByTime.first?.estimated ?? 0
                 let furthestEstimate = sortedByTime[min(fallbackCount - 1, sortedByTime.count - 1)].estimated
-                print("🎯 ✅ 5-MIN FALLBACK: Using \(fallbackPOIs.count) nearest POIs (est: \(nearestEstimate)-\(furthestEstimate)min)")
+                print("🎯 ✅ 10-MIN FALLBACK: Using \(fallbackPOIs.count) nearest POIs (est: \(nearestEstimate)-\(furthestEstimate)min)")
                 
                 return fallbackPOIs
             }
@@ -14276,15 +14277,15 @@ class GoogleMapsService: ObservableObject {
         // v1.6.10: DUAL-MULTIPLIER + DENSITY-AWARE (for 5-min routes)
         // - estimationMultiplier: Aggressive - used for POI selection, aims shorter
         // - validationMultiplier: Original - used for accepting routes, realistic
-        // For ≤5 min routes: use POI density as proxy for street grid density
+        // For ≤10 min routes (shortest bucket): use POI density as proxy for street grid density
         let estimationMultiplier: Double
         let validationMultiplier: Double
         
-        // Determine POI density for adaptive 5-min estimation
+        // Determine POI density for adaptive 10-min estimation
         let poiDensity = prefetchedPOIs?.count ?? 100  // Default to medium if unknown
         
-        if targetDurationMinutes <= 5 {
-            // DENSITY-AWARE 5-MIN ESTIMATION (v1.6.10)
+        if targetDurationMinutes <= 10 {
+            // DENSITY-AWARE 10-MIN (shortest bucket) ESTIMATION (v1.6.10)
             // Explains the 60%-180% split between locations
             if poiDensity > 300 {
                 estimationMultiplier = 0.55   // Dense street grids (Ecclesall) - aim much shorter
@@ -14294,10 +14295,7 @@ class GoogleMapsService: ObservableObject {
                 estimationMultiplier = 0.65   // Default
             }
             validationMultiplier = 0.85
-            print("🎯 5-min density-aware: \(poiDensity) POIs → estimation=\(estimationMultiplier)")
-        } else if targetDurationMinutes <= 10 {
-            estimationMultiplier = 0.65
-            validationMultiplier = 0.85
+            print("🎯 10-min density-aware: \(poiDensity) POIs → estimation=\(estimationMultiplier)")
         } else if targetDurationMinutes <= 15 {
             estimationMultiplier = 0.70
             validationMultiplier = 0.85
@@ -14356,7 +14354,7 @@ class GoogleMapsService: ObservableObject {
         var minWaypointsForTier: Int
         
         switch targetDurationMinutes {
-        case 1...10:  // Handle 5-10 min routes (minimum is 5 min)
+        case 1...10:  // Handle 10 min routes (shortest bucket)
             routeMethod = .endpointOnly
             dynamicMaxWaypoints = 2
             minWaypointsForTier = 1  // Keep 1 for very short routes
