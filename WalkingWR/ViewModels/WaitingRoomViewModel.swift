@@ -441,13 +441,9 @@ class WaitingRoomViewModel: ObservableObject {
         // Firebase has clinicians - reset the "no clinics" flag
         hasNoClinicsAvailable = false
         
-        // If user skipped clinician selection because none were available,
-        // but now there are clinicians, prompt them to select one
-        if hasSkippedClinicianSelection && selectedClinician == nil {
-            hasSkippedClinicianSelection = false
-            showClinicianSelection = true
-            print("📋 Clinicians now available - prompting user to select")
-        } else if selectedClinician == nil && !hasSkippedClinicianSelection && !hasAutoPresentedClinicianSelectionThisSession {
+        // Auto-show clinician selection once per session when we have clinicians and no selection.
+        // Skip = don't ask again this session; user can still choose from Delay tab if they want.
+        if selectedClinician == nil && !hasSkippedClinicianSelection && !hasAutoPresentedClinicianSelectionThisSession {
             // Auto-show clinician selection once per session when we have clinicians and no selection.
             // Stops the sheet from re-appearing on every Firebase snapshot.
             hasAutoPresentedClinicianSelectionThisSession = true

@@ -1499,8 +1499,8 @@ struct NatureCameraView: View {
 }
 
 // MARK: - Bird Data
-struct BirdInfo: Identifiable {
-    let id = UUID()
+struct BirdInfo: Identifiable, Codable {
+    var id = UUID()
     let name: String
     let scientificName: String
     let description: String
@@ -1514,6 +1514,11 @@ struct BirdInfo: Identifiable {
     /// eBird species code when from API; nil for static fallback. Used to key checklist.
     let speciesCode: String?
 
+    enum CodingKeys: String, CodingKey {
+        case name, scientificName, description, habitat, imageURL, localAsset, seasonalNote
+        case isYearRound, summerOnly, winterOnly, speciesCode
+    }
+
     init(name: String, scientificName: String, description: String, habitat: String, imageURL: String, localAsset: String?, seasonalNote: String, isYearRound: Bool, summerOnly: Bool, winterOnly: Bool, speciesCode: String? = nil) {
         self.name = name
         self.scientificName = scientificName
@@ -1526,6 +1531,36 @@ struct BirdInfo: Identifiable {
         self.summerOnly = summerOnly
         self.winterOnly = winterOnly
         self.speciesCode = speciesCode
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        scientificName = try c.decode(String.self, forKey: .scientificName)
+        description = try c.decode(String.self, forKey: .description)
+        habitat = try c.decode(String.self, forKey: .habitat)
+        imageURL = try c.decode(String.self, forKey: .imageURL)
+        localAsset = try c.decodeIfPresent(String.self, forKey: .localAsset)
+        seasonalNote = try c.decode(String.self, forKey: .seasonalNote)
+        isYearRound = try c.decode(Bool.self, forKey: .isYearRound)
+        summerOnly = try c.decode(Bool.self, forKey: .summerOnly)
+        winterOnly = try c.decode(Bool.self, forKey: .winterOnly)
+        speciesCode = try c.decodeIfPresent(String.self, forKey: .speciesCode)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(scientificName, forKey: .scientificName)
+        try c.encode(description, forKey: .description)
+        try c.encode(habitat, forKey: .habitat)
+        try c.encode(imageURL, forKey: .imageURL)
+        try c.encode(localAsset, forKey: .localAsset)
+        try c.encode(seasonalNote, forKey: .seasonalNote)
+        try c.encode(isYearRound, forKey: .isYearRound)
+        try c.encode(summerOnly, forKey: .summerOnly)
+        try c.encode(winterOnly, forKey: .winterOnly)
+        try c.encode(speciesCode, forKey: .speciesCode)
     }
 }
 
@@ -1825,6 +1860,8 @@ struct BirdSpottingView: View {
     private func loadBirds() async {
         let coord = await MainActor.run { locationService?.currentLocation?.coordinate }
         let key = APIKeys.ebird
+        let month = Calendar.current.component(.month, from: Date())
+        let staticKey = "bird_static_\(month)"
         if coord == nil {
             print("\(Self.birdSpotLogTag) no location, using static list")
             await MainActor.run {
@@ -1834,6 +1871,8 @@ struct BirdSpottingView: View {
                 isLoading = false
                 loadError = nil
             }
+            BirdSpottingCache.shared.set(key: staticKey, birds: Self.staticFallbackBirds)
+            BirdSpottingCache.shared.saveLast(key: staticKey, birds: Self.staticFallbackBirds, placeName: nil)
             return
         }
         if key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1845,10 +1884,11 @@ struct BirdSpottingView: View {
                 isLoading = false
                 loadError = nil
             }
+            BirdSpottingCache.shared.set(key: staticKey, birds: Self.staticFallbackBirds)
+            BirdSpottingCache.shared.saveLast(key: staticKey, birds: Self.staticFallbackBirds, placeName: nil)
             return
         }
         let coordinate = coord!
-        let month = Calendar.current.component(.month, from: Date())
         let cacheKey = BirdSpottingCache.shared.cacheKey(coordinate: coordinate, month: month)
         if let cached = BirdSpottingCache.shared.get(key: cacheKey), !cached.isEmpty {
             print("\(Self.birdSpotLogTag) cache hit: \(cached.count) birds")
@@ -1859,6 +1899,8 @@ struct BirdSpottingView: View {
                 loadError = nil
             }
             await updatePlaceName(for: coordinate)
+            let pName = await MainActor.run { placeName }
+            BirdSpottingCache.shared.saveLast(key: cacheKey, birds: cached, placeName: pName)
             return
         }
         print("\(Self.birdSpotLogTag) fetching eBird + EOL…")
@@ -1873,6 +1915,8 @@ struct BirdSpottingView: View {
                 isLoading = false
                 loadError = nil
             }
+            BirdSpottingCache.shared.set(key: staticKey, birds: Self.staticFallbackBirds)
+            BirdSpottingCache.shared.saveLast(key: staticKey, birds: Self.staticFallbackBirds, placeName: nil)
             return
         }
         let limit = min(10, speciesList.count)
@@ -1963,6 +2007,8 @@ struct BirdSpottingView: View {
 
         let finalBirds = await MainActor.run { birds }
         BirdSpottingCache.shared.set(key: cacheKey, birds: finalBirds)
+        let pName = await MainActor.run { placeName }
+        BirdSpottingCache.shared.saveLast(key: cacheKey, birds: finalBirds, placeName: pName)
         print("\(Self.birdSpotLogTag) all \(finalBirds.count) birds loaded")
     }
 
@@ -1980,6 +2026,42 @@ struct BirdSpottingView: View {
             name = locality ?? area ?? pm.subAdministrativeArea
         }
         await MainActor.run { placeName = name }
+    }
+
+    /// Restore the bird list from in-memory cache or persisted storage when opening Bird Spotting,
+    /// so we show the list/progress screen instead of the "get started" card if they already downloaded once.
+    private func restoreBirdsIfNeeded() async {
+        let currentBirds = await MainActor.run { birds }
+        guard currentBirds.isEmpty else { return }
+        let coord = await MainActor.run { locationService?.currentLocation?.coordinate }
+        let month = Calendar.current.component(.month, from: Date())
+        let key: String
+        if let c = coord {
+            key = BirdSpottingCache.shared.cacheKey(coordinate: c, month: month)
+        } else {
+            key = "bird_static_\(month)"
+        }
+        if let cached = BirdSpottingCache.shared.get(key: key), !cached.isEmpty {
+            print("\(Self.birdSpotLogTag) restore from in-memory cache: \(cached.count) birds")
+            await MainActor.run {
+                birds = cached
+                useStaticFallback = (key.hasPrefix("bird_static_"))
+                loadError = nil
+            }
+            if coord != nil {
+                await updatePlaceName(for: coord!)
+            }
+            return
+        }
+        if let (restored, pName) = BirdSpottingCache.shared.getLast(currentKey: key) {
+            print("\(Self.birdSpotLogTag) restore from persisted list: \(restored.count) birds")
+            await MainActor.run {
+                birds = restored
+                useStaticFallback = (key.hasPrefix("bird_static_"))
+                placeName = pName
+                loadError = nil
+            }
+        }
     }
 
     // Season names for display
@@ -2274,8 +2356,8 @@ struct BirdSpottingView: View {
                     birdPhotoForID = nil
                     print("\(Self.birdSpotLogTag) stage=add_to_spotted_complete alert_dismissed")
                 }
-                Button("Done", role: .cancel) {
-                    print("\(Self.birdSpotLogTag) stage=done_tapped alert_dismissed")
+                Button("That's not it!", role: .cancel) {
+                    print("\(Self.birdSpotLogTag) stage=thats_not_it_tapped alert_dismissed")
                     identifiedBirdResult = nil
                     showIdentifiedAlert = false
                     birdPhotoForID = nil
@@ -2298,6 +2380,9 @@ struct BirdSpottingView: View {
                 if let err = identifyError {
                     Text(err)
                 }
+            }
+            .task {
+                await restoreBirdsIfNeeded()
             }
         }
     }

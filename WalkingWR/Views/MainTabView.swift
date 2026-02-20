@@ -118,6 +118,7 @@ struct MainTabView: View {
                     }
                 }
             )
+            .id("clinicianSelection") // Stable identity to avoid invalid reuse after initialization failure
         }
         .onAppear {
             // Only check once per cold launch
