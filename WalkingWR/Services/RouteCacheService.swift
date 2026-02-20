@@ -513,6 +513,14 @@ class RouteCacheService {
         sessionCrossBucketPool[bucket, default: []].append((route: route, data: data, isFromGoogle: isFromGoogle))
         let total = sessionCrossBucketPool.values.reduce(0) { $0 + $1.count }
         print("[ROUTE_DEBUG] 🔄 Session cross-bucket: stored '\(route.name)' (\(actualDuration)min) → \(bucket)min bucket (pool: \(total) routes)")
+        let poolSummary = sessionCrossBucketPoolSummary()
+        if !poolSummary.isEmpty {
+            print("[BUCKET_SUMMARY] Cross-bucket pool: \(poolSummary)")
+            let routesSummary = sessionCrossBucketPoolRoutesSummary()
+            if !routesSummary.isEmpty {
+                print("[BUCKET_SUMMARY] Cross-bucket pool routes: \(routesSummary)")
+            }
+        }
     }
     
     /// In-band check for cache: 80–120% duration (75–125% for edge buckets) and minimum distance. Matches RouteSelectionView so cross-bucket routes returned from getCachedRoutes are valid for display.
@@ -676,6 +684,15 @@ class RouteCacheService {
     func sessionCrossBucketPoolSummary() -> String {
         guard !sessionCrossBucketPool.isEmpty else { return "" }
         return sessionCrossBucketPool.sorted(by: { $0.key < $1.key }).map { "\($0.key)min: \($0.value.count)" }.joined(separator: ", ")
+    }
+    
+    /// Route names per bucket for [BUCKET_SUMMARY] so logs show which routes are in the cross-bucket pool (e.g. "10min: \"Scenic Walk\" 10min | 15min: \"Route A\" 14min, \"Route B\" 16min").
+    func sessionCrossBucketPoolRoutesSummary() -> String {
+        guard !sessionCrossBucketPool.isEmpty else { return "" }
+        return sessionCrossBucketPool.sorted(by: { $0.key < $1.key }).map { bucket, entries in
+            let list = entries.map { "\"\($0.route.name)\" \($0.route.durationMinutes)min" }.joined(separator: ", ")
+            return "\(bucket)min: \(list)"
+        }.joined(separator: " | ")
     }
     
     /// v1.6.46: Increment skip count for a route (user shuffled past it)

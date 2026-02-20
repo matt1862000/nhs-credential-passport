@@ -5455,6 +5455,9 @@ class GoogleMapsService: ObservableObject {
         destination: CLLocationCoordinate2D,
         waypoints: [CLLocationCoordinate2D] = []
     ) async throws -> (distance: Int, duration: Int, polyline: [CLLocationCoordinate2D]) {
+        let priority = ORSDirectionsRateLimiter.shared.currentPriorityForRequest()
+        await ORSDirectionsRateLimiter.shared.waitForSlot(priority: priority)
+        ORSService.logORSUsage(type: "directions")
         let useProxy = !APIKeys.orsBaseURL.isEmpty
         guard useProxy || !openRouteServiceApiKey.isEmpty else {
             throw GoogleMapsError.apiError("OpenRouteService API key not configured")
@@ -5476,7 +5479,10 @@ class GoogleMapsService: ObservableObject {
         
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw GoogleMapsError.apiError("OpenRouteService request failed")
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let bodySnippet = data.isEmpty ? "" : (String(data: data.prefix(200), encoding: .utf8) ?? "")
+            print("[ROUTE_FLOW] stage=routing OpenRouteService=non200 status=\(status) body=\(bodySnippet)")
+            throw GoogleMapsError.apiError("OpenRouteService request failed (HTTP \(status))")
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let routes = json["routes"] as? [[String: Any]],
@@ -5521,7 +5527,10 @@ class GoogleMapsService: ObservableObject {
         
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw GoogleMapsError.apiError("GraphHopper request failed")
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let bodySnippet = data.isEmpty ? "" : (String(data: data.prefix(200), encoding: .utf8) ?? "")
+            print("[ROUTE_FLOW] stage=routing GraphHopper=non200 status=\(status) body=\(bodySnippet)")
+            throw GoogleMapsError.apiError("GraphHopper request failed (HTTP \(status))")
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let paths = json["paths"] as? [[String: Any]],

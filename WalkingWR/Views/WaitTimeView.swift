@@ -390,7 +390,7 @@ struct WaitTimeCard: View {
                 // v1.9.62: Show button to set appointment time if not set
                 Button(action: onShowAppointmentTime) {
                     HStack(spacing: 8) {
-                        Image(systemName: "clock.badge.plus")
+                        Image(systemName: "clock.badge.checkmark")
                             .font(.subheadline)
                             .foregroundColor(.tealAccent)
                         Text("Set appointment time")

@@ -1036,10 +1036,10 @@ class AppDelegate: NSObject, UIApplicationDelegate, MessagingDelegate, UNUserNot
     private func handleStopNotifications(userInfo: [AnyHashable: Any]) {
         // Check if this is a clinician/delay notification (has topic)
         if let topic = userInfo["topic"] as? String {
-            // Unsubscribe from this clinician's FCM topic
+            // Unsubscribe from this clinician's FCM topic (safeUnsubscribe runs only after APNS token is set)
             print("🔕 Unsubscribing from clinician topic: \(topic)")
             
-            Messaging.messaging().unsubscribe(fromTopic: topic) { error in
+            Messaging.safeUnsubscribe(fromTopic: topic) { error in
                 if let error = error {
                     print("❌ Failed to unsubscribe: \(error.localizedDescription)")
                 } else {

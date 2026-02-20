@@ -75,6 +75,17 @@ private final class IsochroneCacheEntry {
 final class ORSService {
     static let shared = ORSService()
     
+    /// Log each ORS API request so you can see volume and rate (grep "ors_usage" in console).
+    static func logORSUsage(type: String) {
+        orsUsageLock.lock()
+        let count = (orsUsageCounts[type] ?? 0) + 1
+        orsUsageCounts[type] = count
+        orsUsageLock.unlock()
+        print("[ROUTE_FLOW] stage=ors_usage type=\(type) #\(count)")
+    }
+    private static var orsUsageCounts: [String: Int] = [:]
+    private static let orsUsageLock = NSLock()
+    
     /// When ORS_BASE_URL is set (e.g. to your Vercel proxy), use it and do not send the API key. Otherwise use ORS directly with key.
     private var baseURL: String {
         let proxy = APIKeys.orsBaseURL
@@ -152,6 +163,7 @@ final class ORSService {
         cacheLock.unlock()
 
         guard hasAPIKey else { throw ORSServiceError.noAPIKey }
+        Self.logORSUsage(type: "isochrones")
 
         let range = Self.rangeSeconds(forBucketMinutes: durationBucketMinutes)
         let url = URL(string: "\(baseURL)/v2/isochrones/foot-walking")!
@@ -248,6 +260,7 @@ final class ORSService {
     private func fetchMatrix(locations: [[Double]]) async throws -> MatrixResult {
         guard hasAPIKey else { throw ORSServiceError.noAPIKey }
         guard locations.count >= 2 else { throw ORSServiceError.invalidResponse("need at least 2 locations") }
+        Self.logORSUsage(type: "matrix")
         
         let url = URL(string: "\(baseURL)/v2/matrix/foot-walking")!
         var request = URLRequest(url: url)
@@ -302,6 +315,7 @@ final class ORSService {
     /// Requires API key; collaborative plan recommended for higher limits.
     func fetchSnapV2(coordinates: [CLLocationCoordinate2D], radiusMeters: Int = 100) async -> [CLLocationCoordinate2D]? {
         guard hasAPIKey, coordinates.count >= 1, coordinates.count <= 100 else { return nil }
+        Self.logORSUsage(type: "snap")
         let locations = coordinates.map { [ $0.longitude, $0.latitude ] }
         guard let url = URL(string: "\(baseURL)/v2/snap/foot-walking") else { return nil }
         var request = URLRequest(url: url)

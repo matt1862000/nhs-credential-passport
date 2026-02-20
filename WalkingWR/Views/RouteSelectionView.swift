@@ -1184,6 +1184,8 @@ struct LocalRoutePickerSheet: View {
     // Track where routes were pre-generated (for movement detection)
     @State private var preGeneratedAtLocation: CLLocationCoordinate2D?
     private let movementThresholdMeters: Double = 50  // Invalidate cache if moved >50m
+    /// Delay (seconds) after first route is ready before starting second-route and pregen to avoid ORS 429s.
+    private let routeStaggerAfterFirstReadySec: UInt64 = 4
     
     // Pre-generate routes before Generate tap (once POIs are ready + clinic delay active)
     @State private var isPreGenBeforeTap = false
@@ -1721,7 +1723,7 @@ struct LocalRoutePickerSheet: View {
                 // When only one route was found initially, try free engines first (MapKit/ORS/GraphHopper), then Google Places fallback
                 if allRoutes.count == 1, let loc = locationService.currentLocation?.coordinate {
                     Task {
-                        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s so UI has settled
+                        try? await Task.sleep(nanoseconds: routeStaggerAfterFirstReadySec * 1_000_000_000) // Stagger to avoid ORS 429s
                         var added = await tryAddSecondRouteViaFreeEngines(userCoordinate: loc)
                         if !added {
                             added = await tryAddSecondRouteViaFreeEngines(userCoordinate: loc) // second attempt with same exclusions (engine may vary)
@@ -2495,6 +2497,7 @@ struct LocalRoutePickerSheet: View {
                         runSummaryTimeToFirstRouteSec = timeToFirst
                         let cacheRoutesSummary = loadedRoutes.enumerated().map { "r\($0.offset + 1):\($0.element.route.durationMinutes)min(inBand:\(Self.isRouteInBand($0.element.route, selectedDuration: selectedDuration)))" }.joined(separator: " ")
                         print("\(kRouteFlowTag) +\(String(format: "%.2f", timeToFirst))s stage=routes_into_buckets source=cache count=\(loadedRoutes.count) target_bucket=\(selectedDuration)min inBand=\(inBandRouteCount())/\(targetInBandRoutes) \(cacheRoutesSummary)")
+                        Self.logBucketSummary(routes: loadedRoutes, selectedDuration: selectedDuration, inBandCount: inBandRouteCount(), targetInBandRoutes: targetInBandRoutes, source: "cache")
                         print("\(kRouteFlowTag) +\(String(format: "%.2f", timeToFirst))s stage=first_route_ready name='\(loadedRoutes.first?.route.name ?? "?")' duration=\(loadedRoutes.first?.route.durationMinutes ?? 0)min (from cache)")
                         print("[FLOW] +\(String(format: "%.1f", timeToFirst))s ROUTE_DISPLAYED (cached) name='\(loadedRoutes.first?.route.name ?? "?")' duration=\(loadedRoutes.first?.route.durationMinutes ?? 0)min")
                         logRoutePreviewSummary()
@@ -3150,7 +3153,10 @@ struct LocalRoutePickerSheet: View {
                                 allRoutes = ordered.map(\.element)
                                 if inBandRouteCount() == 0 {
                                     print("TIME_SOURCE | PREVIEW: All routes out-of-band after validation — triggering pre-generation for in-band options")
-                                    preGenerateRemainingRoutes()
+                                    Task {
+                                        try? await Task.sleep(nanoseconds: routeStaggerAfterFirstReadySec * 1_000_000_000)
+                                        await MainActor.run { preGenerateRemainingRoutes() }
+                                    }
                                 }
                                 validatedPreviewRouteSignatures.insert(previewValidationSignature)
                             }
@@ -3250,7 +3256,10 @@ struct LocalRoutePickerSheet: View {
                         await MainActor.run { logRunSummary() }
                     } else if cachedRoutes.count < maxRoutesToGenerate {
                         print("📦 Only \(inBandAfterCache)/\(targetInBandRoutes) in-band routes — will pre-generate more")
-                        preGenerateRemainingRoutes()
+                        Task {
+                            try? await Task.sleep(nanoseconds: routeStaggerAfterFirstReadySec * 1_000_000_000)
+                            await MainActor.run { preGenerateRemainingRoutes() }
+                        }
                     } else {
                         print("📦 All \(cachedRoutes.count) routes loaded from cache")
                         await MainActor.run { logRunSummary() }
@@ -3638,6 +3647,8 @@ struct LocalRoutePickerSheet: View {
                     var mainRoutePreviewSource = ""
                     var googleSecondRoute: (route: WalkingRoute, data: GeneratedRoute)? = nil
                     repeat {
+                    // ORS Directions 60/min: give main route (attempt 1) priority over retry/background
+                    ORSDirectionsRateLimiter.shared.setPriority(mainRouteAttempt == 0 ? .high : .low)
                     // v2.0.2: Use topology-safe route generation (guarantees a route, especially for short walks)
                     let elapsedRg = Date().timeIntervalSince(generateStartTime)
                     print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsedRg))s stage=generateRouteTopologySafe_call attempt=\(mainRouteAttempt + 1)")
@@ -4003,6 +4014,7 @@ struct LocalRoutePickerSheet: View {
                     excludedPOIs = Array(filteredResult.places)
                     print("[ROUTE_GEN] Main route out-of-band after remeasure — retrying generation once with excluded waypoints")
                     } while true
+                    // Keep .high so route 2 (second route / tryAddSecondRoute) gets ORS priority; pregen sets .low when it starts
                     // For out-of-band Task: capture final display route name/difficulty/description (same names as inside loop)
                     let routeName = displayRoute.name
                     let routeDifficulty = displayRoute.difficulty
@@ -4450,14 +4462,17 @@ struct LocalRoutePickerSheet: View {
                         lastValidRoute = cappedDisplay
                         lastValidRouteData = deduplicatedResult
                         
-                        // v1.8.8: Check if initial route is too short (< 50% of target)
+                        // v1.8.8: Severely short = below 50% of target (used for dead-zone fallback flag and warning)
                         let minAcceptablePercent = 0.50
                         let minAcceptableDuration = Int(Double(selectedDuration) * minAcceptablePercent)
                         let isShortRoute = deduplicatedResult.durationMinutes < minAcceptableDuration
-                        if isShortRoute {
-                            print("⚠️ Initial route is short fallback (\(deduplicatedResult.durationMinutes)min < \(minAcceptableDuration)min target 50%)")
-                            // v2.1.15: Also store in cross-bucket pool at its actual duration so it's useful for the right bucket
+                        // Out-of-band (too short or too long) for this bucket — store at actual duration so it fits in the right bucket when user selects it
+                        let isOutOfBand = !Self.isRouteInBand(displayRoute, selectedDuration: selectedDuration)
+                        if isOutOfBand {
                             storeCrossBucketRoute(route: displayRoute, data: deduplicatedResult, isFromGoogle: mainRoutePreviewSource == "google")
+                            if isShortRoute {
+                                print("⚠️ Initial route is short fallback (\(deduplicatedResult.durationMinutes)min < \(minAcceptableDuration)min target 50%)")
+                            }
                         }
                         
                         // Minimum display % (e.g. 30%): below this we don't show the route — show "no routes found" and suggest another bucket
@@ -4564,6 +4579,7 @@ struct LocalRoutePickerSheet: View {
                         let inBandCount = inBandRouteCount()
                         let routesSummary = routesToShow.enumerated().map { "r\($0.offset + 1):\($0.element.route.durationMinutes)min(inBand:\(Self.isRouteInBand($0.element.route, selectedDuration: selectedDuration)))" }.joined(separator: " ")
                         print("\(kRouteFlowTag) +\(String(format: "%.2f", totalTime))s stage=routes_into_buckets count=\(routesToShow.count) target_bucket=\(selectedDuration)min inBand=\(inBandCount)/\(targetInBandRoutes) \(routesSummary)")
+                        Self.logBucketSummary(routes: routesToShow, selectedDuration: selectedDuration, inBandCount: inBandCount, targetInBandRoutes: targetInBandRoutes, source: "live")
                         print("\(kRouteFlowTag) +\(String(format: "%.2f", totalTime))s stage=first_route_ready name='\(displayRoute.name)' duration=\(displayRoute.durationMinutes)min (map preview after stage animation)")
                         print("[STAGE_TELEMETRY] Bucket: duration=\(selectedDuration)min routes=\(routesToShow.count) inBand=\(inBandCount)/\(targetInBandRoutes) total_sec=\(String(format: "%.2f", totalTime))")
                         for (idx, entry) in routesToShow.enumerated() {
@@ -4601,9 +4617,12 @@ struct LocalRoutePickerSheet: View {
                         // v1.9.28: Clear any status messages - routes are ready
                         routeRefreshStatus = nil
                         
-                        // Start pre-generating more routes in background (only if we need more in-band routes)
+                        // Start pre-generating more routes in background (only if we need more in-band routes); stagger to avoid ORS 429s
                         if !hasEnoughInBandRoutes() {
-                            preGenerateRemainingRoutes()
+                            Task {
+                                try? await Task.sleep(nanoseconds: routeStaggerAfterFirstReadySec * 1_000_000_000)
+                                await MainActor.run { preGenerateRemainingRoutes() }
+                            }
                         } else {
                             print("[ROUTE_GEN] ⏹️ First route is in-band — skipping pre-generation (have \(inBandRouteCount())/\(targetInBandRoutes))")
                         }
@@ -5114,6 +5133,7 @@ struct LocalRoutePickerSheet: View {
     /// Try to add a second route using free engines (MapKit/ORS/GraphHopper) only. Used when we have 1 route and want to avoid Google first.
     /// Returns true if an in-band route was added.
     private func tryAddSecondRouteViaFreeEngines(userCoordinate: CLLocationCoordinate2D) async -> Bool {
+        // Use current priority (stay .high so route 2 has same ORS priority as route 1; pregen sets .low when it starts)
         let (excludedPlaceIds, excludedPOIs, duration, prefetched): (Set<String>, [PlaceResult], Int, [PlaceResult]?) = await MainActor.run {
             let ids = allRoutes.first.map { Set($0.data.places.map { $0.placeId }) } ?? []
             let pois = allRoutes.flatMap { $0.data.places }
@@ -5924,6 +5944,19 @@ struct LocalRoutePickerSheet: View {
         return durationOk && distanceOk
     }
     
+    /// One-line console summary when routes are added to the target bucket (grep "[BUCKET_SUMMARY]").
+    private static func logBucketSummary(
+        routes: [(route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool, isFromGoogle: Bool)],
+        selectedDuration: Int,
+        inBandCount: Int,
+        targetInBandRoutes: Int,
+        source: String
+    ) {
+        guard !routes.isEmpty else { return }
+        let list = routes.enumerated().map { "\($0.offset + 1). \($0.element.route.name) \($0.element.route.durationMinutes)min" }.joined(separator: ", ")
+        print("[BUCKET_SUMMARY] \(selectedDuration)min bucket: \(routes.count) route(s) (\(inBandCount)/\(targetInBandRoutes) in-band) [\(source)] — \(list)")
+    }
+    
     /// v2.1.15: True if route is severely short for the selected duration (< 50% of target). Used as a safety net to avoid showing
     /// a severely out-of-band route as the sole first route — triggers cross-bucket storage + fallthrough to live generation.
     private static func isRouteSeverelyShort(_ route: WalkingRoute, selectedDuration: Int) -> Bool {
@@ -6028,6 +6061,7 @@ struct LocalRoutePickerSheet: View {
         let currentInBand = inBandRouteCount()
         let elapsed = runSummaryStartTime.map { Date().timeIntervalSince($0) } ?? 0
         print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsed))s stage=route_added position=\(allRoutes.count) name='\(route.name)' duration=\(route.durationMinutes)min inBand=\(currentInBand)/\(targetInBandRoutes) source=\(source)")
+        print("[BUCKET_SUMMARY] \(selectedDuration)min bucket: +1 → \(allRoutes.count) total (\(currentInBand)/\(targetInBandRoutes) in-band) [\(source)] — \(route.name) \(route.durationMinutes)min")
         print("[ROUTE_GEN] ✅ [\(source)] '\(route.name)' \(route.durationMinutes)min \(String(format: "%.1f", Double(route.distanceMeters)/1000))km — route \(allRoutes.count) (inBand: \(currentInBand)/\(targetInBandRoutes))")
         
         // Immediately dismiss loading indicator once we have enough in-band routes
@@ -6390,7 +6424,10 @@ struct LocalRoutePickerSheet: View {
             }
             if inBandRouteCount() == 0 {
                 print("TIME_SOURCE | PREPOP VALIDATE: All routes out-of-band after validation — triggering pre-generation for in-band options")
-                preGenerateRemainingRoutes()
+                Task {
+                    try? await Task.sleep(nanoseconds: routeStaggerAfterFirstReadySec * 1_000_000_000)
+                    await MainActor.run { preGenerateRemainingRoutes() }
+                }
             }
         }
     }
@@ -6960,6 +6997,7 @@ struct LocalRoutePickerSheet: View {
         print("🚀 Starting background pre-generation (need \(targetInBandRoutes - inBandRouteCount()) more in-band routes)...")
         
         Task {
+            ORSDirectionsRateLimiter.shared.setPriority(.low)  // Background: never compete with main route for ORS slots
             let preGenTaskStart = Date()
             var routesGenerated = allRoutes.count
             var consecutiveDuplicates = 0
