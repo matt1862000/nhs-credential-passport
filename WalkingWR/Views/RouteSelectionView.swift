@@ -3424,7 +3424,7 @@ struct LocalRoutePickerSheet: View {
                                         location: userLoc,
                                         radiusMeters: radius,
                                         skipGoogle: false,
-                                        minimumForEarlyReturn: 5,
+                                        minimumForEarlyReturn: 10,  // Trigger fallback / early exit: 10 (matches 10-candidate need)
                                         maxWaitSecondsForFirstRoute: 5
                                     )
                                 }

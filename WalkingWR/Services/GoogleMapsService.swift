@@ -2326,7 +2326,8 @@ class GoogleMapsService: ObservableObject {
             // - Apple/Google POIs are used but NOT cached
             // ═══════════════════════════════════════════════════════════════
             let timeoutSeconds: Double = 5.0  // Slightly longer timeout for sequential approach
-            let minimumPOIsRequired = 20  // Skip ORS when ≥20 (buffer for dedup/restricted/coords; 10+ usable candidates)
+            // Recommended thresholds: skip ORS/sufficient = 20, skip Google = 40, early exit / trigger fallback = 10
+            let minimumPOIsRequired = 20  // Sufficient POIs / skip ORS; 20 gives 12–16 usable after attrition
             let startTime = Date()
             
             print("🚀 PRIORITY POI FETCH - Free sources first, Google fallback if needed...")
@@ -2469,9 +2470,10 @@ class GoogleMapsService: ObservableObject {
             allResults = freePOIs
             
             // ═══════════════════════════════════════════════════════════════
-            // STEP 2: If < 15 POIs, fetch ORS (openpoiservice, FREE with API key)
+            // STEP 2: If < 20 POIs, fetch ORS (openpoiservice, FREE with API key)
+            // Recommended: 20 so after attrition we have 12–16 usable; 15 was too close to edge.
             // ═══════════════════════════════════════════════════════════════
-            let minimumPOIsForGoogle = 40  // Skip Google when ≥40 from free+ORS (saves cost in dense areas)
+            let minimumPOIsForGoogle = 40  // Skip Google when ≥40 from free+ORS (saves cost; 40 is recommended)
             if allResults.count < minimumPOIsRequired && ORSService.shared.hasAPIKey {
                 print("📍 Step 2: Have \(allResults.count) POIs (< \(minimumPOIsRequired)) - fetching ORS...")
                 let orsPOIs = await searchORSPOIs(location: location, radiusMeters: radiusMeters)
@@ -2493,8 +2495,9 @@ class GoogleMapsService: ObservableObject {
             }
             
             // ═══════════════════════════════════════════════════════════════
-            // STEP 3: If < 50 POIs, fetch from Google (PAID, NOT CACHED)
-            // Skip Google when we used first-route fast path so first route shows sooner
+            // STEP 3: If < 40 POIs, fetch from Google (PAID, NOT CACHED)
+            // Skip Google when we used first-route fast path so first route shows sooner.
+            // Recommended: 40 (dense area); saves cost with little impact on quality.
             // ═══════════════════════════════════════════════════════════════
             let usedFirstRouteFastPath = (minimumForEarlyReturn != nil || maxWaitSecondsForFirstRoute != nil) && allResults.count >= (minimumForEarlyReturn ?? 20) && allResults.count < minimumPOIsRequired
             let googleEnabled = !skipGoogle && !apiKey.isEmpty && canMakeGooglePlacesCall
@@ -3345,7 +3348,7 @@ class GoogleMapsService: ObservableObject {
     private func fetchLivePOIsForBlending(location: CLLocationCoordinate2D, radiusMeters: Int, skipAppleMaps: Bool = false) async -> [PlaceResult] {
         let startTime = Date()
         let timeoutSeconds: Double = 3.0  // P1 FIX: Reduced from 5.0s to 3.0s (2.0s soft/3.0s hard)
-        let minimumPOIsRequired = 20  // Early exit if we get enough POIs (aligned with sufficient threshold)
+        let minimumPOIsRequired = 20
         
         // ⚠️ DELAY LOG: Highlight blending start
         if skipAppleMaps {
@@ -3806,6 +3809,15 @@ class GoogleMapsService: ObservableObject {
                             nameOpt = Self.orsDerivedPOIName(properties: props, osmTags: osmTags) ?? "POI"
                         }
                         let name = nameOpt ?? "POI"
+                        // Debug: when ORS still yields "POI", log what we had so we can extend mapping (cap to first 5 per response)
+                        if name == "POI" && (results.filter { $0.name == "POI" }.count) < 5 {
+                            let propKeys = props.keys.sorted().joined(separator: ", ")
+                            let tagKeys = (osmTags?.keys.sorted().joined(separator: ", ")) ?? "nil"
+                            let firstCatId = Self._firstCategoryId(from: props)
+                            let firstGroupId = Self._firstCategoryGroupId(from: props)
+                            let catRaw = props["category_ids"].map { "\(type(of: $0))" } ?? "nil"
+                            print("🛤️ ORS POI unnamed: properties.keys=[\(propKeys)] osm_tags.keys=[\(tagKeys)] category_ids.first=\(firstCatId.map(String.init) ?? "nil") category_group_ids.first=\(firstGroupId.map(String.init) ?? "nil") category_ids.type=\(catRaw)")
+                        }
                         if GoogleMapsService.isJunkPOIName(name) { continue }
                         let placeId = "ors_\(String(format: "%.6f", lat))_\(String(format: "%.6f", lon))"
                         let place = PlaceResult(
@@ -21051,11 +21063,11 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// Derives a display name for ORS POIs when API returns no name (or "POI").
-    /// Uses category_ids and osm_tags (amenity, shop, tourism) from openpoiservice response.
+    /// Uses osm_tags and category_ids/category_group_ids from openpoiservice response.
     static func orsDerivedPOIName(properties: [String: Any], osmTags: [String: Any]?) -> String? {
-        // 1. OSM tags often have amenity/shop/tourism – humanise key and use as label
+        // 1. OSM tags – humanise value and use as label (broad set of keys so more POIs get a name)
         if let tags = osmTags {
-            for key in ["amenity", "shop", "tourism", "leisure", "historic"] {
+            for key in ["amenity", "shop", "tourism", "leisure", "historic", "building", "place", "natural", "man_made", "office"] {
                 if let raw = tags[key] as? String, !raw.isEmpty {
                     let label = raw
                         .replacingOccurrences(of: "_", with: " ")
@@ -21066,37 +21078,99 @@ class GoogleMapsService: ObservableObject {
                 }
             }
         }
-        // 2. category_ids (array of Int) – map first known id to label
-        if let ids = properties["category_ids"] as? [Int], let first = ids.first,
-           let label = Self.orsCategoryIdToLabel(first) {
-            return label
-        }
-        if let id = properties["category_ids"] as? Int, let label = Self.orsCategoryIdToLabel(id) {
-            return label
-        }
+        // 2. category_ids – array of Int, [String], [Double]/[NSNumber] (JSON), or single Int
+        if let id = Self._firstCategoryId(from: properties), let label = Self.orsCategoryIdToLabel(id) { return label }
         // 3. category_group_ids
-        if let ids = properties["category_group_ids"] as? [Int], let first = ids.first,
-           let label = Self.orsCategoryGroupIdToLabel(first) {
-            return label
+        if let id = Self._firstCategoryGroupId(from: properties), let label = Self.orsCategoryGroupIdToLabel(id) { return label }
+        return nil
+    }
+    
+    private static func _firstCategoryId(from properties: [String: Any]) -> Int? {
+        guard let raw = properties["category_ids"] else { return nil }
+        if let id = raw as? Int { return id }
+        if let arr = raw as? [Int], let first = arr.first { return first }
+        if let arr = raw as? [String], let first = arr.first, let id = Int(first) { return id }
+        if let arr = raw as? [Any], let first = arr.first {
+            if let n = first as? Int { return n }
+            if let n = first as? NSNumber { return n.intValue }
+            if let s = first as? String, let n = Int(s) { return n }
+        }
+        // ORS sometimes returns category_ids as a dictionary (e.g. __NSSingleEntryDictionaryI)
+        if let dict = raw as? [String: Any] {
+            for (k, v) in dict {
+                if let n = v as? Int { return n }
+                if let n = v as? NSNumber { return n.intValue }
+                if let s = v as? String, let n = Int(s) { return n }
+                if let n = Int(k) { return n }
+                break
+            }
+        }
+        if let dict = raw as? [Int: Any] {
+            for (k, _) in dict { return k; break }
         }
         return nil
     }
     
+    private static func _firstCategoryGroupId(from properties: [String: Any]) -> Int? {
+        guard let raw = properties["category_group_ids"] else { return nil }
+        if let id = raw as? Int { return id }
+        if let arr = raw as? [Int], let first = arr.first { return first }
+        if let arr = raw as? [String], let first = arr.first, let id = Int(first) { return id }
+        if let arr = raw as? [Any], let first = arr.first {
+            if let n = first as? Int { return n }
+            if let n = first as? NSNumber { return n.intValue }
+            if let s = first as? String, let n = Int(s) { return n }
+        }
+        if let dict = raw as? [String: Any] {
+            for (k, v) in dict {
+                if let n = v as? Int { return n }
+                if let n = v as? NSNumber { return n.intValue }
+                if let s = v as? String, let n = Int(s) { return n }
+                if let n = Int(k) { return n }
+                break
+            }
+        }
+        if let dict = raw as? [Int: Any] {
+            for (k, _) in dict { return k; break }
+        }
+        return nil
+    }
+    
+    /// ORS openpoiservice category_ids → display label (from HeiGIT API docs). Expanded so fewer POIs fall back to "POI".
     private static func orsCategoryIdToLabel(_ id: Int) -> String? {
         let map: [Int: String] = [
-            101: "Alpine hut", 102: "Apartment", 103: "Campsite", 106: "Guest house", 107: "Hostel", 108: "Hotel", 109: "Motel",
-            123: "Vet", 131: "Arts centre", 132: "Gallery", 133: "Library", 134: "Museum", 135: "Place of worship",
-            151: "College", 153: "Kindergarten", 156: "School", 157: "University",
-            171: "Post box", 179: "Toilets", 192: "Bank", 193: "Bureau de change",
-            202: "Clinic", 203: "Dentist", 204: "Doctors", 206: "Hospital", 208: "Pharmacy",
-            224: "Castle", 237: "Memorial", 240: "Monument",
-            280: "Park", 283: "Playground", 288: "Sports centre", 289: "Stadium", 299: "Cinema", 308: "Aquarium", 310: "Zoo",
-            363: "Community centre", 367: "Fire station", 369: "Police", 370: "Post office",
-            395: "Hairdresser", 396: "Laundry",
-            426: "Bakery", 435: "Cafe", 451: "Convenience store", 472: "General store", 475: "Grocery", 492: "Mall", 518: "Supermarket",
-            561: "Bar", 564: "Café", 566: "Fast food", 569: "Pub", 570: "Restaurant",
-            587: "Bus station", 588: "Bus stop", 596: "Fuel", 604: "Station", 605: "Tram stop",
-            621: "Artwork", 622: "Attraction", 623: "Fountain", 624: "Information", 627: "Viewpoint"
+            // accommodation 100
+            101: "Alpine hut", 102: "Apartment", 103: "Campsite", 104: "Caravan site", 105: "Chalet", 106: "Guest house", 107: "Hostel", 108: "Hotel", 109: "Motel", 110: "Wilderness hut",
+            // animals 120
+            121: "Animal boarding", 122: "Animal shelter", 123: "Vet", 124: "Pet",
+            // arts_and_culture 130
+            131: "Arts centre", 132: "Gallery", 133: "Library", 134: "Museum", 135: "Place of worship", 136: "Studio",
+            // education 150
+            151: "College", 152: "Driving school", 153: "Kindergarten", 154: "Language school", 155: "Music school", 156: "School", 157: "University",
+            // facilities 160
+            161: "Compressed air", 162: "Bench", 166: "Drinking water", 171: "Post box", 175: "Shelter", 176: "Shower", 179: "Toilets", 182: "Water point",
+            // financial 190
+            191: "ATM", 192: "Bank", 193: "Bureau de change",
+            // healthcare 200
+            202: "Clinic", 203: "Dentist", 204: "Doctors", 206: "Hospital", 207: "Nursing home", 208: "Pharmacy", 209: "Retirement home", 210: "Social facility",
+            // historic 220
+            221: "Aircraft", 222: "Aqueduct", 223: "Archaeological site", 224: "Castle", 226: "City gate", 231: "Farm", 232: "Fort", 236: "Manor", 237: "Memorial", 239: "Monastery", 240: "Monument", 243: "Ruins",
+            // leisure_and_entertainment 260
+            263: "Beach resort", 265: "Bird hide", 266: "Common", 270: "Fishing", 271: "Fitness centre", 272: "Garden", 273: "Golf course", 275: "Horse riding", 277: "Marina", 279: "Nature reserve", 280: "Park", 281: "Picnic table", 282: "Pitch", 283: "Playground", 285: "Public bath", 288: "Sports centre", 289: "Stadium", 291: "Swimming area", 292: "Swimming pool", 299: "Cinema", 308: "Aquarium", 309: "Theme park", 310: "Zoo",
+            // natural 330
+            331: "Cave", 332: "Beach", 334: "Hill", 335: "Peak", 336: "Rock", 338: "Spring", 340: "Water",
+            // public_places 360
+            361: "Embassy", 363: "Community centre", 364: "Courthouse", 367: "Fire station", 368: "Graveyard", 369: "Police", 370: "Post office", 374: "Town hall",
+            // service 390
+            391: "Beauty", 395: "Hairdresser", 396: "Laundry", 397: "Massage", 399: "Tailor",
+            // shops 420 (selection)
+            426: "Bakery", 430: "Bookshop", 435: "Cafe", 443: "Chemist", 448: "Coffee", 451: "Convenience store", 456: "Department store", 463: "Fashion", 465: "Florist", 467: "Furniture", 469: "Garden centre", 472: "General store", 475: "Grocery", 488: "Kiosk", 492: "Mall", 501: "Newsagent", 518: "Supermarket", 527: "Variety store",
+            // sustenance 560
+            561: "Bar", 562: "BBQ", 563: "Biergarten", 564: "Café", 565: "Drinking water", 566: "Fast food", 567: "Food court", 568: "Ice cream", 569: "Pub", 570: "Restaurant",
+            // transport 580
+            581: "Aerodrome", 583: "Bicycle parking", 584: "Bicycle rental", 587: "Bus station", 588: "Bus stop", 589: "Car rental", 593: "Charging station", 595: "Ferry terminal", 596: "Fuel", 604: "Station", 605: "Tram stop", 606: "Taxi",
+            // tourism 620
+            621: "Artwork", 622: "Attraction", 623: "Fountain", 624: "Information", 625: "Picnic site", 626: "Travel agency", 627: "Viewpoint"
         ]
         return map[id]
     }
