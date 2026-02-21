@@ -136,6 +136,7 @@ struct ClinicianSelectionView: View {
                                             color: .tealAccent
                                         ) {
                                             viewModel.hasSkippedClinicianSelection = true
+                                            viewModel.requestNotificationPermissionForDelayAlertsIfNeeded()
                                             isPresented = false
                                             // Navigate to Walk tab and open route picker (delay for dismiss animation)
                                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -151,6 +152,7 @@ struct ClinicianSelectionView: View {
                                             color: .lavenderMist
                                         ) {
                                             viewModel.hasSkippedClinicianSelection = true
+                                            viewModel.requestNotificationPermissionForDelayAlertsIfNeeded()
                                             isPresented = false
                                             // Navigate to Wellbeing and open random breathing exercise (delay for dismiss animation)
                                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -166,6 +168,7 @@ struct ClinicianSelectionView: View {
                                             color: .tealAccent
                                         ) {
                                             viewModel.hasSkippedClinicianSelection = true
+                                            viewModel.requestNotificationPermissionForDelayAlertsIfNeeded()
                                             isPresented = false
                                             // Navigate to Wellbeing > Digital Skills (delay for dismiss animation)
                                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -250,6 +253,7 @@ struct ClinicianSelectionView: View {
                                                     },
                                                     onSkip: {
                                                         viewModel.clearAppointmentTime()
+                                                        viewModel.requestNotificationPermissionForDelayAlertsIfNeeded()
                                                         withAnimation {
                                                             showAppointmentTimePicker = false
                                                         }
@@ -302,6 +306,7 @@ struct ClinicianSelectionView: View {
                     Button(viewModel.hasSelectedClinician ? "Cancel" : "Skip") {
                         if !viewModel.hasSelectedClinician {
                             viewModel.hasSkippedClinicianSelection = true
+                            viewModel.requestNotificationPermissionForDelayAlertsIfNeeded()
                         }
                         isPresented = false
                     }

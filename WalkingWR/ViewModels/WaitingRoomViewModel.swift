@@ -2059,16 +2059,7 @@ class WaitingRoomViewModel: ObservableObject {
             print("📊 Established delay baseline for new user: \(clinician.currentWaitMinutes) min")
         }
         
-        // Request notification permission AFTER clinician is selected
-        // This follows the flow: Location → Clinician Selection → Notifications
-        // Only request if not already authorized and selecting a new clinician
-        if !isSameClinician && !notificationService.isAuthorized {
-            Task {
-                // Small delay to let the clinician selection UI dismiss first
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-                _ = await notificationService.requestAuthorization()
-            }
-        }
+        // Notification permission is requested after appointment time is set or user skips (see requestNotificationPermissionForDelayAlertsIfNeeded)
     }
     
     // MARK: - Appointment Time (v1.9.56)
@@ -2083,6 +2074,7 @@ class WaitingRoomViewModel: ObservableObject {
             let formatter = DateFormatter()
             formatter.timeStyle = .short
             print("📅 Appointment time set: \(formatter.string(from: time))")
+            requestNotificationPermissionForDelayAlertsIfNeeded()
         } else {
             UserDefaults.standard.removeObject(forKey: "appointmentTime")
             print("📅 Appointment time cleared")
@@ -2116,6 +2108,15 @@ class WaitingRoomViewModel: ObservableObject {
     }
     
     // MARK: - Notification Management
+    
+    /// Request notification permission for delay alerts. Called after user sets appointment time or skips clinician selection (so permission is not asked when tapping a clinician).
+    func requestNotificationPermissionForDelayAlertsIfNeeded() {
+        guard !notificationService.isAuthorized else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s so UI can dismiss first
+            _ = await notificationService.requestAuthorization()
+        }
+    }
     
     private func unsubscribeFromAllClinicianTopics() {
         // Unsubscribe from all possible clinician topics to ensure clean state
