@@ -1317,8 +1317,8 @@ struct LocalRoutePickerSheet: View {
                                     .font(.system(size: 28, weight: .bold, design: .rounded))
                                     .foregroundColor(.primary)
                                 
-                                // Recommendation card based on delay
-                                if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
+                                // Recommendation card based on delay (hide for 5 or 10 min delay)
+                                if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable && viewModel.waitTimeInfo.estimatedMinutes > 10 {
                                     let delayMinutes = viewModel.waitTimeInfo.estimatedMinutes
                                     let recommendedWalk = max(5, delayMinutes - 5)
                                     let waitInfo = viewModel.waitTimeInfo
@@ -1359,24 +1359,30 @@ struct LocalRoutePickerSheet: View {
                             }
                             .padding(.top, 8)
                             
-                            // v2.0.1: Warning when delay is too short for a walk
+                            // v2.0.1: Warning when delay is too short for a walk (styled to match recommendation card)
                             if isDelayTooShortForWalk {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundColor(.orange)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Wait time is short")
-                                            .font(.subheadline)
-                                            .fontWeight(.semibold)
-                                        Text("Your \(viewModel.waitTimeInfo.estimatedMinutes)-minute delay may not allow time for a walk. Consider staying near reception.")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.title2)
+                                            .foregroundColor(.tealAccent)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Wait time is short")
+                                                .font(.subheadline)
+                                                .fontWeight(.semibold)
+                                            Text("Your \(viewModel.waitTimeInfo.estimatedMinutes)-minute delay may not allow time for a walk. Consider staying near reception.")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
                                     }
                                 }
-                                .padding()
+                                .padding(16)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.orange.opacity(0.1))
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.tealAccent.opacity(0.15))
+                                )
+                                .padding(.horizontal, 4)
                             }
                             
                             // Duration picker
