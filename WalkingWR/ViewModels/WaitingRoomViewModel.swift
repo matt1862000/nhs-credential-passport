@@ -265,9 +265,11 @@ class WaitingRoomViewModel: ObservableObject {
                 }
             }
             print("📱 Restored clinician from sampleClinicians: \(clinician.fullTitle)")
-            
             // Data is ready - clinician found in sampleClinicians
             self.isDataReady = true
+            DispatchQueue.main.async { [weak self] in
+                self?.startWaitTimeActivityIfNeeded()
+            }
         } else if savedClinicianName != nil {
             // Clinician not in sampleClinicians - will be restored when Firebase loads
             // Keep notification preference for when Firebase restores the clinician
@@ -501,6 +503,7 @@ class WaitingRoomViewModel: ObservableObject {
                 
                 print("📱 Restored clinician from Firebase: \(restoredClinician.fullTitle)")
                 isFirstFirebaseUpdate = false  // Don't show alert for restoration
+                startWaitTimeActivityIfNeeded()
             } else {
                 // Clinician was saved but not found in Firebase - clinic has ended
                 isClinicEnded = true
@@ -609,7 +612,8 @@ class WaitingRoomViewModel: ObservableObject {
                 waitTimeInfo.estimatedMinutes = newDelay
                 waitTimeInfo.lastUpdated = Date()
                 waitTimeInfo.clinicianName = updatedData.fullName
-                
+                // Dynamic Island: update wait-time activity (or start if none)
+                startWaitTimeActivityIfNeeded()
                 // Ensure we're subscribed to this clinician's topic
                 // v1.7.12: Run on background thread to avoid any main thread blocking
                 if notificationsEnabled {
@@ -632,7 +636,7 @@ class WaitingRoomViewModel: ObservableObject {
                 // Selected clinician is NOT in Firebase anymore - clinic has ended
                 isClinicEnded = true
                 print("📋 Selected clinician '\(selected.fullTitle)' no longer in Firebase - clinic ended")
-                
+                WaitTimeLiveActivityBridge.endIfAvailable()
                 // Unsubscribe from notifications since clinic is over (safeUnsubscribe waits for APNS)
                 let topic = "clinician_" + selected.fullTitle.replacingOccurrences(of: "[^a-zA-Z0-9]", with: "_", options: .regularExpression)
                 Messaging.safeUnsubscribe(fromTopic: topic) { error in
@@ -1161,6 +1165,21 @@ class WaitingRoomViewModel: ObservableObject {
         // Start session timer
         startSessionTimer()
         
+        // Dynamic Island: end wait-time activity (walk takes over)
+        WaitTimeLiveActivityBridge.endIfAvailable()
+        // Dynamic Island / Live Activity: show walk in island and on Lock Screen (iOS 16.2+)
+        let backByText: String? = waitTimeInfo.appointmentTime.map { d in
+            let f = DateFormatter()
+            f.timeStyle = .short
+            return f.string(from: d)
+        }
+        let clinicianNameForWidget: String? = {
+            let name = waitTimeInfo.clinicianName
+            if name.isEmpty || name == "Select your clinician" { return nil }
+            return name
+        }()
+        WalkLiveActivityBridge.startIfAvailable(routeName: route.name, totalMinutes: effectiveMinutes, backByText: backByText, clinicianName: clinicianNameForWidget)
+        
         // Prompt for pre-walk wellbeing score if not already done
         if userProgress.anxietyLevelBefore == nil {
             showPreWalkWellbeing = true
@@ -1202,6 +1221,9 @@ class WaitingRoomViewModel: ObservableObject {
         
         // v1.7.5: Clear flag so app knows walk has ended
         UserDefaults.standard.set(false, forKey: "hasActiveWalk")
+        
+        // End Dynamic Island / Live Activity
+        WalkLiveActivityBridge.endIfAvailable()
         
         // Record progress
         if completed {
@@ -1246,6 +1268,8 @@ class WaitingRoomViewModel: ObservableObject {
         selectedRoute = nil
         visitedMarkerIds = []
         currentMarker = nil
+        // Dynamic Island: show wait-time activity again if user still has a clinician
+        startWaitTimeActivityIfNeeded()
         lastWaypointActivationTime = nil // v2.1.7: Reset activation timer
         
         // v1.9.15: Reset cached directions
@@ -1556,6 +1580,14 @@ class WaitingRoomViewModel: ObservableObject {
         
         // Update elapsed time
         walkSession.updateElapsedTime()
+        
+        // Update Dynamic Island / Live Activity (elapsed, mins left, heading back)
+        let minsLeft = remainingOutboundMinutes
+        WalkLiveActivityBridge.updateIfAvailable(
+            elapsedSeconds: walkSession.elapsedSeconds,
+            minutesLeft: minsLeft,
+            isHeadingBack: isHeadingBack
+        )
         
         // Refresh steps from pedometer every 5 seconds; live CMPedometer callbacks can be delayed/batched so steps stay 0
         if stepTrackingWasEnabled, walkSession.elapsedSeconds > 0, walkSession.elapsedSeconds % 5 == 0 {
@@ -1961,7 +1993,9 @@ class WaitingRoomViewModel: ObservableObject {
         
         waitTimeInfo.estimatedMinutes = newWait
         waitTimeInfo.lastUpdated = Date()
-        
+        if !walkSession.isActive {
+            WaitTimeLiveActivityBridge.updateIfAvailable(delayMinutes: newWait)
+        }
         // Update selected clinician's wait time too
         if var clinician = selectedClinician {
             clinician.currentWaitMinutes = newWait
@@ -2049,7 +2083,8 @@ class WaitingRoomViewModel: ObservableObject {
         // Save selection
         UserDefaults.standard.set(clinician.id.uuidString, forKey: "selectedClinicianId")
         UserDefaults.standard.set(clinician.fullTitle, forKey: "selectedClinicianName")
-        
+        // Dynamic Island: show clinician + delay when no walk active
+        startWaitTimeActivityIfNeeded()
         // v1.7.16: Mark first Firebase update as processed when user selects a clinician
         // This fixes the bug where new users miss their first delay alert because
         // isFirstFirebaseUpdate was never set to false (since they had no clinician during initial sync)
@@ -2075,9 +2110,11 @@ class WaitingRoomViewModel: ObservableObject {
             formatter.timeStyle = .short
             print("📅 Appointment time set: \(formatter.string(from: time))")
             requestNotificationPermissionForDelayAlertsIfNeeded()
+            startWaitTimeActivityIfNeeded()
         } else {
             UserDefaults.standard.removeObject(forKey: "appointmentTime")
             print("📅 Appointment time cleared")
+            startWaitTimeActivityIfNeeded()
         }
     }
     
@@ -2221,6 +2258,7 @@ class WaitingRoomViewModel: ObservableObject {
     }
     
     func clearClinicianSelection() {
+        WaitTimeLiveActivityBridge.endIfAvailable()
         selectedClinician = nil
         UserDefaults.standard.removeObject(forKey: "selectedClinicianId")
         waitTimeInfo = WaitTimeInfo(
@@ -2233,6 +2271,21 @@ class WaitingRoomViewModel: ObservableObject {
     
     var hasSelectedClinician: Bool {
         selectedClinician != nil
+    }
+
+    /// Start the wait-time Live Activity (clinician + delay) when user has a clinician and no walk is active.
+    private func startWaitTimeActivityIfNeeded() {
+        guard !walkSession.isActive else { return }
+        guard hasSelectedClinician else { return }
+        let name = waitTimeInfo.clinicianName
+        if name.isEmpty || name == "Select your clinician" { return }
+        let backBy: String? = waitTimeInfo.appointmentTime.map { d in
+            let f = DateFormatter()
+            f.timeStyle = .short
+            return f.string(from: d)
+        }
+        WaitTimeLiveActivityBridge.endIfAvailable()
+        WaitTimeLiveActivityBridge.startIfAvailable(clinicianName: name, delayMinutes: waitTimeInfo.estimatedMinutes, backByText: backBy)
     }
     
     private func recalculateReturnTime(for route: WalkingRoute) {

@@ -17,6 +17,8 @@
 	<false/>
 	<key>FirebaseAppDelegateProxyEnabled</key>
 	<false/>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
@@ -43,6 +45,6 @@
 	<key>CFBundleShortVersionString</key>
 	<string>2.1.27</string>
 	<key>CFBundleVersion</key>
-	<string>404</string>
+	<string>405</string>
 </dict>
 </plist>

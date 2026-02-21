@@ -97,7 +97,15 @@ class ImageCacheService {
             }
         }.resume()
     }
-    
+
+    /// Returns cached image for URL if already in memory or disk cache (no network). Use for widget/ Live Activity.
+    func getImageIfCached(for urlString: String) -> UIImage? {
+        let key = NSString(string: urlString)
+        if let cached = cache.object(forKey: key), !cached.isExpired { return cached.image }
+        let fileURL = cacheFileURL(for: urlString)
+        return loadFromDisk(fileURL: fileURL)
+    }
+
     // MARK: - Disk Cache Helpers
     
     private func cacheFileURL(for urlString: String) -> URL {
