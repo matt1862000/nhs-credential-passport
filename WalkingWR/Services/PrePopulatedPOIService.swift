@@ -1771,6 +1771,7 @@ extension POISource {
         case "apple": return .apple
         case "osm": return .osm
         case "geograph": return .geograph
+        case "ors": return .ors
         default: return .unknown
         }
     }

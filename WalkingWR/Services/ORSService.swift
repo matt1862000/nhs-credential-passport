@@ -95,11 +95,34 @@ final class ORSService {
     
     private var useProxy: Bool { !APIKeys.orsBaseURL.isEmpty }
     
+    /// When using proxy (e.g. Vercel), allow longer timeout for cold start; retry once on timeout/5xx.
+    private static let proxyTimeout: TimeInterval = 28
+    private static let directTimeout: TimeInterval = 10
+    
     private let session: URLSession = {
         let c = URLSessionConfiguration.default
-        c.timeoutIntervalForRequest = 10  // Fail fast so route gen can fall back to radius-based
+        c.timeoutIntervalForRequest = 10  // Direct; proxy requests set longer timeout per-request
         return URLSession(configuration: c)
     }()
+    
+    /// Performs request with proxy-aware timeout and one retry on timeout or 5xx when using proxy.
+    private func dataWithRetry(for request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            let (data, response) = try await session.data(for: request)
+            if useProxy, let http = response as? HTTPURLResponse, (500...599).contains(http.statusCode) {
+                print("[ROUTE_FLOW] stage=ors_retry reason=5xx status=\(http.statusCode)")
+                var retryReq = request
+                retryReq.timeoutInterval = Self.proxyTimeout
+                return try await session.data(for: retryReq)
+            }
+            return (data, response)
+        } catch let err as URLError where err.code == .timedOut && useProxy {
+            print("[ROUTE_FLOW] stage=ors_retry reason=timeout")
+            var retryReq = request
+            retryReq.timeoutInterval = Self.proxyTimeout
+            return try await session.data(for: retryReq)
+        }
+    }
     
     private var isochroneCache: [String: IsochroneCacheEntry] = [:]
     private let cacheLock = NSLock()
@@ -176,8 +199,9 @@ final class ORSService {
             "range": range
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = useProxy ? Self.proxyTimeout : Self.directTimeout
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await dataWithRetry(for: request)
         cacheLock.lock()
         if let http = response as? HTTPURLResponse {
             if http.statusCode == 429 {
@@ -272,8 +296,9 @@ final class ORSService {
             "metrics": ["duration"]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        
-        let (data, response) = try await session.data(for: request)
+        request.timeoutInterval = useProxy ? Self.proxyTimeout : Self.directTimeout
+
+        let (data, response) = try await dataWithRetry(for: request)
         if let http = response as? HTTPURLResponse {
             if http.statusCode == 429 { throw ORSServiceError.rateLimited }
             if http.statusCode != 200 {
@@ -329,9 +354,9 @@ final class ORSService {
         ]
         guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else { return nil }
         request.httpBody = bodyData
-        request.timeoutInterval = 8
+        request.timeoutInterval = useProxy ? Self.proxyTimeout : 8
         do {
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await dataWithRetry(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                 if let http = response as? HTTPURLResponse {
                     print("[ROUTE_FLOW] stage=ors_snap_v2 status=\(http.statusCode)")

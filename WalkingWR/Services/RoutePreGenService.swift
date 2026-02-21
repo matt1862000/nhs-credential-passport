@@ -44,8 +44,8 @@ final class RoutePreGenService: ObservableObject {
             print("\(tag) Already pre-generating — skipping")
             return
         }
-        guard pois.count >= 15 else {
-            print("\(tag) Only \(pois.count) POIs — need ≥15, skipping")
+        guard pois.count >= 20 else {
+            print("\(tag) Only \(pois.count) POIs — need ≥20, skipping")
             return
         }
         // Need at least one clinician with a delay > 0

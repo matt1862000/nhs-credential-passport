@@ -5,7 +5,7 @@ import { motion } from 'framer-motion'
 import PhoneMockup from './PhoneMockup'
 import VideoModal from './VideoModal'
 
-const PROMO_VIDEO_ID = 'sALctWCQQic' // YouTube Shorts promo
+const PROMO_VIDEO_ID = '9hv2Fu3eeWc' // YouTube Shorts promo
 
 export default function Hero() {
   const [isVideoOpen, setIsVideoOpen] = useState(false)

@@ -1,4 +1,10 @@
 {
   "installCommand": "true",
-  "buildCommand": "npm ci && next build"
+  "buildCommand": "npm ci && next build",
+  "crons": [
+    {
+      "path": "/api/ors/warm",
+      "schedule": "*/5 * * * *"
+    }
+  ]
 }

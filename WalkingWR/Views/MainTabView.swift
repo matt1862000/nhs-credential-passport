@@ -182,7 +182,7 @@ struct MainTabView: View {
         let clinicians = viewModel.availableClinicians
         guard !clinicians.isEmpty else { return }
         // Check if POIs are available from pre-pop DB
-        guard let pois = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: coordinate, radiusMeters: 2500), pois.count >= 15 else { return }
+        guard let pois = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: coordinate, radiusMeters: 2500), pois.count >= 20 else { return }
         RoutePreGenService.shared.startPreGenForAllClinicians(pois: pois, clinicians: clinicians, location: coordinate)
     }
     

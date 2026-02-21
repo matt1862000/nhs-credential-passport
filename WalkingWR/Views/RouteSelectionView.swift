@@ -3312,7 +3312,7 @@ struct LocalRoutePickerSheet: View {
                         for _ in 0..<15 {
                             try? await Task.sleep(nanoseconds: 200_000_000) // 0.2s
                             (prefetchCount, isPrefetching) = await MainActor.run { (prefetchedPOIs.count, isPrefetchingPOIs) }
-                            if prefetchCount >= 15 || !isPrefetching { break }
+                            if prefetchCount >= 20 || !isPrefetching { break }
                             if Date().timeIntervalSince(waitStart) >= 3.0 { break }
                         }
                         if prefetchCount > 0 {

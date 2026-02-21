@@ -66,7 +66,7 @@ class POICacheService {
     
     // MARK: - ToS-Safe Sources
     // Only these sources can be cached to comply with Google/Apple Terms of Service
-    static let tosSafeSources: Set<String> = ["osm", "geograph", "database", "unknown", "apple"]
+    static let tosSafeSources: Set<String> = ["osm", "geograph", "database", "unknown", "apple", "ors"]
     
     // MARK: - Public Methods
     

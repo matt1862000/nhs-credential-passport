@@ -401,6 +401,7 @@ enum POISource: String, Codable {
     case apple = "apple"
     case osm = "osm"
     case geograph = "geograph"
+    case ors = "ors"
     case unknown = "unknown"
 }
 
@@ -2070,7 +2071,7 @@ class GoogleMapsService: ObservableObject {
     /// 
     /// - Parameter skipGoogle: If true, skips Google Places API call (cost optimization for first-run)
     /// - Parameter canonicalMaxTimeSeconds: If set, canonical dedup is capped so first route is not blocked (nil = full dedup for prefetch/cache).
-    /// - Parameter minimumForEarlyReturn: If set (e.g. 10), return as soon as we have this many POIs from free sources (faster first route).
+    /// - Parameter minimumForEarlyReturn: If set (e.g. 20), return as soon as we have this many POIs from free sources (aligned with sufficient threshold).
     /// - Parameter maxWaitSecondsForFirstRoute: If set (e.g. 6), return after this many seconds with whatever we have (≥ minimumForEarlyReturn) to show first route sooner.
     func findNearbyPlaces(
         location: CLLocationCoordinate2D,
@@ -2079,7 +2080,7 @@ class GoogleMapsService: ObservableObject {
         skipGoogle: Bool = false,  // v1.9.50: Skip Google on first run to save costs
         targetDurationMinutes: Int? = nil,  // v2.0.3 Phase 2A: For diversity check in DB blending
         canonicalMaxTimeSeconds: TimeInterval? = nil,  // Cap canonical dedup for fast first route (prefetch uses full dedup)
-        minimumForEarlyReturn: Int? = nil,  // Return as soon as we have this many (e.g. 10 for first route)
+        minimumForEarlyReturn: Int? = nil,  // Return as soon as we have this many (e.g. 20, aligned with sufficient)
         maxWaitSecondsForFirstRoute: Double? = nil  // Return after this many seconds with partial POIs for faster first route
     ) async throws -> [PlaceResult] {
         let startTime = Date()
@@ -2325,7 +2326,7 @@ class GoogleMapsService: ObservableObject {
             // - Apple/Google POIs are used but NOT cached
             // ═══════════════════════════════════════════════════════════════
             let timeoutSeconds: Double = 5.0  // Slightly longer timeout for sequential approach
-            let minimumPOIsRequired = 15  // Optimal threshold for route quality
+            let minimumPOIsRequired = 20  // Skip ORS when ≥20 (buffer for dedup/restricted/coords; 10+ usable candidates)
             let startTime = Date()
             
             print("🚀 PRIORITY POI FETCH - Free sources first, Google fallback if needed...")
@@ -2335,14 +2336,15 @@ class GoogleMapsService: ObservableObject {
             var appleCount = 0
             var osmCount = 0
             var geographCount = 0
+            var orsCount = 0
             
             // v1.9.50: Calculate maxRealisticDistance for early filtering
             let maxRealisticDistance = Double(radiusMeters) * 2.0
             
             // ═══════════════════════════════════════════════════════════════
-            // STEP 1: Fetch from FREE sources in parallel (OSM + Geograph + Apple)
+            // STEP 1: Fetch from FREE sources in parallel (Apple + OSM + Geograph only)
             // ═══════════════════════════════════════════════════════════════
-            print("📍 Step 1: Fetching from FREE sources (OSM + Geograph + Apple)...")
+            print("📍 Step 1: Fetching from FREE sources (Apple + OSM + Geograph)...")
             
             var freePOIs: [PlaceResult] = []
             
@@ -2444,7 +2446,7 @@ class GoogleMapsService: ObservableObject {
                     }
                     
                     // First-route fast path: return partial POIs after max wait so first route can show sooner
-                    if let maxWait = maxWaitSecondsForFirstRoute, elapsed >= maxWait, collected.count >= (minimumForEarlyReturn ?? 10) {
+                    if let maxWait = maxWaitSecondsForFirstRoute, elapsed >= maxWait, collected.count >= (minimumForEarlyReturn ?? 20) {
                         print("⏱️ First-route timeout - returning \(collected.count) POIs after \(String(format: "%.1f", maxWait))s (faster first route)")
                         group.cancelAll()
                         break
@@ -2462,19 +2464,43 @@ class GoogleMapsService: ObservableObject {
             }
             
             let freeSourceTime = Date().timeIntervalSince(startTime)
-            print("📍 Free sources: \(freePOIs.count) POIs in \(String(format: "%.2f", freeSourceTime))s")
+            print("📍 Step 1 done: \(freePOIs.count) POIs in \(String(format: "%.2f", freeSourceTime))s")
             
             allResults = freePOIs
             
             // ═══════════════════════════════════════════════════════════════
-            // STEP 2: If not enough POIs, fetch from Google (PAID, NOT CACHED)
-            // Skip Google when we used first-route fast path (10–14 POIs) so first route shows sooner
+            // STEP 2: If < 15 POIs, fetch ORS (openpoiservice, FREE with API key)
             // ═══════════════════════════════════════════════════════════════
-            let usedFirstRouteFastPath = (minimumForEarlyReturn != nil || maxWaitSecondsForFirstRoute != nil) && allResults.count >= (minimumForEarlyReturn ?? 10) && allResults.count < minimumPOIsRequired
+            let minimumPOIsForGoogle = 40  // Skip Google when ≥40 from free+ORS (saves cost in dense areas)
+            if allResults.count < minimumPOIsRequired && ORSService.shared.hasAPIKey {
+                print("📍 Step 2: Have \(allResults.count) POIs (< \(minimumPOIsRequired)) - fetching ORS...")
+                let orsPOIs = await searchORSPOIs(location: location, radiusMeters: radiusMeters)
+                let filteredORS = orsPOIs.filter { poi in
+                    let distance = distanceBetween(location, poi.coordinate)
+                    if distance > maxRealisticDistance { return false }
+                    if isRestrictedPOI(poi) { return false }
+                    return true
+                }
+                let beforeORS = allResults.count
+                allResults.append(contentsOf: filteredORS)
+                allResults = deduplicatePOIs(allResults)
+                orsCount = filteredORS.count
+                print("   🛤️ ORS: \(filteredORS.count) POIs (+\(allResults.count - beforeORS) unique) → total \(allResults.count)")
+            } else if allResults.count >= minimumPOIsRequired {
+                print("📍 Step 2: Skipping ORS - have enough POIs (\(allResults.count) >= \(minimumPOIsRequired))")
+            } else {
+                print("📍 Step 2: Skipping ORS (no API key or not needed)")
+            }
+            
+            // ═══════════════════════════════════════════════════════════════
+            // STEP 3: If < 50 POIs, fetch from Google (PAID, NOT CACHED)
+            // Skip Google when we used first-route fast path so first route shows sooner
+            // ═══════════════════════════════════════════════════════════════
+            let usedFirstRouteFastPath = (minimumForEarlyReturn != nil || maxWaitSecondsForFirstRoute != nil) && allResults.count >= (minimumForEarlyReturn ?? 20) && allResults.count < minimumPOIsRequired
             let googleEnabled = !skipGoogle && !apiKey.isEmpty && canMakeGooglePlacesCall
             
-            if allResults.count < minimumPOIsRequired && googleEnabled && !usedFirstRouteFastPath {
-                print("📍 Step 2: Free sources insufficient (\(allResults.count) < \(minimumPOIsRequired)) - fetching from Google...")
+            if allResults.count < minimumPOIsForGoogle && googleEnabled && !usedFirstRouteFastPath {
+                print("📍 Step 3: Have \(allResults.count) POIs (< \(minimumPOIsForGoogle)) - fetching Google...")
                 
                 let googleStartTime = Date()
                 let googlePOIs = await fetchGooglePOIs(location: location, radiusMeters: radiusMeters)
@@ -2507,14 +2533,14 @@ class GoogleMapsService: ObservableObject {
                     print("   🏫 Filtered \(restrictedCount) restricted Google POIs")
                 }
             } else if usedFirstRouteFastPath {
-                print("📍 Step 2: Skipping Google - first-route fast path (\(allResults.count) POIs, show route sooner)")
-            } else if allResults.count >= minimumPOIsRequired {
-                print("📍 Step 2: Skipping Google - have enough POIs (\(allResults.count) >= \(minimumPOIsRequired))")
+                print("📍 Step 3: Skipping Google - first-route fast path (\(allResults.count) POIs, show route sooner)")
+            } else if allResults.count >= minimumPOIsForGoogle {
+                print("📍 Step 3: Skipping Google - have enough POIs (\(allResults.count) >= \(minimumPOIsForGoogle))")
             } else if !googleEnabled {
                 if skipGoogle {
-                    print("📍 Step 2: Skipping Google (first run optimization)")
+                    print("📍 Step 3: Skipping Google (first run optimization)")
                 } else if !canMakeGooglePlacesCall {
-                    print("📍 Step 2: Skipping Google (quota/cap reached)")
+                    print("📍 Step 3: Skipping Google (quota/cap reached)")
                 }
             }
             
@@ -2522,9 +2548,9 @@ class GoogleMapsService: ObservableObject {
             let endTimeString = formatter.string(from: Date())
             print("═══════════════════════════════════════════════════════════════")
             print("⏱️ [POI SEARCH] [\(endTimeString)] ✅ findNearbyPlaces() COMPLETED in \(String(format: "%.2f", totalTime))s")
-            print("📊 Sources: OSM=\(osmCount), Geograph=\(geographCount), Apple=\(appleCount), Google=\(googleCount)")
+            print("📊 Sources: OSM=\(osmCount), Geograph=\(geographCount), Apple=\(appleCount), ORS=\(orsCount), Google=\(googleCount)")
             print("📊 Total unique POIs: \(allResults.count)")
-            print("💾 ToS Compliance: Only OSM/Geograph POIs will be cached")
+            print("💾 ToS Compliance: Only OSM/Geograph/ORS POIs will be cached")
             if allResults.count < minimumPOIsRequired {
                 print("⚠️ Low POI count (\(allResults.count) < \(minimumPOIsRequired)) - route options may be limited")
             }
@@ -3319,7 +3345,7 @@ class GoogleMapsService: ObservableObject {
     private func fetchLivePOIsForBlending(location: CLLocationCoordinate2D, radiusMeters: Int, skipAppleMaps: Bool = false) async -> [PlaceResult] {
         let startTime = Date()
         let timeoutSeconds: Double = 3.0  // P1 FIX: Reduced from 5.0s to 3.0s (2.0s soft/3.0s hard)
-        let minimumPOIsRequired = 10  // Early exit if we get enough POIs (acts as 2.0s soft timeout)
+        let minimumPOIsRequired = 20  // Early exit if we get enough POIs (aligned with sufficient threshold)
         
         // ⚠️ DELAY LOG: Highlight blending start
         if skipAppleMaps {
@@ -3707,6 +3733,112 @@ class GoogleMapsService: ObservableObject {
             }
             return []
         }
+    }
+    
+    // MARK: - ORS (OpenRouteService / HeiGIT) POI Search
+    /// Fetches POIs from OpenRouteService POI endpoint (openpoiservice - OSM-derived, HeiGIT).
+    /// Public API: POST to api.openrouteservice.org/pois with geometry (Point + buffer).
+    /// Requires ORS API key (or ORS_BASE_URL proxy). Results are ToS-safe and cacheable.
+    private func searchORSPOIs(location: CLLocationCoordinate2D, radiusMeters: Int) async -> [PlaceResult] {
+        guard ORSService.shared.hasAPIKey else { return [] }
+        let useProxy = !APIKeys.orsBaseURL.isEmpty
+        let orsBase = useProxy ? APIKeys.orsBaseURL : "https://api.openrouteservice.org"
+        guard let url = URL(string: "\(orsBase)/pois") else { return [] }
+        
+        // openpoiservice: request=pois, geometry with geojson Point + buffer (max 2000m); bbox required by public API
+        let bufferM = min(max(1, radiusMeters), 2000)  // API: buffer must be between 1 and 2000
+        let lon = location.longitude
+        let lat = location.latitude
+        let metersPerDegreeLat = 111_320.0
+        let metersPerDegreeLon = 111_320.0 * max(0.01, cos(lat * .pi / 180))
+        let deltaLon = Double(bufferM) / metersPerDegreeLon
+        let deltaLat = Double(bufferM) / metersPerDegreeLat
+        let bbox: [[Double]] = [
+            [lon - deltaLon, lat - deltaLat],
+            [lon + deltaLon, lat + deltaLat]
+        ]
+        let body: [String: Any] = [
+            "request": "pois",
+            "geometry": [
+                "geojson": [
+                    "type": "Point",
+                    "coordinates": [lon, lat]
+                ],
+                "bbox": bbox,
+                "buffer": bufferM
+            ],
+            "limit": 200
+        ]
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !useProxy { request.setValue(openRouteServiceApiKey, forHTTPHeaderField: "Authorization") }
+        request.timeoutInterval = useProxy ? 28 : 10  // Proxy: allow cold start; matches ORSService.proxyTimeout
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else { return [] }
+        request.httpBody = bodyData
+        
+        let maxTries = useProxy ? 2 : 1
+        for attempt in 1...maxTries {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else { continue }
+                if httpResponse.statusCode == 200 {
+                    ORSService.logORSUsage(type: "pois")
+                    // GeoJSON FeatureCollection: features[].geometry.coordinates [lon,lat], properties.name
+                    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let features = json["features"] as? [[String: Any]] else {
+                        return []
+                    }
+                    var results: [PlaceResult] = []
+                    for feature in features {
+                        guard let geom = feature["geometry"] as? [String: Any],
+                              geom["type"] as? String == "Point",
+                              let coords = geom["coordinates"] as? [Double], coords.count >= 2 else { continue }
+                        let lon = coords[0], lat = coords[1]
+                        let props = feature["properties"] as? [String: Any] ?? [:]
+                        let osmTags = props["osm_tags"] as? [String: Any]
+                        var nameOpt = (props["name"] as? String)
+                            ?? (props["asciiName"] as? String)
+                            ?? (osmTags?["name"] as? String)
+                        let trimmed = nameOpt?.trimmingCharacters(in: .whitespaces) ?? ""
+                        if trimmed.isEmpty || trimmed.lowercased() == "poi" {
+                            nameOpt = Self.orsDerivedPOIName(properties: props, osmTags: osmTags) ?? "POI"
+                        }
+                        let name = nameOpt ?? "POI"
+                        if GoogleMapsService.isJunkPOIName(name) { continue }
+                        let placeId = "ors_\(String(format: "%.6f", lat))_\(String(format: "%.6f", lon))"
+                        let place = PlaceResult(
+                            placeId: placeId,
+                            name: name,
+                            vicinity: nil,
+                            geometry: PlaceGeometry(location: PlaceLocation(lat: lat, lng: lon)),
+                            types: ["point_of_interest"],
+                            source: .ors
+                        )
+                        results.append(place)
+                    }
+                    return results
+                }
+                if useProxy && attempt == 1 && (500...599).contains(httpResponse.statusCode) {
+                    print("🛤️ ORS POIs: 5xx (\(httpResponse.statusCode)) – retrying...")
+                    continue
+                }
+                if httpResponse.statusCode == 400, let errBody = String(data: data, encoding: .utf8), !errBody.isEmpty {
+                    print("🛤️ ORS POIs: HTTP 400 – \(errBody)")
+                } else {
+                    print("🛤️ ORS POIs: HTTP \(httpResponse.statusCode)")
+                }
+                return []
+            } catch let err as URLError where err.code == .timedOut && useProxy && attempt == 1 {
+                print("🛤️ ORS POIs: timeout – retrying...")
+                continue
+            } catch {
+                print("🛤️ ORS POIs: \(error.localizedDescription)")
+                return []
+            }
+        }
+        return []
     }
     
     // MARK: - Geograph POI Search (Experimental)
@@ -5488,7 +5620,7 @@ class GoogleMapsService: ObservableObject {
         if !useProxy { request.setValue(openRouteServiceApiKey, forHTTPHeaderField: "Authorization") }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["coordinates": coords])
-        request.timeoutInterval = 8
+        request.timeoutInterval = useProxy ? 28 : 8  // Proxy: allow cold start
         
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
@@ -11716,6 +11848,7 @@ class GoogleMapsService: ObservableObject {
         switch poi.source {
         case .google: score += 1.5
         case .osm: score += 1.0
+        case .ors: score += 1.0   // OSM-derived (openpoiservice)
         case .geograph: score += 0.8
         case .apple: score += 0.6
         case .unknown: score += 0.3
@@ -14541,7 +14674,7 @@ class GoogleMapsService: ObservableObject {
         } else {
             // v1.9.50: SMART FIRST-RUN STRATEGY
             // Try free sources first (Apple, OSM, Geograph) to save Google costs
-            // Fallback to Google if <15 POIs found (optimal threshold for route quality)
+            // Fallback to Google if <20 POIs found (threshold for route quality + buffer)
             let freeSourcesStartTime = Date()
             print("🗺️ [COST OPT] First-run: Trying free sources first (Apple/OSM/Geograph)...")
             print("⏱️ [TIMING] Free sources fetch STARTED")
@@ -14552,7 +14685,7 @@ class GoogleMapsService: ObservableObject {
                 skipGoogle: true,  // Skip Google on first attempt
                 targetDurationMinutes: targetDurationMinutes,  // v2.0.3 Phase 2A: For diversity check
                 canonicalMaxTimeSeconds: 4.0,  // Cap canonical dedup so first route is not blocked (~34s → ~4s)
-                minimumForEarlyReturn: 10,  // Return as soon as we have 10 POIs (faster first route)
+                minimumForEarlyReturn: 20,  // Return as soon as we have 20 POIs (aligned with sufficient threshold; ORS runs if <20)
                 maxWaitSecondsForFirstRoute: 6.0  // Return partial after 6s so first route can show sooner
             )
             
@@ -14562,7 +14695,7 @@ class GoogleMapsService: ObservableObject {
             
             // SPRINT-5: Budget check AFTER POI fetch - if we have enough POIs, still build a route (don't abort)
             if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "POI_FETCH_COMPLETE") {
-                if places.count >= 15 {
+                if places.count >= 20 {
                     print("⛔ [HARD-STOP] Budget exceeded after POI fetch - but we have \(places.count) POIs, continuing to build route")
                 } else {
                     print("⛔ [HARD-STOP] Budget exceeded after POI fetch - aborting (only \(places.count) POIs)")
@@ -14575,9 +14708,9 @@ class GoogleMapsService: ObservableObject {
             // Check if we used the pre-populated database (comprehensive, no need for Google fallback)
             usedDatabase = PrePopulatedPOIService.shared.getPrePopulatedPOIs(near: location, radiusMeters: Double(searchRadius)) != nil
             
-            // Fallback to Google if we have <15 POIs AND we didn't use the database
+            // Fallback to Google if we have <20 POIs AND we didn't use the database
             // Database POIs are comprehensive and pre-curated, so no Google fallback needed
-            // Optimal threshold: 15 POIs covers all standard routes (10-30 min) with buffer for filtering
+            // Threshold 20: buffer for dedup/restricted/coords so we keep 10+ usable candidates (10-30 min routes)
             // 🔧 DEBUG: Database-only mode - skip ALL fallbacks
             if RoutingToggles.databaseOnlyMode && !usedDatabase {
                 print("🚫 [DATABASE-ONLY MODE] No database POIs found - NOT falling back to Google")
@@ -14586,14 +14719,14 @@ class GoogleMapsService: ObservableObject {
                 print("NO_ROUTE_REASON | duration=\(targetDurationMinutes) tag=\(lastNoRouteReason)")
                 throw GoogleMapsError.noRouteFound
             }
-            // Use 10 as threshold so first-route fast path (10–14 POIs) doesn't trigger Google wait
-            if places.count < 10 && !usedDatabase && !RoutingToggles.databaseOnlyMode {
+            // Trigger Google when <20 so we align with "sufficient" threshold (free+ORS already run in findNearbyPlaces)
+            if places.count < 20 && !usedDatabase && !RoutingToggles.databaseOnlyMode {
                 // SPRINT-5: Budget check before Google fallback - skip if already past soft-stop
                 if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "GOOGLE_FALLBACK_START") {
                     print("⛔ [HARD-STOP] Skipping Google fallback - budget exceeded")
                 } else {
                 let googleFallbackStartTime = Date()
-                print("🗺️ [FALLBACK] Only \(places.count) POIs from free sources (<10) - fetching Google POIs for better route quality...")
+                print("🗺️ [FALLBACK] Only \(places.count) POIs from free+ORS (<20) - fetching Google POIs for better route quality...")
                 print("⏱️ [TIMING] Google fallback fetch STARTED")
                 
                 let googlePOIs = try await findNearbyPlaces(
@@ -14622,7 +14755,7 @@ class GoogleMapsService: ObservableObject {
                 print("⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", freeSourcesElapsed))s (database only)")
                 print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
             } else {
-                print("🗺️ ✅ Sufficient POIs from free sources (\(places.count) ≥15) - skipping Google (cost saved!)")
+                print("🗺️ ✅ Sufficient POIs from free sources (\(places.count) ≥20) - skipping Google (cost saved!)")
                 print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
                 print("⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", freeSourcesElapsed))s (free sources only)")
                 print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
@@ -14775,7 +14908,7 @@ class GoogleMapsService: ObservableObject {
         // For longer routes OR short routes with few POIs, do additional searches at different points
         // Short routes in dense areas need POIs at BETTER distances, not just more nearby ones
         let needsMorePOIs = places.count < desiredSpots * 2 || 
-                           (targetDurationMinutes <= 15 && places.count < 10)
+                           (targetDurationMinutes <= 15 && places.count < 20)
         if needsMorePOIs {
             // SPRINT-6: Budget check before offset POI searches (unguarded loop was causing p99 blowouts)
             if !RoutingToggles.mustContinue(budget, bestSoFar: nil, stage: "OFFSET_POI_SEARCH") {
@@ -20480,6 +20613,7 @@ class GoogleMapsService: ObservableObject {
             return geographQualityScore(poi) >= 6.0 ? 2 : 4
         case .apple: return 3
         case .osm: return 5
+        case .ors: return 5   // OSM-derived, same as OSM
         case .unknown: return 6
         }
     }
@@ -20916,6 +21050,66 @@ class GoogleMapsService: ObservableObject {
         return false
     }
     
+    /// Derives a display name for ORS POIs when API returns no name (or "POI").
+    /// Uses category_ids and osm_tags (amenity, shop, tourism) from openpoiservice response.
+    static func orsDerivedPOIName(properties: [String: Any], osmTags: [String: Any]?) -> String? {
+        // 1. OSM tags often have amenity/shop/tourism – humanise key and use as label
+        if let tags = osmTags {
+            for key in ["amenity", "shop", "tourism", "leisure", "historic"] {
+                if let raw = tags[key] as? String, !raw.isEmpty {
+                    let label = raw
+                        .replacingOccurrences(of: "_", with: " ")
+                        .prefix(1).uppercased() + raw
+                        .replacingOccurrences(of: "_", with: " ")
+                        .dropFirst()
+                    return String(label)
+                }
+            }
+        }
+        // 2. category_ids (array of Int) – map first known id to label
+        if let ids = properties["category_ids"] as? [Int], let first = ids.first,
+           let label = Self.orsCategoryIdToLabel(first) {
+            return label
+        }
+        if let id = properties["category_ids"] as? Int, let label = Self.orsCategoryIdToLabel(id) {
+            return label
+        }
+        // 3. category_group_ids
+        if let ids = properties["category_group_ids"] as? [Int], let first = ids.first,
+           let label = Self.orsCategoryGroupIdToLabel(first) {
+            return label
+        }
+        return nil
+    }
+    
+    private static func orsCategoryIdToLabel(_ id: Int) -> String? {
+        let map: [Int: String] = [
+            101: "Alpine hut", 102: "Apartment", 103: "Campsite", 106: "Guest house", 107: "Hostel", 108: "Hotel", 109: "Motel",
+            123: "Vet", 131: "Arts centre", 132: "Gallery", 133: "Library", 134: "Museum", 135: "Place of worship",
+            151: "College", 153: "Kindergarten", 156: "School", 157: "University",
+            171: "Post box", 179: "Toilets", 192: "Bank", 193: "Bureau de change",
+            202: "Clinic", 203: "Dentist", 204: "Doctors", 206: "Hospital", 208: "Pharmacy",
+            224: "Castle", 237: "Memorial", 240: "Monument",
+            280: "Park", 283: "Playground", 288: "Sports centre", 289: "Stadium", 299: "Cinema", 308: "Aquarium", 310: "Zoo",
+            363: "Community centre", 367: "Fire station", 369: "Police", 370: "Post office",
+            395: "Hairdresser", 396: "Laundry",
+            426: "Bakery", 435: "Cafe", 451: "Convenience store", 472: "General store", 475: "Grocery", 492: "Mall", 518: "Supermarket",
+            561: "Bar", 564: "Café", 566: "Fast food", 569: "Pub", 570: "Restaurant",
+            587: "Bus station", 588: "Bus stop", 596: "Fuel", 604: "Station", 605: "Tram stop",
+            621: "Artwork", 622: "Attraction", 623: "Fountain", 624: "Information", 627: "Viewpoint"
+        ]
+        return map[id]
+    }
+    
+    private static func orsCategoryGroupIdToLabel(_ id: Int) -> String? {
+        let map: [Int: String] = [
+            100: "Accommodation", 120: "Animals", 130: "Arts & culture", 150: "Education", 160: "Facilities",
+            190: "Financial", 200: "Healthcare", 220: "Historic", 260: "Leisure", 330: "Natural",
+            360: "Public place", 390: "Service", 420: "Shop", 560: "Food & drink", 580: "Transport", 620: "Tourism"
+        ]
+        return map[id]
+    }
+    
     /// Returns true if the POI name is a placeholder or trail-distance label that shouldn't be a waypoint.
     /// Examples: "Unnamed", "Unknown", "West Walk (0.6km)", "Footpath (1.2mi)", "Route Point"
     static func isJunkPOIName(_ name: String) -> Bool {
@@ -21074,11 +21268,11 @@ class GoogleMapsService: ObservableObject {
     private func validatePOICoordinates(_ pois: [PlaceResult]) -> [PlaceResult] {
         var filteredOut = Set<String>()
         
-        // Group POIs by normalized name
+        // Group POIs by normalized name (skip generic "poi" - they are different unnamed places, not same place with wrong coords)
         var nameGroups: [String: [PlaceResult]] = [:]
         for poi in pois {
             let normalizedName = normalizePOIName(poi.name).lowercased()
-            if normalizedName.count >= 3 {  // Only check meaningful names (skip "A", "B", etc.)
+            if normalizedName.count >= 3 && normalizedName != "poi" {
                 nameGroups[normalizedName, default: []].append(poi)
             }
         }
@@ -21211,6 +21405,7 @@ class GoogleMapsService: ObservableObject {
         case .google: reason = "Google (highest priority)"
         case .apple: reason = "Apple Maps"
         case .osm: reason = "OSM"
+        case .ors: reason = "ORS (openpoiservice)"
         case .geograph: reason = "Geograph (evidence only, quality: \(String(format: "%.1f", geographQualityScore(best))))"
         case .unknown: reason = "Unknown source"
         }
