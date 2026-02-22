@@ -284,7 +284,7 @@ class NotificationService: ObservableObject {
     
     func scheduleDelayUpdateNotification(newWaitMinutes: Int) {
         let content = UNMutableNotificationContent()
-        content.title = "Wait Time Updated"
+        content.title = "Delay Time Updated"
         content.body = "Your estimated wait is now \(newWaitMinutes) minutes. We'll keep you updated."
         content.sound = .default
         content.categoryIdentifier = "DELAY_NOTIFICATION"

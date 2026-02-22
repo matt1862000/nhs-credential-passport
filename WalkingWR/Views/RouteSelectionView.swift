@@ -1363,7 +1363,7 @@ struct LocalRoutePickerSheet: View {
                                     Image(systemName: "exclamationmark.triangle.fill")
                                         .foregroundColor(.orange)
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text("Wait time is short")
+                                        Text("Delay time is short")
                                             .font(.subheadline)
                                             .fontWeight(.semibold)
                                         Text("Your \(viewModel.waitTimeInfo.estimatedMinutes)-minute delay may not allow time for a walk. Consider staying near reception.")

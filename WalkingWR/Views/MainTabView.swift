@@ -255,7 +255,7 @@ struct OnboardingView: View {
     
     let pages: [(icon: String, title: String, description: String, color: Color)] = [
         ("clock.badge.checkmark.fill", "Real-Time Updates", "See your clinic delay, updated live from the clinic system.", .tealAccent),
-        ("figure.walk.motion", "Walk While You Wait", "Choose a walking route matched to your wait time. Stay active, reduce anxiety.", .mintGreen),
+        ("figure.walk.motion", "Walk While You Wait", "Choose a walking route matched to your delay time. Stay active, reduce anxiety.", .mintGreen),
         ("bell.badge.fill", "Smart Notifications", "We'll alert you when it's time to head back. No need to worry about missing your slot.", .softAmber),
         ("heart.circle.fill", "Wellbeing Support", "Discover breathing exercises, gratitude prompts, and digital health tips along the way.", .lavenderMist)
     ]

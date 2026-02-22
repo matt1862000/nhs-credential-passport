@@ -57,7 +57,7 @@ private struct WaitTimeExpandedView: View {
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
                 .multilineTextAlignment(.center)
-            Text("Tap for current wait time")
+            Text("Tap for current delay time")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

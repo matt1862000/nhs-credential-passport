@@ -213,7 +213,7 @@ struct WaitTimeView: View {
     }
 }
 
-// MARK: - Wait Time Card
+// MARK: - Delay Time Card
 struct WaitTimeCard: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     var onShowClinicianSelection: () -> Void
@@ -665,12 +665,12 @@ struct WalkingSuggestionCard: View {
                 }
             } else {
                 if hasActiveClinicDelay {
-                    Text("Wait time is short, stay close to reception.")
+                    Text("Delay time is short, stay close to reception.")
                         .font(.bodyMedium)
                         .foregroundColor(.primary)
                 } else {
                     // This shouldn't happen (no clinic + suggestedDuration=0), but handle gracefully
-                    Text("Select a clinician to get walk recommendations based on your wait time.")
+                    Text("Select a clinician to get walk recommendations based on your delay time.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
