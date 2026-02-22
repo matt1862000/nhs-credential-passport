@@ -35,10 +35,10 @@ struct WalkLiveActivity: Widget {
 
     private func formatCompactTrailing(context: ActivityViewContext<WalkActivityAttributes>) -> String {
         if let minLeft = context.state.minutesLeft {
-            return "\(minLeft)m"
+            return minLeft == 1 ? "1 min left" : "\(minLeft) min left"
         }
         let minElapsed = context.state.elapsedSeconds / 60
-        return "\(minElapsed)m"
+        return minElapsed == 1 ? "1 min" : "\(minElapsed) min"
     }
 }
 
