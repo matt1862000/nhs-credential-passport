@@ -21215,6 +21215,14 @@ class GoogleMapsService: ObservableObject {
             options: .regularExpression
         )
         
+        // Remove OSM/ID suffix for display (e.g. "Park (ID: osm_23860721)" → "Park", "Post Box (ID: osm_664304352)" → "Post Box")
+        cleaned = cleaned.replacingOccurrences(
+            of: "\\s*\\(ID:\\s*[a-z0-9_]+\\)\\s*$",
+            with: "",
+            options: .regularExpression
+        )
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        
         // Remove common location suffixes (case-insensitive, preserve original case)
         // IMPORTANT: Order matters - remove longer suffixes first to avoid partial matches
         let locationSuffixes = [

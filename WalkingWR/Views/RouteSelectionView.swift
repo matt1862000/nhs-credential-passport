@@ -73,22 +73,6 @@ struct RouteStageTelemetryEntry: Identifiable {
     }
 }
 
-// MARK: - Export for prepop share sheet
-private struct ExportShareItem: Identifiable {
-    let id = UUID()
-    let url: URL
-}
-
-private struct ShareSheetView: UIViewControllerRepresentable {
-    let activityItems: [Any]
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-    }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
 struct RouteSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var showLocalRoutePicker: Bool
@@ -1196,10 +1180,6 @@ struct LocalRoutePickerSheet: View {
     
     // Pre-fetched POIs for faster route generation
     @State private var prefetchedPOIs: [PlaceResult] = []
-    /// Message after "Export for prepop" (file path or error)
-    @State private var exportPrepopMessage: String?
-    /// When set, present share sheet (AirDrop, Mail, Messages, etc.) for this file.
-    @State private var exportFileURLToShare: ExportShareItem?
     @State private var isPrefetchingPOIs = false
     @State private var prefetchedForLocation: CLLocationCoordinate2D?
     
@@ -1655,27 +1635,6 @@ struct LocalRoutePickerSheet: View {
                         isPresented = false
                     }
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    if allRoutes.count >= 2 {
-                        Button("Export for prepop") {
-                            exportRoutesForPrepop()
-                        }
-                    }
-                }
-            }
-            .alert("Export routes", isPresented: Binding(
-                get: { exportPrepopMessage != nil },
-                set: { if !$0 { exportPrepopMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) { exportPrepopMessage = nil }
-            } message: {
-                if let msg = exportPrepopMessage {
-                    Text(msg)
-                }
-            }
-            .sheet(item: $exportFileURLToShare) { item in
-                ShareSheetView(activityItems: [item.url])
-                    .onDisappear { exportFileURLToShare = nil }
             }
             .fullScreenCover(isPresented: $showActiveWalk) {
                 // v1.9.28: Immersive full-screen presentation - no navigation context
@@ -3045,9 +3004,9 @@ struct LocalRoutePickerSheet: View {
                                     if aInBand != bInBand { return aInBand }
                                     return a.offset < b.offset
                                 }
-                                // Bypass in-band cap for cached/session routes — these were already
-                                // accepted previously (e.g. +1 routes). The cap should only limit
-                                // NEW generation, not restoring what the user already had.
+                                // When from prepop DB, do not bypass band — only show in-band routes (no 14/20 min for 10 min request).
+                                // For non-prepop cache, bypass so previously accepted +1/cached routes are restored.
+                                let allowOutOfBandFromCache = !firstCached.isFromPrePopulatedDatabase
                                 for item in sortedBg {
                                     let added = appendRouteIfAllowed(
                                         route: item.element.route,
@@ -3055,7 +3014,7 @@ struct LocalRoutePickerSheet: View {
                                         isDeadZoneFallback: item.element.isDeadZoneFallback,
                                         isFromGoogle: item.element.isFromGoogle,
                                         source: "cache-load",
-                                        bypassInBandCap: true
+                                        bypassInBandCap: allowOutOfBandFromCache
                                     )
                                     if added {
                                         shownPlaceIdSets.append(backgroundPlaceIdSets[item.offset])
@@ -3366,6 +3325,69 @@ struct LocalRoutePickerSheet: View {
                     print("\(kRouteGenTag) ROUTE_PHASE phase=route_gen_call_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     let routeGenStartTime = Date()
                     let userLoc = userLocation.coordinate
+                    let targetDuration = selectedDuration
+                    
+                    // Synthetic fallback: if live generation doesn't produce a route within this time, show prepop synthetic routes instead.
+                    let liveGenerationSyntheticFallbackSeconds: Double = 10.0
+                    let syntheticFallbackTask = Task {
+                        try? await Task.sleep(nanoseconds: UInt64(liveGenerationSyntheticFallbackSeconds * 1_000_000_000))
+                        let shouldApply = await MainActor.run { !routeGenerationComplete && allRoutes.isEmpty && isGenerating }
+                        guard shouldApply else { return }
+                        guard let syntheticCached = PrePopulatedPOIService.shared.getPrePopulatedSyntheticRoutesOnly(near: userLoc, durationMinutes: targetDuration), !syntheticCached.isEmpty else { return }
+                        var loaded: [(route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool, isFromGoogle: Bool)] = []
+                        var placeIdSets: [Set<String>] = []
+                        for cached in syntheticCached {
+                            let filtered = mapsService.filterCloseWaypointsSync(from: cached.route, durationMinutes: targetDuration, origin: userLoc, isFromPrePopulatedDatabase: true)
+                            let markers = await MainActor.run { createMarkersFromPlaces(filtered.places, origin: userLoc) }
+                            let durationMin = max(1, filtered.durationSeconds / 60)
+                            let diff: RouteDifficulty = durationMin <= 10 ? .easy : (durationMin <= 20 ? .moderate : .challenging)
+                            let name = cached.name ?? "Local Discovery"
+                            let desc = cached.description ?? "A \(durationMin) min walk to a local point of interest."
+                            let wr = WalkingRoute(
+                                name: name,
+                                description: desc,
+                                durationMinutes: durationMin,
+                                distanceMeters: filtered.distanceMeters,
+                                difficulty: diff,
+                                isIndoor: false,
+                                isAccessible: true,
+                                landmarks: ["Start"] + filtered.places.map { $0.name } + ["Return"],
+                                icon: "location.fill",
+                                color: .tealAccent,
+                                qrMarkers: markers,
+                                routeType: .local,
+                                trimmed: filtered.polyline,
+                                walkingDirections: cached.directions ?? [],
+                                usedOSRMRouting: false,
+                                isFromPrePopulatedDatabase: true,
+                                travelToStartMinutes: nil
+                            )
+                            loaded.append((route: wr, data: filtered, isDeadZoneFallback: false, isFromGoogle: false))
+                            placeIdSets.append(Set(filtered.places.map { $0.placeId }))
+                        }
+                        guard !loaded.isEmpty else { return }
+                        await MainActor.run {
+                            guard !routeGenerationComplete && allRoutes.isEmpty else { return }
+                            allRoutes = loaded
+                            shownPlaceIdSets = placeIdSets
+                            currentRouteIndex = 0
+                            generatedRoute = loaded[0].route
+                            generatedRouteData = loaded[0].data
+                            lastValidRoute = loaded[0].route
+                            lastValidRouteData = loaded[0].data
+                            routeGenerationComplete = true
+                            isGenerating = false
+                            showLoadingScreen = false
+                            showMapPreview = true
+                            viewedRouteIndices = [0]
+                            preGenerationComplete = true
+                            isPreGeneratingRoutes = false
+                            routeRefreshStatus = nil
+                            logRoutePreviewSummary()
+                            runSummarySource = "synthetic_fallback"
+                            print("[ROUTE_GEN] ⏱️ Synthetic fallback: live did not complete in \(Int(liveGenerationSyntheticFallbackSeconds))s — showing \(loaded.count) prepop synthetic route(s)")
+                        }
+                    }
                     
                     // v2.1: Prefer free APIs when we have ORS key (better first candidate, fewer retries); else force MapKit for user route
                     mapsService.forceMapKitRouting = !ORSService.shared.hasAPIKey
@@ -5833,58 +5855,6 @@ struct LocalRoutePickerSheet: View {
                 }
                 print("[DIAGNOSTIC +1] ═══════════════════════════════════════════")
             }
-        }
-    }
-    
-    /// Export current in-app routes (e.g. Brandy Carr, Star Inn) to prepop JSON so they can replace script-generated routes.
-    private func exportRoutesForPrepop() {
-        guard allRoutes.count >= 2 else {
-            exportPrepopMessage = "Need at least 2 routes to export."
-            return
-        }
-        let duration = selectedDuration
-        let inBandRoutes = allRoutes.filter { Self.isRouteInBand($0.route, selectedDuration: selectedDuration) }
-        let toExport = inBandRoutes.isEmpty ? Array(allRoutes.prefix(2)) : Array(inBandRoutes.prefix(2))
-        var routeDicts: [[String: Any]] = []
-        for entry in toExport {
-            let places: [[String: Any]] = entry.data.places.map { p in
-                [
-                    "placeId": p.placeId,
-                    "name": p.name,
-                    "latitude": p.coordinate.latitude,
-                    "longitude": p.coordinate.longitude,
-                    "types": p.types ?? [],
-                    "vicinity": p.vicinity as Any,
-                    "source": p.source.rawValue,
-                    "rating": NSNull(),
-                ] as [String: Any]
-            }
-            routeDicts.append([
-                "places": places,
-                "polyline": entry.data.polyline,
-                "distanceMeters": entry.route.distanceMeters,
-                "durationSeconds": entry.route.durationMinutes * 60,
-                "name": entry.route.name as Any,
-                "description": NSNull(),
-                "directions": NSNull(),
-            ] as [String: Any])
-        }
-        let group: [String: Any] = [
-            "durationMinutes": duration,
-            "routes": routeDicts,
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: group, options: [.prettyPrinted]),
-              let json = String(data: data, encoding: .utf8) else {
-            exportPrepopMessage = "Export failed: could not encode JSON."
-            return
-        }
-        let fileName = "prepop_export_\(duration)min_\(ISO8601DateFormatter().string(from: Date()).prefix(10)).json"
-        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.appendingPathComponent(fileName)
-        do {
-            try json.write(to: url, atomically: true, encoding: .utf8)
-            exportFileURLToShare = ExportShareItem(url: url)
-        } catch {
-            exportPrepopMessage = "Export failed: \(error.localizedDescription)"
         }
     }
 

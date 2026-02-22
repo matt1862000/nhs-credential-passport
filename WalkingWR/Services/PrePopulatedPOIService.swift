@@ -793,8 +793,8 @@ class PrePopulatedPOIService {
                     print("\(Self.telem) DB_FALLBACK postcode=\(area.postcode) reason=no_2plus_waypoints requested=\(roundedDuration)")
                     cachedRoutes = collectRoutes(0)
                 }
-                // Single-waypoint options: synthesize from POIs in duration buckets and from area's full POI list (so e.g. Oriental Chef in WF2 can appear even if not a route waypoint).
-                let syntheticSingleWP = buildSyntheticSingleWaypointRoutes(routes: routes, durationsToCheck: durationsToCheck, location: location, roundedDuration: roundedDuration, areaPOIs: area.pois)
+                // Only add synthetic when we have at least 1 bucket route and fewer than 2 (so we try live generation first when 0 bucket routes; synthetic is fallback on timeout).
+                let syntheticSingleWP: [RouteCacheService.CachedRouteWithMetadata] = (cachedRoutes.isEmpty || cachedRoutes.count >= 2) ? [] : buildSyntheticSingleWaypointRoutes(routes: routes, durationsToCheck: durationsToCheck, location: location, roundedDuration: roundedDuration, areaPOIs: area.pois)
                 if !syntheticSingleWP.isEmpty {
                     print("📦 Pre-populated DB: Added \(syntheticSingleWP.count) single-waypoint options (from POIs in duration buckets)")
                     print("\(Self.telem) DB_SINGLE_WP added=\(syntheticSingleWP.count) requested=\(roundedDuration)")
@@ -930,6 +930,48 @@ class PrePopulatedPOIService {
                 let routeCount = area.routes?.flatMap { $0.routes }.count ?? 0
                 let durations = area.routes?.map { "\($0.durationMinutes)min" }.joined(separator: ", ") ?? "none"
                 print("      - \(area.postcode): \(routeCount) routes, durations: \(durations)")
+            }
+        }
+        return nil
+    }
+    
+    /// Returns only synthetic single-waypoint routes from the prepop area's POIs (no bucket routes).
+    /// Used when live generation doesn't complete in time — caller can show these as fallback.
+    func getPrePopulatedSyntheticRoutesOnly(near location: CLLocationCoordinate2D, durationMinutes: Int, radiusMeters: Double = 2500) -> [RouteCacheService.CachedRouteWithMetadata]? {
+        guard supportedPostcodeDistrict(for: location) == true else { return nil }
+        guard let database = loadDatabase() else { return nil }
+        let roundedDuration = RouteCacheService.roundToNearest5Minutes(durationMinutes)
+        let durationsToCheck = [roundedDuration, roundedDuration - 5, roundedDuration + 5, roundedDuration - 10, roundedDuration + 10]
+            .filter { $0 >= 10 && $0 <= 60 }
+        for area in database.postcodeAreas {
+            let areaCenter = effectiveCenter(for: area)
+            let distanceToArea = distanceBetween(location, areaCenter)
+            guard distanceToArea <= Double(area.radiusMeters) else { continue }
+            let routes = area.routes ?? []
+            let synthetic = buildSyntheticSingleWaypointRoutes(routes: routes, durationsToCheck: durationsToCheck, location: location, roundedDuration: roundedDuration, areaPOIs: area.pois)
+            guard !synthetic.isEmpty else { continue }
+            let isEdgeCase = roundedDuration <= 10 || roundedDuration >= 55
+            let (minPercent, maxPercent) = isEdgeCase ? (0.75, 1.25) : (0.80, 1.20)
+            let minAcceptableMinutes = Int(Double(roundedDuration) * minPercent)
+            let maxAcceptableMinutes = Int(Double(roundedDuration) * maxPercent)
+            let bandFiltered = synthetic.filter { r in
+                let min = r.route.durationSeconds / 60
+                return min >= minAcceptableMinutes && min <= maxAcceptableMinutes
+            }
+            var primaryPOIKeys: Set<String> = []
+            let primaryDeduped = bandFiltered.filter { r in
+                guard let first = r.route.places.first else { return true }
+                let c = first.coordinate
+                let canonical = Self.canonicalNameForSingleWaypoint(placeName: first.name)
+                let key = String(format: "1@%.3f,%.3f@%@", c.latitude, c.longitude, canonical)
+                if primaryPOIKeys.contains(key) { return false }
+                primaryPOIKeys.insert(key)
+                return true
+            }
+            let capped = Array(primaryDeduped.prefix(maxPrePopulatedRoutesPerBucket))
+            if !capped.isEmpty {
+                print("📦 Pre-populated DB: Synthetic-only fallback — \(capped.count) routes for \(roundedDuration)min (postcode '\(area.postcode)')")
+                return capped
             }
         }
         return nil
