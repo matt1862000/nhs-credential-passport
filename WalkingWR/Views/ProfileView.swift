@@ -12,7 +12,6 @@ import CoreLocation
 import UIKit
 #endif
 
-
 struct ProfileView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @ObservedObject var healthKitService: HealthKitService
@@ -1789,15 +1788,6 @@ struct SettingsView: View {
     @State private var showMotionUnavailable = false
     @State private var showHealthKitManageAlert = false
     
-    #if DEBUG
-    @State private var isRunningPhase1 = false
-    @State private var phase1Status = ""
-    @State private var showPhase1CompleteAlert = false
-    @State private var phase1ResultPath: String?
-    @State private var phase1ResultFileURL: URL?
-    @State private var showPhase1ShareSheet = false
-    #endif
-    
     // Only show permissions that have been interacted with (not .notDetermined)
     var shouldShowNotifications: Bool {
         !notificationsNeverAsked
@@ -2194,33 +2184,6 @@ struct SettingsView: View {
                 
                 aboutSection
                 
-                #if DEBUG
-                // Phase 1: Generate S5 7 route candidates (MapKit). Spoofs location to S5 7AU. Remove after use.
-                Section {
-                    Button(action: runPhase1S5_7) {
-                        HStack {
-                            Label("Phase 1: Generate S5 7 candidates", systemImage: "map.fill")
-                            Spacer()
-                            if isRunningPhase1 {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                            }
-                        }
-                        .foregroundColor(.primary)
-                    }
-                    .disabled(isRunningPhase1)
-                    if isRunningPhase1 {
-                        Text(phase1Status)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                } header: {
-                    Text("S5 7 route shortlist (debug)")
-                } footer: {
-                    Text("Uses spoofed location S5 7AU. Writes phase1_shortlist_s5_7.json to Documents. Remove this section after use.")
-                }
-                #endif
-                
                 // Privacy Section
                 Section {
                     NavigationLink {
@@ -2375,21 +2338,6 @@ struct SettingsView: View {
             } message: {
                 Text("To manage HealthKit access:\n\n1. Tap 'Open Health App' below\n2. Tap your profile icon (top right)\n3. Look for Apps or Apps & Services\n4. Find WaitWell\n5. Toggle Steps on or off")
             }
-            #if DEBUG
-            .alert("Phase 1 complete", isPresented: $showPhase1CompleteAlert) {
-                Button("Share file") {
-                    showPhase1ShareSheet = true
-                }
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("Shortlist saved. Tap \"Share file\" to AirDrop or save to Files so you can use it on your Mac.")
-            }
-            .sheet(isPresented: $showPhase1ShareSheet) {
-                if let url = phase1ResultFileURL {
-                    Phase1ShareSheet(activityItems: [url])
-                }
-            }
-            #endif
             .preferredColorScheme(effectiveColorScheme)
             .id(appTheme) // Force view refresh when theme changes
             .onAppear {
@@ -2404,89 +2352,6 @@ struct SettingsView: View {
         }
     }
     
-    
-    #if DEBUG
-    /// Phase 1: Generate route candidates for S5 7 using spoofed location S5 7AU. MapKit (and fallbacks). Saves in-band candidates to Documents/phase1_shortlist_s5_7.json for later Google validation.
-    private func runPhase1S5_7() {
-        let s5_7au = CLLocationCoordinate2D(latitude: 53.41, longitude: -1.45)
-        let durations = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
-        isRunningPhase1 = true
-        phase1Status = "Starting..."
-        Task {
-            var shortlist: [[String: Any]] = []
-            let mapsService = GoogleMapsService.shared
-            for (idx, duration) in durations.enumerated() {
-                await MainActor.run { phase1Status = "\(duration) min (\(idx + 1)/\(durations.count))..." }
-                var excludePlaceIds: Set<String> = []
-                var candidatesThisDuration = 0
-                let maxCandidatesPerDuration = 5
-                for _ in 0..<maxCandidatesPerDuration {
-                    do {
-                        let route = try await mapsService.generateLocalRouteWithRetry(
-                            from: s5_7au,
-                            targetDurationMinutes: duration,
-                            excludePlaceIds: excludePlaceIds
-                        )
-                        let durationMin = route.durationSeconds / 60
-                        let rounded = RouteCacheService.roundToNearest5Minutes(duration)
-                        let isEdge = rounded <= 10 || rounded >= 55
-                        let minPct = isEdge ? 0.75 : 0.80
-                        let maxPct = isEdge ? 1.25 : 1.20
-                        let minAcc = Int(Double(rounded) * minPct)
-                        let maxAcc = Int(Double(rounded) * maxPct)
-                        let minDist = max(200, rounded * 50)
-                        let durationOk = durationMin >= minAcc && durationMin <= maxAcc
-                        let distanceOk = route.distanceMeters >= minDist
-                        guard durationOk && distanceOk else { continue }
-                        let waypoints: [[String: Any]] = route.places.map { p in
-                            [
-                                "placeId": p.placeId,
-                                "name": p.name,
-                                "latitude": p.coordinate.latitude,
-                                "longitude": p.coordinate.longitude
-                            ]
-                        }
-                        shortlist.append([
-                            "durationMinutes": duration,
-                            "waypoints": waypoints,
-                            "mapKitDurationSec": route.durationSeconds,
-                            "mapKitDistanceM": route.distanceMeters,
-                            "polyline": route.polyline
-                        ])
-                        candidatesThisDuration += 1
-                        route.places.forEach { excludePlaceIds.insert($0.placeId) }
-                    } catch {
-                        break
-                    }
-                }
-            }
-            guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-                await MainActor.run {
-                    phase1Status = "Error: no Documents directory"
-                    isRunningPhase1 = false
-                }
-                return
-            }
-            let fileURL = docs.appendingPathComponent("phase1_shortlist_s5_7.json")
-            do {
-                let data = try JSONSerialization.data(withJSONObject: ["candidates": shortlist], options: .prettyPrinted)
-                try data.write(to: fileURL)
-                await MainActor.run {
-                    isRunningPhase1 = false
-                    phase1Status = "Done. \(shortlist.count) candidates."
-                    phase1ResultPath = fileURL.path
-                    phase1ResultFileURL = fileURL
-                    showPhase1CompleteAlert = true
-                }
-            } catch {
-                await MainActor.run {
-                    phase1Status = "Write error: \(error.localizedDescription)"
-                    isRunningPhase1 = false
-                }
-            }
-        }
-    }
-    #endif
     
     private func refreshPermissionStatuses() {
         // Check notification status
@@ -2719,6 +2584,126 @@ struct IntroductionReplayView: View {
                 .padding(.bottom, 50)
             }
         }
+    }
+}
+
+// MARK: - API Keys Test View
+
+struct APIKeysTestView: View {
+    @State private var testingRow: String? = nil
+    @State private var resultMessage: String = ""
+    
+    private let sheffield = CLLocationCoordinate2D(latitude: 53.38, longitude: -1.47)
+    
+    var body: some View {
+        List {
+            Section {
+                Text("Tap Test to verify each API key. Keys are loaded from Secrets.xcconfig at build time.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            apiRow(name: "Google Maps", keyPresent: GoogleMapsService.shared.hasAPIKey, testLabel: "Test") {
+                let (ok, msg) = await GoogleMapsService.shared.testGoogleMapsAPI()
+                let result = ok ? "Success: \(msg)" : "Failed: \(msg)"
+                print("[test result] Google Maps: \(result)")
+                await MainActor.run {
+                    resultMessage = result
+                    testingRow = nil
+                }
+            }
+            
+            apiRow(name: "Gemini", keyPresent: !(Bundle.main.object(forInfoDictionaryKey: "GEMINI_API_KEY") as? String ?? "").trimmingCharacters(in: .whitespaces).isEmpty, testLabel: "Test") {
+                let (ok, msg) = await GeminiService.shared.testConnection()
+                let result = ok ? "Success: \(msg)" : "Failed: \(msg)"
+                print("[test result] Gemini: \(result)")
+                await MainActor.run {
+                    resultMessage = result
+                    testingRow = nil
+                }
+            }
+            
+            apiRow(name: "Geograph", keyPresent: !(Bundle.main.object(forInfoDictionaryKey: "GEOGRAPH_API_KEY") as? String ?? "").trimmingCharacters(in: .whitespaces).isEmpty, testLabel: "Test") {
+                let (ok, msg) = await GoogleMapsService.shared.testGeographAPI()
+                let result = ok ? "Success: \(msg)" : "Failed: \(msg)"
+                print("[test result] Geograph: \(result)")
+                await MainActor.run {
+                    resultMessage = result
+                    testingRow = nil
+                }
+            }
+            
+            apiRow(name: "OpenRouteService", keyPresent: ORSService.shared.hasAPIKey, testLabel: "Test") {
+                let (ok, msg) = await GoogleMapsService.shared.testFreeRoutingAPI("ors")
+                let result = ok ? "Success: \(msg)" : "Failed: \(msg)"
+                print("[test result] OpenRouteService: \(result)")
+                await MainActor.run {
+                    resultMessage = result
+                    testingRow = nil
+                }
+            }
+            
+            apiRow(name: "GraphHopper", keyPresent: !(Bundle.main.object(forInfoDictionaryKey: "GRAPHHOPPER_API_KEY") as? String ?? "").trimmingCharacters(in: .whitespaces).isEmpty, testLabel: "Test") {
+                let (ok, msg) = await GoogleMapsService.shared.testFreeRoutingAPI("graphhopper")
+                let result = ok ? "Success: \(msg)" : "Failed: \(msg)"
+                print("[test result] GraphHopper: \(result)")
+                await MainActor.run {
+                    resultMessage = result
+                    testingRow = nil
+                }
+            }
+            
+            apiRow(name: "eBird", keyPresent: !APIKeys.ebird.trimmingCharacters(in: .whitespaces).isEmpty, testLabel: "Test") {
+                let list = await EBirdService.shared.fetchRecentSpecies(coordinate: sheffield, daysBack: 1)
+                let result = "Success (\(list.count) species)"
+                print("[test result] eBird: \(result)")
+                await MainActor.run {
+                    resultMessage = result
+                    testingRow = nil
+                }
+            }
+            
+            if !resultMessage.isEmpty {
+                Section {
+                    Text(resultMessage)
+                        .font(.subheadline)
+                        .foregroundColor(resultMessage.hasPrefix("Success") || resultMessage.hasPrefix("Key") ? .mintGreen : .coralPink)
+                } header: {
+                    Text("Last result")
+                }
+            }
+        }
+        .navigationTitle("Test API Keys")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    @ViewBuilder
+    private func apiRow(name: String, keyPresent: Bool, testLabel: String, action: @escaping () async -> Void) -> some View {
+        let isTesting = testingRow == name
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text(keyPresent ? "Configured" : "Not set")
+                    .font(.caption)
+                    .foregroundColor(keyPresent ? .mintGreen : .secondary)
+            }
+            Spacer()
+            Button(testLabel) {
+                testingRow = name
+                resultMessage = ""
+                Task {
+                    await action()
+                }
+            }
+            .disabled(isTesting || testingRow != nil)
+            if isTesting {
+                ProgressView()
+                    .scaleEffect(0.8)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -2970,18 +2955,6 @@ struct ControlPoint: View {
     }
 }
 
-#if DEBUG
-/// Presents a system share sheet for the Phase 1 shortlist file (AirDrop, Save to Files, etc.).
-struct Phase1ShareSheet: UIViewControllerRepresentable {
-    let activityItems: [Any]
-    
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-    }
-    
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-#endif
 
 #Preview {
     let viewModel = WaitingRoomViewModel()

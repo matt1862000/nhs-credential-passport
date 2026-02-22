@@ -20,7 +20,7 @@ enum WalkLiveActivityBridge {
             isHeadingBack: false
         )
         do {
-            let content = ActivityContent(state: state, staleDate: nil)
+            let content = ActivityContent(state: state, staleDate: nil as Date?)
             _ = try Activity<WalkActivityAttributes>.request(
                 attributes: att,
                 content: content,
@@ -39,7 +39,7 @@ enum WalkLiveActivityBridge {
             minutesLeft: minutesLeft,
             isHeadingBack: isHeadingBack
         )
-        let content = ActivityContent(state: state, staleDate: nil)
+        let content = ActivityContent(state: state, staleDate: nil as Date?)
         Task {
             for activity in Activity<WalkActivityAttributes>.activities {
                 await activity.update(content)

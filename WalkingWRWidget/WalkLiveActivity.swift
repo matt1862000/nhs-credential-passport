@@ -34,10 +34,6 @@ struct WalkLiveActivity: Widget {
     }
 
     private func formatCompactTrailing(context: ActivityViewContext<WalkActivityAttributes>) -> String {
-        if let back = context.attributes.backByText, !back.isEmpty {
-            let short = back.replacingOccurrences(of: " AM", with: "").replacingOccurrences(of: " PM", with: "")
-            return "Back \(short)"
-        }
         if let minLeft = context.state.minutesLeft {
             return "\(minLeft)m"
         }
@@ -70,11 +66,9 @@ private struct WalkExpandedView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                if let backBy = context.attributes.backByText, !backBy.isEmpty {
-                    Label("Back by \(backBy)", systemImage: "clock.badge.checkmark")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Text("Tap for live map")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 if showClinicianName, let name = context.attributes.clinicianName {
                     Text("Appointment with \(name)")
                         .font(.caption2)

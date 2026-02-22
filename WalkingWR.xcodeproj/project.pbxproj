@@ -11,29 +11,27 @@
 		6C9677322EE9B7D700DDB3B5 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 6C9677312EE9B7D700DDB3B5 /* FirebaseCore */; };
 		6C96776D2EEA2F9900DDB3B5 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = 6C96776C2EEA2F9900DDB3B5 /* FirebaseMessaging */; };
 		6C96776E2EEA2F9900DDB3B5 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 6C96776F2EEA2F9900DDB3B5 /* FirebaseStorage */; };
-		6CA4D9172EE6145900FFA65F /* WalkingWRWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6CA4D9022EE6145900FFA65F /* WalkingWRWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		6CA4D9222EE6145900FFA65F /* WalkingWRWidget/WalkActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CA4D9232EE6145900FFA65F /* WalkingWRWidget/WalkActivityAttributes.swift */; };
-		6CA4D9242EE6145900FFA65F /* WalkingWRWidget/WaitTimeActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CA4D9252EE6145900FFA65F /* WalkingWRWidget/WaitTimeActivityAttributes.swift */; };
+		6CA4D8C12EE6145A00FFA65F /* WalkingWRWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6CA4D8C02EE6145A00FFA65F /* WalkingWRWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		6CA4D9182EE6145900FFA65F /* PBXContainerItemProxy */ = {
+		6CA4D8C82EE6145A00FFA65F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 6CA4D8862EE6145800FFA65F /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = 6CA4D9012EE6145900FFA65F;
+			remoteGlobalIDString = 6CA4D8C22EE6145A00FFA65F /* WalkingWRWidget */;
 			remoteInfo = WalkingWRWidget;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		6CA4D9162EE6145900FFA65F /* Embed Foundation Extensions */ = {
+		6CA4D8C62EE6145A00FFA65F /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				6CA4D9172EE6145900FFA65F /* WalkingWRWidget.appex in Embed Foundation Extensions */,
+				6CA4D8C12EE6145A00FFA65F /* WalkingWRWidget.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -42,12 +40,11 @@
 
 /* Begin PBXFileReference section */
 		6C7C9FD82F39FBD90067D7EA /* WF1.gpx */ = {isa = PBXFileReference; lastKnownFileType = text; name = WF1.gpx; path = ../../Desktop/WF1.gpx; sourceTree = "<group>"; };
+		6C7C9FD92F39FD5E0067D7EA /* WF1.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = WF1.gpx; path = ../../Desktop/WF1.gpx; sourceTree = "<group>"; };
 		6C8A49462EFCA2CF00D1648E /* Sheffield_S5_7AU.gpx */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = Sheffield_S5_7AU.gpx; sourceTree = "<group>"; };
 		6CA4D88E2EE6145800FFA65F /* WalkingWR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WalkingWR.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
-		6CA4D9022EE6145900FFA65F /* WalkingWRWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = WalkingWRWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		6CA4D9232EE6145900FFA65F /* WalkingWRWidget/WalkActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalkingWRWidget/WalkActivityAttributes.swift; sourceTree = "<group>"; };
-		6CA4D9252EE6145900FFA65F /* WalkingWRWidget/WaitTimeActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalkingWRWidget/WaitTimeActivityAttributes.swift; sourceTree = "<group>"; };
+		6CA4D8C02EE6145A00FFA65F /* WalkingWRWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = WalkingWRWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -59,12 +56,22 @@
 			);
 			target = 6CA4D88D2EE6145800FFA65F /* WalkingWR */;
 		};
-		6CA4D9202EE6145900FFA65F /* Exceptions for "WalkingWRWidget" folder in "WalkingWRWidget" target */ = {
+		6C9677732EEA319200DDB3B5 /* Exceptions for "WalkingWRWidget" in "WalkingWR" target: exclude widget UI and Info.plist, keep attributes */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				WaitTimeLiveActivity.swift,
+				WalkLiveActivity.swift,
+				WalkingWRWidgetBundle.swift,
+			);
+			target = 6CA4D88D2EE6145800FFA65F /* WalkingWR */;
+		};
+		6CA4D8CC2EE6145A00FFA65F /* Exceptions for "WalkingWRWidget" in "WalkingWRWidget" target: exclude Info.plist from copy */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 6CA4D9012EE6145900FFA65F /* WalkingWRWidget */;
+			target = 6CA4D8C22EE6145A00FFA65F /* WalkingWRWidget */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -77,10 +84,11 @@
 			path = WalkingWR;
 			sourceTree = "<group>";
 		};
-		6CA4D9032EE6145900FFA65F /* WalkingWRWidget */ = {
+		6CA4D8922EE6145900FFA65F /* WalkingWRWidget */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				6CA4D9202EE6145900FFA65F /* Exceptions for "WalkingWRWidget" folder in "WalkingWRWidget" target */,
+				6C9677732EEA319200DDB3B5 /* Exceptions for "WalkingWRWidget" in "WalkingWR" target: exclude widget UI, keep attributes */,
+				6CA4D8CC2EE6145A00FFA65F /* Exceptions for "WalkingWRWidget" in "WalkingWRWidget" target: exclude Info.plist from copy */,
 			);
 			path = WalkingWRWidget;
 			sourceTree = "<group>";
@@ -99,7 +107,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		6CA4D9112EE6145900FFA65F /* Frameworks */ = {
+		6CA4D8C42EE6145A00FFA65F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -120,12 +128,11 @@
 			isa = PBXGroup;
 			children = (
 				6C7C9FD82F39FBD90067D7EA /* WF1.gpx */,
+				6C7C9FD92F39FD5E0067D7EA /* WF1.gpx */,
 				6C8A49462EFCA2CF00D1648E /* Sheffield_S5_7AU.gpx */,
 				6CA4D8A12EE6145900FFA65F /* Secrets.xcconfig */,
 				6CA4D8902EE6145800FFA65F /* WalkingWR */,
-				6CA4D9032EE6145900FFA65F /* WalkingWRWidget */,
-				6CA4D9232EE6145900FFA65F /* WalkingWRWidget/WalkActivityAttributes.swift */,
-				6CA4D9252EE6145900FFA65F /* WalkingWRWidget/WaitTimeActivityAttributes.swift */,
+				6CA4D8922EE6145900FFA65F /* WalkingWRWidget */,
 				6C96772E2EE9B7CE00DDB3B5 /* Frameworks */,
 				6CA4D88F2EE6145800FFA65F /* Products */,
 			);
@@ -135,7 +142,7 @@
 			isa = PBXGroup;
 			children = (
 				6CA4D88E2EE6145800FFA65F /* WalkingWR.app */,
-				6CA4D9022EE6145900FFA65F /* WalkingWRWidget.appex */,
+				6CA4D8C02EE6145A00FFA65F /* WalkingWRWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -150,15 +157,16 @@
 				6CA4D88A2EE6145800FFA65F /* Sources */,
 				6CA4D88B2EE6145800FFA65F /* Frameworks */,
 				6CA4D88C2EE6145800FFA65F /* Resources */,
-				6CA4D9162EE6145900FFA65F /* Embed Foundation Extensions */,
+				6CA4D8C62EE6145A00FFA65F /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				6CA4D9192EE6145900FFA65F /* PBXTargetDependency */,
+				6CA4D8C72EE6145A00FFA65F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				6CA4D8902EE6145800FFA65F /* WalkingWR */,
+				6CA4D8922EE6145900FFA65F /* WalkingWRWidget */,
 			);
 			name = WalkingWR;
 			packageProductDependencies = (
@@ -171,24 +179,24 @@
 			productReference = 6CA4D88E2EE6145800FFA65F /* WalkingWR.app */;
 			productType = "com.apple.product-type.application";
 		};
-		6CA4D9012EE6145900FFA65F /* WalkingWRWidget */ = {
+		6CA4D8C22EE6145A00FFA65F /* WalkingWRWidget */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 6CA4D9132EE6145900FFA65F /* Build configuration list for PBXNativeTarget "WalkingWRWidget" */;
+			buildConfigurationList = 6CA4D8C92EE6145A00FFA65F /* Build configuration list for PBXNativeTarget "WalkingWRWidget" */;
 			buildPhases = (
-				6CA4D90A2EE6145900FFA65F /* Sources */,
-				6CA4D9112EE6145900FFA65F /* Frameworks */,
-				6CA4D9122EE6145900FFA65F /* Resources */,
+				6CA4D8C32EE6145A00FFA65F /* Sources */,
+				6CA4D8C42EE6145A00FFA65F /* Frameworks */,
+				6CA4D8C52EE6145A00FFA65F /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				6CA4D9032EE6145900FFA65F /* WalkingWRWidget */,
+				6CA4D8922EE6145900FFA65F /* WalkingWRWidget */,
 			);
 			name = WalkingWRWidget;
 			productName = WalkingWRWidget;
-			productReference = 6CA4D9022EE6145900FFA65F /* WalkingWRWidget.appex */;
+			productReference = 6CA4D8C02EE6145A00FFA65F /* WalkingWRWidget.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
@@ -204,7 +212,7 @@
 					6CA4D88D2EE6145800FFA65F = {
 						CreatedOnToolsVersion = 26.1.1;
 					};
-					6CA4D9012EE6145900FFA65F = {
+					6CA4D8C22EE6145A00FFA65F = {
 						CreatedOnToolsVersion = 26.1.1;
 					};
 				};
@@ -227,7 +235,7 @@
 			projectRoot = "";
 			targets = (
 				6CA4D88D2EE6145800FFA65F /* WalkingWR */,
-				6CA4D9012EE6145900FFA65F /* WalkingWRWidget */,
+				6CA4D8C22EE6145A00FFA65F /* WalkingWRWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -240,7 +248,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		6CA4D9122EE6145900FFA65F /* Resources */ = {
+		6CA4D8C52EE6145A00FFA65F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -254,12 +262,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				6CA4D9222EE6145900FFA65F /* WalkingWRWidget/WalkActivityAttributes.swift in Sources */,
-				6CA4D9242EE6145900FFA65F /* WalkingWRWidget/WaitTimeActivityAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		6CA4D90A2EE6145900FFA65F /* Sources */ = {
+		6CA4D8C32EE6145A00FFA65F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -269,10 +275,10 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		6CA4D9192EE6145900FFA65F /* PBXTargetDependency */ = {
+		6CA4D8C72EE6145A00FFA65F /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 6CA4D9012EE6145900FFA65F /* WalkingWRWidget */;
-			targetProxy = 6CA4D9182EE6145900FFA65F /* PBXContainerItemProxy */;
+			target = 6CA4D8C22EE6145A00FFA65F /* WalkingWRWidget */;
+			targetProxy = 6CA4D8C82EE6145A00FFA65F /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -406,7 +412,7 @@
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 407;
+				CURRENT_PROJECT_VERSION = 392;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -456,7 +462,7 @@
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 407;
+				CURRENT_PROJECT_VERSION = 392;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -498,12 +504,11 @@
 			};
 			name = Release;
 		};
-		6CA4D9142EE6145900FFA65F /* Debug */ = {
+		6CA4D8CA2EE6145A00FFA65F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = WalkingWRWidget/WalkingWRWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 407;
+				CURRENT_PROJECT_VERSION = 392;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WalkingWRWidget/Info.plist;
@@ -518,20 +523,17 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
-		6CA4D9152EE6145900FFA65F /* Release */ = {
+		6CA4D8CB2EE6145A00FFA65F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = WalkingWRWidget/WalkingWRWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 407;
+				CURRENT_PROJECT_VERSION = 392;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WalkingWRWidget/Info.plist;
@@ -546,8 +548,6 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -576,11 +576,11 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		6CA4D9132EE6145900FFA65F /* Build configuration list for PBXNativeTarget "WalkingWRWidget" */ = {
+		6CA4D8C92EE6145A00FFA65F /* Build configuration list for PBXNativeTarget "WalkingWRWidget" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				6CA4D9142EE6145900FFA65F /* Debug */,
-				6CA4D9152EE6145900FFA65F /* Release */,
+				6CA4D8CA2EE6145A00FFA65F /* Debug */,
+				6CA4D8CB2EE6145A00FFA65F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

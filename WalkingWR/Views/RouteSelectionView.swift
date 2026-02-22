@@ -1184,8 +1184,6 @@ struct LocalRoutePickerSheet: View {
     // Track where routes were pre-generated (for movement detection)
     @State private var preGeneratedAtLocation: CLLocationCoordinate2D?
     private let movementThresholdMeters: Double = 50  // Invalidate cache if moved >50m
-    /// Delay (seconds) after first route is ready before starting second-route and pregen to avoid ORS 429s.
-    private let routeStaggerAfterFirstReadySec: UInt64 = 4
     
     // Pre-generate routes before Generate tap (once POIs are ready + clinic delay active)
     @State private var isPreGenBeforeTap = false
@@ -1317,8 +1315,8 @@ struct LocalRoutePickerSheet: View {
                                     .font(.system(size: 28, weight: .bold, design: .rounded))
                                     .foregroundColor(.primary)
                                 
-                                // Recommendation card based on delay (hide for 5 or 10 min delay)
-                                if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable && viewModel.waitTimeInfo.estimatedMinutes > 10 {
+                                // Recommendation card based on delay
+                                if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
                                     let delayMinutes = viewModel.waitTimeInfo.estimatedMinutes
                                     let recommendedWalk = max(5, delayMinutes - 5)
                                     let waitInfo = viewModel.waitTimeInfo
@@ -1359,30 +1357,24 @@ struct LocalRoutePickerSheet: View {
                             }
                             .padding(.top, 8)
                             
-                            // v2.0.1: Warning when delay is too short for a walk (styled to match recommendation card)
+                            // v2.0.1: Warning when delay is too short for a walk
                             if isDelayTooShortForWalk {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    HStack(spacing: 12) {
-                                        Image(systemName: "exclamationmark.triangle.fill")
-                                            .font(.title2)
-                                            .foregroundColor(.tealAccent)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text("Wait time is short")
-                                                .font(.subheadline)
-                                                .fontWeight(.semibold)
-                                            Text("Your \(viewModel.waitTimeInfo.estimatedMinutes)-minute delay may not allow time for a walk. Consider staying near reception.")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
+                                HStack(spacing: 12) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundColor(.orange)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Wait time is short")
+                                            .font(.subheadline)
+                                            .fontWeight(.semibold)
+                                        Text("Your \(viewModel.waitTimeInfo.estimatedMinutes)-minute delay may not allow time for a walk. Consider staying near reception.")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
                                     }
                                 }
-                                .padding(16)
+                                .padding()
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.tealAccent.opacity(0.15))
-                                )
-                                .padding(.horizontal, 4)
+                                .background(Color.orange.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
                             
                             // Duration picker
@@ -1729,7 +1721,7 @@ struct LocalRoutePickerSheet: View {
                 // When only one route was found initially, try free engines first (MapKit/ORS/GraphHopper), then Google Places fallback
                 if allRoutes.count == 1, let loc = locationService.currentLocation?.coordinate {
                     Task {
-                        try? await Task.sleep(nanoseconds: routeStaggerAfterFirstReadySec * 1_000_000_000) // Stagger to avoid ORS 429s
+                        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s so UI has settled
                         var added = await tryAddSecondRouteViaFreeEngines(userCoordinate: loc)
                         if !added {
                             added = await tryAddSecondRouteViaFreeEngines(userCoordinate: loc) // second attempt with same exclusions (engine may vary)
@@ -2503,7 +2495,6 @@ struct LocalRoutePickerSheet: View {
                         runSummaryTimeToFirstRouteSec = timeToFirst
                         let cacheRoutesSummary = loadedRoutes.enumerated().map { "r\($0.offset + 1):\($0.element.route.durationMinutes)min(inBand:\(Self.isRouteInBand($0.element.route, selectedDuration: selectedDuration)))" }.joined(separator: " ")
                         print("\(kRouteFlowTag) +\(String(format: "%.2f", timeToFirst))s stage=routes_into_buckets source=cache count=\(loadedRoutes.count) target_bucket=\(selectedDuration)min inBand=\(inBandRouteCount())/\(targetInBandRoutes) \(cacheRoutesSummary)")
-                        Self.logBucketSummary(routes: loadedRoutes, selectedDuration: selectedDuration, inBandCount: inBandRouteCount(), targetInBandRoutes: targetInBandRoutes, source: "cache")
                         print("\(kRouteFlowTag) +\(String(format: "%.2f", timeToFirst))s stage=first_route_ready name='\(loadedRoutes.first?.route.name ?? "?")' duration=\(loadedRoutes.first?.route.durationMinutes ?? 0)min (from cache)")
                         print("[FLOW] +\(String(format: "%.1f", timeToFirst))s ROUTE_DISPLAYED (cached) name='\(loadedRoutes.first?.route.name ?? "?")' duration=\(loadedRoutes.first?.route.durationMinutes ?? 0)min")
                         logRoutePreviewSummary()
@@ -3159,10 +3150,7 @@ struct LocalRoutePickerSheet: View {
                                 allRoutes = ordered.map(\.element)
                                 if inBandRouteCount() == 0 {
                                     print("TIME_SOURCE | PREVIEW: All routes out-of-band after validation — triggering pre-generation for in-band options")
-                                    Task {
-                                        try? await Task.sleep(nanoseconds: routeStaggerAfterFirstReadySec * 1_000_000_000)
-                                        await MainActor.run { preGenerateRemainingRoutes() }
-                                    }
+                                    preGenerateRemainingRoutes()
                                 }
                                 validatedPreviewRouteSignatures.insert(previewValidationSignature)
                             }
@@ -3262,10 +3250,7 @@ struct LocalRoutePickerSheet: View {
                         await MainActor.run { logRunSummary() }
                     } else if cachedRoutes.count < maxRoutesToGenerate {
                         print("📦 Only \(inBandAfterCache)/\(targetInBandRoutes) in-band routes — will pre-generate more")
-                        Task {
-                            try? await Task.sleep(nanoseconds: routeStaggerAfterFirstReadySec * 1_000_000_000)
-                            await MainActor.run { preGenerateRemainingRoutes() }
-                        }
+                        preGenerateRemainingRoutes()
                     } else {
                         print("📦 All \(cachedRoutes.count) routes loaded from cache")
                         await MainActor.run { logRunSummary() }
@@ -3318,7 +3303,7 @@ struct LocalRoutePickerSheet: View {
                         for _ in 0..<15 {
                             try? await Task.sleep(nanoseconds: 200_000_000) // 0.2s
                             (prefetchCount, isPrefetching) = await MainActor.run { (prefetchedPOIs.count, isPrefetchingPOIs) }
-                            if prefetchCount >= 20 || !isPrefetching { break }
+                            if prefetchCount >= 15 || !isPrefetching { break }
                             if Date().timeIntervalSince(waitStart) >= 3.0 { break }
                         }
                         if prefetchCount > 0 {
@@ -3430,7 +3415,7 @@ struct LocalRoutePickerSheet: View {
                                         location: userLoc,
                                         radiusMeters: radius,
                                         skipGoogle: false,
-                                        minimumForEarlyReturn: 10,  // Trigger fallback / early exit: 10 (matches 10-candidate need)
+                                        minimumForEarlyReturn: 5,
                                         maxWaitSecondsForFirstRoute: 5
                                     )
                                 }
@@ -3653,8 +3638,6 @@ struct LocalRoutePickerSheet: View {
                     var mainRoutePreviewSource = ""
                     var googleSecondRoute: (route: WalkingRoute, data: GeneratedRoute)? = nil
                     repeat {
-                    // ORS Directions 60/min: give main route (attempt 1) priority over retry/background
-                    ORSDirectionsRateLimiter.shared.setPriority(mainRouteAttempt == 0 ? .high : .low)
                     // v2.0.2: Use topology-safe route generation (guarantees a route, especially for short walks)
                     let elapsedRg = Date().timeIntervalSince(generateStartTime)
                     print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsedRg))s stage=generateRouteTopologySafe_call attempt=\(mainRouteAttempt + 1)")
@@ -4020,7 +4003,6 @@ struct LocalRoutePickerSheet: View {
                     excludedPOIs = Array(filteredResult.places)
                     print("[ROUTE_GEN] Main route out-of-band after remeasure — retrying generation once with excluded waypoints")
                     } while true
-                    // Keep .high so route 2 (second route / tryAddSecondRoute) gets ORS priority; pregen sets .low when it starts
                     // For out-of-band Task: capture final display route name/difficulty/description (same names as inside loop)
                     let routeName = displayRoute.name
                     let routeDifficulty = displayRoute.difficulty
@@ -4420,15 +4402,11 @@ struct LocalRoutePickerSheet: View {
                         }
                         // #endregion
                         
-                        // When 30s fallback already showed route 1: add main as route 2 only if duration is 50–150% of target
+                        // When 30s fallback already showed route 1: add main as route 2 instead of replacing
                         if currentRouteIsFromGoogle30sFallback {
                             let mainPlaceIds = Set(filteredResult.places.map { $0.placeId })
                             let fallbackPlaceIds = allRoutes.first.map { Set($0.data.places.map { $0.placeId }) } ?? []
-                            let mainMin = displayRoute.durationMinutes
-                            let minOk = max(1, Int(Double(selectedDuration) * 0.5))
-                            let maxOk = Int(Double(selectedDuration) * 1.5)
-                            let mainIn50_150 = (mainMin >= minOk && mainMin <= maxOk)
-                            if mainPlaceIds != fallbackPlaceIds && mainIn50_150 {
+                            if mainPlaceIds != fallbackPlaceIds {
                                 let cappedDisplay = Self.applyDurationSanityCap(displayRoute, targetDurationMinutes: selectedDuration)
                                 let isShortRoute = deduplicatedResult.durationMinutes < Int(Double(selectedDuration) * 0.50)
                                 allRoutes.append((route: cappedDisplay, data: deduplicatedResult, isDeadZoneFallback: isShortRoute, isFromGoogle: mainRoutePreviewSource == "google"))
@@ -4447,8 +4425,6 @@ struct LocalRoutePickerSheet: View {
                                 RouteCacheService.shared.setSessionRoutes(liveSessionMeta, at: userLocation.coordinate, durationMinutes: selectedDuration)
                                 logRoutePreviewSummary()
                                 print("[ROUTE_GEN] ⏱️ [30s FALLBACK] Main route added as route 2 (fallback stays route 1) — total \(allRoutes.count) routes")
-                            } else if mainPlaceIds != fallbackPlaceIds && !mainIn50_150 {
-                                print("[ROUTE_GEN] ⏱️ [30s FALLBACK] Main route not added as route 2 — duration \(mainMin)min outside 50–150% of \(selectedDuration)min [\(minOk)–\(maxOk)min]")
                             } else {
                                 print("[ROUTE_GEN] ⏱️ [30s FALLBACK] Main route duplicate of fallback — not adding")
                             }
@@ -4474,17 +4450,14 @@ struct LocalRoutePickerSheet: View {
                         lastValidRoute = cappedDisplay
                         lastValidRouteData = deduplicatedResult
                         
-                        // v1.8.8: Severely short = below 50% of target (used for dead-zone fallback flag and warning)
+                        // v1.8.8: Check if initial route is too short (< 50% of target)
                         let minAcceptablePercent = 0.50
                         let minAcceptableDuration = Int(Double(selectedDuration) * minAcceptablePercent)
                         let isShortRoute = deduplicatedResult.durationMinutes < minAcceptableDuration
-                        // Out-of-band (too short or too long) for this bucket — store at actual duration so it fits in the right bucket when user selects it
-                        let isOutOfBand = !Self.isRouteInBand(displayRoute, selectedDuration: selectedDuration)
-                        if isOutOfBand {
+                        if isShortRoute {
+                            print("⚠️ Initial route is short fallback (\(deduplicatedResult.durationMinutes)min < \(minAcceptableDuration)min target 50%)")
+                            // v2.1.15: Also store in cross-bucket pool at its actual duration so it's useful for the right bucket
                             storeCrossBucketRoute(route: displayRoute, data: deduplicatedResult, isFromGoogle: mainRoutePreviewSource == "google")
-                            if isShortRoute {
-                                print("⚠️ Initial route is short fallback (\(deduplicatedResult.durationMinutes)min < \(minAcceptableDuration)min target 50%)")
-                            }
                         }
                         
                         // Minimum display % (e.g. 30%): below this we don't show the route — show "no routes found" and suggest another bucket
@@ -4504,13 +4477,9 @@ struct LocalRoutePickerSheet: View {
                         var placeIdSetsToShow: [Set<String>] = [Set(filteredResult.places.map { $0.placeId })]
                         var initialRouteIndex = 0
                         if let second = googleSecondRoute {
-                            let firstWaypointSet = Set(filteredResult.places.map { $0.placeId })
-                            let secondWaypointSet = Set(second.data.places.map { $0.placeId })
-                            if secondWaypointSet != firstWaypointSet {
-                                routesToShow.append((route: Self.applyDurationSanityCap(second.route, targetDurationMinutes: selectedDuration), data: second.data, isDeadZoneFallback: false, isFromGoogle: true))
-                                placeIdSetsToShow.append(secondWaypointSet)
-                                initialRouteIndex = 1  // Auto-switch to route 2 (Google) when available so user sees the better option
-                            }
+                            routesToShow.append((route: Self.applyDurationSanityCap(second.route, targetDurationMinutes: selectedDuration), data: second.data, isDeadZoneFallback: false, isFromGoogle: true))
+                            placeIdSetsToShow.append(Set(second.data.places.map { $0.placeId }))
+                            initialRouteIndex = 1  // Auto-switch to route 2 (Google) when available so user sees the better option
                         }
                         allRoutes = routesToShow
                         currentRouteIndex = initialRouteIndex
@@ -4595,7 +4564,6 @@ struct LocalRoutePickerSheet: View {
                         let inBandCount = inBandRouteCount()
                         let routesSummary = routesToShow.enumerated().map { "r\($0.offset + 1):\($0.element.route.durationMinutes)min(inBand:\(Self.isRouteInBand($0.element.route, selectedDuration: selectedDuration)))" }.joined(separator: " ")
                         print("\(kRouteFlowTag) +\(String(format: "%.2f", totalTime))s stage=routes_into_buckets count=\(routesToShow.count) target_bucket=\(selectedDuration)min inBand=\(inBandCount)/\(targetInBandRoutes) \(routesSummary)")
-                        Self.logBucketSummary(routes: routesToShow, selectedDuration: selectedDuration, inBandCount: inBandCount, targetInBandRoutes: targetInBandRoutes, source: "live")
                         print("\(kRouteFlowTag) +\(String(format: "%.2f", totalTime))s stage=first_route_ready name='\(displayRoute.name)' duration=\(displayRoute.durationMinutes)min (map preview after stage animation)")
                         print("[STAGE_TELEMETRY] Bucket: duration=\(selectedDuration)min routes=\(routesToShow.count) inBand=\(inBandCount)/\(targetInBandRoutes) total_sec=\(String(format: "%.2f", totalTime))")
                         for (idx, entry) in routesToShow.enumerated() {
@@ -4633,12 +4601,9 @@ struct LocalRoutePickerSheet: View {
                         // v1.9.28: Clear any status messages - routes are ready
                         routeRefreshStatus = nil
                         
-                        // Start pre-generating more routes in background (only if we need more in-band routes); stagger to avoid ORS 429s
+                        // Start pre-generating more routes in background (only if we need more in-band routes)
                         if !hasEnoughInBandRoutes() {
-                            Task {
-                                try? await Task.sleep(nanoseconds: routeStaggerAfterFirstReadySec * 1_000_000_000)
-                                await MainActor.run { preGenerateRemainingRoutes() }
-                            }
+                            preGenerateRemainingRoutes()
                         } else {
                             print("[ROUTE_GEN] ⏹️ First route is in-band — skipping pre-generation (have \(inBandRouteCount())/\(targetInBandRoutes))")
                         }
@@ -5149,7 +5114,6 @@ struct LocalRoutePickerSheet: View {
     /// Try to add a second route using free engines (MapKit/ORS/GraphHopper) only. Used when we have 1 route and want to avoid Google first.
     /// Returns true if an in-band route was added.
     private func tryAddSecondRouteViaFreeEngines(userCoordinate: CLLocationCoordinate2D) async -> Bool {
-        // Use current priority (stay .high so route 2 has same ORS priority as route 1; pregen sets .low when it starts)
         let (excludedPlaceIds, excludedPOIs, duration, prefetched): (Set<String>, [PlaceResult], Int, [PlaceResult]?) = await MainActor.run {
             let ids = allRoutes.first.map { Set($0.data.places.map { $0.placeId }) } ?? []
             let pois = allRoutes.flatMap { $0.data.places }
@@ -5937,7 +5901,7 @@ struct LocalRoutePickerSheet: View {
     /// Validity band for requested duration (same as RouteCacheService: 80–120%, edge 75–125%). Applies to all buckets.
     private static func minMaxAcceptableMinutes(for selectedDuration: Int) -> (min: Int, max: Int) {
         let rounded = RouteCacheService.roundToNearest5Minutes(selectedDuration)
-        let isEdge = rounded <= 10 || rounded >= 55
+        let isEdge = rounded <= 5 || rounded >= 55
         let minPercent = isEdge ? 0.75 : 0.80
         let maxPercent = isEdge ? 1.25 : 1.20
         let minAcceptable = Int(Double(rounded) * minPercent)
@@ -5947,7 +5911,7 @@ struct LocalRoutePickerSheet: View {
     
     /// Minimum route distance (m) for a route to count as in-band for the given duration bucket. Prevents short walks (e.g. 800 m) being shown as in-band for long targets. Generalisable to all buckets.
     private static func minDistanceMetersForInBand(for selectedDuration: Int) -> Int {
-        let rounded = max(10, RouteCacheService.roundToNearest5Minutes(selectedDuration))
+        let rounded = max(1, RouteCacheService.roundToNearest5Minutes(selectedDuration))
         return max(200, rounded * 50)  // at least 50 m/min implied
     }
     
@@ -5958,19 +5922,6 @@ struct LocalRoutePickerSheet: View {
         let minDist = minDistanceMetersForInBand(for: selectedDuration)
         let distanceOk = route.distanceMeters >= minDist
         return durationOk && distanceOk
-    }
-    
-    /// One-line console summary when routes are added to the target bucket (grep "[BUCKET_SUMMARY]").
-    private static func logBucketSummary(
-        routes: [(route: WalkingRoute, data: GeneratedRoute, isDeadZoneFallback: Bool, isFromGoogle: Bool)],
-        selectedDuration: Int,
-        inBandCount: Int,
-        targetInBandRoutes: Int,
-        source: String
-    ) {
-        guard !routes.isEmpty else { return }
-        let list = routes.enumerated().map { "\($0.offset + 1). \($0.element.route.name) \($0.element.route.durationMinutes)min" }.joined(separator: ", ")
-        print("[BUCKET_SUMMARY] \(selectedDuration)min bucket: \(routes.count) route(s) (\(inBandCount)/\(targetInBandRoutes) in-band) [\(source)] — \(list)")
     }
     
     /// v2.1.15: True if route is severely short for the selected duration (< 50% of target). Used as a safety net to avoid showing
@@ -6072,19 +6023,11 @@ struct LocalRoutePickerSheet: View {
             return false
         }
         
-        // Same waypoints rule: only one route per distinct set of waypoints (e.g. one "home → War memorial" route, not two)
-        let candidateWaypointSet = Set(data.places.map { $0.placeId })
-        if allRoutes.contains(where: { Set($0.data.places.map { $0.placeId }) == candidateWaypointSet }) {
-            print("[ROUTE_GEN] ⏹️ [\(source)] '\(route.name)' — duplicate waypoints (same set as existing route), skipped")
-            return false
-        }
-        
         // Append
         allRoutes.append((route: route, data: data, isDeadZoneFallback: isDeadZoneFallback, isFromGoogle: isFromGoogle))
         let currentInBand = inBandRouteCount()
         let elapsed = runSummaryStartTime.map { Date().timeIntervalSince($0) } ?? 0
         print("\(kRouteFlowTag) +\(String(format: "%.2f", elapsed))s stage=route_added position=\(allRoutes.count) name='\(route.name)' duration=\(route.durationMinutes)min inBand=\(currentInBand)/\(targetInBandRoutes) source=\(source)")
-        print("[BUCKET_SUMMARY] \(selectedDuration)min bucket: +1 → \(allRoutes.count) total (\(currentInBand)/\(targetInBandRoutes) in-band) [\(source)] — \(route.name) \(route.durationMinutes)min")
         print("[ROUTE_GEN] ✅ [\(source)] '\(route.name)' \(route.durationMinutes)min \(String(format: "%.1f", Double(route.distanceMeters)/1000))km — route \(allRoutes.count) (inBand: \(currentInBand)/\(targetInBandRoutes))")
         
         // Immediately dismiss loading indicator once we have enough in-band routes
@@ -6262,13 +6205,13 @@ struct LocalRoutePickerSheet: View {
         }
     }
     
-    /// Waypoint distance bands (minMult, maxMult) for main out-of-band Google attempts. Distances are duration * mult (meters). Per-bucket so short durations don't get tiny routes and long durations get long enough round-trips. Applies to all buckets (10–60 min).
+    /// Waypoint distance bands (minMult, maxMult) for main out-of-band Google attempts. Distances are duration * mult (meters). Per-bucket so short durations don't get tiny routes and long durations get long enough round-trips. Applies to all buckets (5–60 min).
     /// v2.1: Increased multipliers for 20-30min bucket — previous (20-24) produced 500-600m one-way
     /// which was only ~12min round-trip, well short of 20-30min targets.
     private static func outOfBandWaypointBands(for duration: Int) -> [(minMult: Double, maxMult: Double)] {
         let rounded = RouteCacheService.roundToNearest5Minutes(duration)
         switch rounded {
-        case 10, 15:
+        case 5, 10, 15:
             return [(24, 26), (26, 28), (22, 24)]
         case 20, 25, 30:
             return [(28, 34), (34, 40), (24, 30)]  // v2.1: Wider bands for 2-waypoint routes to hit 20-30min
@@ -6447,10 +6390,7 @@ struct LocalRoutePickerSheet: View {
             }
             if inBandRouteCount() == 0 {
                 print("TIME_SOURCE | PREPOP VALIDATE: All routes out-of-band after validation — triggering pre-generation for in-band options")
-                Task {
-                    try? await Task.sleep(nanoseconds: routeStaggerAfterFirstReadySec * 1_000_000_000)
-                    await MainActor.run { preGenerateRemainingRoutes() }
-                }
+                preGenerateRemainingRoutes()
             }
         }
     }
@@ -7020,7 +6960,6 @@ struct LocalRoutePickerSheet: View {
         print("🚀 Starting background pre-generation (need \(targetInBandRoutes - inBandRouteCount()) more in-band routes)...")
         
         Task {
-            ORSDirectionsRateLimiter.shared.setPriority(.low)  // Background: never compete with main route for ORS slots
             let preGenTaskStart = Date()
             var routesGenerated = allRoutes.count
             var consecutiveDuplicates = 0
@@ -7480,146 +7419,6 @@ struct LocalRoutePickerSheet: View {
                 }
             }
             let routeCountAfterCrossBucket = await MainActor.run { allRoutes.count }
-            var inBandAfterCrossBucket = await MainActor.run { inBandRouteCount() }
-            
-            // Throttled background phase: MapKit + OSRM + GraphHopper (no HeiGIT), only when well under rate limit
-            if inBandAfterCrossBucket < targetInBandRoutes {
-                print("[ROUTE_GEN] Throttled MapKit+OSRM+GraphHopper phase starting (inBand < 2, no HeiGIT)")
-                let maxThrottledAttempts = 3
-                let throttledSpacingNanoseconds: UInt64 = 17_000_000_000  // 17s between attempts
-                let throttledTimeCap: TimeInterval = 90
-                var throttledAttempt = 0
-                while throttledAttempt < maxThrottledAttempts {
-                    if Date().timeIntervalSince(preGenTaskStart) >= throttledTimeCap {
-                        print("[ROUTE_GEN] Throttled phase time cap (\(Int(throttledTimeCap))s) — stopping")
-                        break
-                    }
-                    let shouldCancel = await MainActor.run { shouldCancelBackgroundWork }
-                    if shouldCancel {
-                        print("[ROUTE_GEN] Throttled phase cancelled (user action)")
-                        break
-                    }
-                    while await MainActor.run(body: { isGeneratingAdditionalRoute }) {
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
-                    }
-                    var canRun = await mapsService.canRunThrottledBackgroundMapKit()
-                    if !canRun {
-                        try? await Task.sleep(nanoseconds: 12_000_000_000)
-                        canRun = await mapsService.canRunThrottledBackgroundMapKit()
-                        if !canRun {
-                            print("[ROUTE_GEN] Throttled attempt \(throttledAttempt + 1) skipped (rate limit)")
-                            throttledAttempt += 1
-                            continue
-                        }
-                    }
-                    throttledAttempt += 1
-                    let excludedPlaceIds = await MainActor.run { shownPlaceIdSets.reduce(into: Set<String>()) { $0.formUnion($1) } }
-                    let excludedPOIs = await MainActor.run { allRoutes.flatMap { $0.data.places } }
-                    let currentRouteCount = await MainActor.run { allRoutes.count }
-                    let preferMulti = currentRouteCount >= 1 && currentRouteCount <= 3 && selectedDuration >= 30
-                    let poisForThrottled = await MainActor.run { prefetchedPOIs.isEmpty ? nil : prefetchedPOIs }
-                    mapsService.skipHeiGITForBackground = true
-                    defer { mapsService.skipHeiGITForBackground = false }
-                    do {
-                        let result = try await mapsService.generateLocalRoute(
-                            from: userLocation.coordinate,
-                            targetDurationMinutes: selectedDuration,
-                            difficulty: nil,
-                            excludePlaceIds: excludedPlaceIds,
-                            excludePOIs: excludedPOIs,
-                            prefetchedPOIs: poisForThrottled,
-                            preferMultiWaypoint: preferMulti
-                        )
-                        guard !result.places.isEmpty, result.distanceMeters > 0, result.durationSeconds > 0 else { continue }
-                        let isUnique = await MainActor.run { isRouteTrulyUnique(places: result.places, distanceMeters: result.distanceMeters) }
-                        if !isUnique { continue }
-                        let markers = await MainActor.run { createMarkersFromPlaces(result.places, origin: userLocation.coordinate) }
-                        guard !markers.isEmpty else { continue }
-                        var directions = await MainActor.run { extractWalkingDirections(from: result.legs, waypoints: result.places) }
-                        if directions.isEmpty && !result.places.isEmpty {
-                            let waypointCoords = result.places.map { $0.coordinate }
-                            let waypointNames = result.places.map { $0.name }
-                            directions = await mapsService.getMapKitDirectionsForRoute(
-                                origin: userLocation.coordinate,
-                                waypoints: waypointCoords,
-                                destination: userLocation.coordinate,
-                                waypointNames: waypointNames
-                            )
-                        }
-                        let templateName = "\(result.durationMinutes) min walk"
-                        let templateDescription = "A short walk from start and back."
-                        let routeDifficulty: RouteDifficulty = result.durationMinutes <= 10 ? .easy : (result.durationMinutes <= 20 ? .moderate : .challenging)
-                        var route = WalkingRoute(
-                            name: templateName,
-                            description: templateDescription,
-                            durationMinutes: max(1, result.durationMinutes),
-                            distanceMeters: result.distanceMeters,
-                            difficulty: routeDifficulty,
-                            isIndoor: false,
-                            isAccessible: true,
-                            landmarks: ["Start"] + result.places.map { $0.name } + ["Return"],
-                            icon: "location.fill",
-                            color: .tealAccent,
-                            qrMarkers: markers,
-                            routeType: .local,
-                            trimmed: result.polyline,
-                            walkingDirections: directions,
-                            usedOSRMRouting: result.usedOSRM
-                        )
-                        var cappedRoute = Self.applyDurationSanityCap(route, targetDurationMinutes: selectedDuration)
-                        let useWideBandBypass = await MainActor.run { !hasEnoughInBandRoutes() && !Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) && Self.isRouteInWideBand(cappedRoute, selectedDuration: selectedDuration) }
-                        let isInBand = Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) || useWideBandBypass
-                        if isInBand {
-                            let waypointInfos = result.places.map { GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity) }
-                            let aiContent = await GeminiService.shared.generateRouteContent(waypoints: waypointInfos, durationMinutes: route.durationMinutes, distanceMeters: route.distanceMeters, difficulty: nil)
-                            let routeWithGemini = WalkingRoute(
-                                name: aiContent.name,
-                                description: aiContent.description,
-                                durationMinutes: route.durationMinutes,
-                                distanceMeters: route.distanceMeters,
-                                difficulty: route.difficulty,
-                                isIndoor: route.isIndoor,
-                                isAccessible: route.isAccessible,
-                                landmarks: route.landmarks,
-                                icon: route.icon,
-                                color: route.color,
-                                qrMarkers: route.qrMarkers,
-                                routeType: route.routeType,
-                                trimmed: route.trimmed,
-                                walkingDirections: route.walkingDirections,
-                                usedOSRMRouting: route.usedOSRMRouting,
-                                isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase,
-                                travelToStartMinutes: route.travelToStartMinutes
-                            )
-                            cappedRoute = Self.applyDurationSanityCap(routeWithGemini, targetDurationMinutes: selectedDuration)
-                        }
-                        let deduplicatedResult = await MainActor.run { mapsService.finalizeRouteDedupForView(result) }
-                        await MainActor.run {
-                            let useWideBandBypassLocal = !hasEnoughInBandRoutes() && !Self.isRouteInBand(cappedRoute, selectedDuration: selectedDuration) && Self.isRouteInWideBand(cappedRoute, selectedDuration: selectedDuration)
-                            let added = appendRouteIfAllowed(route: cappedRoute, data: deduplicatedResult, isFromGoogle: result.usedGoogleDirections, source: "throttled-mapkit-osrm-gh", bypassInBandCap: useWideBandBypassLocal)
-                            if added {
-                                registerRouteSignature(places: result.places, distanceMeters: result.distanceMeters)
-                                let placeIds = Set(result.places.map { $0.placeId })
-                                shownPlaceIdSets.append(placeIds)
-                                print("[ROUTE_GEN] Throttled phase added route (\(inBandRouteCount())/\(targetInBandRoutes) in-band)")
-                                if inBandRouteCount() >= targetInBandRoutes && isPreGeneratingRoutes {
-                                    isPreGeneratingRoutes = false
-                                    preGenerationComplete = true
-                                    print("[ROUTE_GEN] Loading indicator dismissed (in-band reached via throttled phase)")
-                                }
-                            }
-                        }
-                    } catch {
-                        print("[ROUTE_GEN] Throttled phase attempt error: \(error.localizedDescription)")
-                    }
-                    inBandAfterCrossBucket = await MainActor.run { inBandRouteCount() }
-                    if inBandAfterCrossBucket >= targetInBandRoutes { break }
-                    if throttledAttempt < maxThrottledAttempts {
-                        try? await Task.sleep(nanoseconds: throttledSpacingNanoseconds)
-                    }
-                }
-                print("[ROUTE_GEN] Throttled phase ended — \(inBandAfterCrossBucket)/\(targetInBandRoutes) in-band")
-            }
             
             if routeCountAfterCrossBucket < 2 && mapsService.hasAPIKey && inBandBeforeFallback < targetInBandRoutes {
                 print("⚠️ Only \(routeCountAfterCrossBucket) routes found - calling Google API for more POIs...")

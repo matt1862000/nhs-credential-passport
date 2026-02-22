@@ -19,11 +19,6 @@ struct WaitTimeLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.center) {
                     WaitTimeExpandedView(context: context)
                 }
-                DynamicIslandExpandedRegion(.trailing) {
-                    Text(delayString(context.state.delayMinutes))
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
             } compactLeading: {
                 HStack {
                     Spacer(minLength: 0)
@@ -42,14 +37,6 @@ struct WaitTimeLiveActivity: Widget {
                 }
             }
         }
-    }
-
-    private func delayString(_ minutes: Int) -> String {
-        if minutes == 0 { return "On time" }
-        if minutes < 60 { return "\(minutes)m" }
-        let h = minutes / 60
-        let m = minutes % 60
-        return m == 0 ? "\(h)h" : "\(h)h \(m)m"
     }
 }
 
@@ -70,26 +57,12 @@ private struct WaitTimeExpandedView: View {
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
                 .multilineTextAlignment(.center)
-            Text(waitTimeLabel)
+            Text("Tap for current wait time")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            if let backBy = context.attributes.backByText, !backBy.isEmpty {
-                Label("Back by \(backBy)", systemImage: "clock.badge.checkmark")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 4)
-    }
-
-    private var waitTimeLabel: String {
-        let m = context.state.delayMinutes
-        if m == 0 { return "On time" }
-        if m < 60 { return "\(m) min delay" }
-        let h = m / 60
-        let min = m % 60
-        return min == 0 ? "\(h) hr delay" : "\(h) hr \(min) min delay"
     }
 }

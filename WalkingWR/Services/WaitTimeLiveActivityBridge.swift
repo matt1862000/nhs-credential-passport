@@ -15,7 +15,7 @@ enum WaitTimeLiveActivityBridge {
         let att = WaitTimeActivityAttributes(clinicianName: clinicianName, backByText: backByText)
         let state = WaitTimeActivityAttributes.ContentState(delayMinutes: delayMinutes)
         do {
-            let content = ActivityContent(state: state, staleDate: nil)
+            let content = ActivityContent(state: state, staleDate: nil as Date?)
             _ = try Activity<WaitTimeActivityAttributes>.request(
                 attributes: att,
                 content: content,
@@ -30,7 +30,7 @@ enum WaitTimeLiveActivityBridge {
     static func updateIfAvailable(delayMinutes: Int) {
         guard #available(iOS 16.2, *) else { return }
         let state = WaitTimeActivityAttributes.ContentState(delayMinutes: delayMinutes)
-        let content = ActivityContent(state: state, staleDate: nil)
+        let content = ActivityContent(state: state, staleDate: nil as Date?)
         Task {
             for activity in Activity<WaitTimeActivityAttributes>.activities {
                 await activity.update(content)
