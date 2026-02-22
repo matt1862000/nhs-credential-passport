@@ -5173,12 +5173,12 @@ class GoogleMapsService: ObservableObject {
             .replacingOccurrences(of: "{", with: "\\{")
             .replacingOccurrences(of: "}", with: "\\}")
         
-        // Query for roads with matching name (case-insensitive, partial match)
-        // Use ~i for case-insensitive matching in Overpass
+        // Query for roads with matching name (case-insensitive, partial match).
+        // Restrict to proper public streets so we don't snap to a service/driveway/footway with the same name (e.g. school "Carr Road" vs Brandy Carr Road).
         let query = """
         [out:json][timeout:10];
         (
-          way["highway"]["name"~"\(escapedRoadName)"]["access"!="private"]["access"!="no"](around:\(searchRadius),\(coordinate.latitude),\(coordinate.longitude));
+          way["highway"~"residential|primary|secondary|tertiary|unclassified|living_street|trunk|road"]["name"~"\(escapedRoadName)"]["access"!="private"]["access"!="no"](around:\(searchRadius),\(coordinate.latitude),\(coordinate.longitude));
         );
         out body geom;
         """

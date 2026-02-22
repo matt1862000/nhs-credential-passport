@@ -4498,11 +4498,11 @@ struct LocalRoutePickerSheet: View {
                             }
                             let snappedRoute = Self.applyDurationSanityCap(snapped, targetDurationMinutes: snapDuration)
                             await MainActor.run {
-                                guard allRoutes.indices.contains(0),
-                                      Set(allRoutes[0].data.places.map(\.placeId)) == firstRoutePlaceIds else { return }
-                                let existing = allRoutes[0]
-                                allRoutes[0] = (route: snappedRoute, data: existing.data, isDeadZoneFallback: existing.isDeadZoneFallback, isFromGoogle: existing.isFromGoogle)
-                                if currentRouteIndex == 0 {
+                                // Find the route that matches the one we snapped (may be at index 0 or 1 if Google first-route prepended)
+                                guard let idx = allRoutes.firstIndex(where: { Set($0.data.places.map(\.placeId)) == firstRoutePlaceIds }) else { return }
+                                let existing = allRoutes[idx]
+                                allRoutes[idx] = (route: snappedRoute, data: existing.data, isDeadZoneFallback: existing.isDeadZoneFallback, isFromGoogle: existing.isFromGoogle)
+                                if currentRouteIndex == idx {
                                     generatedRoute = snappedRoute
                                 }
                                 let meta = allRoutes.map { e in
@@ -4516,7 +4516,7 @@ struct LocalRoutePickerSheet: View {
                                     )
                                 }
                                 RouteCacheService.shared.setSessionRoutes(meta, at: snapCoord, durationMinutes: snapDuration)
-                                print("[WALK_REFRESH] Road snap (background) applied — route 1 polyline/markers updated")
+                                print("[WALK_REFRESH] Road snap (background) applied — route at index \(idx + 1) polyline/markers updated")
                             }
                         }
                         
