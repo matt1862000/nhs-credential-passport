@@ -13,6 +13,8 @@ import Combine
 // #region agent log
 /// Filter Xcode console by this tag to see waypoint-direction debug logs only.
 fileprivate let WAYPOINT_DIR_TAG = "WAYPOINT_DIR"
+/// Grep "[route_gen]" in console to see where route-generation time is spent (POI fetch, topology, generateLocalRoute, etc.).
+fileprivate let kRouteGenTag = "[route_gen]"
 fileprivate func _agentLogGM(_ loc: String, _ msg: String, _ data: [String: Any] = [:], _ hid: String = "C") {
     let path = "/Users/raihant/Documents/WalkingWR/.cursor/debug.log"
     var d: [String: Any] = ["location": loc, "message": msg, "timestamp": Int(Date().timeIntervalSince1970 * 1000), "sessionId": "debug-session", "hypothesisId": hid]
@@ -10563,7 +10565,7 @@ class GoogleMapsService: ObservableObject {
         budget: RoutingToggles.Budget? = nil,  // SPRINT-5: Optional budget for hard-stop
         prefetchedPOIs: [PlaceResult]? = nil   // Pre-fetched POIs to skip redundant network calls
     ) async throws -> GeneratedRoute? {
-        print("🗺️ [TOPOLOGY-SAFE] Starting topology-safe route generation for \(targetDurationMinutes)min route\(prefetchedPOIs != nil ? " (with \(prefetchedPOIs!.count) prefetched POIs)" : "")")
+        print("\(kRouteGenTag) 🗺️ [TOPOLOGY-SAFE] Starting topology-safe route generation for \(targetDurationMinutes)min route\(prefetchedPOIs != nil ? " (with \(prefetchedPOIs!.count) prefetched POIs)" : "")")
         
         // SPRINT-5: Check budget before making any MapKit calls
         if let b = budget, !RoutingToggles.mustContinue(b, bestSoFar: nil, stage: "TOPO_SAFE_START") {
@@ -10581,7 +10583,7 @@ class GoogleMapsService: ObservableObject {
         
         // Early exit: if MapKit can't do this, POIs won't save you
         guard !baseRoutes.isEmpty else {
-            print("🗺️ [TOPOLOGY-SAFE] No base routes found - MapKit can't generate routes here")
+            print("\(kRouteGenTag) 🗺️ [TOPOLOGY-SAFE] No base routes found - MapKit can't generate routes here")
             return nil
         }
         
@@ -10594,7 +10596,7 @@ class GoogleMapsService: ObservableObject {
             return nil
         }
         
-        print("🗺️ [TOPOLOGY-SAFE] Best base route: \(base.durationSeconds / 60)min (target: \(targetDurationMinutes)min)")
+        print("\(kRouteGenTag) 🗺️ [TOPOLOGY-SAFE] Best base route: \(base.durationSeconds / 60)min (target: \(targetDurationMinutes)min)")
         
         // Enhancement is OPTIONAL - POIs can only improve a route, never veto it
         if let enhanced = try? await enhanceRouteWithCuratedPOIs(
@@ -10605,12 +10607,12 @@ class GoogleMapsService: ObservableObject {
             excludePOIs: excludePOIs,
             prefetchedPOIs: prefetchedPOIs
         ) {
-            print("🗺️ [TOPOLOGY-SAFE] ✅ Enhanced route with POIs: \(enhanced.durationSeconds / 60)min")
+            print("\(kRouteGenTag) 🗺️ [TOPOLOGY-SAFE] ✅ Enhanced route with POIs: \(enhanced.durationSeconds / 60)min")
             return enhanced
         }
         
         // Important: base route is GOOD ENOUGH
-        print("🗺️ [TOPOLOGY-SAFE] ✅ Using base route (no POI enhancement): \(base.durationSeconds / 60)min")
+        print("\(kRouteGenTag) 🗺️ [TOPOLOGY-SAFE] ✅ Using base route (no POI enhancement): \(base.durationSeconds / 60)min")
         return base
     }
     
@@ -10629,7 +10631,7 @@ class GoogleMapsService: ObservableObject {
         let minAcceptable = Int(Double(targetMinutes) * 0.5)
         let maxAcceptable = Int(Double(targetMinutes) * 1.8)
         
-        print("🗺️ [NETWORK-CONSTRAINED] Generating \(attempts) PARALLEL candidates at \(Int(targetDistance))m distance")
+        print("\(kRouteGenTag) 🗺️ [NETWORK-CONSTRAINED] Generating \(attempts) PARALLEL candidates at \(Int(targetDistance))m distance")
         
         // SPRINT-9: Run all MapKit calls in parallel for massive speed improvement
         let routes = await withTaskGroup(of: (Int, GeneratedRoute?).self, returning: [GeneratedRoute].self) { group in
@@ -11333,7 +11335,7 @@ class GoogleMapsService: ObservableObject {
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: startTime)
         
-        print("⏱️ [ROUTE RETRY] [\(timeString)] 🔄 generateLocalRouteWithRetry() STARTED")
+        print("\(kRouteGenTag) ⏱️ [ROUTE RETRY] [\(timeString)] 🔄 generateLocalRouteWithRetry() STARTED")
         print("╔══════════════════════════════════════════════════════════════╗")
         print("║              🚶 ROUTE GENERATION STARTED                     ║")
         print("╠══════════════════════════════════════════════════════════════╣")
@@ -11347,7 +11349,7 @@ class GoogleMapsService: ObservableObject {
         // Stage 1: Random selection (current behavior)
         print("\n📍 STAGE 1: Random Selection")
         let stage1StartTime = Date()
-        print("⏱️ [TIMING] Stage 1 STARTED")
+        print("\(kRouteGenTag) ⏱️ [TIMING] Stage 1 STARTED")
         do {
             let route = try await generateLocalRoute(
                 from: location,
@@ -11365,11 +11367,11 @@ class GoogleMapsService: ObservableObject {
             
             await MainActor.run { retryStatus = nil }
             print("✅ STAGE 1 SUCCESS: \(route.durationSeconds / 60) min route with \(route.places.count) waypoints")
-            print("⏱️ [TIMING] Stage 1: \(String(format: "%.2f", stage1Elapsed))s")
-            print("⏱️ [ROUTE RETRY] [\(endTimeString)] ✅ generateLocalRouteWithRetry() COMPLETED in \(String(format: "%.2f", totalElapsed))s")
-            print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
-            print("⏱️ [TIMING] TOTAL TIME: \(String(format: "%.2f", totalElapsed))s (Stage 1 only)")
-            print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+            print("\(kRouteGenTag) ⏱️ [TIMING] Stage 1: \(String(format: "%.2f", stage1Elapsed))s")
+            print("\(kRouteGenTag) ⏱️ [ROUTE RETRY] [\(endTimeString)] ✅ generateLocalRouteWithRetry() COMPLETED in \(String(format: "%.2f", totalElapsed))s")
+            print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+            print("\(kRouteGenTag) ⏱️ [TIMING] TOTAL TIME: \(String(format: "%.2f", totalElapsed))s (Stage 1 only)")
+            print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
             return route
         } catch GoogleMapsError.rateLimited(let waitTime) {
             // Rate limited - wait and retry once
@@ -11391,7 +11393,7 @@ class GoogleMapsService: ObservableObject {
         // Try with Google POIs included (if not already tried)
         print("\n📍 STAGE 2: Systematic Selection + Expanded Search")
         let stage2StartTime = Date()
-        print("⏱️ [TIMING] Stage 2 STARTED")
+        print("\(kRouteGenTag) ⏱️ [TIMING] Stage 2 STARTED")
         await MainActor.run { retryStatus = "Retrying with expanded search..." }
         do {
             // Check if we need to fetch Google POIs (if prefetchedPOIs was from free sources only)
@@ -11411,14 +11413,14 @@ class GoogleMapsService: ObservableObject {
                     // Had POIs from free sources only — try with Google (or Stage 1 failed, so try Google)
                     let googleFetchStart = Date()
                     print("🔄 Stage 2: Re-fetching POIs with Google included (had \(prefetched.count) from free sources, 0 from Google)")
-                    print("⏱️ [TIMING] Stage 2 Google fetch STARTED")
+                    print("\(kRouteGenTag) ⏱️ [TIMING] Stage 2 Google fetch STARTED")
                     poisToUse = try await findNearbyPlaces(
                         location: location,
                         radiusMeters: searchRadiusForStage2!,
                         skipGoogle: false  // Include Google
                     )
                     stage2POIFetchTime = Date().timeIntervalSince(googleFetchStart)
-                    print("⏱️ [TIMING] Stage 2 Google fetch: \(String(format: "%.2f", stage2POIFetchTime))s")
+                    print("\(kRouteGenTag) ⏱️ [TIMING] Stage 2 Google fetch: \(String(format: "%.2f", stage2POIFetchTime))s")
                     print("🔄 Stage 2: Now have \(poisToUse?.count ?? 0) POIs with Google")
                 } else {
                     // Already have Google POIs or enough POIs - use prefetched
@@ -11429,14 +11431,14 @@ class GoogleMapsService: ObservableObject {
                 // No prefetched POIs - fetch fresh with Google included
                 let googleFetchStart = Date()
                 print("🔄 Stage 2: Fetching fresh POIs with Google included (expanded search)")
-                print("⏱️ [TIMING] Stage 2 Google fetch STARTED")
+                print("\(kRouteGenTag) ⏱️ [TIMING] Stage 2 Google fetch STARTED")
                 poisToUse = try await findNearbyPlaces(
                     location: location,
                     radiusMeters: searchRadiusForStage2!,
                     skipGoogle: false  // Include Google
                 )
                 stage2POIFetchTime = Date().timeIntervalSince(googleFetchStart)
-                print("⏱️ [TIMING] Stage 2 Google fetch: \(String(format: "%.2f", stage2POIFetchTime))s")
+                print("\(kRouteGenTag) ⏱️ [TIMING] Stage 2 Google fetch: \(String(format: "%.2f", stage2POIFetchTime))s")
                 print("🔄 Stage 2: Fetched \(poisToUse?.count ?? 0) POIs with Google")
             }
             
@@ -11458,14 +11460,14 @@ class GoogleMapsService: ObservableObject {
             
             await MainActor.run { retryStatus = nil }
             print("✅ STAGE 2 SUCCESS: \(route.durationSeconds / 60) min route with \(route.places.count) waypoints")
-            print("⏱️ [TIMING] Stage 2 POI fetch: \(String(format: "%.2f", stage2POIFetchTime))s")
-            print("⏱️ [TIMING] Stage 2 route generation: \(String(format: "%.2f", routeGenTime))s")
-            print("⏱️ [TIMING] Stage 2 total: \(String(format: "%.2f", stage2Elapsed))s")
-            print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
-            print("⏱️ [TIMING] TOTAL TIME: \(String(format: "%.2f", totalElapsed))s")
-            print("⏱️ [TIMING]   Stage 1: failed")
-            print("⏱️ [TIMING]   Stage 2: \(String(format: "%.2f", stage2Elapsed))s")
-            print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+            print("\(kRouteGenTag) ⏱️ [TIMING] Stage 2 POI fetch: \(String(format: "%.2f", stage2POIFetchTime))s")
+            print("\(kRouteGenTag) ⏱️ [TIMING] Stage 2 route generation: \(String(format: "%.2f", routeGenTime))s")
+            print("\(kRouteGenTag) ⏱️ [TIMING] Stage 2 total: \(String(format: "%.2f", stage2Elapsed))s")
+            print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+            print("\(kRouteGenTag) ⏱️ [TIMING] TOTAL TIME: \(String(format: "%.2f", totalElapsed))s")
+            print("\(kRouteGenTag) ⏱️ [TIMING]   Stage 1: failed")
+            print("\(kRouteGenTag) ⏱️ [TIMING]   Stage 2: \(String(format: "%.2f", stage2Elapsed))s")
+            print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
             return route
         } catch GoogleMapsError.rateLimited(let waitTime) {
             // Rate limited - wait and continue
@@ -11480,7 +11482,7 @@ class GoogleMapsService: ObservableObject {
         // v2.0.1: Minimum route duration is 10 minutes
         print("\n📍 STAGE 3: Fallback to Shorter Durations")
         let stage3StartTime = Date()
-        print("⏱️ [TIMING] Stage 3 STARTED")
+        print("\(kRouteGenTag) ⏱️ [TIMING] Stage 3 STARTED")
         for reducedDuration in stride(from: targetDurationMinutes - 5, through: 10, by: -5) {
             let currentDuration = reducedDuration  // Capture for concurrent access
             await MainActor.run { retryStatus = "Trying \(currentDuration) min route..." }
@@ -11499,13 +11501,13 @@ class GoogleMapsService: ObservableObject {
                 let totalElapsed = Date().timeIntervalSince(startTime)
                 await MainActor.run { retryStatus = nil }
                 print("🔄 Found route at \(currentDuration) min (originally requested \(targetDurationMinutes) min)")
-                print("⏱️ [TIMING] Stage 3: \(String(format: "%.2f", stage3Elapsed))s")
-                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
-                print("⏱️ [TIMING] TOTAL TIME: \(String(format: "%.2f", totalElapsed))s")
-                print("⏱️ [TIMING]   Stage 1: failed")
-                print("⏱️ [TIMING]   Stage 2: failed")
-                print("⏱️ [TIMING]   Stage 3: \(String(format: "%.2f", stage3Elapsed))s")
-                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("\(kRouteGenTag) ⏱️ [TIMING] Stage 3: \(String(format: "%.2f", stage3Elapsed))s")
+                print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("\(kRouteGenTag) ⏱️ [TIMING] TOTAL TIME: \(String(format: "%.2f", totalElapsed))s")
+                print("\(kRouteGenTag) ⏱️ [TIMING]   Stage 1: failed")
+                print("\(kRouteGenTag) ⏱️ [TIMING]   Stage 2: failed")
+                print("\(kRouteGenTag) ⏱️ [TIMING]   Stage 3: \(String(format: "%.2f", stage3Elapsed))s")
+                print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
                 return route
             } catch GoogleMapsError.rateLimited(let waitTime) {
                 // Rate limited in stage 3 - wait and continue to next duration
@@ -13615,10 +13617,10 @@ class GoogleMapsService: ObservableObject {
         formatter.dateFormat = "HH:mm:ss.SSS"
         let timeString = formatter.string(from: startTime)
         
-        print("⏱️ [ROUTE GEN] [\(timeString)] 🗺️ generateLocalRoute() STARTED")
-        print("⏱️ [ROUTE GEN] [\(timeString)]   Target: \(targetDurationMinutes)min")
-        print("⏱️ [ROUTE GEN] [\(timeString)]   Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))")
-        print("⏱️ [ROUTE GEN] [\(timeString)]   Mode: \(useSystematicSelection ? "systematic" : "quick"), expandedSearch: \(expandedSearch)")
+        print("\(kRouteGenTag) ⏱️ [ROUTE GEN] [\(timeString)] 🗺️ generateLocalRoute() STARTED")
+        print("\(kRouteGenTag) ⏱️ [ROUTE GEN] [\(timeString)]   Target: \(targetDurationMinutes)min")
+        print("\(kRouteGenTag) ⏱️ [ROUTE GEN] [\(timeString)]   Location: (\(String(format: "%.5f", location.latitude)), \(String(format: "%.5f", location.longitude)))")
+        print("\(kRouteGenTag) ⏱️ [ROUTE GEN] [\(timeString)]   Mode: \(useSystematicSelection ? "systematic" : "quick"), expandedSearch: \(expandedSearch)")
         print("🎯 [DIAGNOSTIC] generateLocalRoute called: useEndpointFirst=\(useEndpointFirst), excludePlaceIds=\(excludePlaceIds.count), excludePOIs=\(excludePOIs.count)")
         
         // v2.0.3 Phase 1.5: Hard-wall timer - absolute maximum time per request
@@ -13627,7 +13629,7 @@ class GoogleMapsService: ObservableObject {
         let initialADS = 3  // Conservative estimate until we calculate actual ADS
         let hardWallSeconds = isBatchTestMode ? 300.0 : RoutingToggles.hardWallFor(duration: targetDurationMinutes, ads: initialADS, postcode: postcode)
         let hardStopSec = isBatchTestMode ? 300.0 : RoutingToggles.hardStopSec  // PHASE A: Global hard-stop (18.0s)
-        print("⏱️ [ROUTE GEN] [\(timeString)]   Hard-wall: \(String(format: "%.0f", hardWallSeconds))s, Hard-stop: \(String(format: "%.0f", hardStopSec))s (dur=\(targetDurationMinutes), pc=\(postcode ?? "none"))")
+        print("\(kRouteGenTag) ⏱️ [ROUTE GEN] [\(timeString)]   Hard-wall: \(String(format: "%.0f", hardWallSeconds))s, Hard-stop: \(String(format: "%.0f", hardStopSec))s (dur=\(targetDurationMinutes), pc=\(postcode ?? "none"))")
         
         // SPRINT-4: Global hard-stop budget guard
         // Batch test mode: extend budget to 300s so we measure true algorithmic performance
@@ -14456,7 +14458,7 @@ class GoogleMapsService: ObservableObject {
             let endTime = Date()
             let elapsed = endTime.timeIntervalSince(startTime)
             let endTimeString = formatter.string(from: endTime)
-            print("⏱️ [ROUTE GEN] [\(endTimeString)] ✅ generateLocalRoute() COMPLETED in \(String(format: "%.2f", elapsed))s")
+            print("\(kRouteGenTag) ⏱️ [ROUTE GEN] [\(endTimeString)] ✅ generateLocalRoute() COMPLETED in \(String(format: "%.2f", elapsed))s")
             Task { @MainActor in isLoading = false } 
         }
         
@@ -14689,7 +14691,7 @@ class GoogleMapsService: ObservableObject {
             // Fallback to Google if <20 POIs found (threshold for route quality + buffer)
             let freeSourcesStartTime = Date()
             print("🗺️ [COST OPT] First-run: Trying free sources first (Apple/OSM/Geograph)...")
-            print("⏱️ [TIMING] Free sources fetch STARTED")
+            print("\(kRouteGenTag) ⏱️ [TIMING] Free sources fetch STARTED")
             
             places = try await findNearbyPlaces(
                 location: location,
@@ -14702,7 +14704,7 @@ class GoogleMapsService: ObservableObject {
             )
             
             let freeSourcesElapsed = Date().timeIntervalSince(freeSourcesStartTime)
-            print("⏱️ [TIMING] Free sources fetch COMPLETED in \(String(format: "%.2f", freeSourcesElapsed))s")
+            print("\(kRouteGenTag) ⏱️ [TIMING] Free sources fetch COMPLETED in \(String(format: "%.2f", freeSourcesElapsed))s")
             print("🗺️ Free sources: Found \(places.count) POIs (need \(desiredSpots) for route)")
             
             // SPRINT-5: Budget check AFTER POI fetch - if we have enough POIs, still build a route (don't abort)
@@ -14739,7 +14741,7 @@ class GoogleMapsService: ObservableObject {
                 } else {
                 let googleFallbackStartTime = Date()
                 print("🗺️ [FALLBACK] Only \(places.count) POIs from free+ORS (<20) - fetching Google POIs for better route quality...")
-                print("⏱️ [TIMING] Google fallback fetch STARTED")
+                print("\(kRouteGenTag) ⏱️ [TIMING] Google fallback fetch STARTED")
                 
                 let googlePOIs = try await findNearbyPlaces(
                     location: location,
@@ -14750,27 +14752,27 @@ class GoogleMapsService: ObservableObject {
                 )
                 
                 let googleFallbackElapsed = Date().timeIntervalSince(googleFallbackStartTime)
-                print("⏱️ [TIMING] Google fallback fetch COMPLETED in \(String(format: "%.2f", googleFallbackElapsed))s")
+                print("\(kRouteGenTag) ⏱️ [TIMING] Google fallback fetch COMPLETED in \(String(format: "%.2f", googleFallbackElapsed))s")
                 print("🗺️ With Google: Found \(googlePOIs.count) POIs")
                 places = googlePOIs
                 
                 let totalPOIFetchTime = Date().timeIntervalSince(freeSourcesStartTime)
-                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
-                print("⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", totalPOIFetchTime))s")
-                print("⏱️ [TIMING]   Free sources: \(String(format: "%.2f", freeSourcesElapsed))s")
-                print("⏱️ [TIMING]   Google fallback: \(String(format: "%.2f", googleFallbackElapsed))s")
-                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("\(kRouteGenTag) ⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", totalPOIFetchTime))s")
+                print("\(kRouteGenTag) ⏱️ [TIMING]   Free sources: \(String(format: "%.2f", freeSourcesElapsed))s")
+                print("\(kRouteGenTag) ⏱️ [TIMING]   Google fallback: \(String(format: "%.2f", googleFallbackElapsed))s")
+                print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
                 }  // SPRINT-5: Close budget check else block
             } else if usedDatabase {
                 print("🗺️ ✅ Using pre-populated database POIs (\(places.count) POIs) - skipping Google fallback (database is comprehensive)")
-                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
-                print("⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", freeSourcesElapsed))s (database only)")
-                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("\(kRouteGenTag) ⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", freeSourcesElapsed))s (database only)")
+                print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
             } else {
                 print("🗺️ ✅ Sufficient POIs from free sources (\(places.count) ≥20) - skipping Google (cost saved!)")
-                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
-                print("⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", freeSourcesElapsed))s (free sources only)")
-                print("⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
+                print("\(kRouteGenTag) ⏱️ [TIMING] TOTAL POI FETCH TIME: \(String(format: "%.2f", freeSourcesElapsed))s (free sources only)")
+                print("\(kRouteGenTag) ⏱️ [TIMING] ═══════════════════════════════════════════════════════════")
             }
         }
         
