@@ -73,6 +73,22 @@ struct RouteStageTelemetryEntry: Identifiable {
     }
 }
 
+// MARK: - Export for prepop share sheet
+private struct ExportShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct ShareSheetView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
 struct RouteSelectionView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @Binding var showLocalRoutePicker: Bool
@@ -1180,6 +1196,10 @@ struct LocalRoutePickerSheet: View {
     
     // Pre-fetched POIs for faster route generation
     @State private var prefetchedPOIs: [PlaceResult] = []
+    /// Message after "Export for prepop" (file path or error)
+    @State private var exportPrepopMessage: String?
+    /// When set, present share sheet (AirDrop, Mail, Messages, etc.) for this file.
+    @State private var exportFileURLToShare: ExportShareItem?
     @State private var isPrefetchingPOIs = false
     @State private var prefetchedForLocation: CLLocationCoordinate2D?
     
@@ -1635,7 +1655,27 @@ struct LocalRoutePickerSheet: View {
                         isPresented = false
                     }
                 }
-                
+                ToolbarItem(placement: .primaryAction) {
+                    if allRoutes.count >= 2 {
+                        Button("Export for prepop") {
+                            exportRoutesForPrepop()
+                        }
+                    }
+                }
+            }
+            .alert("Export routes", isPresented: Binding(
+                get: { exportPrepopMessage != nil },
+                set: { if !$0 { exportPrepopMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { exportPrepopMessage = nil }
+            } message: {
+                if let msg = exportPrepopMessage {
+                    Text(msg)
+                }
+            }
+            .sheet(item: $exportFileURLToShare) { item in
+                ShareSheetView(activityItems: [item.url])
+                    .onDisappear { exportFileURLToShare = nil }
             }
             .fullScreenCover(isPresented: $showActiveWalk) {
                 // v1.9.28: Immersive full-screen presentation - no navigation context
@@ -5796,6 +5836,58 @@ struct LocalRoutePickerSheet: View {
         }
     }
     
+    /// Export current in-app routes (e.g. Brandy Carr, Star Inn) to prepop JSON so they can replace script-generated routes.
+    private func exportRoutesForPrepop() {
+        guard allRoutes.count >= 2 else {
+            exportPrepopMessage = "Need at least 2 routes to export."
+            return
+        }
+        let duration = selectedDuration
+        let inBandRoutes = allRoutes.filter { Self.isRouteInBand($0.route, selectedDuration: selectedDuration) }
+        let toExport = inBandRoutes.isEmpty ? Array(allRoutes.prefix(2)) : Array(inBandRoutes.prefix(2))
+        var routeDicts: [[String: Any]] = []
+        for entry in toExport {
+            let places: [[String: Any]] = entry.data.places.map { p in
+                [
+                    "placeId": p.placeId,
+                    "name": p.name,
+                    "latitude": p.coordinate.latitude,
+                    "longitude": p.coordinate.longitude,
+                    "types": p.types ?? [],
+                    "vicinity": p.vicinity as Any,
+                    "source": p.source.rawValue,
+                    "rating": NSNull(),
+                ] as [String: Any]
+            }
+            routeDicts.append([
+                "places": places,
+                "polyline": entry.data.polyline,
+                "distanceMeters": entry.route.distanceMeters,
+                "durationSeconds": entry.route.durationMinutes * 60,
+                "name": entry.route.name as Any,
+                "description": NSNull(),
+                "directions": NSNull(),
+            ] as [String: Any])
+        }
+        let group: [String: Any] = [
+            "durationMinutes": duration,
+            "routes": routeDicts,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: group, options: [.prettyPrinted]),
+              let json = String(data: data, encoding: .utf8) else {
+            exportPrepopMessage = "Export failed: could not encode JSON."
+            return
+        }
+        let fileName = "prepop_export_\(duration)min_\(ISO8601DateFormatter().string(from: Date()).prefix(10)).json"
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.appendingPathComponent(fileName)
+        do {
+            try json.write(to: url, atomically: true, encoding: .utf8)
+            exportFileURLToShare = ExportShareItem(url: url)
+        } catch {
+            exportPrepopMessage = "Export failed: \(error.localizedDescription)"
+        }
+    }
+
     /// Refresh route list from cache/database. Shows loading, calls RouteCacheService.getCachedRoutes(), then updates allRoutes.
     private func handleRefreshRoutes() {
         guard let userCoord = locationService.currentLocation?.coordinate else {

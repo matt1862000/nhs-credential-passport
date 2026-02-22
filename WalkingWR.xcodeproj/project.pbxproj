@@ -19,7 +19,7 @@
 			isa = PBXContainerItemProxy;
 			containerPortal = 6CA4D8862EE6145800FFA65F /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = 6CA4D8C22EE6145A00FFA65F /* WalkingWRWidget */;
+			remoteGlobalIDString = 6CA4D8C22EE6145A00FFA65F;
 			remoteInfo = WalkingWRWidget;
 		};
 /* End PBXContainerItemProxy section */
@@ -56,17 +56,17 @@
 			);
 			target = 6CA4D88D2EE6145800FFA65F /* WalkingWR */;
 		};
-		6C9677732EEA319200DDB3B5 /* Exceptions for "WalkingWRWidget" in "WalkingWR" target: exclude widget UI and Info.plist, keep attributes */ = {
+		6C9677732EEA319200DDB3B5 /* Exceptions for "WalkingWRWidget" folder in "WalkingWR" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 				WaitTimeLiveActivity.swift,
-				WalkLiveActivity.swift,
 				WalkingWRWidgetBundle.swift,
+				WalkLiveActivity.swift,
 			);
 			target = 6CA4D88D2EE6145800FFA65F /* WalkingWR */;
 		};
-		6CA4D8CC2EE6145A00FFA65F /* Exceptions for "WalkingWRWidget" in "WalkingWRWidget" target: exclude Info.plist from copy */ = {
+		6CA4D8CC2EE6145A00FFA65F /* Exceptions for "WalkingWRWidget" folder in "WalkingWRWidget" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -87,8 +87,8 @@
 		6CA4D8922EE6145900FFA65F /* WalkingWRWidget */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				6C9677732EEA319200DDB3B5 /* Exceptions for "WalkingWRWidget" in "WalkingWR" target: exclude widget UI, keep attributes */,
-				6CA4D8CC2EE6145A00FFA65F /* Exceptions for "WalkingWRWidget" in "WalkingWRWidget" target: exclude Info.plist from copy */,
+				6C9677732EEA319200DDB3B5 /* Exceptions for "WalkingWRWidget" folder in "WalkingWR" target */,
+				6CA4D8CC2EE6145A00FFA65F /* Exceptions for "WalkingWRWidget" folder in "WalkingWRWidget" target */,
 			);
 			path = WalkingWRWidget;
 			sourceTree = "<group>";
@@ -412,7 +412,7 @@
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 406;
+				CURRENT_PROJECT_VERSION = 407;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -462,7 +462,7 @@
 				CODE_SIGN_ENTITLEMENTS = WalkingWR/WalkingWR.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 406;
+				CURRENT_PROJECT_VERSION = 407;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -508,7 +508,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 406;
+				CURRENT_PROJECT_VERSION = 407;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WalkingWRWidget/Info.plist;
@@ -533,7 +533,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 406;
+				CURRENT_PROJECT_VERSION = 407;
 				DEVELOPMENT_TEAM = KJ6SWNDC54;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = WalkingWRWidget/Info.plist;
