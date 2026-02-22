@@ -12,6 +12,7 @@ import CoreLocation
 import UIKit
 #endif
 
+
 struct ProfileView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
     @ObservedObject var healthKitService: HealthKitService
@@ -1788,6 +1789,15 @@ struct SettingsView: View {
     @State private var showMotionUnavailable = false
     @State private var showHealthKitManageAlert = false
     
+    #if DEBUG
+    @State private var isRunningPhase1 = false
+    @State private var phase1Status = ""
+    @State private var showPhase1CompleteAlert = false
+    @State private var phase1ResultPath: String?
+    @State private var phase1ResultFileURL: URL?
+    @State private var showPhase1ShareSheet = false
+    #endif
+    
     // Only show permissions that have been interacted with (not .notDetermined)
     var shouldShowNotifications: Bool {
         !notificationsNeverAsked
@@ -2184,6 +2194,33 @@ struct SettingsView: View {
                 
                 aboutSection
                 
+                #if DEBUG
+                // Phase 1: Generate S5 7 route candidates (MapKit). Spoofs location to S5 7AU. Remove after use.
+                Section {
+                    Button(action: runPhase1S5_7) {
+                        HStack {
+                            Label("Phase 1: Generate S5 7 candidates", systemImage: "map.fill")
+                            Spacer()
+                            if isRunningPhase1 {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                            }
+                        }
+                        .foregroundColor(.primary)
+                    }
+                    .disabled(isRunningPhase1)
+                    if isRunningPhase1 {
+                        Text(phase1Status)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Text("S5 7 route shortlist (debug)")
+                } footer: {
+                    Text("Uses spoofed location S5 7AU. Writes phase1_shortlist_s5_7.json to Documents. Remove this section after use.")
+                }
+                #endif
+                
                 // Privacy Section
                 Section {
                     NavigationLink {
@@ -2338,6 +2375,21 @@ struct SettingsView: View {
             } message: {
                 Text("To manage HealthKit access:\n\n1. Tap 'Open Health App' below\n2. Tap your profile icon (top right)\n3. Look for Apps or Apps & Services\n4. Find WaitWell\n5. Toggle Steps on or off")
             }
+            #if DEBUG
+            .alert("Phase 1 complete", isPresented: $showPhase1CompleteAlert) {
+                Button("Share file") {
+                    showPhase1ShareSheet = true
+                }
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("Shortlist saved. Tap \"Share file\" to AirDrop or save to Files so you can use it on your Mac.")
+            }
+            .sheet(isPresented: $showPhase1ShareSheet) {
+                if let url = phase1ResultFileURL {
+                    Phase1ShareSheet(activityItems: [url])
+                }
+            }
+            #endif
             .preferredColorScheme(effectiveColorScheme)
             .id(appTheme) // Force view refresh when theme changes
             .onAppear {
@@ -2352,6 +2404,89 @@ struct SettingsView: View {
         }
     }
     
+    
+    #if DEBUG
+    /// Phase 1: Generate route candidates for S5 7 using spoofed location S5 7AU. MapKit (and fallbacks). Saves in-band candidates to Documents/phase1_shortlist_s5_7.json for later Google validation.
+    private func runPhase1S5_7() {
+        let s5_7au = CLLocationCoordinate2D(latitude: 53.41, longitude: -1.45)
+        let durations = [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
+        isRunningPhase1 = true
+        phase1Status = "Starting..."
+        Task {
+            var shortlist: [[String: Any]] = []
+            let mapsService = GoogleMapsService.shared
+            for (idx, duration) in durations.enumerated() {
+                await MainActor.run { phase1Status = "\(duration) min (\(idx + 1)/\(durations.count))..." }
+                var excludePlaceIds: Set<String> = []
+                var candidatesThisDuration = 0
+                let maxCandidatesPerDuration = 5
+                for _ in 0..<maxCandidatesPerDuration {
+                    do {
+                        let route = try await mapsService.generateLocalRouteWithRetry(
+                            from: s5_7au,
+                            targetDurationMinutes: duration,
+                            excludePlaceIds: excludePlaceIds
+                        )
+                        let durationMin = route.durationSeconds / 60
+                        let rounded = RouteCacheService.roundToNearest5Minutes(duration)
+                        let isEdge = rounded <= 10 || rounded >= 55
+                        let minPct = isEdge ? 0.75 : 0.80
+                        let maxPct = isEdge ? 1.25 : 1.20
+                        let minAcc = Int(Double(rounded) * minPct)
+                        let maxAcc = Int(Double(rounded) * maxPct)
+                        let minDist = max(200, rounded * 50)
+                        let durationOk = durationMin >= minAcc && durationMin <= maxAcc
+                        let distanceOk = route.distanceMeters >= minDist
+                        guard durationOk && distanceOk else { continue }
+                        let waypoints: [[String: Any]] = route.places.map { p in
+                            [
+                                "placeId": p.placeId,
+                                "name": p.name,
+                                "latitude": p.coordinate.latitude,
+                                "longitude": p.coordinate.longitude
+                            ]
+                        }
+                        shortlist.append([
+                            "durationMinutes": duration,
+                            "waypoints": waypoints,
+                            "mapKitDurationSec": route.durationSeconds,
+                            "mapKitDistanceM": route.distanceMeters,
+                            "polyline": route.polyline
+                        ])
+                        candidatesThisDuration += 1
+                        route.places.forEach { excludePlaceIds.insert($0.placeId) }
+                    } catch {
+                        break
+                    }
+                }
+            }
+            guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                await MainActor.run {
+                    phase1Status = "Error: no Documents directory"
+                    isRunningPhase1 = false
+                }
+                return
+            }
+            let fileURL = docs.appendingPathComponent("phase1_shortlist_s5_7.json")
+            do {
+                let data = try JSONSerialization.data(withJSONObject: ["candidates": shortlist], options: .prettyPrinted)
+                try data.write(to: fileURL)
+                await MainActor.run {
+                    isRunningPhase1 = false
+                    phase1Status = "Done. \(shortlist.count) candidates."
+                    phase1ResultPath = fileURL.path
+                    phase1ResultFileURL = fileURL
+                    showPhase1CompleteAlert = true
+                }
+            } catch {
+                await MainActor.run {
+                    phase1Status = "Write error: \(error.localizedDescription)"
+                    isRunningPhase1 = false
+                }
+            }
+        }
+    }
+    #endif
     
     private func refreshPermissionStatuses() {
         // Check notification status
@@ -2835,6 +2970,18 @@ struct ControlPoint: View {
     }
 }
 
+#if DEBUG
+/// Presents a system share sheet for the Phase 1 shortlist file (AirDrop, Save to Files, etc.).
+struct Phase1ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif
 
 #Preview {
     let viewModel = WaitingRoomViewModel()

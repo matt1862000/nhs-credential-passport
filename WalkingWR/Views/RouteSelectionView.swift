@@ -4504,9 +4504,13 @@ struct LocalRoutePickerSheet: View {
                         var placeIdSetsToShow: [Set<String>] = [Set(filteredResult.places.map { $0.placeId })]
                         var initialRouteIndex = 0
                         if let second = googleSecondRoute {
-                            routesToShow.append((route: Self.applyDurationSanityCap(second.route, targetDurationMinutes: selectedDuration), data: second.data, isDeadZoneFallback: false, isFromGoogle: true))
-                            placeIdSetsToShow.append(Set(second.data.places.map { $0.placeId }))
-                            initialRouteIndex = 1  // Auto-switch to route 2 (Google) when available so user sees the better option
+                            let firstWaypointSet = Set(filteredResult.places.map { $0.placeId })
+                            let secondWaypointSet = Set(second.data.places.map { $0.placeId })
+                            if secondWaypointSet != firstWaypointSet {
+                                routesToShow.append((route: Self.applyDurationSanityCap(second.route, targetDurationMinutes: selectedDuration), data: second.data, isDeadZoneFallback: false, isFromGoogle: true))
+                                placeIdSetsToShow.append(secondWaypointSet)
+                                initialRouteIndex = 1  // Auto-switch to route 2 (Google) when available so user sees the better option
+                            }
                         }
                         allRoutes = routesToShow
                         currentRouteIndex = initialRouteIndex
@@ -6065,6 +6069,13 @@ struct LocalRoutePickerSheet: View {
         }
         if isGeometryDupe {
             print("[DIAGNOSTIC +1] ⏹️ [\(source)] '\(route.name)' (\(route.durationMinutes)min, \(route.distanceMeters)m, WPs=\(data.places.map{$0.name})) geometry dupe of '\(geometryDupeOf ?? "?")'")
+            return false
+        }
+        
+        // Same waypoints rule: only one route per distinct set of waypoints (e.g. one "home → War memorial" route, not two)
+        let candidateWaypointSet = Set(data.places.map { $0.placeId })
+        if allRoutes.contains(where: { Set($0.data.places.map { $0.placeId }) == candidateWaypointSet }) {
+            print("[ROUTE_GEN] ⏹️ [\(source)] '\(route.name)' — duplicate waypoints (same set as existing route), skipped")
             return false
         }
         
