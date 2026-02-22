@@ -2275,6 +2275,7 @@ class WaitingRoomViewModel: ObservableObject {
     }
 
     /// Start the wait-time Live Activity (clinician + delay) when user has a clinician and no walk is active.
+    /// When clinician changes, we end the current activity and wait for dismissal before starting with new attributes so the widget shows the new name.
     private func startWaitTimeActivityIfNeeded() {
         guard !walkSession.isActive else { return }
         guard hasSelectedClinician else { return }
@@ -2285,8 +2286,13 @@ class WaitingRoomViewModel: ObservableObject {
             f.timeStyle = .short
             return f.string(from: d)
         }
-        WaitTimeLiveActivityBridge.endIfAvailable()
-        WaitTimeLiveActivityBridge.startIfAvailable(clinicianName: name, delayMinutes: waitTimeInfo.estimatedMinutes, backByText: backBy)
+        let delay = waitTimeInfo.estimatedMinutes
+        Task {
+            await WaitTimeLiveActivityBridge.endAndWaitIfAvailable()
+            await MainActor.run {
+                WaitTimeLiveActivityBridge.startIfAvailable(clinicianName: name, delayMinutes: delay, backByText: backBy)
+            }
+        }
     }
     
     private func recalculateReturnTime(for route: WalkingRoute) {

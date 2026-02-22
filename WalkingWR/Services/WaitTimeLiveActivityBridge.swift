@@ -47,4 +47,12 @@ enum WaitTimeLiveActivityBridge {
             }
         }
     }
+
+    /// End the current Wait Time activity and wait for dismissal. Call before starting a new one when clinician changes so the new attributes (clinician name) are shown.
+    static func endAndWaitIfAvailable() async {
+        guard #available(iOS 16.2, *) else { return }
+        for activity in Activity<WaitTimeActivityAttributes>.activities {
+            await activity.end(dismissalPolicy: .immediate)
+        }
+    }
 }
