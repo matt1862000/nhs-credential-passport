@@ -18,6 +18,8 @@ struct WalkActivityAttributes: ActivityAttributes {
         var minutesLeft: Int?
         /// True when user has tapped "Head back".
         var isHeadingBack: Bool
+        /// When delay/live data was last updated (for "last updated xx:xx").
+        var lastUpdatedAt: Date?
     }
 
     /// Route name (fixed for the activity).

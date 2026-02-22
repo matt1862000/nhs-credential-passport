@@ -11,13 +11,15 @@ import ActivityKit
 
 enum WalkLiveActivityBridge {
     /// Start a Live Activity when the user starts a walk.
-    static func startIfAvailable(routeName: String, totalMinutes: Int, backByText: String? = nil, clinicianName: String? = nil) {
+    /// - Parameter lastUpdatedAt: When live delay was last updated from the app (e.g. waitTimeInfo.lastUpdated). Nil uses current time.
+    static func startIfAvailable(routeName: String, totalMinutes: Int, backByText: String? = nil, clinicianName: String? = nil, lastUpdatedAt: Date? = nil) {
         guard #available(iOS 16.2, *) else { return }
         let att = WalkActivityAttributes(routeName: routeName, totalMinutes: totalMinutes, backByText: backByText, clinicianName: clinicianName)
         let state = WalkActivityAttributes.ContentState(
             elapsedSeconds: 0,
             minutesLeft: totalMinutes,
-            isHeadingBack: false
+            isHeadingBack: false,
+            lastUpdatedAt: lastUpdatedAt ?? Date()
         )
         do {
             let content = ActivityContent(state: state, staleDate: nil as Date?)
@@ -32,12 +34,14 @@ enum WalkLiveActivityBridge {
     }
 
     /// Update the Live Activity (elapsed time, mins left, heading back). Call from the walk timer.
-    static func updateIfAvailable(elapsedSeconds: Int, minutesLeft: Int?, isHeadingBack: Bool) {
+    /// - Parameter lastUpdatedAt: When live delay was last updated from the app; pass through so "last updated" doesn't change on every tick.
+    static func updateIfAvailable(elapsedSeconds: Int, minutesLeft: Int?, isHeadingBack: Bool, lastUpdatedAt: Date? = nil) {
         guard #available(iOS 16.2, *) else { return }
         let state = WalkActivityAttributes.ContentState(
             elapsedSeconds: elapsedSeconds,
             minutesLeft: minutesLeft,
-            isHeadingBack: isHeadingBack
+            isHeadingBack: isHeadingBack,
+            lastUpdatedAt: lastUpdatedAt
         )
         let content = ActivityContent(state: state, staleDate: nil as Date?)
         Task {

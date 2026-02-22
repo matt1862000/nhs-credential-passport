@@ -1178,7 +1178,7 @@ class WaitingRoomViewModel: ObservableObject {
             if name.isEmpty || name == "Select your clinician" { return nil }
             return name
         }()
-        WalkLiveActivityBridge.startIfAvailable(routeName: route.name, totalMinutes: effectiveMinutes, backByText: backByText, clinicianName: clinicianNameForWidget)
+        WalkLiveActivityBridge.startIfAvailable(routeName: route.name, totalMinutes: effectiveMinutes, backByText: backByText, clinicianName: clinicianNameForWidget, lastUpdatedAt: waitTimeInfo.lastUpdated)
         
         // Prompt for pre-walk wellbeing score if not already done
         if userProgress.anxietyLevelBefore == nil {
@@ -1586,7 +1586,8 @@ class WaitingRoomViewModel: ObservableObject {
         WalkLiveActivityBridge.updateIfAvailable(
             elapsedSeconds: walkSession.elapsedSeconds,
             minutesLeft: minsLeft,
-            isHeadingBack: isHeadingBack
+            isHeadingBack: isHeadingBack,
+            lastUpdatedAt: waitTimeInfo.lastUpdated
         )
         
         // Refresh steps from pedometer every 5 seconds; live CMPedometer callbacks can be delayed/batched so steps stay 0

@@ -51,6 +51,10 @@ private struct WalkExpandedView: View {
         return name != "Select your clinician"
     }
 
+    private var tapForDelayTimeText: String {
+        "Tap for live delay time"
+    }
+
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
@@ -66,16 +70,16 @@ private struct WalkExpandedView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text("Tap for live map")
+                Text(tapForDelayTimeText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 if showClinicianName, let name = context.attributes.clinicianName {
                     Text("Appointment with \(name)")
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                 }
                 HStack(spacing: 12) {
-                    Label(elapsedString, systemImage: "clock")
+                    Label("Current Walk \(elapsedString)", systemImage: "clock")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -118,7 +122,7 @@ private struct WalkExpandedView: View {
 #Preview("Lock Screen", as: .content, using: WalkActivityAttributes(routeName: "Riverside Loop", totalMinutes: 15, backByText: "2:30 PM", clinicianName: "Dr. Smith")) {
     WalkLiveActivity()
 } contentStates: {
-    WalkActivityAttributes.ContentState(elapsedSeconds: 270, minutesLeft: 11, isHeadingBack: false)
-    WalkActivityAttributes.ContentState(elapsedSeconds: 600, minutesLeft: nil, isHeadingBack: true)
+    WalkActivityAttributes.ContentState(elapsedSeconds: 270, minutesLeft: 11, isHeadingBack: false, lastUpdatedAt: Date())
+    WalkActivityAttributes.ContentState(elapsedSeconds: 600, minutesLeft: nil, isHeadingBack: true, lastUpdatedAt: Date())
 }
 #endif

@@ -3867,8 +3867,8 @@ struct LocalRoutePickerSheet: View {
                     let roadSnapStartTime = Date()
                     print("[FLOW] +\(String(format: "%.1f", Date().timeIntervalSince(generateStartTime)))s GOOGLE_SNAP_START")
                     print("ROUTE_PHASE phase=road_snap_start_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
-                    // ORS Snap V2 + Directions vs Google snap + Directions — whoever finishes first wins; 15s cap
-                    if let snappedRoute = await mapsService.refreshRouteSnapRaceWithTimeout(route: localRoute, userLocation: userLocation.coordinate, timeoutSeconds: 15, onCompleteAfterTimeout: nil) {
+                    // ORS Snap V2 + Directions vs Google snap + Directions — whoever finishes first wins; 10s cap
+                    if let snappedRoute = await mapsService.refreshRouteSnapRaceWithTimeout(route: localRoute, userLocation: userLocation.coordinate, timeoutSeconds: 10, onCompleteAfterTimeout: nil) {
                         displayRoute = snappedRoute
                         mainRouteDurationFromGoogle = true  // refreshed route from ORS or Google
                         print("[WALK_REFRESH] 🛤️ [ROUTE CREATION] Applied road snap — polyline and markers now on road (no off-road POI)")

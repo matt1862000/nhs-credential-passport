@@ -8747,7 +8747,7 @@ class GoogleMapsService: ObservableObject {
     func refreshRouteSnapRaceWithTimeout(
         route: WalkingRoute,
         userLocation: CLLocationCoordinate2D,
-        timeoutSeconds: TimeInterval = 15,
+        timeoutSeconds: TimeInterval = 10,
         onCompleteAfterTimeout: ((WalkingRoute?) -> Void)? = nil
     ) async -> WalkingRoute? {
         let holder = RefreshedRouteHolder()
@@ -8775,7 +8775,7 @@ class GoogleMapsService: ObservableObject {
     func refreshRouteWithGoogleOnlyWithTimeout(
         route: WalkingRoute,
         userLocation: CLLocationCoordinate2D,
-        timeoutSeconds: TimeInterval = 15,
+        timeoutSeconds: TimeInterval = 10,
         onCompleteAfterTimeout: ((WalkingRoute?) -> Void)? = nil
     ) async -> WalkingRoute? {
         let holder = RefreshedRouteHolder()
