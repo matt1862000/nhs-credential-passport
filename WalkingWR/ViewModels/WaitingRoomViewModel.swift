@@ -761,6 +761,40 @@ class WaitingRoomViewModel: ObservableObject {
                     )
                     print("REFRESH_FALLBACK | Single-waypoint safeguard: replaced '\(orig.prefix(40))...' with Arrive at Waypoint 1 (\(name))")
                 }
+                // v2.2: Safety-net — ensure every waypoint has an "Arrive at Waypoint N" line (some code paths omit Waypoint 1)
+                let n = route.qrMarkers.count
+                if n > 0 {
+                    var insertions: [(index: Int, instruction: WalkingDirection)] = []
+                    for k in 1...n {
+                        let needle = "Arrive at Waypoint \(k)"
+                        let hasK = directionsToUse.contains { $0.instruction.contains(needle) }
+                        if !hasK, k - 1 < route.qrMarkers.count {
+                            let name = route.qrMarkers[k - 1].name
+                            let newDir = WalkingDirection(instruction: "Arrive at Waypoint \(k) (\(name))", distance: "", distanceMeters: 0, duration: "", maneuver: "arrive")
+                            let insertBefore: Int
+                            if k < n {
+                                if let idx = directionsToUse.firstIndex(where: { $0.instruction.contains("Arrive at Waypoint \(k + 1)") }) {
+                                    insertBefore = idx
+                                } else {
+                                    insertBefore = directionsToUse.count
+                                }
+                            } else {
+                                if let idx = directionsToUse.firstIndex(where: { $0.instruction.contains("Return to starting point") }) {
+                                    insertBefore = idx
+                                } else {
+                                    insertBefore = directionsToUse.count
+                                }
+                            }
+                            insertions.append((insertBefore, newDir))
+                        }
+                    }
+                    for (idx, dir) in insertions.sorted(by: { $0.index < $1.index }).reversed() {
+                        directionsToUse.insert(dir, at: idx)
+                    }
+                    if !insertions.isEmpty {
+                        print("WAYPOINT_DIAG updateCurrentRoute | safety-net: injected \(insertions.count) missing waypoint arrival(s), directions=\(directionsToUse.count)")
+                    }
+                }
                 if resetDirectionIndex {
                     locationService.startDirectionMonitoring(directions: directionsToUse, routePath: route.routePath, skipPassedWaypoints: false)
                 } else {

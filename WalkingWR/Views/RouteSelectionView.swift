@@ -1317,8 +1317,8 @@ struct LocalRoutePickerSheet: View {
                                     .font(.system(size: 28, weight: .bold, design: .rounded))
                                     .foregroundColor(.primary)
                                 
-                                // Recommendation card based on delay
-                                if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable {
+                                // Recommendation card based on delay (hide for 5 or 10 min delay)
+                                if viewModel.selectedClinician != nil && !viewModel.hasNoClinicsAvailable && viewModel.waitTimeInfo.estimatedMinutes > 10 {
                                     let delayMinutes = viewModel.waitTimeInfo.estimatedMinutes
                                     let recommendedWalk = max(5, delayMinutes - 5)
                                     let waitInfo = viewModel.waitTimeInfo
@@ -1359,24 +1359,30 @@ struct LocalRoutePickerSheet: View {
                             }
                             .padding(.top, 8)
                             
-                            // v2.0.1: Warning when delay is too short for a walk
+                            // v2.0.1: Warning when delay is too short for a walk (styled to match recommendation card)
                             if isDelayTooShortForWalk {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundColor(.orange)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Delay time is short")
-                                            .font(.subheadline)
-                                            .fontWeight(.semibold)
-                                        Text("Your \(viewModel.waitTimeInfo.estimatedMinutes)-minute delay may not allow time for a walk. Consider staying near reception.")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.title2)
+                                            .foregroundColor(.tealAccent)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Delay time is short")
+                                                .font(.subheadline)
+                                                .fontWeight(.semibold)
+                                            Text("Your \(viewModel.waitTimeInfo.estimatedMinutes)-minute delay may not allow time for a walk. Consider staying near reception.")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
                                     }
                                 }
-                                .padding()
+                                .padding(16)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.orange.opacity(0.1))
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.tealAccent.opacity(0.15))
+                                )
+                                .padding(.horizontal, 4)
                             }
                             
                             // Duration picker
@@ -2250,6 +2256,9 @@ struct LocalRoutePickerSheet: View {
                     var firstRouteData: GeneratedRoute = (filteredCachedRoute.places.count <= 2 && !prefetchedPOIs.isEmpty)
                         ? mapsService.addOnRoutePOIsIfNeeded(filteredCachedRoute, origin: userLocation.coordinate, candidatePOIs: prefetchedPOIs, durationMinutes: selectedDuration)
                         : filteredCachedRoute
+                    // v2.2: Snap waypoints to roads (e.g. academy on Brandy Carr Road) so preview and walk show markers on road
+                    let snappedFirstPlaces = await mapsService.snapPlacesToRoads(firstRouteData.places)
+                    firstRouteData = GeneratedRoute(places: snappedFirstPlaces, polyline: firstRouteData.polyline, distanceMeters: firstRouteData.distanceMeters, durationSeconds: firstRouteData.durationSeconds, legs: firstRouteData.legs, usedOSRM: firstRouteData.usedOSRM, travelToStartSeconds: firstRouteData.travelToStartSeconds)
                     
                     // Create markers early so we can use them for MapKit full-loop (prepop) or display
                     let firstMarkersForPrepop: [QRMarker] = {
@@ -2752,6 +2761,9 @@ struct LocalRoutePickerSheet: View {
                                     var routeData: GeneratedRoute = (filteredCachedRoute.places.count <= 2 && !prefetchedPOIs.isEmpty)
                                         ? mapsService.addOnRoutePOIsIfNeeded(filteredCachedRoute, origin: userLocation.coordinate, candidatePOIs: prefetchedPOIs, durationMinutes: selectedDuration)
                                         : filteredCachedRoute
+                                    // v2.2: Snap waypoints to roads so markers appear on road (e.g. academy on Brandy Carr Road)
+                                    let snappedPlaces = await mapsService.snapPlacesToRoads(routeData.places)
+                                    routeData = GeneratedRoute(places: snappedPlaces, polyline: routeData.polyline, distanceMeters: routeData.distanceMeters, durationSeconds: routeData.durationSeconds, legs: routeData.legs, usedOSRM: routeData.usedOSRM, travelToStartSeconds: routeData.travelToStartSeconds)
                                     
                                     // Pre-populated routes: start = GPS; prepend GPS → first waypoint, append last waypoint → GPS (return to start)
                                     var polylineToUse = routeData.polyline
@@ -3338,7 +3350,9 @@ struct LocalRoutePickerSheet: View {
                         var placeIdSets: [Set<String>] = []
                         for cached in syntheticCached {
                             let filtered = mapsService.filterCloseWaypointsSync(from: cached.route, durationMinutes: targetDuration, origin: userLoc, isFromPrePopulatedDatabase: true)
-                            let markers = await MainActor.run { createMarkersFromPlaces(filtered.places, origin: userLoc) }
+                            let snappedPlaces = await mapsService.snapPlacesToRoads(filtered.places)
+                            let filteredWithSnapped = GeneratedRoute(places: snappedPlaces, polyline: filtered.polyline, distanceMeters: filtered.distanceMeters, durationSeconds: filtered.durationSeconds, legs: filtered.legs, usedOSRM: filtered.usedOSRM, travelToStartSeconds: filtered.travelToStartSeconds)
+                            let markers = await MainActor.run { createMarkersFromPlaces(snappedPlaces, origin: userLoc) }
                             let durationMin = max(1, filtered.durationSeconds / 60)
                             let diff: RouteDifficulty = durationMin <= 10 ? .easy : (durationMin <= 20 ? .moderate : .challenging)
                             let name = cached.name ?? "Local Discovery"
@@ -3351,7 +3365,7 @@ struct LocalRoutePickerSheet: View {
                                 difficulty: diff,
                                 isIndoor: false,
                                 isAccessible: true,
-                                landmarks: ["Start"] + filtered.places.map { $0.name } + ["Return"],
+                                landmarks: ["Start"] + snappedPlaces.map { $0.name } + ["Return"],
                                 icon: "location.fill",
                                 color: .tealAccent,
                                 qrMarkers: markers,
@@ -3362,8 +3376,8 @@ struct LocalRoutePickerSheet: View {
                                 isFromPrePopulatedDatabase: true,
                                 travelToStartMinutes: nil
                             )
-                            loaded.append((route: wr, data: filtered, isDeadZoneFallback: false, isFromGoogle: false))
-                            placeIdSets.append(Set(filtered.places.map { $0.placeId }))
+                            loaded.append((route: wr, data: filteredWithSnapped, isDeadZoneFallback: false, isFromGoogle: false))
+                            placeIdSets.append(Set(snappedPlaces.map { $0.placeId }))
                         }
                         guard !loaded.isEmpty else { return }
                         await MainActor.run {
@@ -3583,7 +3597,8 @@ struct LocalRoutePickerSheet: View {
                                 )
                                 let enrichedData = mapsService.addOnRoutePOIsIfNeeded(generatedData, origin: userLoc, candidatePOIs: places, durationMinutes: duration)
                                 generatedData = enrichedData
-                                let enrichedMarkers = RouteConversionHelper.markersFromPlaces(generatedData.places, origin: userLoc)
+                                let snappedForMarkers = await mapsService.snapPlacesToRoads(generatedData.places)
+                                let enrichedMarkers = RouteConversionHelper.markersFromPlaces(snappedForMarkers, origin: userLoc)
                                 let waypointInfos = generatedData.places.map {
                                     GeminiService.WaypointInfo(name: $0.name, types: $0.types ?? [], vicinity: $0.vicinity)
                                 }
@@ -4137,7 +4152,8 @@ struct LocalRoutePickerSheet: View {
                                             legs: []
                                         )
                                         let enrichedData = mapsService.addOnRoutePOIsIfNeeded(googleGenData, origin: coord, candidatePOIs: placesForOutOfBand, durationMinutes: duration)
-                                        let enrichedMarkers = RouteConversionHelper.markersFromPlaces(enrichedData.places, origin: coord)
+                                        let snappedEnriched = await mapsService.snapPlacesToRoads(enrichedData.places)
+                                        let enrichedMarkers = RouteConversionHelper.markersFromPlaces(snappedEnriched, origin: coord)
                                         let googleRoute = WalkingRoute(
                                             name: "\(duration) min walk",
                                             description: "A short walk from start and back.",
@@ -8482,46 +8498,27 @@ struct LocalRoutePickerSheet: View {
                 
                 let isLastStepOfLeg = stepIndex == steps.count - 1
                 
-                // v2.1.6: Replace arrival instructions with waypoint-specific text
+                // v2.2: Always replace last step of waypoint leg with "Arrive at Waypoint N (name)" so Waypoint 1 always appears (API often returns "Walk towards X" instead of arrival phrasing)
                 if isLastStepOfLeg {
-                    let instructionLower = direction.instruction.lowercased()
-                    // Last step of leg = arrival; match all phrasings so every waypoint gets name + flag
-                    let isArrivalInstruction =
-                        instructionLower.contains("destination is on your right") ||
-                        instructionLower.contains("destination is on your left") ||
-                        instructionLower.contains("the destination is on your right") ||
-                        instructionLower.contains("the destination is on your left") ||
-                        instructionLower.contains("destination will be on the right") ||
-                        instructionLower.contains("destination will be on the left") ||
-                        instructionLower.contains("arrive at") ||
-                        (instructionLower.contains("destination") && (instructionLower.contains("on your right") || instructionLower.contains("on your left") || instructionLower.contains("on the right") || instructionLower.contains("on the left"))) ||
-                        (instructionLower.contains("destination") || instructionLower.contains("arrive"))
-                    
-                    if isArrivalInstruction {
-                        if isReturnLeg {
-                            // Last leg is return to origin
-                            direction = WalkingDirection(
-                                instruction: "Return to starting point",
-                                distance: step.distance.text,
-                                distanceMeters: step.distance.value,
-                                duration: step.duration.text,
-                                maneuver: "arrive"
-                            )
-                        } else if legIndex < waypoints.count {
-                            // v2.2: Simplified — no left/right side, just "Arrive at Waypoint"
-                            let waypointIndex = legIndex + 1 // 1-indexed for display
-                            let waypoint = waypoints[legIndex]
-                            let waypointName = waypoint.name
-                            
-                            direction = WalkingDirection(
-                                instruction: "Arrive at Waypoint \(waypointIndex) (\(waypointName))",
-                                distance: step.distance.text,
-                                distanceMeters: step.distance.value,
-                                duration: step.duration.text,
-                                maneuver: "arrive"
-                            )
-                        }
-                        // If legIndex >= waypoints.count but not return leg, keep original instruction
+                    if isReturnLeg {
+                        direction = WalkingDirection(
+                            instruction: "Return to starting point",
+                            distance: step.distance.text,
+                            distanceMeters: step.distance.value,
+                            duration: step.duration.text,
+                            maneuver: "arrive"
+                        )
+                    } else if legIndex < waypoints.count {
+                        let waypointIndex = legIndex + 1
+                        let waypoint = waypoints[legIndex]
+                        let waypointName = waypoint.name
+                        direction = WalkingDirection(
+                            instruction: "Arrive at Waypoint \(waypointIndex) (\(waypointName))",
+                            distance: step.distance.text,
+                            distanceMeters: step.distance.value,
+                            duration: step.duration.text,
+                            maneuver: "arrive"
+                        )
                     }
                 }
                 

@@ -74,41 +74,27 @@ enum RouteConversionHelper {
                     maneuver: maneuver
                 )
                 let isLastStepOfLeg = stepIndex == steps.count - 1
+                // v2.2: Always replace last step of waypoint leg so Waypoint 1 always appears (API often omits arrival phrasing)
                 if isLastStepOfLeg {
-                    let instructionLower = direction.instruction.lowercased()
-                    // Last step of leg = arrival; match all phrasings so every waypoint gets name + flag
-                    let isArrivalInstruction =
-                        instructionLower.contains("destination is on your right") ||
-                        instructionLower.contains("destination is on your left") ||
-                        instructionLower.contains("the destination is on your right") ||
-                        instructionLower.contains("the destination is on your left") ||
-                        instructionLower.contains("destination will be on the right") ||
-                        instructionLower.contains("destination will be on the left") ||
-                        instructionLower.contains("arrive at") ||
-                        (instructionLower.contains("destination") && (instructionLower.contains("on your right") || instructionLower.contains("on your left") || instructionLower.contains("on the right") || instructionLower.contains("on the left"))) ||
-                        (instructionLower.contains("destination") || instructionLower.contains("arrive"))
-                    if isArrivalInstruction {
-                        if isReturnLeg {
-                            direction = WalkingDirection(
-                                instruction: "Return to starting point",
-                                distance: step.distance.text,
-                                distanceMeters: step.distance.value,
-                                duration: step.duration.text,
-                                maneuver: "arrive"
-                            )
-                        } else if legIndex < waypoints.count {
-                            // v2.2: Simplified — no left/right side, just "Arrive at Waypoint"
-                            let waypointIndex = legIndex + 1
-                            let waypoint = waypoints[legIndex]
-                            let waypointName = waypoint.name
-                            direction = WalkingDirection(
-                                instruction: "Arrive at Waypoint \(waypointIndex) (\(waypointName))",
-                                distance: step.distance.text,
-                                distanceMeters: step.distance.value,
-                                duration: step.duration.text,
-                                maneuver: "arrive"
-                            )
-                        }
+                    if isReturnLeg {
+                        direction = WalkingDirection(
+                            instruction: "Return to starting point",
+                            distance: step.distance.text,
+                            distanceMeters: step.distance.value,
+                            duration: step.duration.text,
+                            maneuver: "arrive"
+                        )
+                    } else if legIndex < waypoints.count {
+                        let waypointIndex = legIndex + 1
+                        let waypoint = waypoints[legIndex]
+                        let waypointName = waypoint.name
+                        direction = WalkingDirection(
+                            instruction: "Arrive at Waypoint \(waypointIndex) (\(waypointName))",
+                            distance: step.distance.text,
+                            distanceMeters: step.distance.value,
+                            duration: step.duration.text,
+                            maneuver: "arrive"
+                        )
                     }
                 }
                 directions.append(direction)

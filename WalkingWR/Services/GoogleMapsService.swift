@@ -2118,17 +2118,62 @@ class GoogleMapsService: ObservableObject {
                 print("📦 🏫 Filtered \(restrictedCount) restricted POIs from database (playcare/nursery/playground)")
             }
             
-            // 2. Skip canonical deduplication for database POIs (they're pre-curated and deduplicated)
+            // 2. Road-snap database POIs that have a road name in vicinity (e.g. school on Brandy Carr Road) so markers appear on the road
+            var withRoadName = dbResults.enumerated().compactMap { i, poi -> (Int, PlaceResult, String)? in
+                guard let road = extractRoadName(from: poi.vicinity) else { return nil }
+                return (i, poi, road)
+            }
+            // Prioritise school-like POIs so they are snapped first (cap applies to total)
+            let schoolLikeKeywords = ["academy", "school", "primary", "college", "university"]
+            withRoadName.sort { a, b in
+                let aPriority = schoolLikeKeywords.contains { a.1.name.lowercased().contains($0) }
+                let bPriority = schoolLikeKeywords.contains { b.1.name.lowercased().contains($0) }
+                if aPriority != bPriority { return aPriority && !bPriority }
+                return a.0 < b.0
+            }
+            let snapCap = 25
+            if withRoadName.count > snapCap {
+                withRoadName = Array(withRoadName.prefix(snapCap))
+            }
+            if !withRoadName.isEmpty {
+                var snappedDb = dbResults
+                // Parallelize road snapping so 25 POIs don't run sequentially (was 25× latency → ~163s in slow networks)
+                typealias SnapUpdate = (index: Int, snapped: PlaceResult?)
+                let updates: [SnapUpdate] = await withTaskGroup(of: SnapUpdate.self) { group in
+                    for (index, poi, roadName) in withRoadName {
+                        group.addTask { [self] in
+                            guard let nearest = await findNearestRoadPointWithFallback(near: poi.coordinate, radiusMeters: 100, preferredRoadName: roadName) else {
+                                return (index, nil)
+                            }
+                            let dist = Int(CLLocation(latitude: poi.coordinate.latitude, longitude: poi.coordinate.longitude).distance(from: CLLocation(latitude: nearest.latitude, longitude: nearest.longitude)))
+                            guard dist > 10 else { return (index, nil) }
+                            let snappedGeometry = PlaceGeometry(location: PlaceLocation(lat: nearest.latitude, lng: nearest.longitude))
+                            let snapped = PlaceResult(placeId: poi.placeId, name: poi.name, vicinity: poi.vicinity, geometry: snappedGeometry, types: poi.types, source: poi.source)
+                            print("📦 🛤️ DB POI '\(poi.name)' snapped to '\(roadName)' (\(dist)m)")
+                            return (index, snapped)
+                        }
+                    }
+                    var result: [SnapUpdate] = []
+                    for await update in group { result.append(update) }
+                    return result
+                }
+                for (index, snapped) in updates {
+                    if let s = snapped { snappedDb[index] = s }
+                }
+                dbResults = snappedDb
+            }
+            
+            // 3. Skip canonical deduplication for database POIs (they're pre-curated and deduplicated)
             // Database POIs are already deduplicated during database generation
             // Canonical deduplication is expensive (O(n²)) and takes 20+ seconds for 460 POIs
             // Database is already curated, so we skip this expensive step
             
-            // 3. Skip restricted area filtering for database POIs (they're pre-curated)
+            // 4. Skip restricted area filtering for database POIs (they're pre-curated)
             // The restricted POI filter (playcare/nursery) already handles the main issues
             // Restricted area filtering queries Overpass API which is slow (7-15s per call)
             // Database POIs are already curated, so we skip this expensive check
             
-            // 4. Skip coordinate validation for database POIs (they're pre-curated)
+            // 5. Skip coordinate validation for database POIs (they're pre-curated)
             // Database POIs are already validated during database generation
             // Coordinate validation is expensive and database is already curated
             
@@ -5114,10 +5159,12 @@ class GoogleMapsService: ObservableObject {
         
         // Remove common prefixes like house numbers, postcodes, etc.
         // Pattern: Optional number/letter prefix, then road name, then optional suffix
+        // Only strip "The " and "A " as leading words — do NOT strip words like "Brandy" (e.g. "Brandy Carr Road")
         let patterns = [
             "^\\d+[A-Za-z]?\\s+",  // "5A " or "123 "
             "^\\d+\\s+",            // "123 "
-            "^[A-Za-z]+\\s+",       // "The " or "A "
+            "^The\\s+",             // "The " only
+            "^A\\s+",               // "A " only (e.g. "A Road" — rare)
         ]
         
         var cleaned = address.trimmingCharacters(in: .whitespaces)
@@ -7167,11 +7214,28 @@ class GoogleMapsService: ObservableObject {
                     )
                     allDirections.append(direction)
                 }
+                // v2.2: If this is a waypoint leg and we didn't add "Arrive at Waypoint N", inject it (e.g. first leg had 0 steps or last step had empty instructions)
+                if !isReturnLeg, i < waypointNames.count {
+                    let waypointArrival = "Arrive at Waypoint \(i + 1) (\(waypointNames[i]))"
+                    if allDirections.isEmpty || !allDirections.last!.instruction.contains("Arrive at Waypoint \(i + 1)") {
+                        allDirections.append(WalkingDirection(instruction: waypointArrival, distance: "", distanceMeters: 0, duration: "", maneuver: "arrive"))
+                    }
+                }
             } catch TimeoutError.timeout {
                 print("🍎 ⏱️ MapKit timeout for leg \(i+1) after retries - continuing with other legs")
+                // v2.2: Inject waypoint arrival so we don't lose "Waypoint 1" when first leg fails
+                if !isReturnLeg, i < waypointNames.count {
+                    let waypointArrival = "Arrive at Waypoint \(i + 1) (\(waypointNames[i]))"
+                    allDirections.append(WalkingDirection(instruction: waypointArrival, distance: "", distanceMeters: 0, duration: "", maneuver: "arrive"))
+                }
                 // Continue with other legs even if one times out
             } catch {
                 print("🍎 MapKit directions failed for leg \(i): \(error.localizedDescription)")
+                // v2.2: Inject waypoint arrival so we don't lose "Waypoint 1" when first leg fails
+                if !isReturnLeg, i < waypointNames.count {
+                    let waypointArrival = "Arrive at Waypoint \(i + 1) (\(waypointNames[i]))"
+                    allDirections.append(WalkingDirection(instruction: waypointArrival, distance: "", distanceMeters: 0, duration: "", maneuver: "arrive"))
+                }
                 // Continue with other legs even if one fails
             }
         }
@@ -8261,6 +8325,44 @@ class GoogleMapsService: ObservableObject {
         return final
     }
 
+    /// Snaps an array of PlaceResult waypoints to roads using vicinity (e.g. "Brandy Carr Road") so markers appear on the road, not in building centroids.
+    /// Used when loading pre-populated or cached routes so preview and walk use road positions from the start.
+    /// Snaps run in parallel so first-route display isn't delayed by sequential Overpass calls.
+    func snapPlacesToRoads(_ places: [PlaceResult]) async -> [PlaceResult] {
+        guard !places.isEmpty else { return places }
+        let indicesToSnap: [(Int, PlaceResult)] = places.enumerated().compactMap { i, place in
+            guard extractRoadName(from: place.vicinity) != nil else { return nil }
+            return (i, place)
+        }
+        guard !indicesToSnap.isEmpty else { return places }
+        typealias SnapResult = (index: Int, place: PlaceResult?)
+        let results: [SnapResult] = await withTaskGroup(of: SnapResult.self) { group in
+            for (i, place) in indicesToSnap {
+                let roadName = extractRoadName(from: place.vicinity)
+                group.addTask { [self] in
+                    guard let roadName = roadName,
+                          let snapped = await findNearestRoadPointWithFallback(near: place.coordinate, radiusMeters: 100, preferredRoadName: roadName) else {
+                        return (i, nil)
+                    }
+                    let dist = CLLocation(latitude: place.coordinate.latitude, longitude: place.coordinate.longitude)
+                        .distance(from: CLLocation(latitude: snapped.latitude, longitude: snapped.longitude))
+                    guard dist > 10 else { return (i, nil) }
+                    let snappedGeometry = PlaceGeometry(location: PlaceLocation(lat: snapped.latitude, lng: snapped.longitude))
+                    let updated = PlaceResult(placeId: place.placeId, name: place.name, vicinity: place.vicinity, geometry: snappedGeometry, types: place.types, source: place.source)
+                    return (i, updated)
+                }
+            }
+            var collected: [SnapResult] = []
+            for await r in group { collected.append(r) }
+            return collected
+        }
+        var result = places
+        for (index, updated) in results {
+            if let u = updated { result[index] = u }
+        }
+        return result
+    }
+
     /// Snaps waypoints to roads: ORS Snap V2 first when key available; else Overpass per-waypoint; if any fail, Google batch; if Google fails, ORS Snap V2 retry; else Overpass partial.
     /// Returns snapped waypoints in same order as route.qrMarkers. Empty array if route has no waypoints.
     func snapWaypointsToRoads(route: WalkingRoute) async -> [CLLocationCoordinate2D] {
@@ -8468,6 +8570,20 @@ class GoogleMapsService: ObservableObject {
                             }
                             freshDirections.append(WalkingDirection(instruction: instruction, distance: stepDistText, distanceMeters: stepDistValue, duration: stepDurText, maneuver: maneuver))
                         }
+                        // v2.2: If this is a waypoint leg with no steps (or we didn't replace with waypoint name), inject "Arrive at Waypoint N (name)" so Waypoint 1 always appears
+                        if !isReturnLeg, legIndex < route.qrMarkers.count {
+                            let waypointArrival = "Arrive at Waypoint \(legIndex + 1) (\(route.qrMarkers[legIndex].name))"
+                            if freshDirections.isEmpty || !freshDirections.last!.instruction.contains("Arrive at Waypoint \(legIndex + 1)") {
+                                freshDirections.append(WalkingDirection(instruction: waypointArrival, distance: "", distanceMeters: 0, duration: "", maneuver: "arrive"))
+                            }
+                        }
+                    } else {
+                        // v2.2: Leg has no steps (e.g. very short leg) — still inject "Arrive at Waypoint N" so Waypoint 1 always appears
+                        let isReturnLeg = legIndex == legs.count - 1 && !route.qrMarkers.isEmpty
+                        if !isReturnLeg, legIndex < route.qrMarkers.count {
+                            let waypointArrival = "Arrive at Waypoint \(legIndex + 1) (\(route.qrMarkers[legIndex].name))"
+                            freshDirections.append(WalkingDirection(instruction: waypointArrival, distance: "", distanceMeters: 0, duration: "", maneuver: "arrive"))
+                        }
                     }
                 }
             }
@@ -8493,9 +8609,17 @@ class GoogleMapsService: ObservableObject {
                     if instructionLower.contains(keyword) { hasRestrictedRoads = true; break }
                 }
             }
+            var waypointsForMarkers = waypointsInDisplayOrder
             if hasRestrictedRoads {
                 lastRouteHadRestrictedRoads = true
-                pendingMapKitFallbackWaypoints = waypoints
+                // v2.2: Use snapped waypoints for fallback and returned markers so route/map show road positions (e.g. academy on Brandy Carr Rd, not in school grounds)
+                let snapped = await snapWaypointsToRoads(route: route)
+                if snapped.count == route.qrMarkers.count {
+                    pendingMapKitFallbackWaypoints = snapped
+                    waypointsForMarkers = snapped
+                } else {
+                    pendingMapKitFallbackWaypoints = waypoints
+                }
                 pendingMapKitFallbackOrigin = userLocation
                 // #region agent log
                 _agentLogGM("GoogleMapsService:fetchGoogleDirections:restricted", "restricted roads - MapKit fallback may be used", ["freshDirCount": freshDirections.count], "B")
@@ -8505,8 +8629,8 @@ class GoogleMapsService: ObservableObject {
             }
             var updatedMarkers: [QRMarker] = []
             for (index, marker) in route.qrMarkers.enumerated() {
-                if index < waypointsInDisplayOrder.count {
-                    let coord = waypointsInDisplayOrder[index]
+                if index < waypointsForMarkers.count {
+                    let coord = waypointsForMarkers[index]
                     updatedMarkers.append(QRMarker(code: marker.code, name: marker.name, location: marker.location, coordinate: coord, contentType: marker.contentType, content: marker.content, pointsValue: marker.pointsValue))
                 } else {
                     updatedMarkers.append(marker)
@@ -8608,34 +8732,10 @@ class GoogleMapsService: ObservableObject {
             return nil
         }
         
-        // Option A: Fast path when caller wants refinement — Directions (raw) and road snapping in parallel; return fast route, then call onRefinedRoute with snapped route.
+        // Option A: Fast path when caller wants refinement — snap first so route and MapKit fallback use road positions (e.g. academy on Brandy Carr Rd), then Directions with snapped waypoints.
         if let onRefined = onRefinedRoute {
-            print("[WALK_REFRESH] REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: fast path (raw waypoints) + refinement in background")
-            async let fastResult = fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: rawWaypoints, preserveWaypointOrder: true)
-            async let snappedResult = snapWaypointsToRoads(route: route)
-            let fastRoute = await fastResult
-            if let fast = fastRoute {
-                let elapsed = Date().timeIntervalSince(startTime)
-                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready, fast path — refinement in background)")
-                Task { [route, userLocation] in
-                    let snapped = await self.snapWaypointsToRoads(route: route)
-                    for (index, (original, snappedCoord)) in zip(rawWaypoints, snapped).enumerated() where index < snapped.count {
-                        let distance = CLLocation(latitude: original.latitude, longitude: original.longitude)
-                            .distance(from: CLLocation(latitude: snappedCoord.latitude, longitude: snappedCoord.longitude))
-                        if distance > 1 {
-                            print("[WALK_REFRESH] 🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m (refinement)")
-                        }
-                    }
-                    if let refined = await self.fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snapped, preserveWaypointOrder: true) {
-                        let refineElapsed = Date().timeIntervalSince(startTime)
-                        print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly REFINED elapsed=\(String(format: "%.2f", refineElapsed))s (road-snapped)")
-                        await MainActor.run { onRefined(refined) }
-                    }
-                }
-                return fast
-            }
-            // Fast path failed — fall through to single-call path with snapped waypoints (and MapKit fallback if needed)
-            let snappedWaypoints = await snappedResult
+            print("[WALK_REFRESH] REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: fast path (snap then Google with snapped waypoints)")
+            let snappedWaypoints = await snapWaypointsToRoads(route: route)
             for (index, (original, snapped)) in zip(rawWaypoints, snappedWaypoints).enumerated() where index < snappedWaypoints.count {
                 let distance = CLLocation(latitude: original.latitude, longitude: original.longitude)
                     .distance(from: CLLocation(latitude: snapped.latitude, longitude: snapped.longitude))
@@ -8643,12 +8743,14 @@ class GoogleMapsService: ObservableObject {
                     print("[WALK_REFRESH] 🛤️ [ROAD SNAP] Waypoint \(index+1): MOVED \(Int(distance))m")
                 }
             }
-            print("[WALK_REFRESH] REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: fast path failed — using snapped waypoints (single call)")
-            if let result = await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snappedWaypoints, preserveWaypointOrder: true) {
+            if let fast = await fetchGoogleDirections(route: route, userLocation: userLocation, waypointsInDisplayOrder: snappedWaypoints, preserveWaypointOrder: true) {
                 let elapsed = Date().timeIntervalSince(startTime)
-                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route ready)")
-                return result
+                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] refreshRouteWithGoogleOnly COMPLETED elapsed=\(String(format: "%.2f", elapsed))s (Google route with snapped waypoints)")
+                await MainActor.run { onRefined(fast) }
+                return fast
             }
+            // Fast path failed — try MapKit fallback with same snapped waypoints
+            print("[WALK_REFRESH] REFRESH_SOURCE | [\(timeString)] refreshRouteWithGoogleOnly: fast path failed — trying MapKit fallback")
             let googleStatus = lastGoogleDirectionsErrorStatus ?? "unknown"
             print("REFRESH_FALLBACK | Google returned nil — status=\(googleStatus) (filter Xcode by REFRESH_FALLBACK to see when MapKit is used)")
             let useMapKitFallback = googleStatus == "OVER_QUERY_LIMIT" || googleStatus == "REQUEST_DENIED"
@@ -8855,7 +8957,8 @@ class GoogleMapsService: ObservableObject {
             for poi in candidates.prefix(5) {
                 var newPlaces = existingPlaces
                 newPlaces.insert(poi, at: min(insertIndex, newPlaces.count))
-                let markers = RouteConversionHelper.markersFromPlaces(newPlaces, origin: userLocation)
+                let snappedPlaces = await snapPlacesToRoads(newPlaces)
+                let markers = RouteConversionHelper.markersFromPlaces(snappedPlaces, origin: userLocation)
                 let walkingRoute = WalkingRoute(
                     name: cachedRoute.name ?? "Extended route",
                     description: cachedRoute.description ?? "Route extended to \(targetMinutes) min",
