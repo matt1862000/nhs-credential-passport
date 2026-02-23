@@ -3720,6 +3720,8 @@ struct LocalRoutePickerSheet: View {
                     var mainRoutePreviewSource = ""
                     var googleSecondRoute: (route: WalkingRoute, data: GeneratedRoute)? = nil
                     var backgroundPlaceSnapTask: Task<[PlaceResult], Never>? = nil
+                    // Alternate routing API each Generate: 1st MapKit, 2nd ORS/GH, 3rd MapKit, etc.
+                    mapsService.prepareForNextGenerate()
                     repeat {
                     // v2.0.2: Use topology-safe route generation (guarantees a route, especially for short walks)
                     let elapsedRg = Date().timeIntervalSince(generateStartTime)

@@ -942,6 +942,17 @@ class GoogleMapsService: ObservableObject {
     /// v2.1.15: When true, skip MapKit and use only free APIs (OSRM/ORS/GH). Set by RoutePreGenService when MapKit quota is capped.
     var forceSkipMapKit = false
     
+    /// Alternating API order: 1st Generate = MapKit first, 2nd = ORS/GH, 3rd = MapKit, etc. Toggled each time prepareForNextGenerate() is called.
+    private var alternateRoutingAPIUseORSFirst = true  // first toggle → false → MapKit first
+    /// For the current Generate only: when true, use ORS/GraphHopper before MapKit. Set by prepareForNextGenerate().
+    var routingAPIOrderORSFirst = false
+    
+    /// Call once at the start of each new Generate (live). Flips the alternating order so this request uses ORS first or MapKit first.
+    func prepareForNextGenerate() {
+        alternateRoutingAPIUseORSFirst.toggle()
+        routingAPIOrderORSFirst = alternateRoutingAPIUseORSFirst
+    }
+    
     /// When true, skip HeiGIT (ORS) only in routing; use MapKit + OSRM + GraphHopper. Set during throttled background pregen.
     var skipHeiGITForBackground = false
     
@@ -5919,6 +5930,13 @@ class GoogleMapsService: ObservableObject {
             }
             print("[ROUTE_FLOW] stage=routing forceSkipMapKit=yes using=OSRM pregen_mapkit_capped")
             return (true, "forced_free_api")
+        }
+        // Alternate every Generate: MapKit first, then ORS/GH, then MapKit, etc. (spreads load; helps 20→cancel→10 min).
+        if routingAPIOrderORSFirst && (canUseOpenRouteService || !graphHopperApiKey.isEmpty) {
+            if Self.shouldPrintRouteFlowFreeAPI() {
+                print("[ROUTE_FLOW] stage=routing alternate_ors_first (toggle)")
+            }
+            return (true, "alternate_ors_first")
         }
         // v2.1: User-initiated routes (+1) always get MapKit — better to risk rate limit than guaranteed OSRM timeout
         if forceMapKitRouting {
