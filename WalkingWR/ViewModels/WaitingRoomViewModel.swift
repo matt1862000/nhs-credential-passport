@@ -186,6 +186,8 @@ class WaitingRoomViewModel: ObservableObject {
     private var isFirstFirebaseUpdate = true  // Skip alert on first sync
     /// Prevents re-presenting clinician selection on every Firebase snapshot when user has no clinician and hasn't skipped.
     private var hasAutoPresentedClinicianSelectionThisSession = false
+    /// Only log clinician rebuild when list actually changes (avoids log storm from frequent Firestore snapshots).
+    private var lastLoggedClinicianFingerprint: String?
     
     let healthKitService = HealthKitService()
     let notificationService = NotificationService.shared
@@ -453,13 +455,21 @@ class WaitingRoomViewModel: ObservableObject {
         for firebaseData in firebaseClinicians {
             let clinician = createClinicianFromFirebase(firebaseData)
             result.append(clinician)
-            #if DEBUG
-            print("✅ Built clinician from Firebase: \(clinician.fullTitle) - \(clinician.currentWaitMinutes)min")
-            #endif
         }
         
         availableClinicians = result
-        print("👥 Total clinicians from Firebase: \(availableClinicians.count)")
+        
+        // Only log when clinician list actually changed (avoids storm from frequent Firestore snapshots)
+        let fingerprint = "\(result.count):" + result.sorted(by: { $0.fullTitle < $1.fullTitle }).map { "\($0.fullTitle)|\($0.currentWaitMinutes)" }.joined(separator: ",")
+        if lastLoggedClinicianFingerprint != fingerprint {
+            lastLoggedClinicianFingerprint = fingerprint
+            #if DEBUG
+            for clinician in result {
+                print("✅ Built clinician from Firebase: \(clinician.fullTitle) - \(clinician.currentWaitMinutes)min")
+            }
+            #endif
+            print("👥 Total clinicians from Firebase: \(availableClinicians.count)")
+        }
         
         // Data is ready - Firebase has loaded (even if empty)
         if !isDataReady {

@@ -4879,7 +4879,8 @@ class GoogleMapsService: ObservableObject {
                 if let roadName = roadName {
                     print("   🛤️ '\(poi.name)' - preferred road from address: '\(roadName)'")
                 }
-                if let nearestRoadPoint = await findNearestRoadPoint(near: poi.coordinate, radiusMeters: 50, preferredRoadName: roadName) {
+                // Use 100m radius so roads like Brandy Carr Road (when address says "Carr Road") are found
+                if let nearestRoadPoint = await findNearestRoadPoint(near: poi.coordinate, radiusMeters: 100, preferredRoadName: roadName) {
                     // Create a new POI with snapped coordinates
                     let snappedGeometry = PlaceGeometry(location: PlaceLocation(lat: nearestRoadPoint.latitude, lng: nearestRoadPoint.longitude))
                     let snappedPOI = PlaceResult(
@@ -5152,12 +5153,13 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// v2.1.5: Find a specific road by name near a coordinate
+    /// Matches roads whose name contains the given string (e.g. "Carr Road" matches "Brandy Carr Road").
     private func findRoadByName(_ roadName: String, near coordinate: CLLocationCoordinate2D, radiusMeters: Int) async -> CLLocationCoordinate2D? {
-        let searchRadius = max(radiusMeters, 150) // Slightly larger radius for name-based search
+        // Use 250m so roads like Brandy Carr Road are found when POI is at school centroid (road can be 100–200m away)
+        let searchRadius = max(radiusMeters, 250)
         
         // Escape special regex characters in road name for Overpass query
-        // Overpass uses ~ for case-insensitive regex matching
-        let escapedRoadName = roadName
+        let escaped = roadName
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: ".", with: "\\.")
             .replacingOccurrences(of: "^", with: "\\^")
@@ -5172,6 +5174,8 @@ class GoogleMapsService: ObservableObject {
             .replacingOccurrences(of: "]", with: "\\]")
             .replacingOccurrences(of: "{", with: "\\{")
             .replacingOccurrences(of: "}", with: "\\}")
+        // Substring match: "Carr Road" matches "Brandy Carr Road" in OSM
+        let escapedRoadName = ".*" + escaped + ".*"
         
         // Query for roads with matching name (case-insensitive, partial match).
         // Restrict to proper public streets so we don't snap to a service/driveway/footway with the same name (e.g. school "Carr Road" vs Brandy Carr Road).
@@ -5248,9 +5252,23 @@ class GoogleMapsService: ObservableObject {
     
     private func findNearestRoadPoint(near coordinate: CLLocationCoordinate2D, radiusMeters: Int, preferredRoadName: String? = nil) async -> CLLocationCoordinate2D? {
         // v2.1.5: If we have a preferred road name from the address, try that first
-        if let roadName = preferredRoadName {
+        if let roadName = preferredRoadName, !roadName.isEmpty {
             if let namedRoadPoint = await findRoadByName(roadName, near: coordinate, radiusMeters: radiusMeters) {
                 return namedRoadPoint
+            }
+            // Fallback: try without suffix ("Brandy Carr" from "Brandy Carr Road") or distinctive word ("Carr")
+            let words = roadName.split(separator: " ").map(String.init)
+            let roadSuffixes = ["road", "street", "lane", "way", "avenue", "drive", "court", "close"]
+            if words.count > 1, let last = words.last?.lowercased(), roadSuffixes.contains(last) {
+                let withoutSuffix = words.dropLast().joined(separator: " ")
+                if !withoutSuffix.isEmpty, let fallback = await findRoadByName(withoutSuffix, near: coordinate, radiusMeters: max(radiusMeters, 250)) {
+                    return fallback
+                }
+            }
+            if let firstDistinct = words.first(where: { $0.lowercased() != "the" && $0.count > 2 }), words.count > 1 {
+                if let fallback = await findRoadByName(firstDistinct, near: coordinate, radiusMeters: max(radiusMeters, 250)) {
+                    return fallback
+                }
             }
             print("🛤️ ⚠️ Could not find preferred road '\(roadName)', falling back to nearest road")
         }

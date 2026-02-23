@@ -35,6 +35,13 @@ struct FirebaseClinicianData: Identifiable {
 class FirebaseService: ObservableObject {
     private let db = Firestore.firestore()
     private var listener: ListenerRegistration?
+    /// Once we have received at least one snapshot with clinicians, we stop aggressive retries.
+    private var hasReceivedClinicians = false
+    private var retryWorkItem: DispatchWorkItem?
+    /// Throttle duplicate snapshot logging: only log when count/delays change or every 60s.
+    private var lastLoggedFingerprint: String?
+    private var lastSnapshotLogTime: Date?
+    private static let snapshotLogInterval: TimeInterval = 60
     
     @Published var clinicianDelays: [String: Int] = [:] // name -> delay in minutes (legacy support)
     @Published var availableClinicianNames: Set<String> = [] // names from Firebase
@@ -45,22 +52,29 @@ class FirebaseService: ObservableObject {
     }
     
     deinit {
+        retryWorkItem?.cancel()
         listener?.remove()
     }
     
-    /// Start real-time listener for clinician data
+    /// Start real-time listener for clinician data. On connection error, retries until clinicians are received.
     func startListening() {
+        retryWorkItem?.cancel()
         print("🚀 Starting Firebase listener for 'clinicians' collection...")
         
         listener = db.collection("clinicians").addSnapshotListener { [weak self] snapshot, error in
             guard let self = self else { return }
             
-            #if DEBUG
-            print("[WALK_REFRESH] 📡 Firebase snapshot received!")
-            #endif
-            
             if let error = error {
                 print("❌ Firebase error: \(error.localizedDescription)")
+                self.listener?.remove()
+                self.listener = nil
+                let delay: TimeInterval = self.hasReceivedClinicians ? 15 : 5
+                print("🔄 Retrying clinicians fetch in \(Int(delay))s...")
+                let work = DispatchWorkItem { [weak self] in
+                    self?.startListening()
+                }
+                self.retryWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
                 return
             }
             
@@ -69,9 +83,9 @@ class FirebaseService: ObservableObject {
                 return
             }
             
-            #if DEBUG
-            print("📦 Found \(documents.count) documents in Firebase")
-            #endif
+            if !documents.isEmpty {
+                self.hasReceivedClinicians = true
+            }
             
             var delays: [String: Int] = [:]
             var names: Set<String> = []
@@ -79,9 +93,6 @@ class FirebaseService: ObservableObject {
             
             for document in documents {
                 let data = document.data()
-                #if DEBUG
-                print("📄 Firebase doc: \(data)")
-                #endif
                 
                 // Required fields
                 guard let name = data["name"] as? String else {
@@ -135,16 +146,19 @@ class FirebaseService: ObservableObject {
                 delays[name] = delay
                 names.insert(fullName)
                 names.insert(name)
-                
-                #if DEBUG
-                print("✅ Loaded: '\(fullName)' - \(delay) min delay")
-                #endif
             }
             
-            #if DEBUG
-            print("📊 All loaded delays: \(delays)")
-            print("👥 Available clinicians from Firebase: \(clinicianList.map { $0.fullName })")
-            #endif
+            // Only log when clinician list meaningfully changed or every 60s to avoid log storm
+            let fingerprint = "\(documents.count):" + clinicianList.sorted(by: { $0.fullName < $1.fullName }).map { "\($0.fullName)|\($0.delay)" }.joined(separator: ",")
+            let now = Date()
+            let shouldLog = lastLoggedFingerprint != fingerprint || lastSnapshotLogTime.map { now.timeIntervalSince($0) >= Self.snapshotLogInterval } ?? true
+            if shouldLog {
+                lastLoggedFingerprint = fingerprint
+                lastSnapshotLogTime = now
+                #if DEBUG
+                print("📦 Firebase clinicians: \(documents.count) — \(clinicianList.map { $0.fullName }.joined(separator: ", "))")
+                #endif
+            }
             
             DispatchQueue.main.async {
                 self.clinicianDelays = delays
@@ -209,6 +223,8 @@ class FirebaseService: ObservableObject {
     
     /// Stop listening to updates
     func stopListening() {
+        retryWorkItem?.cancel()
+        retryWorkItem = nil
         listener?.remove()
         listener = nil
     }
