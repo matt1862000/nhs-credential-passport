@@ -2257,7 +2257,8 @@ struct LocalRoutePickerSheet: View {
                         ? mapsService.addOnRoutePOIsIfNeeded(filteredCachedRoute, origin: userLocation.coordinate, candidatePOIs: prefetchedPOIs, durationMinutes: selectedDuration)
                         : filteredCachedRoute
                     // v2.2: Snap waypoints to roads (e.g. academy on Brandy Carr Road) so preview and walk show markers on road
-                    let snappedFirstPlaces = await mapsService.snapPlacesToRoads(firstRouteData.places)
+                    let firstPolylineFallback = firstRouteData.polyline.isEmpty ? [] : mapsService.decodePolyline(firstRouteData.polyline)
+                    let snappedFirstPlaces = await mapsService.snapPlacesToRoads(firstRouteData.places, fallbackPolyline: firstPolylineFallback)
                     firstRouteData = GeneratedRoute(places: snappedFirstPlaces, polyline: firstRouteData.polyline, distanceMeters: firstRouteData.distanceMeters, durationSeconds: firstRouteData.durationSeconds, legs: firstRouteData.legs, usedOSRM: firstRouteData.usedOSRM, travelToStartSeconds: firstRouteData.travelToStartSeconds)
                     
                     // Create markers early so we can use them for MapKit full-loop (prepop) or display
@@ -2762,7 +2763,8 @@ struct LocalRoutePickerSheet: View {
                                         ? mapsService.addOnRoutePOIsIfNeeded(filteredCachedRoute, origin: userLocation.coordinate, candidatePOIs: prefetchedPOIs, durationMinutes: selectedDuration)
                                         : filteredCachedRoute
                                     // v2.2: Snap waypoints to roads so markers appear on road (e.g. academy on Brandy Carr Road)
-                                    let snappedPlaces = await mapsService.snapPlacesToRoads(routeData.places)
+                                    let routePolylineFallback = routeData.polyline.isEmpty ? [] : mapsService.decodePolyline(routeData.polyline)
+                                    let snappedPlaces = await mapsService.snapPlacesToRoads(routeData.places, fallbackPolyline: routePolylineFallback)
                                     routeData = GeneratedRoute(places: snappedPlaces, polyline: routeData.polyline, distanceMeters: routeData.distanceMeters, durationSeconds: routeData.durationSeconds, legs: routeData.legs, usedOSRM: routeData.usedOSRM, travelToStartSeconds: routeData.travelToStartSeconds)
                                     
                                     // Pre-populated routes: start = GPS; prepend GPS → first waypoint, append last waypoint → GPS (return to start)
@@ -3350,7 +3352,8 @@ struct LocalRoutePickerSheet: View {
                         var placeIdSets: [Set<String>] = []
                         for cached in syntheticCached {
                             let filtered = mapsService.filterCloseWaypointsSync(from: cached.route, durationMinutes: targetDuration, origin: userLoc, isFromPrePopulatedDatabase: true)
-                            let snappedPlaces = await mapsService.snapPlacesToRoads(filtered.places)
+                            let syntheticPolyline = filtered.polyline.isEmpty ? [CLLocationCoordinate2D]() : mapsService.decodePolyline(filtered.polyline)
+                            let snappedPlaces = await mapsService.snapPlacesToRoads(filtered.places, fallbackPolyline: syntheticPolyline)
                             let filteredWithSnapped = GeneratedRoute(places: snappedPlaces, polyline: filtered.polyline, distanceMeters: filtered.distanceMeters, durationSeconds: filtered.durationSeconds, legs: filtered.legs, usedOSRM: filtered.usedOSRM, travelToStartSeconds: filtered.travelToStartSeconds)
                             let markers = await MainActor.run { createMarkersFromPlaces(snappedPlaces, origin: userLoc) }
                             let durationMin = max(1, filtered.durationSeconds / 60)
@@ -3805,9 +3808,10 @@ struct LocalRoutePickerSheet: View {
                     filteredResult = mapsService.filterCloseWaypointsSync(from: result, durationMinutes: selectedDuration, origin: userLocation.coordinate)
                     
                     // Start road-snap in background (parallel with naming + directions); results applied after route is shown
+                    let bgSnapPolyline = filteredResult.polyline.isEmpty ? [CLLocationCoordinate2D]() : mapsService.decodePolyline(filteredResult.polyline)
                     backgroundPlaceSnapTask?.cancel()
                     backgroundPlaceSnapTask = Task {
-                        await mapsService.snapPlacesToRoads(filteredResult.places)
+                        await mapsService.snapPlacesToRoads(filteredResult.places, fallbackPolyline: bgSnapPolyline)
                     }
                     
                     print("\(kRouteGenTag) ROUTE_PHASE phase=markers_start_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")

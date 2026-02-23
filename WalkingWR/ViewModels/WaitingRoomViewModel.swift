@@ -804,7 +804,8 @@ class WaitingRoomViewModel: ObservableObject {
                 cachedOriginalDirections = directionsToUse
                 // #region agent log — waypoint directions diagnostic (filter Xcode by WAYPOINT_DIAG)
                 let wpCountUpdate = directionsToUse.filter { $0.instruction.contains("Arrive at Waypoint") }.count
-                print("WAYPOINT_DIAG updateCurrentRoute | route='\(route.name)' waypoints=\(route.qrMarkers.count) names=[\(route.qrMarkers.map { $0.name }.joined(separator: ", "))] | directions=\(directionsToUse.count) waypointLines=\(wpCountUpdate)")
+                let coordSummary = route.qrMarkers.map { "'\($0.name)' (\(String(format: "%.5f", $0.coordinate.latitude)),\(String(format: "%.5f", $0.coordinate.longitude)))" }.joined(separator: ", ")
+                print("WAYPOINT_DIAG updateCurrentRoute | route='\(route.name)' waypoints=\(route.qrMarkers.count) names=[\(route.qrMarkers.map { $0.name }.joined(separator: ", "))] | directions=\(directionsToUse.count) waypointLines=\(wpCountUpdate) | coords=[\(coordSummary)]")
                 let updatePayload: [String: Any] = ["location": "WaitingRoomViewModel:updateCurrentRoute:diag", "message": "route update waypoint diagnostic", "data": ["routeName": route.name, "expectedWaypoints": route.qrMarkers.count, "waypointNames": route.qrMarkers.map { $0.name }, "directionCount": directionsToUse.count, "waypointLineCount": wpCountUpdate], "timestamp": Int(Date().timeIntervalSince1970 * 1000), "hypothesisId": "A"]
                 if let updateData = try? JSONSerialization.data(withJSONObject: updatePayload), let updateLine = String(data: updateData, encoding: .utf8) { updateLine.appendLine(toFile: "/Users/raihant/Documents/WalkingWR/.cursor/debug.log") }
                 // #endregion

@@ -5201,11 +5201,10 @@ class GoogleMapsService: ObservableObject {
     
     /// v2.1.5: Find a specific road by name near a coordinate
     /// Matches roads whose name contains the given string (e.g. "Carr Road" matches "Brandy Carr Road").
+    /// Tries all Overpass mirrors (prioritized by health) so a single mirror outage doesn't break snapping.
     private func findRoadByName(_ roadName: String, near coordinate: CLLocationCoordinate2D, radiusMeters: Int) async -> CLLocationCoordinate2D? {
-        // Use 250m so roads like Brandy Carr Road are found when POI is at school centroid (road can be 100–200m away)
         let searchRadius = max(radiusMeters, 250)
         
-        // Escape special regex characters in road name for Overpass query
         let escaped = roadName
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: ".", with: "\\.")
@@ -5221,11 +5220,8 @@ class GoogleMapsService: ObservableObject {
             .replacingOccurrences(of: "]", with: "\\]")
             .replacingOccurrences(of: "{", with: "\\{")
             .replacingOccurrences(of: "}", with: "\\}")
-        // Substring match: "Carr Road" matches "Brandy Carr Road" in OSM
         let escapedRoadName = ".*" + escaped + ".*"
         
-        // Query for roads with matching name (case-insensitive, partial match).
-        // Restrict to proper public streets so we don't snap to a service/driveway/footway with the same name (e.g. school "Carr Road" vs Brandy Carr Road).
         let query = """
         [out:json][timeout:10];
         (
@@ -5234,67 +5230,91 @@ class GoogleMapsService: ObservableObject {
         out body geom;
         """
         
-        guard let url = URL(string: "https://lz4.overpass-api.de/api/interpreter") else {
-            return nil
-        }
+        let allMirrors = [
+            "https://lz4.overpass-api.de/api/interpreter",
+            "https://overpass-api.de/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter",
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+            "https://overpass.osm.jp/api/interpreter"
+        ]
+        let mirrors = await osmMirrorTracker.prioritizeMirrors(allMirrors)
         
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = "data=\(query)".data(using: .utf8)
-        request.timeoutInterval = 10
-        
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+        for mirror in mirrors {
+            guard let url = URL(string: mirror) else { continue }
             
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                return nil
-            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.httpBody = "data=\(query)".data(using: .utf8)
+            request.timeoutInterval = 10
             
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let elements = json["elements"] as? [[String: Any]] else {
-                return nil
-            }
-            
-            // Find the closest point on the named road
-            var closestPoint: CLLocationCoordinate2D?
-            var closestDistance = Double.greatestFiniteMagnitude
-            let poiLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            
-            for element in elements {
-                guard let geometry = element["geometry"] as? [[String: Any]] else { continue }
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
                 
-                // Verify the name matches (case-insensitive)
-                if let tags = element["tags"] as? [String: String],
-                   let name = tags["name"]?.lowercased(),
-                   name.contains(roadName.lowercased()) {
+                guard let httpResponse = response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200 else {
+                    await osmMirrorTracker.recordFailure(mirror: mirror)
+                    continue
+                }
+                
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let elements = json["elements"] as? [[String: Any]] else {
+                    await osmMirrorTracker.recordFailure(mirror: mirror)
+                    continue
+                }
+                
+                await osmMirrorTracker.recordSuccess(mirror: mirror)
+                
+                let poiLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                var candidates: [(coord: CLLocationCoordinate2D, distance: Double)] = []
+                
+                for element in elements {
+                    guard let geometry = element["geometry"] as? [[String: Any]] else { continue }
                     
-                    for node in geometry {
-                        guard let lat = node["lat"] as? Double,
-                              let lon = node["lon"] as? Double else { continue }
+                    if let tags = element["tags"] as? [String: String],
+                       let name = tags["name"]?.lowercased(),
+                       name.contains(roadName.lowercased()) {
                         
-                        let nodeLocation = CLLocation(latitude: lat, longitude: lon)
-                        let distance = poiLocation.distance(from: nodeLocation)
-                        
-                        if distance < closestDistance {
-                            closestDistance = distance
-                            closestPoint = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                        for node in geometry {
+                            guard let lat = node["lat"] as? Double,
+                                  let lon = node["lon"] as? Double else { continue }
+                            
+                            let nodeLocation = CLLocation(latitude: lat, longitude: lon)
+                            let distance = poiLocation.distance(from: nodeLocation)
+                            candidates.append((CLLocationCoordinate2D(latitude: lat, longitude: lon), distance))
                         }
                     }
                 }
+                
+                guard !candidates.isEmpty else { continue }
+                candidates.sort { $0.distance < $1.distance }
+                
+                let minMainRoadDistance = 40.0
+                let chosen: (coord: CLLocationCoordinate2D, distance: Double)
+                if candidates[0].distance < minMainRoadDistance,
+                   let mainRoadNode = candidates.first(where: { $0.distance >= minMainRoadDistance }) {
+                    chosen = mainRoadNode
+                    print("🛤️ Found road '\(roadName)': skipped access node at \(Int(candidates[0].distance))m, using main road node at \(Int(chosen.distance))m")
+                } else {
+                    chosen = candidates[0]
+                    print("🛤️ Found road '\(roadName)' at \(Int(chosen.distance))m from POI")
+                }
+                
+                return chosen.coord
+                
+            } catch {
+                let nsErr = error as NSError
+                if [NSURLErrorSecureConnectionFailed, -1200, -9816].contains(nsErr.code) {
+                    await osmMirrorTracker.recordSSLError(mirror: mirror, errorCode: nsErr.code)
+                } else {
+                    await osmMirrorTracker.recordFailure(mirror: mirror)
+                }
+                continue
             }
-            
-            if let point = closestPoint {
-                print("🛤️ Found road '\(roadName)' at \(Int(closestDistance))m from POI")
-            }
-            
-            return closestPoint
-            
-        } catch {
-            print("🛤️ ❌ Failed to find road '\(roadName)': \(error.localizedDescription)")
-            return nil
         }
+        
+        print("🛤️ ❌ All mirrors failed to find road '\(roadName)'")
+        return nil
     }
     
     private func findNearestRoadPoint(near coordinate: CLLocationCoordinate2D, radiusMeters: Int, preferredRoadName: String? = nil) async -> CLLocationCoordinate2D? {
@@ -5364,77 +5384,88 @@ class GoogleMapsService: ObservableObject {
     }
     
     /// v2.1.4: Helper to execute road snap query
+    /// Tries all Overpass mirrors (prioritized by health) so a single mirror outage doesn't break snapping.
     private func executeRoadSnapQuery(_ query: String, coordinate: CLLocationCoordinate2D, description: String) async -> CLLocationCoordinate2D? {
-        guard let url = URL(string: "https://lz4.overpass-api.de/api/interpreter") else {
-            return nil
-        }
-        // #region agent log
-        DebugLogger.agentLog(location: "GoogleMapsService.executeRoadSnapQuery", message: "Overpass request start", hypothesisId: "H1_H2_H3", data: ["url": url.absoluteString, "description": description])
-        // #endregion agent log
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = "data=\(query)".data(using: .utf8)
-        request.timeoutInterval = 10
+        let allMirrors = [
+            "https://lz4.overpass-api.de/api/interpreter",
+            "https://overpass-api.de/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter",
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+            "https://overpass.osm.jp/api/interpreter"
+        ]
+        let mirrors = await osmMirrorTracker.prioritizeMirrors(allMirrors)
         
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+        for mirror in mirrors {
+            guard let url = URL(string: mirror) else { continue }
             
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                return nil
-            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.httpBody = "data=\(query)".data(using: .utf8)
+            request.timeoutInterval = 10
             
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let elements = json["elements"] as? [[String: Any]] else {
-                return nil
-            }
-            
-            // Find the closest point on any road
-            var closestPoint: CLLocationCoordinate2D?
-            var closestDistance = Double.greatestFiniteMagnitude
-            let poiLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            
-            for element in elements {
-                // Get the geometry (node coordinates) for this way
-                guard let geometry = element["geometry"] as? [[String: Any]] else { continue }
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
                 
-                // v2.1.4: Skip if this way has tags indicating private/restricted access
-                if let tags = element["tags"] as? [String: String] {
-                    if tags["service"] == "driveway" || tags["service"] == "parking_aisle" { continue }
-                    if tags["access"] == "private" || tags["access"] == "no" { continue }
-                    if tags["foot"] == "private" || tags["foot"] == "no" { continue }
+                guard let httpResponse = response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200 else {
+                    await osmMirrorTracker.recordFailure(mirror: mirror)
+                    continue
                 }
                 
-                for node in geometry {
-                    guard let lat = node["lat"] as? Double,
-                          let lon = node["lon"] as? Double else { continue }
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let elements = json["elements"] as? [[String: Any]] else {
+                    await osmMirrorTracker.recordFailure(mirror: mirror)
+                    continue
+                }
+                
+                await osmMirrorTracker.recordSuccess(mirror: mirror)
+                
+                var closestPoint: CLLocationCoordinate2D?
+                var closestDistance = Double.greatestFiniteMagnitude
+                let poiLocation = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+                
+                for element in elements {
+                    guard let geometry = element["geometry"] as? [[String: Any]] else { continue }
                     
-                    let nodeLocation = CLLocation(latitude: lat, longitude: lon)
-                    let distance = poiLocation.distance(from: nodeLocation)
+                    if let tags = element["tags"] as? [String: String] {
+                        if tags["service"] == "driveway" || tags["service"] == "parking_aisle" { continue }
+                        if tags["access"] == "private" || tags["access"] == "no" { continue }
+                        if tags["foot"] == "private" || tags["foot"] == "no" { continue }
+                    }
                     
-                    if distance < closestDistance {
-                        closestDistance = distance
-                        closestPoint = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                    for node in geometry {
+                        guard let lat = node["lat"] as? Double,
+                              let lon = node["lon"] as? Double else { continue }
+                        
+                        let nodeLocation = CLLocation(latitude: lat, longitude: lon)
+                        let distance = poiLocation.distance(from: nodeLocation)
+                        
+                        if distance < closestDistance {
+                            closestDistance = distance
+                            closestPoint = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                        }
                     }
                 }
+                
+                if let point = closestPoint {
+                    print("🛤️ Found nearest \(description): \(Int(closestDistance))m from POI at (\(String(format: "%.6f", point.latitude)), \(String(format: "%.6f", point.longitude)))")
+                    return point
+                }
+                
+            } catch {
+                let nsErr = error as NSError
+                if [NSURLErrorSecureConnectionFailed, -1200, -9816].contains(nsErr.code) {
+                    await osmMirrorTracker.recordSSLError(mirror: mirror, errorCode: nsErr.code)
+                } else {
+                    await osmMirrorTracker.recordFailure(mirror: mirror)
+                }
+                continue
             }
-            
-            if let point = closestPoint {
-                print("🛤️ Found nearest \(description): \(Int(closestDistance))m from POI at (\(String(format: "%.6f", point.latitude)), \(String(format: "%.6f", point.longitude)))")
-            }
-            
-            return closestPoint
-            
-        } catch {
-            // #region agent log
-            let nsErr = error as NSError
-            let isTLS = (nsErr.domain == NSURLErrorDomain && [NSURLErrorSecureConnectionFailed, -1200, -9816].contains(nsErr.code))
-            DebugLogger.agentLog(location: "GoogleMapsService.executeRoadSnapQuery", message: "Overpass request failed", hypothesisId: "H1_H2_H4", data: ["domain": nsErr.domain, "code": nsErr.code, "isTLS": isTLS, "description": description])
-            // #endregion agent log
-            print("🛤️ ❌ Failed to find nearest \(description): \(error.localizedDescription)")
-            return nil
         }
+        
+        print("🛤️ ❌ All mirrors failed to find nearest \(description)")
+        return nil
     }
     
     /// v2.1.5: Snap a coordinate to the nearest walkable path with fallback mirrors
@@ -5462,12 +5493,14 @@ class GoogleMapsService: ObservableObject {
         out body geom;
         """
         
-        let mirrors = [
+        let fallbackMirrors = await osmMirrorTracker.prioritizeMirrors([
             "https://overpass-api.de/api/interpreter",
-            "https://overpass.private.coffee/api/interpreter"
-        ]
+            "https://overpass.private.coffee/api/interpreter",
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+            "https://overpass.osm.jp/api/interpreter"
+        ])
         
-        for mirror in mirrors {
+        for mirror in fallbackMirrors {
             guard let url = URL(string: mirror) else { continue }
             
             var request = URLRequest(url: url)
@@ -7830,8 +7863,36 @@ class GoogleMapsService: ObservableObject {
             }
             print("🛤️ [ROAD SNAP] Waypoint snapping complete")
             
+            // Polyline-based fallback: if Overpass failed for any school-type waypoint, project it
+            // onto the cached route polyline (which follows roads). This is a pure geometric operation
+            // so it works even when Overpass is down/slow.
+            let cachedPolyline = route.routePath
+            var finalSnapped = snappedWaypoints
+            if cachedPolyline.count >= 2 {
+                for (index, waypoint) in finalSnapped.enumerated() {
+                    let original = rawWaypoints[index]
+                    let movedByOverpass = abs(waypoint.latitude - original.latitude) > 1e-7 || abs(waypoint.longitude - original.longitude) > 1e-7
+                    if movedByOverpass { continue }
+                    let marker = route.qrMarkers[index]
+                    let nameLC = marker.name.lowercased()
+                    let isSchoolType = nameLC.contains("academy") || nameLC.contains("school") || nameLC.contains("primary") || nameLC.contains("college") || nameLC.contains("university")
+                    guard isSchoolType else { continue }
+                    if let proj = RouteGeometryHelper.projectOntoPolyline(coordinate: waypoint, polyline: cachedPolyline),
+                       proj.distanceToPolyline > 20, proj.distanceToPolyline < 300 {
+                        let seg = proj.segmentIndex
+                        let t = proj.t
+                        let snappedCoord = CLLocationCoordinate2D(
+                            latitude: cachedPolyline[seg].latitude + t * (cachedPolyline[seg + 1].latitude - cachedPolyline[seg].latitude),
+                            longitude: cachedPolyline[seg].longitude + t * (cachedPolyline[seg + 1].longitude - cachedPolyline[seg].longitude)
+                        )
+                        finalSnapped[index] = snappedCoord
+                        print("🛤️ [ROAD SNAP] ✅ Waypoint \(index+1) '\(marker.name)' polyline fallback: \(Int(proj.distanceToPolyline))m from route → snapped to polyline")
+                    }
+                }
+            }
+            
             // Preserve waypoint order when refreshing so polyline follows intended sequence (no cutting across)
-            let waypoints = snappedWaypoints
+            let waypoints = finalSnapped
             
             print("🌐   🎯 Waypoints: \(waypoints.count) (display order preserved, road-snapped)")
             for (index, waypoint) in waypoints.enumerated() {
@@ -8328,7 +8389,8 @@ class GoogleMapsService: ObservableObject {
     /// Snaps an array of PlaceResult waypoints to roads using vicinity (e.g. "Brandy Carr Road") so markers appear on the road, not in building centroids.
     /// Used when loading pre-populated or cached routes so preview and walk use road positions from the start.
     /// Snaps run in parallel so first-route display isn't delayed by sequential Overpass calls.
-    func snapPlacesToRoads(_ places: [PlaceResult]) async -> [PlaceResult] {
+    /// When `fallbackPolyline` is provided, school-type POIs that fail Overpass snap are projected onto the polyline.
+    func snapPlacesToRoads(_ places: [PlaceResult], fallbackPolyline: [CLLocationCoordinate2D] = []) async -> [PlaceResult] {
         guard !places.isEmpty else { return places }
         let indicesToSnap: [(Int, PlaceResult)] = places.enumerated().compactMap { i, place in
             guard extractRoadName(from: place.vicinity) != nil else { return nil }
@@ -8359,6 +8421,27 @@ class GoogleMapsService: ObservableObject {
         var result = places
         for (index, updated) in results {
             if let u = updated { result[index] = u }
+        }
+        // Polyline fallback: school-type POIs that failed Overpass snap get projected onto the route polyline
+        if fallbackPolyline.count >= 2 {
+            for (i, place) in result.enumerated() {
+                let original = places[i]
+                let moved = abs(place.coordinate.latitude - original.coordinate.latitude) > 1e-7 || abs(place.coordinate.longitude - original.coordinate.longitude) > 1e-7
+                if moved { continue }
+                let nameLC = place.name.lowercased()
+                let isSchoolType = nameLC.contains("academy") || nameLC.contains("school") || nameLC.contains("primary") || nameLC.contains("college") || nameLC.contains("university")
+                guard isSchoolType else { continue }
+                if let proj = RouteGeometryHelper.projectOntoPolyline(coordinate: place.coordinate, polyline: fallbackPolyline),
+                   proj.distanceToPolyline > 20, proj.distanceToPolyline < 300 {
+                    let seg = proj.segmentIndex
+                    let t = proj.t
+                    let snappedLat = fallbackPolyline[seg].latitude + t * (fallbackPolyline[seg + 1].latitude - fallbackPolyline[seg].latitude)
+                    let snappedLon = fallbackPolyline[seg].longitude + t * (fallbackPolyline[seg + 1].longitude - fallbackPolyline[seg].longitude)
+                    let snappedGeometry = PlaceGeometry(location: PlaceLocation(lat: snappedLat, lng: snappedLon))
+                    result[i] = PlaceResult(placeId: place.placeId, name: place.name, vicinity: place.vicinity, geometry: snappedGeometry, types: place.types, source: place.source)
+                    print("🛤️ [ROAD SNAP] ✅ '\(place.name)' polyline fallback: \(Int(proj.distanceToPolyline))m → snapped to route polyline")
+                }
+            }
         }
         return result
     }
