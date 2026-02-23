@@ -3716,6 +3716,7 @@ struct LocalRoutePickerSheet: View {
                     var mainActualMin = 0
                     var mainRoutePreviewSource = ""
                     var googleSecondRoute: (route: WalkingRoute, data: GeneratedRoute)? = nil
+                    var backgroundPlaceSnapTask: Task<[PlaceResult], Never>? = nil
                     repeat {
                     // v2.0.2: Use topology-safe route generation (guarantees a route, especially for short walks)
                     let elapsedRg = Date().timeIntervalSince(generateStartTime)
@@ -3802,6 +3803,12 @@ struct LocalRoutePickerSheet: View {
                     
                     // v2.1.7: Filter close waypoints from fresh routes (100m under 25min, 200m for 25+ min to avoid clustered village waypoints).
                     filteredResult = mapsService.filterCloseWaypointsSync(from: result, durationMinutes: selectedDuration, origin: userLocation.coordinate)
+                    
+                    // Start road-snap in background (parallel with naming + directions); results applied after route is shown
+                    backgroundPlaceSnapTask?.cancel()
+                    backgroundPlaceSnapTask = Task {
+                        await mapsService.snapPlacesToRoads(filteredResult.places)
+                    }
                     
                     print("\(kRouteGenTag) ROUTE_PHASE phase=markers_start_elapsed elapsed_sec=\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))")
                     print("⏱️ +\(String(format: "%.2f", Date().timeIntervalSince(generateStartTime)))s - Creating markers...")
@@ -4559,6 +4566,51 @@ struct LocalRoutePickerSheet: View {
                             )
                         }
                         RouteCacheService.shared.setSessionRoutes(liveSessionMeta, at: userLocation.coordinate, durationMinutes: selectedDuration)
+                        
+                        // Background place-snap: snap waypoint markers to roads (started in parallel with naming earlier)
+                        let placeSnapPlaceIds = Set(filteredResult.places.map(\.placeId))
+                        let placeSnapOrigin = userLocation.coordinate
+                        if let snapTask = backgroundPlaceSnapTask {
+                            Task {
+                                let snappedPlaces = await snapTask.value
+                                let anyMoved = zip(filteredResult.places, snappedPlaces).contains {
+                                    $0.0.coordinate.latitude != $0.1.coordinate.latitude || $0.0.coordinate.longitude != $0.1.coordinate.longitude
+                                }
+                                guard anyMoved else { return }
+                                let newMarkers = await MainActor.run {
+                                    self.createMarkersFromPlaces(snappedPlaces, origin: placeSnapOrigin)
+                                }
+                                guard !newMarkers.isEmpty else { return }
+                                await MainActor.run {
+                                    guard let idx = self.allRoutes.firstIndex(where: { Set($0.data.places.map(\.placeId)) == placeSnapPlaceIds }) else { return }
+                                    let existing = self.allRoutes[idx].route
+                                    let updated = WalkingRoute(
+                                        name: existing.name,
+                                        description: existing.description,
+                                        durationMinutes: existing.durationMinutes,
+                                        distanceMeters: existing.distanceMeters,
+                                        difficulty: existing.difficulty,
+                                        isIndoor: existing.isIndoor,
+                                        isAccessible: existing.isAccessible,
+                                        landmarks: existing.landmarks,
+                                        icon: existing.icon,
+                                        color: existing.color,
+                                        qrMarkers: newMarkers,
+                                        routeType: existing.routeType,
+                                        trimmed: existing.trimmed,
+                                        walkingDirections: existing.walkingDirections,
+                                        usedOSRMRouting: existing.usedOSRMRouting,
+                                        isFromPrePopulatedDatabase: existing.isFromPrePopulatedDatabase,
+                                        travelToStartMinutes: existing.travelToStartMinutes
+                                    )
+                                    self.allRoutes[idx] = (route: updated, data: self.allRoutes[idx].data, isDeadZoneFallback: self.allRoutes[idx].isDeadZoneFallback, isFromGoogle: self.allRoutes[idx].isFromGoogle)
+                                    if self.currentRouteIndex == idx {
+                                        self.generatedRoute = updated
+                                    }
+                                    print("[WALK_REFRESH] 🛤️ Background place-snap applied — waypoint markers updated for route at index \(idx + 1)")
+                                }
+                            }
+                        }
                         
                         // Road snap in background: update first route when ORS/Google snap completes so polyline and markers follow roads
                         let routeToSnap = displayRoute
@@ -6133,6 +6185,44 @@ struct LocalRoutePickerSheet: View {
             isPreGeneratingRoutes = false
             preGenerationComplete = true
             print("[ROUTE_GEN] ✅ Loading indicator dismissed (\(currentInBand)/\(targetInBandRoutes) in-band reached via \(source))")
+        }
+        
+        // Background place-snap: snap waypoint markers to roads for this route (no delay)
+        let snapIdx = allRoutes.count - 1
+        let snapPlaces = data.places
+        let snapUserCoord = viewModel.locationService.currentLocation?.coordinate ?? route.qrMarkers.first?.coordinate ?? CLLocationCoordinate2D()
+        Task {
+            let snappedPlaces = await GoogleMapsService.shared.snapPlacesToRoads(snapPlaces)
+            let anyMoved = zip(snapPlaces, snappedPlaces).contains {
+                $0.0.coordinate.latitude != $0.1.coordinate.latitude || $0.0.coordinate.longitude != $0.1.coordinate.longitude
+            }
+            guard anyMoved else { return }
+            let newMarkers = await MainActor.run {
+                self.createMarkersFromPlaces(snappedPlaces, origin: snapUserCoord)
+            }
+            guard !newMarkers.isEmpty else { return }
+            await MainActor.run {
+                guard self.allRoutes.indices.contains(snapIdx),
+                      Set(self.allRoutes[snapIdx].data.places.map(\.placeId)) == Set(snapPlaces.map(\.placeId)) else { return }
+                let existing = self.allRoutes[snapIdx].route
+                let updated = WalkingRoute(
+                    name: existing.name, description: existing.description,
+                    durationMinutes: existing.durationMinutes, distanceMeters: existing.distanceMeters,
+                    difficulty: existing.difficulty, isIndoor: existing.isIndoor, isAccessible: existing.isAccessible,
+                    landmarks: existing.landmarks, icon: existing.icon, color: existing.color,
+                    qrMarkers: newMarkers, routeType: existing.routeType, trimmed: existing.trimmed,
+                    walkingDirections: existing.walkingDirections, usedOSRMRouting: existing.usedOSRMRouting,
+                    isFromPrePopulatedDatabase: existing.isFromPrePopulatedDatabase,
+                    travelToStartMinutes: existing.travelToStartMinutes
+                )
+                self.allRoutes[snapIdx] = (route: updated, data: self.allRoutes[snapIdx].data,
+                                           isDeadZoneFallback: self.allRoutes[snapIdx].isDeadZoneFallback,
+                                           isFromGoogle: self.allRoutes[snapIdx].isFromGoogle)
+                if self.currentRouteIndex == snapIdx {
+                    self.generatedRoute = updated
+                }
+                print("[WALK_REFRESH] 🛤️ Background place-snap applied — markers updated for '\(existing.name)' at index \(snapIdx + 1)")
+            }
         }
         
         return true
