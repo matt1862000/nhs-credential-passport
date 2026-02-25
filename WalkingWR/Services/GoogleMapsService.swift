@@ -933,7 +933,7 @@ class GoogleMapsService: ObservableObject {
     // Skip OSRM after consecutive failures to avoid wasting time on a dead service
     private var osrmConsecutiveFailures = 0
     private var osrmDisabledUntil: Date?
-    private let osrmCircuitBreakerThreshold = 2       // Trip after 2 consecutive failures
+    private let osrmCircuitBreakerThreshold = 3       // Trip after 3 consecutive failures (was 2 — reduce false trips from transient timeouts)
     private let osrmCooldownSeconds: TimeInterval = 120 // Skip OSRM for 2 minutes after trip
     
     /// v2.1: When true, bypass OSRM and always use MapKit (set for user-initiated +1 routes)
@@ -5678,35 +5678,42 @@ class GoogleMapsService: ObservableObject {
         }
         
         // Walking only: use "foot" profile. No driving — we only want walking directions.
-        // "walking" doesn't exist on the public OSRM server; "foot" is correct. Timeout 3s.
+        // "walking" doesn't exist on the public OSRM server; "foot" is correct.
+        // v2.2: Timeout 10s and retry once to reduce false circuit-breaker trips from transient timeouts.
         let profilesToTry = ["foot"]
+        let timeout: TimeInterval = 10
         var lastError: Error?
         for profile in profilesToTry {
             let urlString = "https://router.project-osrm.org/route/v1/\(profile)/\(coordsPath)?overview=full&geometries=polyline"
             guard let url = URL(string: urlString) else { continue }
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 3  // v2.1: Reduced from 10s — OSRM responds in <1s when healthy
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { continue }
-                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-                if let code = json["code"] as? String, code != "Ok" { continue }
-                guard let routes = json["routes"] as? [[String: Any]],
-                      let firstRoute = routes.first,
-                      let distance = firstRoute["distance"] as? Double,
-                      let duration = firstRoute["duration"] as? Double,
-                      let geometry = firstRoute["geometry"] as? String,
-                      distance > 0 else { continue }
-                let polylinePoints = decodePolyline(geometry)
-                if polylinePoints.isEmpty { continue }
-                recordOSRMSuccess()
-                return (distance: Int(distance), duration: Int(duration), polyline: polylinePoints)
-            } catch {
-                lastError = error
-                continue
+            for attempt in 1...2 {
+                var request = URLRequest(url: url)
+                request.timeoutInterval = timeout
+                do {
+                    let (data, response) = try await URLSession.shared.data(for: request)
+                    guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else { continue }
+                    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                    if let code = json["code"] as? String, code != "Ok" { continue }
+                    guard let routes = json["routes"] as? [[String: Any]],
+                          let firstRoute = routes.first,
+                          let distance = firstRoute["distance"] as? Double,
+                          let duration = firstRoute["duration"] as? Double,
+                          let geometry = firstRoute["geometry"] as? String,
+                          distance > 0 else { continue }
+                    let polylinePoints = decodePolyline(geometry)
+                    if polylinePoints.isEmpty { continue }
+                    recordOSRMSuccess()
+                    return (distance: Int(distance), duration: Int(duration), polyline: polylinePoints)
+                } catch {
+                    lastError = error
+                    if attempt == 1 {
+                        print("🗺️ OSRM: attempt \(attempt) failed - \(error.localizedDescription), retrying...")
+                    }
+                    continue
+                }
             }
         }
-        // Foot profile failed — record for circuit breaker
+        // Foot profile failed after retries — record for circuit breaker
         recordOSRMFailure()
         if let err = lastError {
             print("🗺️ OSRM: foot profile failed - \(err.localizedDescription)")
@@ -7157,15 +7164,25 @@ class GoogleMapsService: ObservableObject {
     ///   - destination: End point (usually same as origin for round-trips)
     /// - Returns: Array of WalkingDirection for turn-by-turn navigation
     /// v2.1.6: Get MapKit directions with waypoint-specific arrival instructions
+    /// - Parameter waypointRoadNames: Optional road name per waypoint (e.g. from marker.location). When set, inserts "Turn onto [road]" before "Arrive at Waypoint N" so directions read clearly (e.g. "Turn onto Brandy Carr Road" then "Arrive at Waypoint 1 (Oriental Chef)").
     func getMapKitDirectionsForRoute(
         origin: CLLocationCoordinate2D,
         waypoints: [CLLocationCoordinate2D],
         destination: CLLocationCoordinate2D,
-        waypointNames: [String] = []
+        waypointNames: [String] = [],
+        waypointRoadNames: [String?] = []
     ) async -> [WalkingDirection] {
         // v1.9.25: Acquire semaphore to prevent concurrent MapKit calls
         await rateLimiter.acquire()
         defer { Task { await rateLimiter.release() } }
+        
+        /// If we have a road name for this waypoint and the previous step doesn't mention it, insert "Turn onto [road]" before the arrival so directions read e.g. "Turn left onto Hawthorn Cl, Turn onto Brandy Carr Road, Arrive at Waypoint 1 (Oriental Chef)".
+        func insertTurnOntoRoadIfNeeded(waypointIndex: Int) {
+            guard waypointIndex < waypointRoadNames.count,
+                  let road = waypointRoadNames[waypointIndex], !road.isEmpty,
+                  let last = allDirections.last, !last.instruction.localizedCaseInsensitiveContains(road) else { return }
+            allDirections.append(WalkingDirection(instruction: "Turn onto \(road)", distance: "", distanceMeters: 0, duration: "", maneuver: "turn"))
+        }
         
         var allDirections: [WalkingDirection] = []
         
@@ -7241,6 +7258,9 @@ class GoogleMapsService: ObservableObject {
                     var maneuver = extractManeuverType(from: step.instructions)
                     
                     var instruction = step.instructions
+                    // MapKit sometimes appends "Restricted-usage road" with no space (e.g. "Hawthorn ClRestricted-usage road")
+                    instruction = instruction.replacingOccurrences(of: "Restricted-usage road", with: " (restricted-usage road)")
+                    instruction = instruction.replacingOccurrences(of: "restricted-usage road", with: " (restricted-usage road)")
                     let isLastStepOfLeg = stepIndex == lastStepWithInstructions
                     
                     // v2.1.6: Always replace last step of waypoint leg with waypoint name (API sometimes omits "arrival" phrasing)
@@ -7249,6 +7269,8 @@ class GoogleMapsService: ObservableObject {
                         if isReturnLeg {
                             instruction = "Return to starting point"
                         } else if i < waypointNames.count {
+                            // v2.2: Insert "Turn onto [road]" before arrival when we know the waypoint is on a specific road (e.g. Oriental Chef on Brandy Carr Road)
+                            insertTurnOntoRoadIfNeeded(waypointIndex: i)
                             let waypointIndex = i + 1
                             let waypointName = waypointNames[i]
                             // v2.2: Simplified — no left/right side, just "Arrive at Waypoint"
@@ -7267,8 +7289,9 @@ class GoogleMapsService: ObservableObject {
                 }
                 // v2.2: If this is a waypoint leg and we didn't add "Arrive at Waypoint N", inject it (e.g. first leg had 0 steps or last step had empty instructions)
                 if !isReturnLeg, i < waypointNames.count {
-                    let waypointArrival = "Arrive at Waypoint \(i + 1) (\(waypointNames[i]))"
                     if allDirections.isEmpty || !allDirections.last!.instruction.contains("Arrive at Waypoint \(i + 1)") {
+                        insertTurnOntoRoadIfNeeded(waypointIndex: i)
+                        let waypointArrival = "Arrive at Waypoint \(i + 1) (\(waypointNames[i]))"
                         allDirections.append(WalkingDirection(instruction: waypointArrival, distance: "", distanceMeters: 0, duration: "", maneuver: "arrive"))
                     }
                 }
@@ -7276,6 +7299,7 @@ class GoogleMapsService: ObservableObject {
                 print("🍎 ⏱️ MapKit timeout for leg \(i+1) after retries - continuing with other legs")
                 // v2.2: Inject waypoint arrival so we don't lose "Waypoint 1" when first leg fails
                 if !isReturnLeg, i < waypointNames.count {
+                    insertTurnOntoRoadIfNeeded(waypointIndex: i)
                     let waypointArrival = "Arrive at Waypoint \(i + 1) (\(waypointNames[i]))"
                     allDirections.append(WalkingDirection(instruction: waypointArrival, distance: "", distanceMeters: 0, duration: "", maneuver: "arrive"))
                 }
@@ -7284,6 +7308,7 @@ class GoogleMapsService: ObservableObject {
                 print("🍎 MapKit directions failed for leg \(i): \(error.localizedDescription)")
                 // v2.2: Inject waypoint arrival so we don't lose "Waypoint 1" when first leg fails
                 if !isReturnLeg, i < waypointNames.count {
+                    insertTurnOntoRoadIfNeeded(waypointIndex: i)
                     let waypointArrival = "Arrive at Waypoint \(i + 1) (\(waypointNames[i]))"
                     allDirections.append(WalkingDirection(instruction: waypointArrival, distance: "", distanceMeters: 0, duration: "", maneuver: "arrive"))
                 }
@@ -7416,11 +7441,13 @@ class GoogleMapsService: ObservableObject {
         // Get fresh MapKit directions
         let directionsStartTime = Date()
         let waypointNames = route.qrMarkers.map { $0.name }
+        let waypointRoadNames = route.qrMarkers.map { extractRoadName(from: $0.location) }
         let freshDirections = await getMapKitDirectionsForRoute(
             origin: userLocation,
             waypoints: waypoints,
             destination: userLocation,  // Round trip
-            waypointNames: waypointNames
+            waypointNames: waypointNames,
+            waypointRoadNames: waypointRoadNames
         )
         let directionsElapsed = Date().timeIntervalSince(directionsStartTime)
         print("⏱️ [ROUTE REFRESH] [\(timeString)]   getMapKitDirectionsForRoute() took \(String(format: "%.2f", directionsElapsed))s")
@@ -7569,17 +7596,36 @@ class GoogleMapsService: ObservableObject {
             }
         }
         
-        // Encode the fresh polyline
-        let freshEncodedPolyline = encodePolyline(freshPolylinePoints)
-        let durationMinutes = max(1, totalDuration / 60)
-        let pointsPerKm = totalDistance > 0 ? Double(freshPolylinePoints.count) / (Double(totalDistance) / 1000.0) : 0
+        // v2.2: If MapKit returned a very sparse polyline (can look like it cuts across fields), try ORS for geometry so the line follows roads.
+        var finalPolylinePoints = freshPolylinePoints
+        var finalDistance = totalDistance
+        var finalDuration = totalDuration
+        let sparseThreshold = 25
+        if freshPolylinePoints.count < sparseThreshold && canUseOpenRouteService && !waypoints.isEmpty {
+            do {
+                let orsResult = try await getOpenRouteServiceWalkingDirections(origin: userLocation, destination: userLocation, waypoints: waypoints)
+                if orsResult.polyline.count > freshPolylinePoints.count {
+                    finalPolylinePoints = orsResult.polyline
+                    finalDistance = orsResult.distance
+                    finalDuration = orsResult.duration
+                    print("✅ [SPARSE MAPKIT] Replaced with ORS polyline: \(orsResult.polyline.count) points (was \(freshPolylinePoints.count)) — avoids off-road look")
+                }
+            } catch {
+                print("⚠️ [SPARSE MAPKIT] ORS geometry fallback failed: \(error.localizedDescription)")
+            }
+        }
+        
+        // Encode the final polyline
+        let freshEncodedPolyline = encodePolyline(finalPolylinePoints)
+        let durationMinutes = max(1, finalDuration / 60)
+        let pointsPerKm = finalDistance > 0 ? Double(finalPolylinePoints.count) / (Double(finalDistance) / 1000.0) : 0
         
         print("🍎 ═══════════════════════════════════════════════════════")
         print("🍎 REFRESH COMPLETE (MapKit Fallback)")
         print("🍎   ⏱️  Duration: \(durationMinutes)min")
-        print("🍎   📏 Distance: \(totalDistance)m")
+        print("🍎   📏 Distance: \(finalDistance)m")
         print("🍎   🧭 Directions: \(freshDirections.count) steps")
-        print("🍎   📐 Polyline: \(freshEncodedPolyline.count) chars → \(freshPolylinePoints.count) points")
+        print("🍎   📐 Polyline: \(freshEncodedPolyline.count) chars → \(finalPolylinePoints.count) points")
         print("🍎   📐 Point density: \(String(format: "%.1f", pointsPerKm)) points/km")
         if pointsPerKm < 20 {
             print("🍎   ⚠️  LOW DENSITY - may not follow roads precisely")
@@ -7591,7 +7637,7 @@ class GoogleMapsService: ObservableObject {
             name: route.name,
             description: route.description,
             durationMinutes: durationMinutes,
-            distanceMeters: totalDistance > 0 ? totalDistance : route.distanceMeters,
+            distanceMeters: finalDistance > 0 ? finalDistance : route.distanceMeters,
             difficulty: route.difficulty,
             isIndoor: route.isIndoor,
             isAccessible: route.isAccessible,
@@ -8737,7 +8783,28 @@ class GoogleMapsService: ObservableObject {
                     updatedMarkers.append(marker)
                 }
             }
-            let directionsToUse = freshDirections.isEmpty ? route.walkingDirections : freshDirections
+            var directionsToUse = freshDirections.isEmpty ? route.walkingDirections : freshDirections
+            // v2.2: When Google returns only waypoint-arrival steps (no street names like Kirkhamgate Villas / Hawthorn Road), use MapKit for full turn-by-turn while keeping Google polyline
+            let waypointCount = route.qrMarkers.count
+            let onlyArrivalSteps = directionsToUse.allSatisfy { dir in
+                let t = dir.instruction
+                return t.contains("Arrive at Waypoint") || t.contains("Return to starting point")
+            }
+            if waypointCount >= 1 && directionsToUse.count <= waypointCount + 1 && onlyArrivalSteps,
+               !waypoints.isEmpty {
+                let mapKitDirs = await getMapKitDirectionsForRoute(
+                    origin: userLocation,
+                    waypoints: waypoints,
+                    destination: userLocation,
+                    waypointNames: route.qrMarkers.map { $0.name },
+                    waypointRoadNames: route.qrMarkers.map { extractRoadName(from: $0.location) }
+                )
+                if mapKitDirs.count > directionsToUse.count {
+                    let originalCount = directionsToUse.count
+                    directionsToUse = mapKitDirs
+                    print("WAYPOINT_DIAG fetchGoogleDirections | Google had only \(originalCount) arrival steps — using MapKit turn-by-turn (\(mapKitDirs.count) steps) for street names")
+                }
+            }
             // #region agent log
             let hasWaypointInDirs = directionsToUse.contains(where: { $0.instruction.contains("Waypoint") })
             _agentLogGM("GoogleMapsService:fetchGoogleDirections:return", "returning route", [
@@ -8774,6 +8841,46 @@ class GoogleMapsService: ObservableObject {
             lastGoogleDirectionsErrorStatus = "NETWORK_ERROR"
             return nil
         }
+    }
+    
+    /// When the route has only waypoint-arrival steps (no street names), fetches MapKit turn-by-turn and returns a new route with the same polyline but full directions. Returns nil if directions are not minimal or MapKit fails.
+    func routeWithMapKitDirectionsIfMinimal(route: WalkingRoute, userLocation: CLLocationCoordinate2D) async -> WalkingRoute? {
+        let dirs = route.walkingDirections
+        let waypointCount = route.qrMarkers.count
+        guard waypointCount >= 1, dirs.count <= waypointCount + 1 else { return nil }
+        let onlyArrivalSteps = dirs.allSatisfy { d in
+            d.instruction.contains("Arrive at Waypoint") || d.instruction.contains("Return to starting point")
+        }
+        guard onlyArrivalSteps else { return nil }
+        let waypoints = route.qrMarkers.map { $0.coordinate }
+        guard !waypoints.isEmpty else { return nil }
+        let mapKitDirs = await getMapKitDirectionsForRoute(
+            origin: userLocation,
+            waypoints: waypoints,
+            destination: userLocation,
+            waypointNames: route.qrMarkers.map { $0.name },
+            waypointRoadNames: route.qrMarkers.map { extractRoadName(from: $0.location) }
+        )
+        guard mapKitDirs.count > dirs.count else { return nil }
+        return WalkingRoute(
+            name: route.name,
+            description: route.description,
+            durationMinutes: route.durationMinutes,
+            distanceMeters: route.distanceMeters,
+            difficulty: route.difficulty,
+            isIndoor: route.isIndoor,
+            isAccessible: route.isAccessible,
+            landmarks: route.landmarks,
+            icon: route.icon,
+            color: route.color,
+            qrMarkers: route.qrMarkers,
+            routeType: route.routeType,
+            trimmed: route.trimmed,
+            walkingDirections: mapKitDirs,
+            usedOSRMRouting: route.usedOSRMRouting,
+            isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase,
+            travelToStartMinutes: route.travelToStartMinutes
+        )
     }
     
     /// Optimistic hybrid: Google Directions with raw waypoints only (no OSM snap). Use for fast first render.
@@ -9122,11 +9229,13 @@ class GoogleMapsService: ObservableObject {
         
         // Get MapKit directions
         let waypointNames = route.qrMarkers.map { $0.name }
+        let waypointRoadNames = route.qrMarkers.map { extractRoadName(from: $0.location) }
         let mapKitDirections = await getMapKitDirectionsForRoute(
             origin: origin,
             waypoints: waypoints,
             destination: origin,
-            waypointNames: waypointNames
+            waypointNames: waypointNames,
+            waypointRoadNames: waypointRoadNames
         )
         
         // Get MapKit polyline
@@ -9210,6 +9319,49 @@ class GoogleMapsService: ObservableObject {
             qrMarkers: updatedMarkers,
             routeType: route.routeType,
             trimmed: mapKitPolyline,
+            walkingDirections: mapKitDirections
+        )
+    }
+    
+    /// v2.2: When Google had restricted roads, keep Google's polyline and use MapKit for directions only (avoids off-road-looking MapKit geometry).
+    /// Returns nil if pending state is missing or MapKit directions fail. Pending state is only cleared on success so caller can try getMapKitFallbackRoute if this returns nil.
+    func getMapKitDirectionsOnlyFallback(for route: WalkingRoute) async -> WalkingRoute? {
+        guard lastRouteHadRestrictedRoads,
+              let waypoints = pendingMapKitFallbackWaypoints,
+              let origin = pendingMapKitFallbackOrigin else {
+            return nil
+        }
+        let waypointNames = route.qrMarkers.map { $0.name }
+        let waypointRoadNames = route.qrMarkers.map { extractRoadName(from: $0.location) }
+        let mapKitDirections = await getMapKitDirectionsForRoute(
+            origin: origin,
+            waypoints: waypoints,
+            destination: origin,
+            waypointNames: waypointNames,
+            waypointRoadNames: waypointRoadNames
+        )
+        guard !mapKitDirections.isEmpty else {
+            print("⚠️ [MAPKIT DIRECTIONS-ONLY] MapKit directions failed — caller may use full MapKit fallback")
+            return nil
+        }
+        pendingMapKitFallbackWaypoints = nil
+        pendingMapKitFallbackOrigin = nil
+        lastRouteHadRestrictedRoads = false
+        print("✅ [MAPKIT DIRECTIONS-ONLY] Keeping Google polyline (\(route.routePath.count) points), using MapKit for \(mapKitDirections.count) directions")
+        return WalkingRoute(
+            name: route.name,
+            description: route.description,
+            durationMinutes: route.durationMinutes,
+            distanceMeters: route.distanceMeters,
+            difficulty: route.difficulty,
+            isIndoor: route.isIndoor,
+            isAccessible: route.isAccessible,
+            landmarks: route.landmarks,
+            icon: route.icon,
+            color: route.color,
+            qrMarkers: route.qrMarkers,
+            routeType: route.routeType,
+            trimmed: route.trimmed,
             walkingDirections: mapKitDirections
         )
     }

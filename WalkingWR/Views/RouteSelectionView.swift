@@ -430,7 +430,7 @@ struct RouteSelectionView: View {
                 let previewTargetMin = route.durationMinutes
                 let capped = refreshed.withDurationSanityCap(targetDurationMinutes: previewTargetMin)
                 await MainActor.run {
-                    viewModel.updateCurrentRoute(capped, sourceIsGoogle: true, caller: "safetyNet_mainView")
+                    viewModel.updateCurrentRoute(capped, sourceIsGoogle: true, caller: "safetyNet_mainView", displayPolylineSource: "Google")
                     print("DIRECTIONS | [SAFETY NET] ✅ Google route applied")
                 }
             } else {
@@ -3086,7 +3086,7 @@ struct LocalRoutePickerSheet: View {
                         await MainActor.run {
                             if raceState.walkStarted {
                                 if !raceState.googleApplied {
-                                    viewModel.updateCurrentRoute(mapKitRoute, caller: "mapkit_preview_after_lets_go")
+                                    viewModel.updateCurrentRoute(mapKitRoute, caller: "mapkit_preview_after_lets_go", displayPolylineSource: "MapKit")
                                     print("DIRECTIONS | MapKit (preview) finished after Let's Go — applied (Google not yet)")
                                 } else {
                                     print("DIRECTIONS | MapKit (preview) finished after Let's Go — ignored (Google already applied)")
@@ -3127,9 +3127,14 @@ struct LocalRoutePickerSheet: View {
                                 return
                             }
                             var routeToApply = refreshed
-                            if mapsService.lastRouteHadRestrictedRoads, let mapKitFallback = await mapsService.getMapKitFallbackRoute(for: refreshed) {
-                                routeToApply = mapKitFallback
-                                print("TIME_SOURCE | PREVIEW: Google had restricted roads — using MapKit fallback \(mapKitFallback.durationMinutes) min for preview")
+                            if mapsService.lastRouteHadRestrictedRoads {
+                                if let directionsOnly = await mapsService.getMapKitDirectionsOnlyFallback(for: refreshed) {
+                                    routeToApply = directionsOnly
+                                    print("TIME_SOURCE | PREVIEW: Google had restricted roads — keeping Google polyline, MapKit directions for preview")
+                                } else if let mapKitFallback = await mapsService.getMapKitFallbackRoute(for: refreshed) {
+                                    routeToApply = mapKitFallback
+                                    print("TIME_SOURCE | PREVIEW: Google had restricted roads — using MapKit fallback \(mapKitFallback.durationMinutes) min for preview")
+                                }
                             }
                             var updatedData = GeneratedRoute(
                                 places: firstDataForGoogle.places,
@@ -4777,7 +4782,7 @@ struct LocalRoutePickerSheet: View {
                         await MainActor.run {
                             if liveRaceState.walkStarted {
                                 if !liveRaceState.googleApplied {
-                                    viewModel.updateCurrentRoute(mapKitRoute, caller: "mapkit_live_after_lets_go")
+                                    viewModel.updateCurrentRoute(mapKitRoute, caller: "mapkit_live_after_lets_go", displayPolylineSource: "MapKit")
                                     print("DIRECTIONS | MapKit (live) finished after Let's Go — applied (Google not yet)")
                                 }
                             } else {
@@ -5048,7 +5053,7 @@ struct LocalRoutePickerSheet: View {
         // When the route being started came from Google, set pill so it shows "X mins left" and we skip refresh below
         let startedRouteIsFromGoogle = currentRouteIndex < allRoutes.count && allRoutes[currentRouteIndex].isFromGoogle
         if startedRouteIsFromGoogle {
-            viewModel.updateCurrentRoute(route, sourceIsGoogle: true, caller: "lets_go_initial_from_google")
+            viewModel.updateCurrentRoute(route, sourceIsGoogle: true, caller: "lets_go_initial_from_google", displayPolylineSource: "Google")
         }
         
         // Show map right away
@@ -5110,34 +5115,86 @@ struct LocalRoutePickerSheet: View {
                 return
             }
             
-            // Skip refresh when route was already Google-validated in preview (same route and session) — saves one API call.
+            // When route was already Google-validated in preview we skip immediate refresh, but force one after 30s and retry every 30s until success (or walk ends).
+            let forceRefreshDelaySeconds: UInt64 = 30
+            var routeToRefresh = route
+            var userLocationToUse: CLLocationCoordinate2D? = userLocation
+            var refreshedRoute: WalkingRoute? = nil
+            var googleStart: Date? = nil
             if wasFromGoogle {
-                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_skipped reason=already_validated_in_preview (using current route)")
-                print("DIRECTIONS | [\(taskTimeString)] ✅ Using preview route (already Google-validated)")
+                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_skipped reason=already_validated_in_preview (will force refresh in \(forceRefreshDelaySeconds)s, retry every \(forceRefreshDelaySeconds)s until success)")
+                print("DIRECTIONS | [\(taskTimeString)] ✅ Using preview route now — force refresh in \(forceRefreshDelaySeconds)s, then retry until success")
+                // v2.2: If preview route has only waypoint-arrival steps (no street names), augment with MapKit turn-by-turn
+                if let augmented = await mapsService.routeWithMapKitDirectionsIfMinimal(route: route, userLocation: userLocation) {
+                    await MainActor.run {
+                        viewModel.updateCurrentRoute(augmented, caller: "lets_go_preview_minimal_dirs_augmented", displayPolylineSource: "Google (directions: MapKit)")
+                        print("DIRECTIONS | [\(taskTimeString)] ✅ Augmented minimal directions with MapKit turn-by-turn (\(augmented.walkingDirections.count) steps)")
+                    }
+                }
+                var attempt = 0
+                while true {
+                    try? await Task.sleep(nanoseconds: forceRefreshDelaySeconds * 1_000_000_000)
+                    let stillActive = await MainActor.run { viewModel.walkSession.isActive }
+                    guard stillActive else {
+                        print("DIRECTIONS | [\(formatter.string(from: Date()))] Force refresh stopped — walk ended")
+                        break
+                    }
+                    attempt += 1
+                    let current = await MainActor.run { viewModel.walkSession.currentRoute }
+                    if let current = current { routeToRefresh = current }
+                    userLocationToUse = await MainActor.run { locationService.currentLocation?.coordinate }
+                    for _ in 0..<10 {
+                        if userLocationToUse != nil { break }
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        userLocationToUse = await MainActor.run { locationService.currentLocation?.coordinate }
+                    }
+                    guard let loc = userLocationToUse else {
+                        print("DIRECTIONS | [\(formatter.string(from: Date()))] Force refresh attempt \(attempt): no location — retrying in \(forceRefreshDelaySeconds)s")
+                        continue
+                    }
+                    if let r = await mapsService.refreshRouteWithGoogleOnly(route: routeToRefresh, userLocation: loc) {
+                        refreshedRoute = r
+                        print("DIRECTIONS | [\(formatter.string(from: Date()))] 🌐 Force refresh succeeded (attempt \(attempt))")
+                        break
+                    }
+                    print("DIRECTIONS | [\(formatter.string(from: Date()))] Force refresh attempt \(attempt) failed — retrying in \(forceRefreshDelaySeconds)s")
+                }
+                if refreshedRoute == nil {
+                    print("DIRECTIONS | [\(formatter.string(from: Date()))] Force refresh gave up (walk ended or no success)")
+                    return
+                }
+            }
+            guard let locationForRefresh = userLocationToUse else {
+                print("DIRECTIONS | [\(taskTimeString)] ❌ No location for refresh")
                 return
             }
-            
-            let googleStart = Date()
-            print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_start (Google refresh on Let's Go)")
-            print("DIRECTIONS | [\(taskTimeString)] 🌐 Google refresh starting...")
-            var refreshedRoute: WalkingRoute? = await mapsService.refreshRouteWithGoogleOnly(
-                route: route,
-                userLocation: userLocation
-            )
-            // One retry on transient failure (e.g. network) so we always show Google when we can; skip retry when API rejected
-            if refreshedRoute == nil && !mapsService.isLastGoogleDirectionsFailureAPIRefusal {
-                print("DIRECTIONS | [\(taskTimeString)] 🔄 Transient failure (no API rejection) — retrying Google once...")
-                try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s
-                refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(route: route, userLocation: userLocation)
-            }
-            if refreshedRoute == nil && mapsService.isLastGoogleDirectionsFailureAPIRefusal {
-                print("DIRECTIONS | [\(taskTimeString)] ⚠️ Using preview route (API rejection: \(mapsService.lastGoogleDirectionsErrorStatus ?? "unknown"))")
+            if !wasFromGoogle {
+                googleStart = Date()
+                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_start (Google refresh on Let's Go)")
+                print("DIRECTIONS | [\(taskTimeString)] 🌐 Google refresh starting...")
+                refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(
+                    route: routeToRefresh,
+                    userLocation: locationForRefresh
+                )
+                // One retry on transient failure (e.g. network)
+                if refreshedRoute == nil && !mapsService.isLastGoogleDirectionsFailureAPIRefusal {
+                    print("DIRECTIONS | [\(taskTimeString)] 🔄 Transient failure (no API rejection) — retrying Google once...")
+                    try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s
+                    refreshedRoute = await mapsService.refreshRouteWithGoogleOnly(route: routeToRefresh, userLocation: locationForRefresh)
+                }
+                if refreshedRoute == nil && mapsService.isLastGoogleDirectionsFailureAPIRefusal {
+                    print("DIRECTIONS | [\(taskTimeString)] ⚠️ Using preview route (API rejection: \(mapsService.lastGoogleDirectionsErrorStatus ?? "unknown"))")
+                }
             }
             if let refreshedRoute = refreshedRoute {
-                let googleElapsed = Date().timeIntervalSince(googleStart)
-                print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_done elapsed=\(String(format: "%.2f", googleElapsed))s")
+                if let start = googleStart {
+                    let googleElapsed = Date().timeIntervalSince(start)
+                    print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_done elapsed=\(String(format: "%.2f", googleElapsed))s")
+                } else {
+                    print("[WALK_REFRESH] REFRESH_SOURCE | [\(formatter.string(from: Date()))] step=google_done (force refresh)")
+                }
                 // Cap refreshed duration so it matches preview: avoid showing 45 min when preview was 8 min (same sanity cap as elsewhere, using preview duration as target)
-                let previewTargetMin = route.durationMinutes
+                let previewTargetMin = routeToRefresh.durationMinutes
                 let cappedRefreshedRoute = refreshedRoute.withDurationSanityCap(targetDurationMinutes: previewTargetMin)
                 if cappedRefreshedRoute.durationMinutes != refreshedRoute.durationMinutes {
                     print("DIRECTIONS | [\(formatter.string(from: Date()))] Duration capped for display: Google=\(refreshedRoute.durationMinutes)min → \(cappedRefreshedRoute.durationMinutes)min (preview was \(previewTargetMin)min)")
@@ -5149,32 +5206,32 @@ struct LocalRoutePickerSheet: View {
                 let overThreshold = max(1, Int(ceil(Double(targetMin) * 0.10)))
                 if refreshedRoute.durationMinutes > targetMin + overThreshold,
                    refreshedRoute.qrMarkers.count >= 2,
-                   route.qrMarkers.count >= 2 {
+                   routeToRefresh.qrMarkers.count >= 2 {
                     var bestShortened: WalkingRoute? = nil
                     var bestShortenedMins = Int.max
-                    for dropIndex in 0..<route.qrMarkers.count {
-                        let keptMarkers = route.qrMarkers.enumerated().filter { $0.offset != dropIndex }.map(\.element)
+                    for dropIndex in 0..<routeToRefresh.qrMarkers.count {
+                        let keptMarkers = routeToRefresh.qrMarkers.enumerated().filter { $0.offset != dropIndex }.map(\.element)
                         guard keptMarkers.count >= 1 else { continue }
                         let routeWithDropped = WalkingRoute(
-                            name: route.name,
-                            description: route.description,
-                            durationMinutes: route.durationMinutes,
-                            distanceMeters: route.distanceMeters,
-                            difficulty: route.difficulty,
-                            isIndoor: route.isIndoor,
-                            isAccessible: route.isAccessible,
+                            name: routeToRefresh.name,
+                            description: routeToRefresh.description,
+                            durationMinutes: routeToRefresh.durationMinutes,
+                            distanceMeters: routeToRefresh.distanceMeters,
+                            difficulty: routeToRefresh.difficulty,
+                            isIndoor: routeToRefresh.isIndoor,
+                            isAccessible: routeToRefresh.isAccessible,
                             landmarks: ["Start"] + keptMarkers.map { $0.name } + ["Return"],
-                            icon: route.icon,
-                            color: route.color,
+                            icon: routeToRefresh.icon,
+                            color: routeToRefresh.color,
                             qrMarkers: keptMarkers,
-                            routeType: route.routeType,
+                            routeType: routeToRefresh.routeType,
                             encodedPolyline: nil,
                             walkingDirections: [],
                             usedOSRMRouting: false,
-                            isFromPrePopulatedDatabase: route.isFromPrePopulatedDatabase,
-                            travelToStartMinutes: route.travelToStartMinutes
+                            isFromPrePopulatedDatabase: routeToRefresh.isFromPrePopulatedDatabase,
+                            travelToStartMinutes: routeToRefresh.travelToStartMinutes
                         )
-                        if let shortened = await mapsService.refreshRouteWithGoogleOnly(route: routeWithDropped, userLocation: userLocation),
+                        if let shortened = await mapsService.refreshRouteWithGoogleOnly(route: routeWithDropped, userLocation: locationForRefresh),
                            shortened.durationMinutes <= targetMin + 3,
                            shortened.durationMinutes < bestShortenedMins {
                             bestShortened = shortened
@@ -5194,18 +5251,25 @@ struct LocalRoutePickerSheet: View {
                     refreshRaceState.googleApplied = true
                     // Smooth transition: avoid polyline flash when swapping preview → Google route
                     withAnimation(.easeInOut(duration: 0.25)) {
-                        viewModel.updateCurrentRoute(routeToApply, sourceIsGoogle: true, caller: "lets_go_google_refresh")
+                        viewModel.updateCurrentRoute(routeToApply, sourceIsGoogle: true, caller: "lets_go_google_refresh", displayPolylineSource: "Google")
                     }
                     isRouteRefreshed = true
                     print("DIRECTIONS | [\(formatter.string(from: Date()))] ✅ Google route applied (capped to preview \(routeToApply.durationMinutes)min; raw Google was \(refreshedRoute.durationMinutes)min)")
                 }
                 
                 if mapsService.lastRouteHadRestrictedRoads {
-                    print("DIRECTIONS | Google had restricted roads - fetching MapKit fallback...")
-                    if let mapKitFallback = await mapsService.getMapKitFallbackRoute(for: refreshedRoute) {
+                    // v2.2: Prefer keeping Google polyline and use MapKit for directions only (avoids off-road MapKit geometry)
+                    if let directionsOnly = await mapsService.getMapKitDirectionsOnlyFallback(for: refreshedRoute) {
                         await MainActor.run {
                             withAnimation(.easeInOut(duration: 0.25)) {
-                                viewModel.updateCurrentRoute(mapKitFallback, caller: "mapkit_fallback_restricted_roads")
+                                viewModel.updateCurrentRoute(directionsOnly, caller: "mapkit_directions_only_restricted_roads", displayPolylineSource: "Google (directions: MapKit)")
+                            }
+                            print("DIRECTIONS | ✅ Google polyline kept, MapKit directions applied (restricted roads)")
+                        }
+                    } else if let mapKitFallback = await mapsService.getMapKitFallbackRoute(for: refreshedRoute) {
+                        await MainActor.run {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                viewModel.updateCurrentRoute(mapKitFallback, caller: "mapkit_fallback_restricted_roads", displayPolylineSource: "MapKit")
                             }
                             print("DIRECTIONS | ✅ MapKit fallback applied (restricted roads)")
                         }
@@ -5257,7 +5321,7 @@ struct LocalRoutePickerSheet: View {
                 let previewTargetMin = route.durationMinutes
                 let capped = refreshed.withDurationSanityCap(targetDurationMinutes: previewTargetMin)
                 await MainActor.run {
-                    viewModel.updateCurrentRoute(capped, sourceIsGoogle: true, caller: "safetyNet_localPicker")
+                    viewModel.updateCurrentRoute(capped, sourceIsGoogle: true, caller: "safetyNet_localPicker", displayPolylineSource: "Google")
                     print("DIRECTIONS | [SAFETY NET] ✅ Google route applied")
                 }
             } else {
@@ -6662,7 +6726,7 @@ struct LocalRoutePickerSheet: View {
             // Only update if refreshed route has valid directions (use updateCurrentRoute so pill stays in sync and never reverts to longer duration)
             if newDirections > 0 {
                 print("PILL | caller: MapKit background refresh — route=\(refreshedRoute.durationMinutes)min before: display=\(viewModel.displayDurationMinutesForPill ?? -1) lock=\(viewModel.hasReceivedGoogleRefreshForPill)")
-                viewModel.updateCurrentRoute(refreshedRoute, caller: "mapkit_background_refresh")
+                viewModel.updateCurrentRoute(refreshedRoute, caller: "mapkit_background_refresh", displayPolylineSource: "MapKit")
                 
                 print("⏱️ [BG REFRESH] [\(updateTimeString)] ✅ Route updated successfully!")
                 print("╔═══════════════════════════════════════════════════════════╗")

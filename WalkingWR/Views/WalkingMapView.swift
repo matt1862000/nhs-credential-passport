@@ -8,6 +8,7 @@
 import SwiftUI
 import MapKit
 import Combine
+import UIKit
 
 struct WalkingMapView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
@@ -306,6 +307,94 @@ struct WalkingInfoCard: View {
     }
 }
 
+// MARK: - Route map image for bug dump (MKMapSnapshotter + route overlay)
+private func generateRouteMapImage(routePath: [CLLocationCoordinate2D], waypoints: [CLLocationCoordinate2D]) async -> UIImage? {
+    guard routePath.count >= 2 else { return nil }
+    let size = CGSize(width: 800, height: 600)
+    let scale = await MainActor.run { UIScreen.main.scale }
+    
+    // Region that fits the route with padding
+    let lats = routePath.map(\.latitude)
+    let lons = routePath.map(\.longitude)
+    let minLat = lats.min() ?? 0, maxLat = lats.max() ?? 0
+    let minLon = lons.min() ?? 0, maxLon = lons.max() ?? 0
+    let pad = 0.0015
+    let center = CLLocationCoordinate2D(
+        latitude: (minLat + maxLat) / 2,
+        longitude: (minLon + maxLon) / 2
+    )
+    let span = MKCoordinateSpan(
+        latitudeDelta: max((maxLat - minLat) + pad, 0.002),
+        longitudeDelta: max((maxLon - minLon) + pad, 0.002)
+    )
+    let region = MKCoordinateRegion(center: center, span: span)
+    
+    let options = MKMapSnapshotter.Options()
+    options.region = region
+    options.size = size
+    options.scale = scale
+    options.mapType = .standard
+    
+    return await withCheckedContinuation { continuation in
+        let snapshotter = MKMapSnapshotter(options: options)
+        snapshotter.start { snapshot, error in
+            guard let snapshot = snapshot, error == nil else {
+                continuation.resume(returning: nil)
+                return
+            }
+            let image = snapshot.image
+            UIGraphicsBeginImageContextWithOptions(size, true, scale)
+            defer { UIGraphicsEndImageContext() }
+            guard let ctx = UIGraphicsGetCurrentContext() else {
+                continuation.resume(returning: image)
+                return
+            }
+            image.draw(at: .zero)
+            let pathPoints = routePath.map { snapshot.point(for: $0) }
+            guard pathPoints.count >= 2 else {
+                continuation.resume(returning: image)
+                return
+            }
+            ctx.setStrokeColor(UIColor.systemTeal.cgColor)
+            ctx.setLineWidth(6)
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+            ctx.addLines(between: pathPoints)
+            ctx.strokePath()
+            for (i, wp) in waypoints.enumerated() where i < 3 {
+                let p = snapshot.point(for: wp)
+                ctx.setFillColor(UIColor.orange.cgColor)
+                ctx.fillEllipse(in: CGRect(x: p.x - 8, y: p.y - 8, width: 16, height: 16))
+            }
+            if let composite = UIGraphicsGetImageFromCurrentImageContext() {
+                continuation.resume(returning: composite)
+            } else {
+                continuation.resume(returning: image)
+            }
+        }
+    }
+}
+
+// MARK: - Route Debug Share Sheet (AirDrop, email, clipboard)
+private struct RouteDebugShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    @Binding var isPresented: Bool
+    var onDismiss: (() -> Void)? = nil
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let items = activityItems.isEmpty ? ["No route debug content"] : activityItems
+        print("BUG_BUTTON | RouteDebugShareSheet makeUIViewController — activityItems.count=\(items.count)")
+        let vc = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        vc.completionWithItemsHandler = { _, _, _, _ in
+            isPresented = false
+            onDismiss?()
+        }
+        return vc
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
 // MARK: - Embedded Walk Map View (for inline display)
 struct EmbeddedWalkMapView: View {
     @ObservedObject var viewModel: WaitingRoomViewModel
@@ -390,6 +479,13 @@ struct EmbeddedWalkMapView: View {
     @State private var justResumedAutoFollow: Bool = false {
         didSet { justResumed = justResumedAutoFollow }
     }
+    
+    // Route debug share (bug button): share route/polyline info via AirDrop, email, clipboard
+    @State private var showRouteDebugShare: Bool = false
+    @State private var routeDebugContent: String = ""
+    @State private var routeDebugTextFileURL: URL? = nil  // Temp file so share sheet gets text + image as two items
+    @State private var routeDebugImage: UIImage? = nil
+    @State private var isPreparingRouteDebugShare: Bool = false
     
     // MARK: - Constants
     private let gpsGrace: TimeInterval = 0.3
@@ -734,6 +830,65 @@ struct EmbeddedWalkMapView: View {
             .padding(.horizontal, 12)
             .padding(.top, 8)
             
+            // Bug button: share route/polyline debug info + map image via AirDrop, email, clipboard
+            HStack {
+                Spacer()
+                Button(action: {
+                    print("BUG_BUTTON | tapped — building content and preparing share")
+                    routeDebugContent = buildRouteDebugContent()
+                    routeDebugImage = nil
+                    routeDebugTextFileURL = nil
+                    isPreparingRouteDebugShare = true
+                    Task {
+                        // Write text to temp file so share sheet has both a file and an image (some targets only take one string otherwise)
+                        let dateStr = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-").prefix(19)
+                        let fileName = "WalkingWR_route_debug_\(dateStr).txt"
+                        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+                        let writeOk = (try? routeDebugContent.write(to: tempURL, atomically: true, encoding: .utf8)) != nil
+                        print("BUG_BUTTON | temp file \(writeOk ? "written" : "failed") \(tempURL.lastPathComponent)")
+                        let path = viewModel.walkSession.currentRoute?.routePath ?? []
+                        let waypoints = viewModel.walkSession.currentRoute?.qrMarkers.map(\.coordinate) ?? []
+                        // Wait for map image with 6s timeout so share sheet always appears (snapshot can hang)
+                        let image: UIImage? = await withTaskGroup(of: UIImage?.self) { group in
+                            group.addTask { await generateRouteMapImage(routePath: path, waypoints: waypoints) }
+                            group.addTask { try? await Task.sleep(nanoseconds: 6_000_000_000); return nil as UIImage? }
+                            let first = await group.next() ?? nil
+                            group.cancelAll()
+                            return first ?? nil
+                        }
+                        await MainActor.run {
+                            routeDebugTextFileURL = tempURL
+                            routeDebugImage = image
+                            isPreparingRouteDebugShare = false
+                            showRouteDebugShare = true
+                            print("BUG_BUTTON | share sheet presenting (image=\(image != nil), showRouteDebugShare=\(showRouteDebugShare))")
+                        }
+                    }
+                }) {
+                    ZStack {
+                        Image(systemName: "ladybug.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.orange)
+                            .opacity(isPreparingRouteDebugShare ? 0.5 : 1)
+                        if isPreparingRouteDebugShare {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .orange))
+                                .scaleEffect(0.8)
+                        }
+                    }
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+                    .background(Color.darkCardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
+                }
+                .buttonStyle(.plain)
+                .disabled(isPreparingRouteDebugShare)
+                .accessibilityLabel("Share route debug info and map")
+                .padding(.trailing, 12)
+            }
+            .padding(.top, 4)
+            
             Spacer()
         }
         .allowsHitTesting(true)
@@ -889,6 +1044,18 @@ struct EmbeddedWalkMapView: View {
                 onCancel: {
                     print("🟢 MotionPermissionExplainerSheet: onCancel called")
                     showMotionExplainer = false
+                }
+            )
+        }
+        .sheet(isPresented: $showRouteDebugShare) {
+            RouteDebugShareSheet(
+                activityItems: buildRouteDebugActivityItems(),
+                isPresented: $showRouteDebugShare,
+                onDismiss: {
+                    if let url = routeDebugTextFileURL {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                    routeDebugTextFileURL = nil
                 }
             )
         }
@@ -1499,6 +1666,110 @@ struct EmbeddedWalkMapView: View {
                 resumeAutoFollow()
             }
         }
+    }
+    
+    /// Builds a plain-text debug dump of route, waypoints, polyline, and directions for sharing (AirDrop, email, clipboard).
+    private func buildRouteDebugContent() -> String {
+        var lines: [String] = []
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        lines.append("WalkingWR Route Debug")
+        lines.append("Generated: \(dateFormatter.string(from: Date()))")
+        lines.append("")
+        if let loc = viewModel.locationService.currentLocation {
+            lines.append("Current location: \(String(format: "%.6f", loc.coordinate.latitude)), \(String(format: "%.6f", loc.coordinate.longitude))")
+        } else {
+            lines.append("Current location: (unavailable)")
+        }
+        lines.append("Is showing return route: \(isShowingReturnRoute)")
+        lines.append("Is heading back: \(viewModel.isHeadingBack)")
+        lines.append("")
+        guard let route = viewModel.walkSession.currentRoute else {
+            lines.append("No current route.")
+            return lines.joined(separator: "\n")
+        }
+        lines.append("--- Route ---")
+        lines.append("Name: \(route.name)")
+        lines.append("Duration: \(route.durationMinutes) min, Distance: \(route.distanceMeters) m")
+        lines.append("Has polyline: \(route.hasPolyline), From prepop: \(route.isFromPrePopulatedDatabase)")
+        lines.append("Used OSRM routing: \(route.usedOSRMRouting)")
+        lines.append("")
+        lines.append("--- Waypoints (qrMarkers) ---")
+        for (i, m) in route.qrMarkers.enumerated() {
+            lines.append("\(i + 1). \(m.name) | lat=\(String(format: "%.6f", m.coordinate.latitude)) lng=\(String(format: "%.6f", m.coordinate.longitude)) | id=\(m.id)")
+        }
+        lines.append("")
+        lines.append("--- Polyline ---")
+        if let enc = route.encodedPolyline, !enc.isEmpty {
+            lines.append("Encoded (length \(enc.count) chars): \(enc)")
+            let path = route.routePath
+            lines.append("Decoded points: \(path.count)")
+            lines.append("(Stored polyline is usually ROUND-TRIP: start → waypoints → back to start; points may double back.)")
+            if !path.isEmpty, let firstMarker = route.qrMarkers.first {
+                // Find approximate outbound end index (closest path point to first waypoint)
+                var closestIdx = 0
+                var closestDist = Double.greatestFiniteMagnitude
+                for (i, p) in path.enumerated() {
+                    let d = distanceBetween(firstMarker.coordinate, p)
+                    if d < closestDist { closestDist = d; closestIdx = i }
+                }
+                let outboundEnd = closestIdx
+                if outboundEnd < path.count - 1 {
+                    lines.append("Outbound-only segment (start to first waypoint): points [0..\(outboundEnd)] (\(outboundEnd + 1) points). Return leg: [\(outboundEnd + 1)..\(path.count - 1)].")
+                }
+            }
+            if !path.isEmpty {
+                let sample: [CLLocationCoordinate2D]
+                if path.count <= 10 {
+                    sample = path
+                } else {
+                    sample = Array(path.prefix(5)) + Array(path.suffix(5))
+                }
+                for (i, c) in sample.enumerated() {
+                    let label = path.count <= 10 ? i : (i < 5 ? i : path.count - 10 + i)
+                    lines.append("  [\(label)] \(String(format: "%.6f", c.latitude)), \(String(format: "%.6f", c.longitude))")
+                }
+                if path.count > 10 {
+                    lines.append("  ... (\(path.count - 10) more)")
+                }
+            }
+        } else {
+            lines.append("(no encoded polyline - fallback to straight lines between markers)")
+        }
+        lines.append("")
+        lines.append("--- Walking directions ---")
+        lines.append("Count: \(route.walkingDirections.count)")
+        for (i, d) in route.walkingDirections.prefix(10).enumerated() {
+            lines.append("\(i + 1). \(d.instruction) (\(d.distance))")
+        }
+        if route.walkingDirections.count > 10 {
+            lines.append("... (\(route.walkingDirections.count - 10) more)")
+        }
+        lines.append("")
+        lines.append("--- Progress ---")
+        lines.append("Visited waypoints: \(viewModel.visitedMarkerIds.count)/\(route.qrMarkers.count)")
+        lines.append("")
+        lines.append("--- Diagnostics (console-style, recent) ---")
+        if viewModel.routeDiagnosticsLines.isEmpty {
+            lines.append("(No route-update diagnostics this session — e.g. Display polyline source, caller)")
+        } else {
+            lines.append(contentsOf: viewModel.routeDiagnosticsLines)
+        }
+        return lines.joined(separator: "\n")
+    }
+    
+    /// Items to pass to the share sheet: text file URL (so both text and image are shared) + map image when available.
+    private func buildRouteDebugActivityItems() -> [Any] {
+        var items: [Any] = []
+        if let url = routeDebugTextFileURL, FileManager.default.fileExists(atPath: url.path) {
+            items.append(url)
+        } else {
+            items.append(routeDebugContent)
+        }
+        if let image = routeDebugImage {
+            items.append(image)
+        }
+        return items
     }
     
     // v1.9.0: Auto-zoom to turn intersection when approaching

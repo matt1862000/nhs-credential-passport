@@ -64,6 +64,15 @@ class WaitingRoomViewModel: ObservableObject {
     @Published var isLoadingDelayChangeRoute: Bool = false
     @Published var delayChangeRouteError: String? = nil
     
+    /// v2.2: Recent route diagnostics (polyline source, caller, etc.) for the bug-button debug dump. Appended in updateCurrentRoute; cleared on endWalk.
+    private(set) var routeDiagnosticsLines: [String] = []
+    private let maxRouteDiagnosticsLines = 50
+    private let diagnosticsDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+    
     private static let pillDisplayMinutesKey = "pillDisplayDurationMinutes"
     private static let pillLockKey = "pillHasReceivedGoogleRefresh"
     
@@ -717,12 +726,28 @@ class WaitingRoomViewModel: ObservableObject {
     /// Updates both selectedRoute and walkSession.currentRoute so map refreshes automatically.
     /// When resetDirectionIndex is true (e.g. Head back), directions start from step 0.
     /// - Parameter caller: Short label for logging (e.g. "Let's Go initial") — filter logs by [POLYLINE_UPDATE] to see what triggered each change.
-    func updateCurrentRoute(_ route: WalkingRoute, sourceIsGoogle: Bool = false, resetDirectionIndex: Bool = false, caller: String? = nil) {
+    /// - Parameter displayPolylineSource: When set, logs [ROUTE_DISPLAY] so logs show which provider supplied the displayed polyline (e.g. "Google", "MapKit", "Google (directions: MapKit)").
+    /// Append a line to the in-memory diagnostics buffer (used when user taps the bug button to share console-style info).
+    func appendRouteDiagnostic(_ line: String) {
+        let ts = diagnosticsDateFormatter.string(from: Date())
+        routeDiagnosticsLines.append("[\(ts)] \(line)")
+        if routeDiagnosticsLines.count > maxRouteDiagnosticsLines {
+            routeDiagnosticsLines.removeFirst(routeDiagnosticsLines.count - maxRouteDiagnosticsLines)
+        }
+    }
+    
+    func updateCurrentRoute(_ route: WalkingRoute, sourceIsGoogle: Bool = false, resetDirectionIndex: Bool = false, caller: String? = nil, displayPolylineSource: String? = nil) {
         let incomingMin = route.durationMinutes
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
         let ts = formatter.string(from: Date())
         let callerLabel = caller ?? "unknown"
+        if let source = displayPolylineSource {
+            print("[ROUTE_DISPLAY] Display polyline: \(source)")
+            appendRouteDiagnostic("Display polyline: \(source) | caller=\(callerLabel) | route='\(route.name)' | points=\(route.routePath.count) sourceIsGoogle=\(sourceIsGoogle)")
+        } else {
+            appendRouteDiagnostic("Route update | caller=\(callerLabel) | route='\(route.name)' | points=\(route.routePath.count) sourceIsGoogle=\(sourceIsGoogle)")
+        }
         print("🔄 [POLYLINE_UPDATE] [\(ts)] caller=\(callerLabel) route='\(route.name)' polylinePoints=\(route.routePath.count) directions=\(route.walkingDirections.count) durationMin=\(route.durationMinutes) sourceIsGoogle=\(sourceIsGoogle)")
         print("PILL | updateCurrentRoute ENTRY isActive=\(walkSession.isActive) incoming=\(incomingMin)min display=\(displayDurationMinutesForPill ?? -1) lastKnown=\(lastKnownPillMinutes ?? -1) lock=\(hasReceivedGoogleRefreshForPill) sourceIsGoogle=\(sourceIsGoogle) route.name=\(route.name)")
         selectedRoute = route
@@ -969,6 +994,7 @@ class WaitingRoomViewModel: ObservableObject {
             print("PILL | startWalk: SKIPPED (already active) — pill stays display=\(displayDurationMinutesForPill ?? -1) lock=\(hasReceivedGoogleRefreshForPill)")
             return
         }
+        appendRouteDiagnostic("Walk started | route='\(route.name)' duration=\(routeMin)min waypoints=\(route.qrMarkers.count)")
         
         // v1.6.29: Removed requestWalkPermissions() - no longer request HealthKit here
         // Step tracking is now fully opt-in via the Steps card during the walk
@@ -1232,6 +1258,7 @@ class WaitingRoomViewModel: ObservableObject {
     }
     
     func endWalk(completed: Bool) {
+        routeDiagnosticsLines = [] // Clear so next walk gets fresh diagnostics
         // Log immediately so we can see order vs home arrival / sheet (search for [HOME] and [WALK_LIFECYCLE])
         DebugLogger.shared.log("endWalk(completed: \(completed)) CALLED - showHomeArrivalPrompt=\(showHomeArrivalPrompt) hasReachedHome=\(hasReachedHome)", category: "HOME")
         // v1.9.79: Log walk end
