@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // No output: 'export' — API routes (e.g. /api/ors) require a server. Static export excludes them.
+  // No output: 'export' for normal/Vercel builds (API routes need server). GitHub Actions sets this for static export.
+  ...(process.env.GITHUB_ACTIONS === 'true' && { output: 'export' }),
   images: {
     unoptimized: true,
     remotePatterns: [

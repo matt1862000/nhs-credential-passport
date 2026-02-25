@@ -36,9 +36,17 @@ jobs:
         working-directory: ./website
         run: npm ci
       
+      # Static export cannot include API routes. Move api/ outside app so export succeeds; /api/ors is only used on Vercel.
+      - name: Hide API route for static export
+        run: mv website/src/app/api website/api-backup
+      
       - name: Build
         working-directory: ./website
         run: npm run build
+      
+      - name: Restore API route
+        if: always()
+        run: mv website/api-backup website/src/app/api 2>/dev/null || true
       
       - name: Setup Pages
         uses: actions/configure-pages@v4
