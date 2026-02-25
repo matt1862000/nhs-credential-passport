@@ -49,7 +49,7 @@ export default function TermsOfService() {
               <p>You agree to use the App only for lawful purposes and in accordance with these Terms. You agree not to:</p>
               <ul className="list-disc pl-6 space-y-2">
                 <li>Use the App in any way that violates applicable laws or regulations</li>
-                <li>Attempt to gain unauthorized access to the App or its systems</li>
+                <li>Attempt to gain unauthorised access to the App or its systems</li>
                 <li>Interfere with or disrupt the App's functionality</li>
                 <li>Use the App while driving or operating a vehicle</li>
                 <li>Use the App in a manner that could harm yourself or others</li>
@@ -135,8 +135,8 @@ export default function TermsOfService() {
                 If you have any questions about these Terms, please contact us:
               </p>
               <p className="mt-4">
-                <strong>Email:</strong> support@waitwell.app<br />
-                <strong>Address:</strong> NHS Innovation, Sheffield, UK
+                <strong>Email:</strong> raihan.talukdar@nhs.net<br />
+                <strong>Address:</strong> Sheffield Health Partnership, NHS Foundation Trust, Centre Court, Atlas Way, Sheffield, S4 7QQ
               </p>
             </section>
           </div>

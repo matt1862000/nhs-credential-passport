@@ -33,21 +33,20 @@ export default function Accessibility() {
               <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">Mobile App</h3>
               <p>The WaitWell iOS app includes the following accessibility features:</p>
               <ul className="list-disc pl-6 space-y-2">
-                <li><strong>VoiceOver Support:</strong> Full VoiceOver compatibility for users with visual impairments</li>
-                <li><strong>Dynamic Type:</strong> Support for iOS Dynamic Type, allowing users to adjust text size to their preference</li>
+                <li><strong>Dark Mode:</strong> The app supports dark mode to reduce glare and support users who prefer or need a dark theme</li>
                 <li><strong>High Contrast:</strong> Support for iOS accessibility settings including increased contrast and reduced transparency</li>
-                <li><strong>Color Blindness:</strong> Color choices designed to be distinguishable for users with color vision deficiencies</li>
-                <li><strong>Haptic Feedback:</strong> Tactile feedback for important interactions</li>
+                <li><strong>Colour Blindness:</strong> Colour choices designed to be distinguishable for users with colour vision deficiencies</li>
                 <li><strong>Large Touch Targets:</strong> Interactive elements are sized appropriately for easy tapping</li>
               </ul>
 
               <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">Website</h3>
               <p>Our website includes:</p>
               <ul className="list-disc pl-6 space-y-2">
+                <li><strong>Dark Mode:</strong> Light, dark, and system theme options so you can choose a comfortable appearance</li>
                 <li>Semantic HTML structure for screen reader compatibility</li>
                 <li>Keyboard navigation support</li>
                 <li>Alt text for images</li>
-                <li>Sufficient color contrast ratios</li>
+                <li>Sufficient colour contrast ratios</li>
                 <li>Responsive design that works on various screen sizes</li>
                 <li>Skip to main content link for keyboard users</li>
               </ul>
@@ -59,6 +58,7 @@ export default function Accessibility() {
                 While we strive to ensure accessibility, we are aware that some parts of the app may not be fully accessible. We are working to address these issues:
               </p>
               <ul className="list-disc pl-6 space-y-2">
+                <li>VoiceOver and Dynamic Type are not currently supported in the app; we are working to improve screen reader and text-scaling support</li>
                 <li>Some map visualizations may be challenging for users with visual impairments - we provide text-based alternatives where possible</li>
                 <li>Route navigation relies on visual cues - we are working to enhance audio and haptic feedback</li>
                 <li>Some third-party content may not meet accessibility standards</li>
@@ -71,8 +71,7 @@ export default function Accessibility() {
                 We welcome feedback on the accessibility of WaitWell. If you encounter accessibility barriers, please contact us:
               </p>
               <ul className="list-disc pl-6 space-y-2 mt-4">
-                <li><strong>Email:</strong> accessibility@waitwell.app</li>
-                <li><strong>In-App:</strong> Use the feedback feature within the app</li>
+                <li><strong>Email:</strong> raihan.talukdar@nhs.net</li>
               </ul>
               <p className="mt-4">
                 When contacting us, please include:
@@ -121,8 +120,8 @@ export default function Accessibility() {
                 For questions or concerns about accessibility, please contact us:
               </p>
               <p className="mt-4">
-                <strong>Email:</strong> accessibility@waitwell.app<br />
-                <strong>Address:</strong> NHS Innovation, Sheffield, UK
+                <strong>Email:</strong> raihan.talukdar@nhs.net<br />
+                <strong>Address:</strong> Sheffield Health Partnership, NHS Foundation Trust, Centre Court, Atlas Way, Sheffield, S4 7QQ
               </p>
             </section>
           </div>

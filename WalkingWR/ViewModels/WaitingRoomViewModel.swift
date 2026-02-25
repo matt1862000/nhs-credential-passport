@@ -10,6 +10,7 @@ import SwiftUI
 import Combine
 import CoreLocation
 import MapKit
+import UIKit
 import FirebaseMessaging
 
 @MainActor
@@ -67,6 +68,11 @@ class WaitingRoomViewModel: ObservableObject {
     /// v2.2: Recent route diagnostics (polyline source, caller, etc.) for the bug-button debug dump. Appended in updateCurrentRoute; cleared on endWalk.
     private(set) var routeDiagnosticsLines: [String] = []
     private let maxRouteDiagnosticsLines = 50
+    
+    /// Route debug share (triggered by double-tap Version in Settings/About). When true, present share sheet with routeDebugShareItems.
+    @Published var showRouteDebugShare: Bool = false
+    @Published var routeDebugShareItems: [Any] = []
+    private var routeDebugTextFileURL: URL?
     private let diagnosticsDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss.SSS"
@@ -734,6 +740,193 @@ class WaitingRoomViewModel: ObservableObject {
         if routeDiagnosticsLines.count > maxRouteDiagnosticsLines {
             routeDiagnosticsLines.removeFirst(routeDiagnosticsLines.count - maxRouteDiagnosticsLines)
         }
+    }
+    
+    /// Builds plain-text route debug dump (same content as map view). Used when sharing from Settings → double-tap Version.
+    private func buildRouteDebugContentString(isShowingReturnRoute: Bool = false) -> String {
+        var lines: [String] = []
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        lines.append("WalkingWR Route Debug")
+        lines.append("Generated: \(dateFormatter.string(from: Date()))")
+        lines.append("")
+        if let loc = locationService.currentLocation {
+            lines.append("Current location: \(String(format: "%.6f", loc.coordinate.latitude)), \(String(format: "%.6f", loc.coordinate.longitude))")
+        } else {
+            lines.append("Current location: (unavailable)")
+        }
+        lines.append("Is showing return route: \(isShowingReturnRoute)")
+        lines.append("Is heading back: \(isHeadingBack)")
+        lines.append("")
+        guard let route = walkSession.currentRoute else {
+            lines.append("No current route.")
+            return lines.joined(separator: "\n")
+        }
+        lines.append("--- Route ---")
+        lines.append("Name: \(route.name)")
+        lines.append("Duration: \(route.durationMinutes) min, Distance: \(route.distanceMeters) m")
+        lines.append("Has polyline: \(route.hasPolyline), From prepop: \(route.isFromPrePopulatedDatabase)")
+        lines.append("Used OSRM routing: \(route.usedOSRMRouting)")
+        lines.append("")
+        lines.append("--- Waypoints (qrMarkers) ---")
+        for (i, m) in route.qrMarkers.enumerated() {
+            lines.append("\(i + 1). \(m.name) | lat=\(String(format: "%.6f", m.coordinate.latitude)) lng=\(String(format: "%.6f", m.coordinate.longitude)) | id=\(m.id)")
+        }
+        lines.append("")
+        lines.append("--- Polyline ---")
+        if let enc = route.encodedPolyline, !enc.isEmpty {
+            lines.append("Encoded (length \(enc.count) chars): \(enc)")
+            let path = route.routePath
+            lines.append("Decoded points: \(path.count)")
+            lines.append("(Stored polyline is usually ROUND-TRIP: start → waypoints → back to start; points may double back.)")
+            if !path.isEmpty, let firstMarker = route.qrMarkers.first {
+                let locA = CLLocation(latitude: firstMarker.coordinate.latitude, longitude: firstMarker.coordinate.longitude)
+                var closestIdx = 0
+                var closestDist = Double.greatestFiniteMagnitude
+                for (i, p) in path.enumerated() {
+                    let locB = CLLocation(latitude: p.latitude, longitude: p.longitude)
+                    let d = locA.distance(from: locB)
+                    if d < closestDist { closestDist = d; closestIdx = i }
+                }
+                let outboundEnd = closestIdx
+                if outboundEnd < path.count - 1 {
+                    lines.append("Outbound-only segment (start to first waypoint): points [0..\(outboundEnd)] (\(outboundEnd + 1) points). Return leg: [\(outboundEnd + 1)..\(path.count - 1)].")
+                }
+            }
+            if !path.isEmpty {
+                let sample = path.count <= 10 ? path : (Array(path.prefix(5)) + Array(path.suffix(5)))
+                for (i, c) in sample.enumerated() {
+                    let label = path.count <= 10 ? i : (i < 5 ? i : path.count - 10 + i)
+                    lines.append("  [\(label)] \(String(format: "%.6f", c.latitude)), \(String(format: "%.6f", c.longitude))")
+                }
+                if path.count > 10 { lines.append("  ... (\(path.count - 10) more)") }
+            }
+        } else {
+            lines.append("(no encoded polyline - fallback to straight lines between markers)")
+        }
+        lines.append("")
+        lines.append("--- Walking directions ---")
+        lines.append("Count: \(route.walkingDirections.count)")
+        for (i, d) in route.walkingDirections.prefix(10).enumerated() {
+            lines.append("\(i + 1). \(d.instruction) (\(d.distance))")
+        }
+        if route.walkingDirections.count > 10 {
+            lines.append("... (\(route.walkingDirections.count - 10) more)")
+        }
+        lines.append("")
+        lines.append("--- Progress ---")
+        lines.append("Visited waypoints: \(visitedMarkerIds.count)/\(route.qrMarkers.count)")
+        lines.append("")
+        lines.append("--- Diagnostics (console-style, recent) ---")
+        if routeDiagnosticsLines.isEmpty {
+            lines.append("(No route-update diagnostics this session — e.g. Display polyline source, caller)")
+        } else {
+            lines.append(contentsOf: routeDiagnosticsLines)
+        }
+        return lines.joined(separator: "\n")
+    }
+    
+    /// Generate route map image for debug share (MKMapSnapshotter + overlay). Static so it can run without capturing view model.
+    private static func generateRouteMapImage(routePath: [CLLocationCoordinate2D], waypoints: [CLLocationCoordinate2D]) async -> UIImage? {
+        guard routePath.count >= 2 else { return nil }
+        let size = CGSize(width: 800, height: 600)
+        let scale = await MainActor.run { UIScreen.main.scale }
+        let lats = routePath.map(\.latitude)
+        let lons = routePath.map(\.longitude)
+        let minLat = lats.min() ?? 0, maxLat = lats.max() ?? 0
+        let minLon = lons.min() ?? 0, maxLon = lons.max() ?? 0
+        let pad = 0.0015
+        let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2)
+        let span = MKCoordinateSpan(
+            latitudeDelta: max((maxLat - minLat) + pad, 0.002),
+            longitudeDelta: max((maxLon - minLon) + pad, 0.002)
+        )
+        let region = MKCoordinateRegion(center: center, span: span)
+        let options = MKMapSnapshotter.Options()
+        options.region = region
+        options.size = size
+        options.scale = scale
+        options.mapType = .standard
+        return await withCheckedContinuation { continuation in
+            let snapshotter = MKMapSnapshotter(options: options)
+            snapshotter.start { snapshot, error in
+                guard let snapshot = snapshot, error == nil else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let image = snapshot.image
+                UIGraphicsBeginImageContextWithOptions(size, true, scale)
+                defer { UIGraphicsEndImageContext() }
+                guard let ctx = UIGraphicsGetCurrentContext() else {
+                    continuation.resume(returning: image)
+                    return
+                }
+                image.draw(at: .zero)
+                let pathPoints = routePath.map { snapshot.point(for: $0) }
+                guard pathPoints.count >= 2 else {
+                    continuation.resume(returning: image)
+                    return
+                }
+                ctx.setStrokeColor(UIColor.systemTeal.cgColor)
+                ctx.setLineWidth(6)
+                ctx.setLineCap(.round)
+                ctx.setLineJoin(.round)
+                ctx.addLines(between: pathPoints)
+                ctx.strokePath()
+                for (i, wp) in waypoints.enumerated() where i < 3 {
+                    let p = snapshot.point(for: wp)
+                    ctx.setFillColor(UIColor.orange.cgColor)
+                    ctx.fillEllipse(in: CGRect(x: p.x - 8, y: p.y - 8, width: 16, height: 16))
+                }
+                if let composite = UIGraphicsGetImageFromCurrentImageContext() {
+                    continuation.resume(returning: composite)
+                } else {
+                    continuation.resume(returning: image)
+                }
+            }
+        }
+    }
+    
+    /// Trigger route debug share (double-tap Version in Settings/About). Builds content, writes file, fetches map image, then sets showRouteDebugShare and routeDebugShareItems.
+    func triggerRouteDebugShare() {
+        let content = buildRouteDebugContentString()
+        let dateStr = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-").prefix(19)
+        let fileName = "WalkingWR_route_debug_\(dateStr).txt"
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(String(fileName))
+        try? content.write(to: tempURL, atomically: true, encoding: .utf8)
+        routeDebugTextFileURL = tempURL
+        let path = walkSession.currentRoute?.routePath ?? []
+        let waypoints = walkSession.currentRoute?.qrMarkers.map(\.coordinate) ?? []
+        Task {
+            let image: UIImage? = await withTaskGroup(of: UIImage?.self) { group in
+                group.addTask { await Self.generateRouteMapImage(routePath: path, waypoints: waypoints) }
+                group.addTask { try? await Task.sleep(nanoseconds: 6_000_000_000); return nil as UIImage? }
+                let first = await group.next() ?? nil
+                group.cancelAll()
+                return first ?? nil
+            }
+            await MainActor.run {
+                var items: [Any] = []
+                if let url = routeDebugTextFileURL, FileManager.default.fileExists(atPath: url.path) {
+                    items.append(url)
+                } else {
+                    items.append(content)
+                }
+                if let img = image { items.append(img) }
+                routeDebugShareItems = items.isEmpty ? ["No route debug content"] : items
+                showRouteDebugShare = true
+            }
+        }
+    }
+    
+    /// Call when route debug share sheet is dismissed. Cleans up temp file and resets state.
+    func dismissRouteDebugShare() {
+        if let url = routeDebugTextFileURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+        routeDebugTextFileURL = nil
+        routeDebugShareItems = []
+        showRouteDebugShare = false
     }
     
     func updateCurrentRoute(_ route: WalkingRoute, sourceIsGoogle: Bool = false, resetDirectionIndex: Bool = false, caller: String? = nil, displayPolylineSource: String? = nil) {

@@ -22,14 +22,6 @@ export default function Download() {
           animate={isInView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.6 }}
         >
-          {/* Badge */}
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass mb-6 sm:mb-8">
-            <svg className="w-4 h-4 sm:w-5 sm:h-5 text-teal-accent" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
-            </svg>
-            <span className="text-slate-950 dark:text-white/80 text-sm sm:text-base">Available on iOS</span>
-          </div>
-
           {/* Main heading */}
           <h2 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold mb-4 sm:mb-6 text-slate-800 dark:text-white px-2 sm:px-0">
             Ready to Transform
@@ -75,29 +67,6 @@ export default function Download() {
               </div>
             </motion.a>
           </div>
-
-          {/* QR Code */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={isInView ? { opacity: 1, scale: 1 } : {}}
-            transition={{ duration: 0.6, delay: 0.3 }}
-            className="inline-block glass rounded-2xl p-4 sm:p-6"
-          >
-            <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6">
-              <div className="w-20 h-20 sm:w-24 sm:h-24 bg-white rounded-xl p-2">
-                {/* QR Code placeholder - would be actual QR in production */}
-                <div className="w-full h-full bg-gradient-to-br from-midnight to-deep-navy rounded-lg flex items-center justify-center">
-                  <svg className="w-12 h-12 text-teal-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-                  </svg>
-                </div>
-              </div>
-              <div className="text-left">
-                <div className="font-semibold dark:text-white text-slate-800 mb-1">Scan to Download</div>
-                <div className="text-sm dark:text-white/50 text-slate-800">Point your camera at the QR code</div>
-              </div>
-            </div>
-          </motion.div>
         </motion.div>
       </div>
     </section>

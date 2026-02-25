@@ -86,25 +86,6 @@ export default function ForClinicians() {
               ))}
             </div>
 
-            {/* CTA */}
-            <div className="mt-6 sm:mt-8 md:mt-10 flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4">
-              <motion.a
-                href="#contact"
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className="px-6 sm:px-8 py-3 sm:py-4 rounded-full bg-gradient-to-r from-teal-accent to-teal-accent/80 text-midnight font-semibold text-center text-sm sm:text-base"
-              >
-                Get Started Free
-              </motion.a>
-              <motion.a
-                href="#"
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className="px-6 sm:px-8 py-3 sm:py-4 rounded-full glass dark:text-white text-slate-700 font-semibold hover:bg-white/10 dark:hover:bg-white/10 hover:bg-slate-100 text-center text-sm sm:text-base"
-              >
-                Download Resources
-              </motion.a>
-            </div>
           </motion.div>
 
           {/* Right - Stats & Admin Preview */}

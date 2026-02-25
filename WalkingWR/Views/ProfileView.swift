@@ -1816,8 +1816,6 @@ struct SettingsView: View {
     
     // MARK: - List Sections (extracted to reduce compiler complexity)
     
-    @State private var showLogsCopied = false
-    
     private var aboutSection: some View {
         Section("About") {
             HStack {
@@ -1828,16 +1826,8 @@ struct SettingsView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture(count: 2) {
-                // Double-tap Version to copy debug log to pasteboard (for on-device debugging)
-                if DebugLogger.shared.copyLogToPasteboard() {
-                    showLogsCopied = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { showLogsCopied = false }
-                }
-            }
-            if showLogsCopied {
-                Text("Debug log copied — paste in Messages/Notes to share")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                // Double-tap Version to trigger route debug share (same as former bug button)
+                viewModel.triggerRouteDebugShare()
             }
             
             Link(destination: URL(string: "https://www.sheffieldpartnership.nhs.uk")!) {
@@ -1848,6 +1838,44 @@ struct SettingsView: View {
                     Image(systemName: "arrow.up.right.square")
                 }
             }
+        }
+    }
+    
+    /// Always-visible section for App Store Guideline 2.5.1: clearly identify HealthKit functionality in the UI.
+    private var appleHealthSection: some View {
+        Section {
+            Button(action: openHealthApp) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.red.opacity(0.12))
+                            .frame(width: 36, height: 36)
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(.red)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Apple Health (HealthKit)")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+                        Text(healthKitService.isAuthorized ? "Steps access enabled" : "Manage step data in Health app")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+            .foregroundColor(.primary)
+        } header: {
+            Text("Apple Health (HealthKit)")
+        } footer: {
+            Text("WaitWell uses Apple's HealthKit to read and write step data with the Health app. Your step count can be synced so you see total daily steps. Data stays in Apple Health; you can turn access on or off in the Health app at any time.")
+                .font(.caption)
         }
     }
     
@@ -2130,7 +2158,7 @@ struct SettingsView: View {
                         if shouldShowHealthKit {
                             Button(action: requestHealthKitPermission) {
                                 HStack {
-                                    Label("HealthKit Steps", systemImage: "heart.fill")
+                                    Label("Apple Health (HealthKit) – Steps", systemImage: "heart.fill")
                                     Spacer()
                                     if healthKitService.isAuthorized {
                                         Text("Enabled")
@@ -2183,6 +2211,8 @@ struct SettingsView: View {
                 }
                 
                 aboutSection
+                
+                appleHealthSection
                 
                 // Privacy Section
                 Section {
@@ -2337,6 +2367,13 @@ struct SettingsView: View {
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("To manage HealthKit access:\n\n1. Tap 'Open Health App' below\n2. Tap your profile icon (top right)\n3. Look for Apps or Apps & Services\n4. Find WaitWell\n5. Toggle Steps on or off")
+            }
+            .sheet(isPresented: $viewModel.showRouteDebugShare) {
+                RouteDebugShareSheet(
+                    activityItems: viewModel.routeDebugShareItems,
+                    isPresented: $viewModel.showRouteDebugShare,
+                    onDismiss: { viewModel.dismissRouteDebugShare() }
+                )
             }
             .preferredColorScheme(effectiveColorScheme)
             .id(appTheme) // Force view refresh when theme changes
@@ -2817,8 +2854,8 @@ struct PrivacyInfoView: View {
                     
                     PermissionExplainer(
                         icon: "heart.fill",
-                        title: "HealthKit Steps",
-                        explanation: "Syncs your total daily step count from Apple Health. This lets you see all your steps, not just from walks in this app."
+                        title: "Apple Health (HealthKit) – Steps",
+                        explanation: "WaitWell uses Apple's HealthKit to sync your step count with the Health app. You can see total daily steps and choose to save walk steps to Health. Data stays in Apple Health."
                     )
                 }
                 .padding(20)

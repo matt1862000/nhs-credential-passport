@@ -21,131 +21,37 @@ export default function CookiePolicy() {
             <section>
               <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">1. What Are Cookies?</h2>
               <p>
-                Cookies are small text files that are placed on your device when you visit a website or use a mobile application. They are widely used to make websites and apps work more efficiently and to provide information to the owners of the site or app.
+                Cookies are small text files that websites can place on your device. This policy explains what we use on the WaitWell website and app.
+              </p>
+            </section>
+
+            <section>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">2. Our Website</h2>
+              <p>
+                <strong>We do not use cookies on this website.</strong> We do not set any cookies for analytics, advertising, or session management.
               </p>
               <p className="mt-4">
-                This Cookie Policy explains how WaitWell uses cookies and similar technologies on our website and in our mobile application.
-              </p>
-            </section>
-
-            <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">2. How We Use Cookies</h2>
-              <p>WaitWell uses cookies and similar technologies for the following purposes:</p>
-              
-              <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">2.1 Essential Cookies</h3>
-              <p>
-                These cookies are necessary for the website and app to function properly. They enable core functionality such as security, network management, and accessibility. You cannot opt out of these cookies as they are essential for the service to work.
-              </p>
-              <ul className="list-disc pl-6 space-y-2">
-                <li>Session management</li>
-                <li>Security and authentication</li>
-                <li>Load balancing</li>
-              </ul>
-
-              <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">2.2 Analytics Cookies</h3>
-              <p>
-                These cookies help us understand how visitors interact with our website and app by collecting and reporting information anonymously. This helps us improve our services.
-              </p>
-              <ul className="list-disc pl-6 space-y-2">
-                <li>Page views and navigation patterns</li>
-                <li>Feature usage statistics</li>
-                <li>Performance monitoring</li>
-              </ul>
-
-              <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">2.3 Functional Cookies</h3>
-              <p>
-                These cookies enable enhanced functionality and personalization. They may be set by us or by third-party providers whose services we use.
-              </p>
-              <ul className="list-disc pl-6 space-y-2">
-                <li>User preferences (theme, language settings)</li>
-                <li>Remembering your settings</li>
-                <li>Improving user experience</li>
-              </ul>
-            </section>
-
-            <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">3. Third-Party Cookies</h2>
-              <p>
-                Some cookies are placed by third-party services that appear on our pages. We use the following third-party services:
-              </p>
-              <ul className="list-disc pl-6 space-y-2">
-                <li><strong>Firebase:</strong> For backend services and analytics (Google)</li>
-                <li><strong>Google Maps:</strong> For map and route services</li>
-              </ul>
-              <p className="mt-4">
-                These third parties may use cookies to collect information about your online activities across different websites. We do not control these third-party cookies. Please refer to the privacy policies of these third parties for more information.
-              </p>
-            </section>
-
-            <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">4. Mobile App</h2>
-              <p>
-                Our mobile app may use similar technologies to cookies, such as:
-              </p>
-              <ul className="list-disc pl-6 space-y-2">
-                <li>Local storage for caching route data and preferences</li>
-                <li>Device identifiers for analytics and app functionality</li>
-                <li>Location data (with your permission) for route navigation</li>
-              </ul>
-              <p className="mt-4">
-                These technologies are used to provide app functionality and improve your experience. You can control location permissions through your device settings.
-              </p>
-            </section>
-
-            <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">5. Managing Cookies</h2>
-              <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">5.1 Website</h3>
-              <p>
-                Most web browsers allow you to control cookies through their settings. You can set your browser to refuse cookies or to alert you when cookies are being sent. However, if you disable cookies, some parts of our website may not function properly.
+                The only thing we store in your browser is your <strong>theme preference</strong> (light, dark, or system) in local storage, so the site remembers how you like it. That is not a cookie; it stays on your device and we do not receive it. You can clear it at any time via your browser’s site data or storage settings.
               </p>
               <p className="mt-4">
-                To manage cookies in your browser:
-              </p>
-              <ul className="list-disc pl-6 space-y-2">
-                <li><strong>Chrome:</strong> Settings → Privacy and security → Cookies and other site data</li>
-                <li><strong>Firefox:</strong> Options → Privacy & Security → Cookies and Site Data</li>
-                <li><strong>Safari:</strong> Preferences → Privacy → Cookies and website data</li>
-                <li><strong>Edge:</strong> Settings → Cookies and site permissions</li>
-              </ul>
-
-              <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">5.2 Mobile App</h3>
-              <p>
-                For the mobile app, you can manage permissions and data through your device settings:
-              </p>
-              <ul className="list-disc pl-6 space-y-2">
-                <li><strong>iOS:</strong> Settings → WaitWell → Permissions and Data</li>
-                <li>You can also delete and reinstall the app to clear stored data</li>
-              </ul>
-            </section>
-
-            <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">6. Your Rights</h2>
-              <p>
-                Under UK data protection law, you have the right to:
-              </p>
-              <ul className="list-disc pl-6 space-y-2">
-                <li>Be informed about the use of cookies</li>
-                <li>Give or withdraw consent for non-essential cookies</li>
-                <li>Access information about cookies used</li>
-                <li>Request deletion of cookie data</li>
-              </ul>
-            </section>
-
-            <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">7. Updates to This Policy</h2>
-              <p>
-                We may update this Cookie Policy from time to time to reflect changes in our practices or for other operational, legal, or regulatory reasons. We will notify you of any material changes by posting the updated policy on this page and updating the "Last updated" date.
+                If we introduce cookies in future (for example to improve the site or add features), we will update this policy and, where required by law, ask for your consent before using non-essential cookies.
               </p>
             </section>
 
             <section>
-              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">8. Contact Us</h2>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">3. Mobile App</h2>
               <p>
-                If you have questions about our use of cookies, please contact us:
+                The WaitWell mobile app does not use cookies. It may use local storage on your device for things like cached route data and your preferences. That data stays on your device. For details about what the app collects and how we use it, see our <Link href="/privacy" className="text-teal-600 dark:text-teal-accent hover:underline">Privacy Policy</Link>.
+              </p>
+            </section>
+
+            <section>
+              <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">4. Your Rights and Contact</h2>
+              <p>
+                Under UK data protection law you have the right to be informed about cookies and similar technologies, and to manage or object to their use. Because we do not use cookies on the website, there are no cookie preferences to manage here. If that changes, we will explain how to manage them on this page.
               </p>
               <p className="mt-4">
-                <strong>Email:</strong> privacy@waitwell.app<br />
-                <strong>Address:</strong> NHS Innovation, Sheffield, UK
+                If you have questions about this policy or our use of cookies and similar technologies, contact us at <strong>raihan.talukdar@nhs.net</strong> or Sheffield Health Partnership, NHS Foundation Trust, Centre Court, Atlas Way, Sheffield, S4 7QQ. We may update this Cookie Policy from time to time; the "Last updated" date at the top will reflect any changes.
               </p>
             </section>
           </div>

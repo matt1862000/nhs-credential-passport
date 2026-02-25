@@ -54,7 +54,7 @@ export default function FAQs() {
                 <div>
                   <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What devices is WaitWell available on?</h3>
                   <p>
-                    WaitWell is currently available for iOS devices (iPhone and iPad). The app requires iOS 17.0 or later and integrates with Apple HealthKit for activity tracking.
+                    WaitWell is currently available for iOS devices (iPhone and iPad). The app requires iOS 26.0 or later and integrates with Apple HealthKit for activity tracking.
                   </p>
                 </div>
               </div>
@@ -100,7 +100,7 @@ export default function FAQs() {
                 <div>
                   <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What are Points of Interest (POIs)?</h3>
                   <p>
-                    POIs are highlighted locations along your route, such as pharmacies (useful for picking up prescriptions), cafes and shops, and parks and green spaces. POIs are automatically included in route suggestions and are marked with colored circles on the map. You can see POI details by tapping on them in the route preview.
+                    POIs are highlighted locations along your route, such as pharmacies (useful for picking up prescriptions), cafes and shops, and parks and green spaces. POIs are automatically included in route suggestions and are marked with coloured circles on the map. You can see POI details by tapping on them in the route preview.
                   </p>
                 </div>
 
@@ -140,12 +140,13 @@ export default function FAQs() {
                     Waypoint markers on the map show key points along your route:
                   </p>
                   <ul className="list-disc pl-6 space-y-2 mt-2">
-                    <li><strong>Teal circle:</strong> Start/End point (your clinic location)</li>
-                    <li><strong>Red/Brown circle:</strong> Pharmacy or other POI</li>
-                    <li><strong>Gold/Brown circle:</strong> Dentist or destination (furthest point on route)</li>
+                    <li><strong>Blue circle:</strong> Start/End point (your clinic location)</li>
+                    <li><strong>Green circle:</strong> POI waypoint (unvisited)</li>
+                    <li><strong>Orange circle:</strong> Your next waypoint (with a pulsing ring)</li>
+                    <li><strong>Grey circle:</strong> Waypoint you have already passed</li>
                   </ul>
                   <p className="mt-4">
-                    Labels (Start, Pharmacy, Dentist, End) appear next to markers as you progress.
+                    Labels show <strong>Start</strong>, the <strong>name of each place</strong> (e.g. pharmacy, café, park), and <strong>Return</strong> for heading back to the clinic.
                   </p>
                 </div>
 
@@ -170,8 +171,7 @@ export default function FAQs() {
                   <ul className="list-disc pl-6 space-y-2 mt-2">
                     <li>Location data (GPS coordinates) when using route navigation</li>
                     <li>Health and fitness data (steps, distance) through HealthKit - this stays on your device</li>
-                    <li>Appointment information you provide (clinic location, clinician details)</li>
-                    <li>Device information for app functionality</li>
+                    <li>Appointment information you provide (clinician selection, appointment time) - stored only on your device</li>
                   </ul>
                   <p className="mt-4">
                     For more details, please see our <Link href="/privacy" className="text-teal-600 dark:text-teal-accent hover:underline">Privacy Policy</Link>.
@@ -240,14 +240,14 @@ export default function FAQs() {
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What do the colors on the map mean?</h3>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">What do the colours on the map mean?</h3>
                   <ul className="list-disc pl-6 space-y-2">
-                    <li><strong>Teal/Green:</strong> Active routes, start/end points, positive indicators</li>
-                    <li><strong>Red/Brown:</strong> Pharmacies and POIs</li>
-                    <li><strong>Gold/Brown:</strong> Destination waypoints</li>
-                    <li><strong>Blue:</strong> Return routes, your location</li>
-                    <li><strong>Pulsing Circle:</strong> Your current GPS location</li>
-                    <li><strong>Solid Circle:</strong> Waypoint markers</li>
+                    <li><strong>Teal:</strong> Active outbound route line</li>
+                    <li><strong>Blue:</strong> Return route, clinic (start/end) marker, and your current location</li>
+                    <li><strong>Green:</strong> Unvisited waypoint markers</li>
+                    <li><strong>Orange:</strong> Your next waypoint (highlighted)</li>
+                    <li><strong>Grey:</strong> Visited waypoint markers</li>
+                    <li><strong>Pulsing blue circle:</strong> Your current GPS position</li>
                   </ul>
                 </div>
 
@@ -272,7 +272,7 @@ export default function FAQs() {
                 <div>
                   <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">My clinic isn't listed. Can I still use WaitWell?</h3>
                   <p>
-                    Yes! You can manually enter your clinic location and appointment details. However, real-time wait times are only available for participating clinics. You can still use WaitWell to find walking routes near any clinic location.
+                    Yes! You can skip selecting a clinician and still use WaitWell. Walk routes are generated from your current location, so you can discover and follow walking routes wherever you are. Real-time wait times and return alerts are only available when you choose a clinician from a participating clinic. Without a listed clinic, you won't get wait-time updates, but you can use the app for walks and wellbeing features.
                   </p>
                 </div>
 

@@ -102,5 +102,5 @@ Edit individual component files in `src/components/` to update:
 
 ## License
 
-© NHS Innovation - All rights reserved.
+© Sheffield Health Partnership - All rights reserved.
 # Deployment trigger

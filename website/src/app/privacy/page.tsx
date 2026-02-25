@@ -31,13 +31,13 @@ export default function PrivacyPolicy() {
             <section>
               <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">2. Information We Collect</h2>
               <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">2.1 Personal Information</h3>
-              <p>We may collect the following types of personal information:</p>
+              <p className="mb-4">
+                We use the following only as needed for the app. <strong>Most of this is processed and stored on your device; we do not store your health, fitness, or appointment details on our servers.</strong>
+              </p>
               <ul className="list-disc pl-6 space-y-2">
-                <li>Location data (GPS coordinates) when you use the walking route features</li>
-                <li>Health and fitness data (steps, distance walked) through HealthKit integration</li>
-                <li>Appointment information (clinic location, clinician details) that you provide</li>
-                <li>Device information (device type, operating system, app version)</li>
-                <li>Usage data (features used, time spent in app)</li>
+                <li><strong>Location (GPS)</strong> — Used on your device for walking routes and during a walk. When you generate a route, your coordinates are sent to mapping providers (e.g. Google, OpenStreetMap-based services) solely to calculate the route; we do not keep that location on our servers.</li>
+                <li><strong>Health and fitness</strong> — If you allow access, we read and may write step count and related data via HealthKit. This is used in the app and stored in Apple Health on your device. We do not send health or fitness data to our servers.</li>
+                <li><strong>Appointment information</strong> — The clinician you select and any appointment time you set are stored only on your device. We receive a list of clinicians and delay information from our systems to show you options; we do not upload your choices.</li>
               </ul>
 
               <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">2.2 Health Data</h3>
@@ -48,10 +48,10 @@ export default function PrivacyPolicy() {
 
             <section>
               <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">3. How We Use Your Information</h2>
-              <p>We use the information we collect to:</p>
+              <p>We use your information to:</p>
               <ul className="list-disc pl-6 space-y-2">
                 <li>Provide and improve our services, including route navigation and wellness features</li>
-                <li>Personalize your experience within the app</li>
+                <li>Personalise your experience within the app</li>
                 <li>Ensure app functionality and troubleshoot technical issues</li>
                 <li>Comply with legal obligations and protect our legal rights</li>
                 <li>Send you important updates about the app (with your consent)</li>
@@ -64,10 +64,10 @@ export default function PrivacyPolicy() {
             <section>
               <h2 className="text-2xl font-semibold dark:text-white text-slate-900 mt-8 mb-4">4. Data Storage and Security</h2>
               <p>
-                Your data is stored securely using industry-standard encryption. Location data and route information are cached locally on your device to enable offline functionality. We use Firebase for backend services, which complies with international data protection standards.
+                Your data is stored securely using industry-standard encryption. Location data and route information are cached locally on your device to enable offline functionality. We use Firebase to receive clinician and delay information so we can show you options; we do not store your health, fitness, appointment or location data on our servers. Our backend services comply with international data protection standards.
               </p>
               <p className="mt-4">
-                We implement appropriate technical and organizational measures to protect your personal information against unauthorized access, alteration, disclosure, or destruction.
+                We implement appropriate technical and organisational measures to protect your personal information against unauthorised access, alteration, disclosure, or destruction.
               </p>
             </section>
 
@@ -107,8 +107,8 @@ export default function PrivacyPolicy() {
                 If you have questions about this Privacy Policy or wish to exercise your data protection rights, please contact us:
               </p>
               <p className="mt-4">
-                <strong>Email:</strong> privacy@waitwell.app<br />
-                <strong>Address:</strong> NHS Innovation, Sheffield, UK
+                <strong>Email:</strong> raihan.talukdar@nhs.net<br />
+                <strong>Address:</strong> Sheffield Health Partnership, NHS Foundation Trust, Centre Court, Atlas Way, Sheffield, S4 7QQ
               </p>
             </section>
 

@@ -28,31 +28,26 @@ export default function HelpCentre() {
                   <ol className="list-decimal pl-6 space-y-2 mt-2">
                     <li>Open the app and grant location permissions when prompted</li>
                     <li>Allow HealthKit access if you want to track your steps and activity (optional)</li>
-                    <li>Grant camera permissions if you want to scan QR codes</li>
+                    <li>Grant camera permissions if you want to scan route markers during a walk (optional)</li>
                     <li>Complete the onboarding tutorial (first time only)</li>
                     <li>You're ready to use WaitWell at your next clinic appointment!</li>
                   </ol>
                 </div>
 
                 <div>
-                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">How to Scan the Clinic QR Code</h3>
+                  <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">How to See Your Wait Time</h3>
                   <ol className="list-decimal pl-6 space-y-2">
                     <li>Open WaitWell when you arrive at your clinic</li>
-                    <li>Look for the QR code displayed in the waiting area or at reception</li>
-                    <li>Tap the QR scanner icon in the app</li>
-                    <li>Point your camera at the QR code</li>
-                    <li>The app will automatically detect and load your appointment information</li>
-                    <li>If scanning fails, you can manually enter your clinic and clinician details</li>
+                    <li>Tap the Clinic Delay tab and select your clinician from the list (wait times are provided by your clinic and update in real time)</li>
+                    <li>You can optionally set your appointment time to get return reminders</li>
+                    <li>Once your wait time is shown, tap the Walk tab to see route suggestions</li>
                   </ol>
-                  <p className="mt-4 text-sm text-slate-600 dark:text-white/60">
-                    <strong>Tip:</strong> Ensure good lighting and hold your phone steady. The QR code should fill most of the camera viewfinder.
-                  </p>
                 </div>
 
                 <div>
                   <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">How to Select a Walking Route</h3>
                   <ol className="list-decimal pl-6 space-y-2">
-                    <li>After scanning the QR code, you'll see your current wait time</li>
+                    <li>When you have a clinician selected, you'll see your current wait time and suggested walk duration</li>
                     <li>Tap the "Walk" tab at the bottom of the screen</li>
                     <li>Browse the available routes - each shows duration, distance, and steps</li>
                     <li>Routes are automatically filtered to fit within your wait time</li>
@@ -124,16 +119,16 @@ export default function HelpCentre() {
                 <div>
                   <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">AI-Powered Route Naming</h3>
                   <p>
-                    WaitWell uses Google's Gemini AI to generate creative, personalized names and descriptions for each route:
+                    WaitWell uses Google's Gemini AI to generate creative, personalised names and descriptions for each route:
                   </p>
                   <ol className="list-decimal pl-6 space-y-2 mt-2">
-                    <li><strong>Route Analysis:</strong> The AI analyzes all points of interest (POIs) along your route, including their types (cafes, parks, churches, shops, etc.) and locations</li>
+                    <li><strong>Route Analysis:</strong> The AI analyses all points of interest (POIs) along your route, including their types (cafes, parks, churches, shops, etc.) and locations</li>
                     <li><strong>Creative Naming:</strong> Based on the specific POIs, route duration, and distance, the AI generates a fun, memorable route name (e.g., "Pub & Spire Stroll", "Bakery Loop", "Garden Gateway")</li>
                     <li><strong>Detailed Descriptions:</strong> The AI creates warm, specific descriptions mentioning actual places you'll pass, what you might see or experience, and concrete details about each location</li>
                     <li><strong>Template Fallback:</strong> If AI generation isn't available, the app uses intelligent templates based on the route's key features</li>
                   </ol>
                   <p className="mt-4">
-                    <strong>Why AI?</strong> This ensures every route feels unique and personalized, making your walk more engaging and helping you remember the route by its distinctive name and description.
+                    <strong>Why AI?</strong> This ensures every route feels unique and personalised, making your walk more engaging and helping you remember the route by its distinctive name and description.
                   </p>
                 </div>
 
@@ -360,12 +355,11 @@ export default function HelpCentre() {
                   <h3 className="text-xl font-semibold dark:text-white text-slate-900 mt-6 mb-3">I Can't See My Wait Time</h3>
                   <p>Try these steps:</p>
                   <ol className="list-decimal pl-6 space-y-2 mt-2">
-                    <li>Ensure you've scanned the QR code at the clinic</li>
-                    <li>Check if your clinic participates in WaitWell's wait time system</li>
-                    <li>Try manually entering your clinic and clinician details</li>
+                    <li>Open the Delay tab and choose your clinician from the list (participating clinics only)</li>
+                    <li>Set your appointment time if prompted</li>
                     <li>Check your internet connection</li>
                     <li>Wait a few moments for the wait time to load</li>
-                    <li>If your clinic doesn't participate, you can still use routes manually</li>
+                    <li>If your clinic isn't listed, you can skip and still use the app for walks and wellbeing</li>
                   </ol>
                 </div>
 
@@ -379,7 +373,7 @@ export default function HelpCentre() {
                     <li>Hold your phone steady and ensure the QR code fills most of the viewfinder</li>
                     <li>Clean your camera lens</li>
                     <li>Try moving closer or further away from the QR code</li>
-                    <li>If scanning fails, you can manually enter appointment details</li>
+                    <li>For route-marker QR codes, if you can't scan one, you can continue your walk and still complete the route</li>
                   </ol>
                 </div>
               </div>
