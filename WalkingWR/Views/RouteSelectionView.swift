@@ -1692,6 +1692,11 @@ struct LocalRoutePickerSheet: View {
                 // Pre-fetch POIs while user selects duration (speeds up Generate)
                 prefetchPOIsIfNeeded()
                 
+                // If user moved to a new location since last route, clear displayed routes so we don't show stale map
+                if let coord = locationService.currentLocation?.coordinate,
+                   RouteCacheService.shared.clearSessionCacheIfLocationChanged(from: coord, threshold: 50) {
+                    clearDisplayedRoutesForNewLocation()
+                }
             }
             .onChange(of: locationService.currentLocation) { _, newLocation in
                 // Re-fetch POIs if location significantly changed
@@ -2170,7 +2175,13 @@ struct LocalRoutePickerSheet: View {
                 // CHECK CACHE FIRST (with movement detection)
                 print("🔍 Checking for cached routes...")
                 // v2.1.10: If session cache is from a different location (e.g. Cancel at WF2 → open at S66), wipe it
-                RouteCacheService.shared.clearSessionCacheIfLocationChanged(from: userLocation.coordinate, threshold: 50)
+                let locationChanged = RouteCacheService.shared.clearSessionCacheIfLocationChanged(from: userLocation.coordinate, threshold: 50)
+                if locationChanged {
+                    await MainActor.run {
+                        clearDisplayedRoutesForNewLocation()
+                        showLoadingScreen = true
+                    }
+                }
                 
                 let shouldUseCache: Bool
                 if let preGenLocation = preGeneratedAtLocation {
@@ -5567,27 +5578,22 @@ struct LocalRoutePickerSheet: View {
         return didAdd
     }
     
-    private func handleBackFromPreview() {
-        print("🔙 handleBackFromPreview - resetting all generation state")
-        
-        // Reset view state
+    /// Clears displayed routes and preview state (e.g. when user moved to a new location).
+    /// Does not set isGenerating so callers can keep generation in progress when appropriate.
+    private func clearDisplayedRoutesForNewLocation() {
         showMapPreview = false
         showLoadingScreen = false
-        isGenerating = false
         routeGenerationComplete = false
         
-        // Reset route data
         generatedRoute = nil
         generatedRouteData = nil
         lastValidRoute = nil
         lastValidRouteData = nil
         
-        // Reset MapKit vs Google race state for next walk
         refreshRaceState.walkStarted = false
         refreshRaceState.googleApplied = false
         currentRouteIsFromGoogle30sFallback = false
         
-        // Reset pre-generation state
         allRoutes = []
         currentRouteIndex = 0
         preGenerationComplete = false
@@ -5596,13 +5602,18 @@ struct LocalRoutePickerSheet: View {
         showPremiumUpsell = false
         routeSignatures = []
         varietyExhausted = false
-        rejectedShortRoutes = []  // v1.8.8: Clear rejected routes
-        shownPlaceIdSets = []  // Reset shown place IDs
-        additionalRoutesGenerated = 0  // v2.1.10: Reset +1 button cap
+        rejectedShortRoutes = []
+        shownPlaceIdSets = []
+        additionalRoutesGenerated = 0
         isGeneratingAdditionalRoute = false
         
-        // Reset error state
         errorMessage = nil
+    }
+    
+    private func handleBackFromPreview() {
+        print("🔙 handleBackFromPreview - resetting all generation state")
+        clearDisplayedRoutesForNewLocation()
+        isGenerating = false
     }
     
     private func handleDeleteRoute() {
