@@ -32,6 +32,20 @@ struct ProfileView: View {
                         StatsSummaryCard(progress: viewModel.userProgress)
                             .padding(.top, 20)
                         
+                        // App Store Guideline 2.5.1: Clearly identify HealthKit in the app UI
+                        HStack(spacing: 10) {
+                            Image(systemName: "heart.fill")
+                                .font(.subheadline)
+                                .foregroundColor(.red.opacity(0.9))
+                            Text("Step data can sync with Apple Health (HealthKit). Manage in Settings (Clinic Delay → gear).")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        
                         // Activity History (scrollable)
                         ActivityHistorySection(
                             progress: viewModel.userProgress,
@@ -679,6 +693,12 @@ struct ActivityDetailSheet: View {
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.top, 8)
+            
+            // App Store Guideline 2.5.1: Identify HealthKit where step data is shown
+            Text("Step data may include Apple Health (HealthKit).")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .padding(.top, 4)
         }
         .padding(20)
         .cardStyle()
@@ -2077,6 +2097,9 @@ struct SettingsView: View {
     
     @ViewBuilder
     private var listContent: some View {
+        // App Store Guideline 2.5.1: HealthKit must be clearly identified in the UI — show first in Settings
+        appleHealthSection
+        
         // Only show Permissions section if user has interacted with any permission
         if hasAnyPermissions {
                     Section {
@@ -2211,8 +2234,6 @@ struct SettingsView: View {
                 }
                 
                 aboutSection
-                
-                appleHealthSection
                 
                 // Privacy Section
                 Section {

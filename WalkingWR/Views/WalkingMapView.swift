@@ -4480,7 +4480,7 @@ struct HealthKitSyncOfferSheet: View {
                                 .font(.system(size: 24))
                                 .foregroundColor(.red)
                         }
-                        Text("Sync with Apple Health?")
+                        Text("Sync with Apple Health (HealthKit)?")
                             .font(.title3)
                             .fontWeight(.bold)
                         Spacer()
