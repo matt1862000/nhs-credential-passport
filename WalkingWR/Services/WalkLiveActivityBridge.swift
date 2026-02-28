@@ -10,6 +10,9 @@ import Foundation
 import ActivityKit
 
 enum WalkLiveActivityBridge {
+    /// If the app stops updating (e.g. force-closed), the activity content becomes stale after this interval and the system will dismiss the Live Activity.
+    private static let staleAfterSeconds: TimeInterval = 60
+
     /// Start a Live Activity when the user starts a walk.
     /// - Parameter lastUpdatedAt: When live delay was last updated from the app (e.g. waitTimeInfo.lastUpdated). Nil uses current time.
     static func startIfAvailable(routeName: String, totalMinutes: Int, backByText: String? = nil, clinicianName: String? = nil, lastUpdatedAt: Date? = nil) {
@@ -22,7 +25,7 @@ enum WalkLiveActivityBridge {
             lastUpdatedAt: lastUpdatedAt ?? Date()
         )
         do {
-            let content = ActivityContent(state: state, staleDate: nil as Date?)
+            let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(staleAfterSeconds))
             _ = try Activity<WalkActivityAttributes>.request(
                 attributes: att,
                 content: content,
@@ -43,7 +46,7 @@ enum WalkLiveActivityBridge {
             isHeadingBack: isHeadingBack,
             lastUpdatedAt: lastUpdatedAt
         )
-        let content = ActivityContent(state: state, staleDate: nil as Date?)
+        let content = ActivityContent(state: state, staleDate: Date().addingTimeInterval(staleAfterSeconds))
         Task {
             for activity in Activity<WalkActivityAttributes>.activities {
                 await activity.update(content)
@@ -51,11 +54,13 @@ enum WalkLiveActivityBridge {
         }
     }
 
-    /// End the Live Activity when the walk ends. Call from endWalk().
+    /// End the Live Activity when the walk ends. Call from endWalk() or on launch after force-close.
+    /// Runs on MainActor so Activity.activities is read on main thread (required by ActivityKit).
     static func endIfAvailable() {
         guard #available(iOS 16.2, *) else { return }
-        Task {
-            for activity in Activity<WalkActivityAttributes>.activities {
+        Task { @MainActor in
+            let activities = Activity<WalkActivityAttributes>.activities
+            for activity in activities {
                 await activity.end(dismissalPolicy: .immediate)
             }
         }

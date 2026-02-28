@@ -16,6 +16,9 @@ struct WalkingWRApp: App {
     @AppStorage("appTheme") private var appTheme: String = AppTheme.system.rawValue
     @Environment(\.scenePhase) private var scenePhase
     
+    /// Tracks whether we've already tried to dismiss stale walk Live Activity this launch (so we don't end one the user just started).
+    private static var hasTriedEndingStaleWalkActivity = false
+    
     var selectedTheme: AppTheme {
         AppTheme(rawValue: appTheme) ?? .system
     }
@@ -44,6 +47,11 @@ struct WalkingWRApp: App {
             UserDefaults.standard.set(false, forKey: "hasActiveWalk")
             // Clear persisted pill state so next walk starts with fresh pill (no stale 77 from crashed session)
             WaitingRoomViewModel.clearPersistedPillState()
+            // Dismiss the walk Live Activity (Dynamic Island / Lock Screen) so user doesn't see a frozen "walk in progress" after force-close.
+            // Activity.activities can be empty immediately at launch; delay so the system has time to restore the list.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                WalkLiveActivityBridge.endIfAvailable()
+            }
         }
     }
     
@@ -64,6 +72,11 @@ struct WalkingWRApp: App {
                 // without the app running
                 UserDefaults.standard.set(false, forKey: "hasActiveWalk")
                 WaitingRoomViewModel.clearPersistedPillState()
+            } else if newPhase == .active, !Self.hasTriedEndingStaleWalkActivity {
+                // First time becoming active this launch: dismiss any stale walk Live Activity
+                // (e.g. from force-close). Activity.activities may only be populated once scene is active.
+                Self.hasTriedEndingStaleWalkActivity = true
+                WalkLiveActivityBridge.endIfAvailable()
             }
         }
     }

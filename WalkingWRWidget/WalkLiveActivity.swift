@@ -13,21 +13,29 @@ import WidgetKit
 struct WalkLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: WalkActivityAttributes.self) { context in
-            WalkExpandedView(context: context)
+            if context.isStale {
+                WalkEndedView(routeName: context.attributes.routeName)
+            } else {
+                WalkExpandedView(context: context)
+            }
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.center) {
-                    WalkExpandedView(context: context)
+                    if context.isStale {
+                        WalkEndedView(routeName: context.attributes.routeName)
+                    } else {
+                        WalkExpandedView(context: context)
+                    }
                 }
             } compactLeading: {
-                Image(systemName: "figure.walk")
+                Image(systemName: context.isStale ? "checkmark.circle.fill" : "figure.walk")
                     .foregroundStyle(.teal)
             } compactTrailing: {
-                Text(formatCompactTrailing(context: context))
+                Text(context.isStale ? "Walk ended" : formatCompactTrailing(context: context))
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
             } minimal: {
-                Image(systemName: "figure.walk")
+                Image(systemName: context.isStale ? "checkmark.circle.fill" : "figure.walk")
                     .foregroundStyle(.teal)
             }
         }
@@ -39,6 +47,29 @@ struct WalkLiveActivity: Widget {
         }
         let minElapsed = context.state.elapsedSeconds / 60
         return minElapsed == 1 ? "1 min" : "\(minElapsed) min"
+    }
+}
+
+@available(iOS 16.2, *)
+private struct WalkEndedView: View {
+    let routeName: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(routeName)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+                Text("Walk ended")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.teal)
+        }
+        .padding(EdgeInsets(top: 6, leading: 10, bottom: 14, trailing: 10))
     }
 }
 
