@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My e-learning — NHS E-Learning Credential Passport</title>
+  <style>
+    :root {
+      --nhsuk-text: #212b32;
+      --nhsuk-link: #005eb8;
+      --nhsuk-link-hover: #003087;
+      --nhsuk-focus: #ffeb3b;
+      --nhsuk-success: #007f3b;
+      --nhsuk-error: #d5281b;
+      --nhsuk-button: #007f3b;
+      --nhsuk-button-hover: #00662f;
+      --nhsuk-border: #d8dde0;
+      --nhsuk-body-bg: #f0f4f5;
+      --nhsuk-panel-bg: #fff;
+      --nhsuk-secondary-text: #4c6272;
+      --expired-warn: #ffb81c;
+      --nhsuk-card-shadow: 0 2px 8px rgba(33, 43, 50, 0.06);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif;
+      background: var(--nhsuk-body-bg);
+      color: var(--nhsuk-text);
+      line-height: 1.5;
+      margin: 0;
+      min-height: 100vh;
+    }
+    .nhsuk-header { background-color: #005eb8; padding: 0.75rem 0; }
+    .nhsuk-header__container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+    .nhsuk-header__service { display: flex; align-items: center; }
+    .nhsuk-header__service-logo { display: flex; align-items: center; gap: 0.75rem; color: #fff; text-decoration: none; font-weight: 600; font-size: 1.25rem; }
+    .nhsuk-header__service-logo:hover { color: #fff; text-decoration: underline; }
+    .nhsuk-header__service-logo:focus { outline: 3px solid #ffeb3b; outline-offset: 2px; }
+    .nhsuk-header__logo { flex-shrink: 0; height: 40px; width: 100px; fill: currentColor; }
+    .nhsuk-header__service-name { white-space: nowrap; }
+    .nhsuk-main { max-width: 960px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+    .nhsuk-page-heading { font-size: 2.25rem; font-weight: 700; margin: 0 0 0.5rem 0; color: var(--nhsuk-text); letter-spacing: -0.02em; }
+    .nhsuk-body-s { font-size: 1.0625rem; color: var(--nhsuk-secondary-text); margin-bottom: 1.5rem; max-width: 38em; }
+    .nhsuk-tabs { display: flex; gap: 0; margin: 1.5rem 0; border-bottom: 2px solid var(--nhsuk-border); }
+    .nhsuk-tabs button {
+      padding: 0.75rem 1.25rem;
+      border: none;
+      border-bottom: 3px solid transparent;
+      background: transparent;
+      color: var(--nhsuk-link);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      margin-bottom: -2px;
+    }
+    .nhsuk-tabs button:hover { color: var(--nhsuk-text); }
+    .nhsuk-tabs button:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
+    .nhsuk-tabs button.active { color: var(--nhsuk-text); border-bottom-color: var(--nhsuk-link); }
+    section { display: none; }
+    section.visible { display: block; }
+    .nhsuk-form-group { margin-bottom: 1rem; }
+    .nhsuk-label { display: block; font-weight: 600; margin-bottom: 0.35rem; font-size: 1.125rem; }
+    .nhsuk-input, .nhsuk-select {
+      width: 100%;
+      max-width: 28rem;
+      padding: 0.75rem;
+      border: 2px solid var(--nhsuk-border);
+      border-radius: 4px;
+      font-size: 1rem;
+      font-family: inherit;
+    }
+    .nhsuk-select { min-height: 3.25rem; padding: 0.875rem 2.5rem 0.875rem 0.875rem; font-size: 1.0625rem; }
+    .nhsuk-input:focus, .nhsuk-select:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 0;
+      border-color: var(--nhsuk-text);
+    }
+    .nhsuk-file-upload {
+      display: block;
+      max-width: 28rem;
+    }
+    .nhsuk-file-upload .nhsuk-hint { margin-bottom: 0.5rem; }
+    .nhsuk-file-upload input[type="file"] {
+      position: absolute;
+      width: 0.1px;
+      height: 0.1px;
+      opacity: 0;
+      overflow: hidden;
+      z-index: -1;
+    }
+    .nhsuk-file-upload__trigger {
+      display: inline-block;
+      background: var(--nhsuk-link);
+      color: #fff;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 4px;
+      font-size: 1.125rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      margin-top: 0.25rem;
+    }
+    .nhsuk-file-upload__trigger:hover { background: #004c8f; }
+    .nhsuk-file-upload__trigger:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 2px;
+    }
+    .nhsuk-file-upload__name {
+      display: block;
+      font-size: 0.9375rem;
+      color: var(--nhsuk-secondary-text);
+      margin-top: 0.5rem;
+    }
+    .nhsuk-bulk-export-panel {
+      background: var(--nhsuk-panel-bg);
+      border: 1px solid var(--nhsuk-border);
+      border-left: 4px solid var(--nhsuk-link);
+      border-radius: 4px;
+      box-shadow: var(--nhsuk-card-shadow);
+      padding: 1.5rem 1.75rem;
+      margin: 1.25rem 0 1.5rem 0;
+    }
+    .nhsuk-bulk-export-panel__title { font-size: 1.25rem; font-weight: 700; margin: 0 0 0.35rem 0; color: var(--nhsuk-text); }
+    .nhsuk-bulk-export-panel__desc { font-size: 0.9375rem; color: var(--nhsuk-secondary-text); margin: 0 0 1rem 0; }
+    .nhsuk-bulk-export-panel__actions { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .nhsuk-bulk-export-panel__count { font-size: 0.9375rem; font-weight: 600; color: var(--nhsuk-secondary-text); min-width: 5rem; }
+    .nhsuk-bulk-export-panel__btn { padding: 0.5rem 1rem; font-size: 0.9375rem; }
+    .nhsuk-bulk-export-panel__divider { color: var(--nhsuk-border); font-weight: 700; padding: 0 0.25rem; }
+    .nhsuk-hint { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.25rem; }
+    .nhsuk-button {
+      background: var(--nhsuk-button);
+      color: #fff;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 4px;
+      font-size: 1.125rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .nhsuk-button:hover { background: var(--nhsuk-button-hover); }
+    .nhsuk-button:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
+    .nhsuk-button--secondary { background: var(--nhsuk-link); }
+    .nhsuk-button--secondary:hover { background: #004c8f; }
+    .nhsuk-button--warning { background: var(--nhsuk-error); }
+    .nhsuk-button--warning:hover { background: #a01e12; }
+    .nhsuk-card {
+      background: var(--nhsuk-panel-bg);
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 4px;
+      box-shadow: var(--nhsuk-card-shadow);
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1rem;
+      transition: box-shadow 0.2s ease;
+    }
+    .nhsuk-card:hover { box-shadow: 0 4px 12px rgba(33, 43, 50, 0.08); }
+    .nhsuk-card.revoked { opacity: 0.85; }
+    .nhsuk-card__title { font-size: 1.25rem; font-weight: 700; margin: 0 0 0.25rem 0; color: var(--nhsuk-text); }
+    .nhsuk-card__meta { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-bottom: 0.5rem; }
+    .nhsuk-tag { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.875rem; font-weight: 600; }
+    .nhsuk-tag--valid { background: #cce5d2; color: var(--nhsuk-success); }
+    .nhsuk-tag--expiring { background: #fff3cd; color: #996a00; }
+    .nhsuk-tag--expired { background: #fdecea; color: var(--nhsuk-error); }
+    .nhsuk-tag--revoked { background: #fdecea; color: var(--nhsuk-error); }
+    .nhsuk-card__actions { margin-top: 1rem; }
+    .nhsuk-card__actions .nhsuk-button { margin-right: 0.5rem; margin-bottom: 0.5rem; }
+    .nhsuk-summary-list {
+      margin: 1rem 0; padding: 1rem 1.25rem;
+      background: var(--nhsuk-panel-bg); border: 1px solid var(--nhsuk-border);
+      border-radius: 4px; box-shadow: var(--nhsuk-card-shadow);
+    }
+    .nhsuk-summary-list__row { display: flex; gap: 1rem; margin-bottom: 0.5rem; }
+    .nhsuk-summary-list__row:last-child { margin-bottom: 0; }
+    .nhsuk-summary-list__key { font-weight: 600; min-width: 8rem; }
+    .nhsuk-summary-list__value { color: var(--nhsuk-secondary-text); }
+    .nhsuk-filter-bar {
+      display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; margin: 1.25rem 0;
+      padding: 1.25rem; background: var(--nhsuk-panel-bg); border: 1px solid var(--nhsuk-border);
+      border-radius: 4px;
+    }
+    .nhsuk-filter-bar .nhsuk-form-group { margin-bottom: 0; }
+    .nhsuk-filter-bar .nhsuk-label { font-size: 0.9375rem; margin-bottom: 0.25rem; }
+    #qrModal { display: none; position: fixed; inset: 0; background: rgba(33, 43, 50, 0.35); align-items: center; justify-content: center; z-index: 10; }
+    #qrModal.show { display: flex; }
+    #qrModal .nhsuk-modal {
+      background: #fff; padding: 1.75rem; max-width: 24rem;
+      border-radius: 4px; border: 1px solid var(--nhsuk-border);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    }
+    #qrModal .nhsuk-modal input { width: 100%; padding: 0.6rem; margin-top: 0.5rem; border-radius: 4px; border: 1px solid var(--nhsuk-border); }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/" aria-label="NHS E-Learning Credential Passport homepage">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" height="40" width="100" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
+        </a>
+      </div>
+    </div>
+  </header>
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <h2 class="nhsuk-page-heading">My e-learning</h2>
+    <p class="nhsuk-body-s">Add your e-learning completion records and share them with receiving Trusts.</p>
+
+    <div class="nhsuk-tabs" role="tablist">
+      <button type="button" role="tab" aria-selected="true" data-tab="list" class="active" id="tab-list">My e-learning</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="add" id="tab-add">Add e-learning</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="bulk" id="tab-bulk">Bulk export</button>
+    </div>
+
+    <section id="list" class="visible" role="tabpanel" aria-labelledby="tab-list">
+      <div class="nhsuk-summary-list">
+        <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Valid</span><span class="nhsuk-summary-list__value" id="countValid">0</span></div>
+        <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expiring soon</span><span class="nhsuk-summary-list__value" id="countExpiring">0</span></div>
+        <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expired</span><span class="nhsuk-summary-list__value" id="countExpired">0</span></div>
+      </div>
+      <div class="nhsuk-filter-bar">
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="filterStatus">Filter by status</label>
+          <select class="nhsuk-select" id="filterStatus" aria-label="Filter by status">
+            <option value="">All</option>
+            <option value="valid">Valid</option>
+            <option value="expiring">Expiring soon</option>
+            <option value="expired">Expired</option>
+          </select>
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="filterModule">Filter by module</label>
+          <select class="nhsuk-select" id="filterModule" aria-label="Filter by module">
+            <option value="">All modules</option>
+          </select>
+        </div>
+      </div>
+      <div id="credentialList"></div>
+    </section>
+
+    <section id="add" role="tabpanel" aria-labelledby="tab-add" aria-hidden="true">
+      <form id="addForm">
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_full_name">Your full name</label><input class="nhsuk-input" id="staff_full_name" type="text" name="staff_full_name" required placeholder="Jane Smith"></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_identifier">NHS number or ESR ID</label><input class="nhsuk-input" id="staff_identifier" type="text" name="staff_identifier" required placeholder="1234567890"></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="moduleSelect">Module</label><select class="nhsuk-select" name="module_code" id="moduleSelect"></select></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="completion_date">Completion date</label><input class="nhsuk-input" id="completion_date" type="date" name="completion_date" required></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="expiry_date">Expiry date</label><input class="nhsuk-input" id="expiry_date" type="date" name="expiry_date" required></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_ods_code">Issuing Trust ODS code</label><input class="nhsuk-input" id="issuing_trust_ods_code" type="text" name="issuing_trust_ods_code" placeholder="RGT" required></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_name">Issuing Trust name</label><input class="nhsuk-input" id="issuing_trust_name" type="text" name="issuing_trust_name" placeholder="Royal General Trust" required></div>
+        <div class="nhsuk-form-group nhsuk-file-upload">
+          <label class="nhsuk-label" for="certificate_upload">Upload certificate (optional)</label>
+          <span class="nhsuk-hint" id="certificate_hint">PDF or image (PNG, JPG) — e.g. your course completion certificate.</span>
+          <label for="certificate_upload" class="nhsuk-file-upload__trigger">Choose file</label>
+          <input id="certificate_upload" type="file" name="certificate" accept=".pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf">
+          <span class="nhsuk-file-upload__name" id="certificate_filename" aria-live="polite"></span>
+        </div>
+        <button type="submit" class="nhsuk-button">Add e-learning</button>
+      </form>
+      <p class="nhsuk-hint" style="margin-top:1rem;">At MVP this creates an e-learning record from the data you enter. In production, e-learning would be issued from ESR exports.</p>
+    </section>
+
+    <section id="bulk" role="tabpanel" aria-labelledby="tab-bulk" aria-hidden="true">
+      <div class="nhsuk-bulk-export-panel" id="bulkExportPanel">
+        <h3 class="nhsuk-bulk-export-panel__title">Bulk export</h3>
+        <p class="nhsuk-bulk-export-panel__desc">Download all e-learning as one ZIP, or tick items below to <strong>Download selected as ZIP</strong> or <strong>Share selected</strong> (one link/QR for a verifier).</p>
+        <div class="nhsuk-bulk-export-panel__actions">
+          <span class="nhsuk-bulk-export-panel__count" id="bulkExportCount" aria-live="polite">0 selected</span>
+          <button type="button" class="nhsuk-button nhsuk-bulk-export-panel__btn" id="btnExportAll" title="Download all as one ZIP">Download all as ZIP</button>
+          <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnExportSelected" title="Download selected e-learning as PDFs in a ZIP" disabled>Download selected as ZIP</button>
+          <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnShareSelected" title="One link or QR a verifier can use to check all selected" disabled>Share selected (one link/QR)</button>
+        </div>
+      </div>
+      <div id="bulkCredentialList"></div>
+    </section>
+
+    <div id="qrModal" aria-modal="true" aria-labelledby="qrModalTitle" role="dialog">
+      <div class="nhsuk-modal">
+        <h3 id="qrModalTitle">Share e-learning</h3>
+        <p>Scan the QR code or share the link below so a receiving Trust can verify this e-learning.</p>
+        <div id="qrTarget" style="display:block; width:200px; height:200px; margin:0.5rem 0;"></div>
+        <label class="nhsuk-label" for="shareLink">Verification link</label>
+        <input type="text" id="shareLink" readonly onclick="this.select()">
+        <button type="button" class="nhsuk-button" style="margin-top:1rem;" onclick="document.getElementById('qrModal').classList.remove('show')">Close</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
+  <script>
+    const MODULES = [
+      { code: 'fire_safety', name: 'Fire Safety' },
+      { code: 'infection_control', name: 'Infection Prevention and Control' },
+      { code: 'information_governance', name: 'Information Governance' },
+      { code: 'moving_handling', name: 'Moving and Handling' },
+      { code: 'resuscitation', name: 'Resuscitation Awareness' },
+      { code: 'conflict_resolution', name: 'Conflict Resolution' },
+    ];
+    const STORAGE_KEY = 'nhs_credentials';
+
+    function getStored() { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
+    function setStored(arr) { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); }
+
+    document.querySelectorAll('.nhsuk-tabs button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.nhsuk-tabs button').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+        document.querySelectorAll('main section').forEach(s => { s.classList.remove('visible'); s.setAttribute('aria-hidden', 'true'); });
+        btn.classList.add('active');
+        btn.setAttribute('aria-selected', 'true');
+        const panel = document.getElementById(btn.dataset.tab);
+        panel.classList.add('visible');
+        panel.setAttribute('aria-hidden', 'false');
+      });
+    });
+
+    var filterStatusEl = document.getElementById('filterStatus');
+    var filterModuleEl = document.getElementById('filterModule');
+    if (filterStatusEl) filterStatusEl.addEventListener('change', renderList);
+    if (filterModuleEl) filterModuleEl.addEventListener('change', renderList);
+    var btnExport = document.getElementById('btnExportSelected');
+    if (btnExport) btnExport.addEventListener('click', exportSelectedAsZip);
+    document.getElementById('btnShareSelected').addEventListener('click', shareSelectedAsLink);
+    document.getElementById('btnExportAll').addEventListener('click', function() {
+      document.querySelectorAll('.credential-export-cb').forEach(cb => { cb.checked = true; });
+      updateBulkExportState();
+      exportSelectedAsZip();
+    });
+    document.getElementById('bulkCredentialList').addEventListener('change', function(e) {
+      if (e.target && e.target.classList.contains('credential-export-cb')) updateBulkExportState();
+    });
+
+    function updateBulkExportState() {
+      const checked = document.querySelectorAll('.credential-export-cb:checked');
+      const n = checked.length;
+      const countEl = document.getElementById('bulkExportCount');
+      const btnExport = document.getElementById('btnExportSelected');
+      const btnShare = document.getElementById('btnShareSelected');
+      if (countEl) countEl.textContent = n === 0 ? '0 selected' : (n === 1 ? '1 selected' : n + ' selected');
+      if (btnExport) btnExport.disabled = n === 0;
+      if (btnShare) btnShare.disabled = n === 0;
+    }
+
+    function base64urlEncode(str) {
+      const base64 = btoa(unescape(encodeURIComponent(str)));
+      return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    function shareSelectedAsLink() {
+      const checked = document.querySelectorAll('.credential-export-cb:checked');
+      const ids = Array.from(checked).map(el => el.getAttribute('data-credential-id'));
+      if (ids.length === 0) return;
+      const list = getStored();
+      const bundle = ids.map(id => {
+        const c = list.find(x => x.credential_id === id);
+        return c && c.jwt ? { id: c.credential_id, jwt: c.jwt } : null;
+      }).filter(Boolean);
+      if (bundle.length === 0) {
+        alert('Selected e-learning do not have verification data. Add them again to get shareable links.');
+        return;
+      }
+      const encoded = base64urlEncode(JSON.stringify(bundle));
+      const bundleUrl = window.location.origin + '/static/verifier/bundle.html?b=' + encoded;
+      document.getElementById('shareLink').value = bundleUrl;
+      const qrTarget = document.getElementById('qrTarget');
+      const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(bundleUrl);
+      qrTarget.innerHTML = '<img src="' + qrImg + '" alt="QR code – scan to verify e-learning" width="200" height="200">';
+      document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share selected e-learning';
+      document.querySelector('#qrModal .nhsuk-modal p').textContent = 'One link or QR for all ' + bundle.length + ' selected. A verifier can open this to check them all at once.';
+      document.getElementById('qrModal').classList.add('show');
+    }
+    document.getElementById('certificate_upload').addEventListener('change', function() {
+      const nameEl = document.getElementById('certificate_filename');
+      nameEl.textContent = this.files.length ? 'Chosen: ' + this.files[0].name : '';
+    });
+
+    const sel = document.getElementById('moduleSelect');
+    MODULES.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.code;
+      opt.textContent = m.name;
+      sel.appendChild(opt);
+    });
+
+    function statusClass(expiryDate, revoked) {
+      if (revoked) return 'revoked';
+      const exp = new Date(expiryDate);
+      const now = new Date();
+      const in30 = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      if (exp < now) return 'expired';
+      if (exp < in30) return 'expiring';
+      return 'valid';
+    }
+
+    function getFilteredList() {
+      const list = getStored();
+      const statusFilter = (document.getElementById('filterStatus') || {}).value || '';
+      const moduleFilter = (document.getElementById('filterModule') || {}).value || '';
+      return list.filter(c => {
+        const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
+        if (statusFilter && status !== statusFilter) return false;
+        if (moduleFilter && (c.module_name || '') !== moduleFilter) return false;
+        return true;
+      });
+    }
+
+    function renderList() {
+      const list = getStored();
+      const valid = list.filter(c => !c.revoked && statusClass(c.expiry_date, false) === 'valid').length;
+      const expiring = list.filter(c => !c.revoked && statusClass(c.expiry_date, false) === 'expiring').length;
+      const expired = list.filter(c => statusClass(c.expiry_date, c.revoked) === 'expired' && !c.revoked).length;
+
+      document.getElementById('countValid').textContent = valid;
+      document.getElementById('countExpiring').textContent = expiring;
+      document.getElementById('countExpired').textContent = expired;
+
+      var moduleSelect = document.getElementById('filterModule');
+      if (moduleSelect && list.length > 0) {
+        var names = [...new Set(list.map(c => c.module_name).filter(Boolean))].sort();
+        var current = moduleSelect.value;
+        moduleSelect.innerHTML = '<option value="">All modules</option>' + names.map(n => '<option value="' + n.replace(/"/g, '&quot;') + '">' + n + '</option>').join('');
+        if (names.indexOf(current) !== -1) moduleSelect.value = current;
+      }
+
+      const filtered = getFilteredList();
+      const emptyMsg = list.length === 0 ? 'No e-learning yet. Add one from the "Add e-learning" tab.' : 'No e-learning matches the current filter.';
+      const emptyHtml = '<p class="nhsuk-body-s">' + emptyMsg + '</p>';
+
+      function cardHtml(c, withCheckbox) {
+        const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
+        const checkboxBlock = withCheckbox
+          ? `<label class="nhsuk-card__select" style="flex-shrink:0; margin:0.25rem 0 0 0;">
+               <input type="checkbox" class="credential-export-cb" data-credential-id="${c.credential_id}" aria-label="Select for export">
+             </label>`
+          : '';
+        return `
+          <div class="nhsuk-card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
+            <div class="nhsuk-card__row" style="display:flex; align-items:flex-start; gap:0.75rem;">
+              ${checkboxBlock}
+              <div style="flex:1;">
+                <h3 class="nhsuk-card__title">${c.module_name}</h3>
+                <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
+                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>
+                <div class="nhsuk-card__actions">
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="shareCred('${c.credential_id}')">Share</button>
+                  <button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
+                  ${c.certificate_base64 ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">Download certificate</button>` : ''}
+                </div>
+              </div>
+            </div>
+          </div>`;
+      }
+
+      document.getElementById('credentialList').innerHTML = filtered.length === 0 ? emptyHtml : filtered.map(c => cardHtml(c, false)).join('');
+      const bulkListEl = document.getElementById('bulkCredentialList');
+      if (bulkListEl) {
+        bulkListEl.innerHTML = filtered.length === 0
+          ? '<p class="nhsuk-body-s">No e-learning to export. Add e-learning in the Add e-learning tab, or adjust filters in My e-learning.</p>'
+          : filtered.map(c => cardHtml(c, true)).join('');
+      }
+      const panel = document.getElementById('bulkExportPanel');
+      if (panel) panel.style.display = filtered.length === 0 ? 'none' : 'block';
+      updateBulkExportState();
+    }
+
+    function shareCred(credentialId) {
+      const list = getStored();
+      const c = list.find(x => x.credential_id === credentialId);
+      if (!c) return;
+      document.getElementById('shareLink').value = c.verification_url;
+      const qrTarget = document.getElementById('qrTarget');
+      const url = c.verification_url;
+      const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(url);
+      qrTarget.innerHTML = '<img src="' + qrImg + '" alt="QR code – scan to verify e-learning" width="200" height="200">';
+      document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share e-learning';
+      document.querySelector('#qrModal .nhsuk-modal p').textContent = 'Scan the QR code or share the link below so a receiving Trust can verify this e-learning.';
+      document.getElementById('qrModal').classList.add('show');
+    }
+
+    function downloadPdf(credentialId) {
+      const list = getStored();
+      const c = list.find(x => x.credential_id === credentialId);
+      if (!c || !c.pdf_base64) { alert('PDF not available for this e-learning'); return; }
+      const a = document.createElement('a');
+      a.href = 'data:application/pdf;base64,' + c.pdf_base64;
+      a.download = 'credential-' + credentialId.slice(0, 12) + '.pdf';
+      a.click();
+    }
+
+    async function exportSelectedAsZip() {
+      const checked = document.querySelectorAll('.credential-export-cb:checked');
+      const ids = Array.from(checked).map(el => el.getAttribute('data-credential-id'));
+      if (ids.length === 0) return;
+      const list = getStored();
+      const withPdf = ids.map(id => list.find(c => c.credential_id === id)).filter(c => c && c.pdf_base64);
+      if (withPdf.length === 0) {
+        alert('None of the selected e-learning have a PDF to export.');
+        return;
+      }
+      if (typeof JSZip === 'undefined') {
+        alert('Export requires JSZip. Please refresh the page and try again.');
+        return;
+      }
+      const btnSelected = document.getElementById('btnExportSelected');
+      const btnAll = document.getElementById('btnExportAll');
+      if (btnSelected) { btnSelected.disabled = true; btnSelected.textContent = 'Preparing…'; }
+      if (btnAll) btnAll.disabled = true;
+      try {
+        const zip = new JSZip();
+        withPdf.forEach((c, i) => {
+          const name = (c.module_name || 'credential').replace(/[^a-zA-Z0-9-_]/g, '_') + '-' + (c.credential_id || i).slice(0, 12) + '.pdf';
+          zip.file(name, c.pdf_base64, { base64: true });
+        });
+        const blob = await zip.generateAsync({ type: 'blob' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'nhs-elearning-export.zip';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } catch (e) {
+        alert('Export failed: ' + (e.message || e));
+      }
+      const n = document.querySelectorAll('.credential-export-cb:checked').length;
+      if (btnSelected) { btnSelected.disabled = n === 0; btnSelected.textContent = 'Download selected as ZIP'; }
+      if (btnAll) btnAll.disabled = false;
+    }
+
+    function downloadCertificate(credentialId) {
+      const list = getStored();
+      const c = list.find(x => x.credential_id === credentialId);
+      if (!c || !c.certificate_base64) { alert('No uploaded certificate for this e-learning'); return; }
+      const name = c.certificate_filename || 'certificate';
+      const ext = (name.split('.').pop() || '').toLowerCase();
+      const mime = ext === 'pdf' ? 'application/pdf' : (ext === 'png' ? 'image/png' : 'image/jpeg');
+      const a = document.createElement('a');
+      a.href = 'data:' + mime + ';base64,' + c.certificate_base64;
+      a.download = name;
+      a.click();
+    }
+
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const b64 = reader.result.split(',')[1];
+          resolve(b64);
+        };
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    document.getElementById('addForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const module_code = fd.get('module_code');
+      const module_name = MODULES.find(m => m.code === module_code)?.name || module_code;
+      const body = { records: [{ staff_full_name: fd.get('staff_full_name'), staff_identifier: fd.get('staff_identifier'), module_code, module_name, completion_date: fd.get('completion_date'), expiry_date: fd.get('expiry_date'), issuing_trust_ods_code: fd.get('issuing_trust_ods_code'), issuing_trust_name: fd.get('issuing_trust_name') }] };
+      const certInput = document.getElementById('certificate_upload');
+      if (certInput.files && certInput.files[0]) {
+        try {
+          body.certificate_base64 = await fileToBase64(certInput.files[0]);
+          body.certificate_filename = certInput.files[0].name || 'certificate';
+        } catch (err) { alert('Could not read certificate file: ' + err.message); return; }
+      }
+      try {
+        const res = await fetch('/api/credentials/issue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        const issued = data.credentials[0];
+        const list = getStored();
+        list.push({ credential_id: issued.credential_id, verification_url: issued.verification_url, jwt: issued.jwt, pdf_base64: issued.pdf_base64, module_name, expiry_date: fd.get('expiry_date'), revoked: false, certificate_base64: issued.certificate_base64 || null, certificate_filename: issued.certificate_filename || null });
+        setStored(list);
+        renderList();
+        e.target.reset();
+        document.querySelector('.nhsuk-tabs button[data-tab="list"]').click();
+      } catch (err) { alert(err.message); }
+    });
+
+    renderList();
+  </script>
+</body>
+</html>

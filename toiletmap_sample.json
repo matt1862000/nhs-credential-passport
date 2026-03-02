@@ -1,4 +1,0 @@
-[
-  {"id":"abc123","active":true,"name":"Kirkhamgate Public Toilets","accessible":true,"baby_change":true,"men":true,"women":true,"areas":{"name":"Wakefield","id":"x"},"location":{"type":"Point","coordinates":[-1.5496,53.7029]}},
-  {"id":"def456","active":true,"name":null,"accessible":false,"baby_change":null,"men":true,"women":true,"areas":{"name":"Wakefield","id":"x"},"location":{"type":"Point","coordinates":[-1.52,53.70]}}
-]

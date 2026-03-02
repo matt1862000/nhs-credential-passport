@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verify e-learning — NHS E-Learning Credential Passport</title>
+  <style>
+    /* NHS design system: https://service-manual.nhs.uk/design-system/styles/colour */
+    :root {
+      --nhsuk-text: #212b32;
+      --nhsuk-link: #005eb8;
+      --nhsuk-link-hover: #003087;
+      --nhsuk-focus: #ffeb3b;
+      --nhsuk-success: #007f3b;
+      --nhsuk-error: #d5281b;
+      --nhsuk-button: #007f3b;
+      --nhsuk-button-hover: #00662f;
+      --nhsuk-border: #d8dde0;
+      --nhsuk-body-bg: #f0f4f5;
+      --nhsuk-panel-bg: #fff;
+      --nhsuk-secondary-text: #4c6272;
+      --expired-warn: #ffb81c;
+      --unverified: #6b7280;
+      --nhsuk-card-shadow: 0 2px 8px rgba(33, 43, 50, 0.06);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif;
+      background: var(--nhsuk-body-bg);
+      color: var(--nhsuk-text);
+      line-height: 1.5;
+      margin: 0;
+      min-height: 100vh;
+    }
+    .nhsuk-header { background-color: #005eb8; padding: 0.75rem 0; }
+    .nhsuk-header__container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+    .nhsuk-header__service { display: flex; align-items: center; }
+    .nhsuk-header__service-logo { display: flex; align-items: center; gap: 0.75rem; color: #fff; text-decoration: none; font-weight: 600; font-size: 1.25rem; }
+    .nhsuk-header__service-logo:hover { color: #fff; text-decoration: underline; }
+    .nhsuk-header__service-logo:focus { outline: 3px solid #ffeb3b; outline-offset: 2px; }
+    .nhsuk-header__logo { flex-shrink: 0; height: 40px; width: 100px; fill: currentColor; }
+    .nhsuk-header__service-name { white-space: nowrap; }
+    .nhsuk-main { max-width: 960px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+    .nhsuk-page-heading { font-size: 2.25rem; font-weight: 700; margin: 0 0 0.5rem 0; color: var(--nhsuk-text); letter-spacing: -0.02em; }
+    .nhsuk-body-s { font-size: 1.0625rem; color: var(--nhsuk-secondary-text); margin-bottom: 1.5rem; max-width: 38em; }
+    .nhsuk-form-group { margin-bottom: 1.25rem; }
+    .nhsuk-label { display: block; font-weight: 600; margin-bottom: 0.35rem; font-size: 1.125rem; }
+    .nhsuk-input, .nhsuk-textarea {
+      width: 100%;
+      padding: 0.75rem;
+      border: 2px solid var(--nhsuk-border);
+      border-radius: 4px;
+      font-size: 1rem;
+      font-family: inherit;
+    }
+    .nhsuk-textarea { min-height: 120px; resize: vertical; }
+    .nhsuk-input:focus, .nhsuk-textarea:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 0;
+      border-color: var(--nhsuk-text);
+    }
+    .nhsuk-hint { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.25rem; }
+    .nhsuk-button {
+      background: var(--nhsuk-button);
+      color: #fff;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 4px;
+      font-size: 1.125rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .nhsuk-button:hover { background: var(--nhsuk-button-hover); }
+    .nhsuk-button:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 2px;
+    }
+    .nhsuk-button:disabled { background: var(--nhsuk-border); cursor: not-allowed; }
+    .nhsuk-panel { background: var(--nhsuk-panel-bg); padding: 1.5rem; margin-top: 1.5rem; border: 1px solid var(--nhsuk-border); border-left: 4px solid; border-radius: 4px; box-shadow: var(--nhsuk-card-shadow); }
+    .nhsuk-panel--valid   { border-color: var(--nhsuk-success); }
+    .nhsuk-panel--expired { border-color: var(--expired-warn); background: #fff9e6; }
+    .nhsuk-panel--revoked { border-color: var(--nhsuk-error); background: #fdecea; }
+    .nhsuk-panel--unverified { border-color: var(--unverified); background: #f3f4f6; }
+    .nhsuk-panel__title { margin: 0 0 0.5rem 0; font-size: 1.25rem; font-weight: 700; }
+    .nhsuk-panel--valid .nhsuk-panel__title   { color: var(--nhsuk-success); }
+    .nhsuk-panel--expired .nhsuk-panel__title { color: #996a00; }
+    .nhsuk-panel--revoked .nhsuk-panel__title { color: var(--nhsuk-error); }
+    .nhsuk-panel--unverified .nhsuk-panel__title { color: var(--unverified); }
+    .nhsuk-panel pre { background: var(--nhsuk-body-bg); padding: 1rem; border-radius: 4px; overflow-x: auto; font-size: 0.875rem; }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/" aria-label="NHS E-Learning Credential Passport homepage">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" height="40" width="100" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
+        </a>
+      </div>
+    </div>
+  </header>
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <h2 class="nhsuk-page-heading">Verify e-learning</h2>
+    <p class="nhsuk-body-s">Check that a staff member’s e-learning is valid. Paste the e-learning ID or the full verification link they shared with you.</p>
+
+    <form id="verifyForm">
+      <div class="nhsuk-form-group">
+        <label class="nhsuk-label" for="input">E-learning ID or verification URL</label>
+        <textarea class="nhsuk-textarea" id="input" name="input" placeholder="Paste e-learning ID (e.g. nhs-el-abc123...) or the full verification URL from a shared link" aria-describedby="input-hint"></textarea>
+        <span class="nhsuk-hint" id="input-hint">If the staff member shared a link, paste the entire URL here.</span>
+      </div>
+      <button type="submit" class="nhsuk-button" id="btn">Verify</button>
+    </form>
+
+    <div class="nhsuk-form-group" style="margin-top:2rem; padding-top:1.5rem; border-top:1px solid #aeb7bd;">
+      <h3 class="nhsuk-page-heading" style="font-size:1.25rem; margin:0 0 0.5rem 0;">Import (multiple e-learning)</h3>
+      <p class="nhsuk-body-s" style="margin-bottom:0.75rem;">If the staff member shared one link or QR for several e-learning (e.g. Fire Safety and Information Governance), paste that bundle URL here to verify them all at once.</p>
+      <label class="nhsuk-label" for="bundleUrl">Bundle URL from staff member</label>
+      <input class="nhsuk-input" id="bundleUrl" type="url" placeholder="https://.../static/verifier/bundle.html?b=..." style="max-width:100%;">
+      <button type="button" class="nhsuk-button" id="btnImportBundle" style="margin-top:0.5rem;">Open bundle</button>
+    </div>
+
+    <div id="result"></div>
+  </main>
+
+  <script>
+    const form = document.getElementById('verifyForm');
+    const input = document.getElementById('input');
+    const resultEl = document.getElementById('result');
+    const btn = document.getElementById('btn');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const raw = (input.value || '').trim();
+      if (!raw) return;
+
+      btn.disabled = true;
+      resultEl.innerHTML = '<p>Checking…</p>';
+
+      let credentialId = null;
+      let jwtParam = null;
+
+      try {
+        if (raw.startsWith('http')) {
+          const url = new URL(raw);
+          credentialId = url.pathname.split('/').filter(Boolean).pop();
+          if (credentialId === 'verify') credentialId = url.pathname.split('/').filter(Boolean).slice(-1)[0];
+          jwtParam = url.searchParams.get('jwt') || null;
+        } else {
+          credentialId = raw.split(/[\s\n]/)[0].trim();
+        }
+      } catch (_) {
+        credentialId = raw.split(/[\s\n]/)[0].trim();
+      }
+
+      const apiUrl = `/api/credentials/verify/${encodeURIComponent(credentialId)}${jwtParam ? '?jwt=' + encodeURIComponent(jwtParam) : ''}`;
+
+      try {
+        const res = await fetch(apiUrl);
+        const data = await res.json();
+        const status = (data.status || 'UNVERIFIED').toLowerCase();
+        resultEl.className = 'nhsuk-panel nhsuk-panel--' + status;
+        resultEl.innerHTML = `
+          <h3 class="nhsuk-panel__title">${data.status}</h3>
+          <p>${escapeHtml(data.message || '')}</p>
+          ${data.claims ? '<pre>' + escapeHtml(JSON.stringify(data.claims, null, 2)) + '</pre>' : ''}
+        `;
+      } catch (err) {
+        resultEl.className = 'nhsuk-panel nhsuk-panel--unverified';
+        resultEl.innerHTML = '<h3 class="nhsuk-panel__title">Error</h3><p>' + escapeHtml(err.message) + '</p>';
+      }
+      btn.disabled = false;
+    });
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    document.getElementById('btnImportBundle').addEventListener('click', function() {
+      let url = (document.getElementById('bundleUrl').value || '').trim();
+      if (!url) return;
+      if (!url.startsWith('http') && !url.startsWith('/')) {
+        url = window.location.origin + '/static/verifier/bundle.html' + (url.startsWith('?') ? url : '?b=' + encodeURIComponent(url));
+      }
+      window.location = url;
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NHS E-Learning Credential Passport</title>
+  <style>
+    :root {
+      --nhsuk-text: #212b32;
+      --nhsuk-link: #005eb8;
+      --nhsuk-link-hover: #003087;
+      --nhsuk-focus: #ffeb3b;
+      --nhsuk-body-bg: #f0f4f5;
+      --nhsuk-secondary-text: #4c6272;
+      --nhsuk-border: #d8dde0;
+      --nhsuk-card-shadow: 0 2px 8px rgba(33, 43, 50, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif;
+      background: var(--nhsuk-body-bg);
+      color: var(--nhsuk-text);
+      line-height: 1.5;
+      margin: 0;
+      min-height: 100vh;
+    }
+    .nhsuk-header {
+      background-color: #005eb8;
+      padding: 0.75rem 0;
+    }
+    .nhsuk-header__container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+    .nhsuk-header__service { display: flex; align-items: center; }
+    .nhsuk-header__service-logo {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      color: #fff;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1.25rem;
+    }
+    .nhsuk-header__service-logo:hover { color: #fff; text-decoration: underline; }
+    .nhsuk-header__service-logo:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 2px;
+    }
+    .nhsuk-header__logo {
+      flex-shrink: 0;
+      height: 40px;
+      width: 100px;
+      fill: currentColor;
+    }
+    .nhsuk-header__service-name { white-space: nowrap; }
+    .nhsuk-main {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem;
+    }
+    .nhsuk-hero { margin-bottom: 2rem; }
+    .nhsuk-page-heading {
+      font-size: 2.25rem;
+      font-weight: 700;
+      margin: 0 0 0.5rem 0;
+      color: var(--nhsuk-text);
+      letter-spacing: -0.02em;
+    }
+    .nhsuk-lead {
+      font-size: 1.1875rem;
+      color: var(--nhsuk-secondary-text);
+      margin: 0 0 2rem 0;
+      max-width: 38em;
+    }
+    .nhsuk-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 1.25rem;
+    }
+    .nhsuk-list li {
+      margin: 0;
+      padding: 1.5rem 1.5rem 1.25rem;
+      background: #fff;
+      border: 1px solid var(--nhsuk-border);
+      border-left: 4px solid var(--nhsuk-link);
+      border-radius: 4px;
+      box-shadow: var(--nhsuk-card-shadow);
+      transition: box-shadow 0.2s ease, border-left-color 0.2s ease;
+    }
+    .nhsuk-list li:hover {
+      box-shadow: 0 4px 12px rgba(33, 43, 50, 0.12);
+      border-left-color: #003087;
+    }
+    .nhsuk-list a {
+      color: var(--nhsuk-link);
+      font-weight: 600;
+      font-size: 1.25rem;
+      text-decoration: none;
+      display: inline-block;
+      margin-bottom: 0.25rem;
+    }
+    .nhsuk-list a:hover {
+      color: var(--nhsuk-link-hover);
+      text-decoration: underline;
+    }
+    .nhsuk-list a:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 2px;
+    }
+    .nhsuk-list p {
+      margin: 0;
+      font-size: 1rem;
+      color: var(--nhsuk-secondary-text);
+      font-weight: 400;
+      line-height: 1.45;
+    }
+    .nhsuk-body-s {
+      font-size: 0.9375rem;
+      color: var(--nhsuk-secondary-text);
+      margin-top: 2rem;
+    }
+    .nhsuk-body-s a { color: var(--nhsuk-link); }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/" aria-label="NHS E-Learning Credential Passport homepage">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" height="40" width="100" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
+        </a>
+      </div>
+    </div>
+  </header>
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <div class="nhsuk-hero">
+      <h1 class="nhsuk-page-heading">Welcome</h1>
+      <p class="nhsuk-lead">Share and verify e-learning so staff and Trusts can avoid duplicate training. Phase 2 MVP — no ESR integration yet.</p>
+    </div>
+    <ul class="nhsuk-list">
+      <li>
+        <a href="/static/staff/">Staff app</a>
+        <p>View your e-learning, add new ones, share by link or QR, download PDF.</p>
+      </li>
+      <li>
+        <a href="/static/verifier/">Verify e-learning</a>
+        <p>Paste an e-learning ID or verification URL to check it is valid, expired, or revoked.</p>
+      </li>
+      <li>
+        <a href="/.well-known/did.json">Public key (did:web)</a>
+        <p>For verifiers: issuer public key for signature verification.</p>
+      </li>
+    </ul>
+    <p class="nhsuk-body-s">Built to the <a href="https://service-manual.nhs.uk/design-system/design-principles" target="_blank" rel="noopener">NHS design principles</a>.</p>
+  </main>
+</body>
+</html>
