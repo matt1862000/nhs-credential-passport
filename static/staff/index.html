@@ -5,98 +5,171 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>My credentials — NHS E-Learning Credential Passport</title>
   <style>
-    :root { --nhs-blue: #005eb8; --valid: #007f3b; --expired: #da291c; --warn: #ffb81c; }
+    :root {
+      --nhsuk-text: #212b32;
+      --nhsuk-link: #005eb8;
+      --nhsuk-focus: #ffeb3b;
+      --nhsuk-success: #007f3b;
+      --nhsuk-error: #d5281b;
+      --nhsuk-button: #007f3b;
+      --nhsuk-button-hover: #00662f;
+      --nhsuk-border: #aeb7bd;
+      --nhsuk-body-bg: #f0f4f5;
+      --nhsuk-panel-bg: #fff;
+      --nhsuk-secondary-text: #4c6272;
+      --expired-warn: #ffb81c;
+    }
     * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 0 auto; padding: 1.5rem; color: #212b32; }
-    h1 { font-size: 1.5rem; color: var(--nhs-blue); }
-    .tabs { display: flex; gap: 0.5rem; margin: 1rem 0; }
-    .tabs button { padding: 0.5rem 1rem; border: 1px solid #aeb7bd; background: #fff; border-radius: 4px; cursor: pointer; }
-    .tabs button.active { background: var(--nhs-blue); color: #fff; border-color: var(--nhs-blue); }
+    body {
+      font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif;
+      background: var(--nhsuk-body-bg);
+      color: var(--nhsuk-text);
+      line-height: 1.5;
+      margin: 0;
+      min-height: 100vh;
+    }
+    .nhsuk-header {
+      background: var(--nhsuk-link);
+      color: #fff;
+      padding: 1rem 0;
+    }
+    .nhsuk-header__container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+    .nhsuk-header__title { font-size: 1.5rem; font-weight: 700; margin: 0; }
+    .nhsuk-header__title a { color: #fff; text-decoration: none; }
+    .nhsuk-header__title a:hover { text-decoration: underline; }
+    .nhsuk-main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+    .nhsuk-page-heading { font-size: 2rem; font-weight: 700; margin: 0 0 0.5rem 0; color: var(--nhsuk-text); }
+    .nhsuk-body-s { font-size: 1rem; color: var(--nhsuk-secondary-text); margin-bottom: 1.25rem; }
+    .nhsuk-tabs { display: flex; gap: 0; margin: 1.5rem 0; border-bottom: 2px solid var(--nhsuk-border); }
+    .nhsuk-tabs button {
+      padding: 0.75rem 1.25rem;
+      border: none;
+      border-bottom: 3px solid transparent;
+      background: transparent;
+      color: var(--nhsuk-link);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      margin-bottom: -2px;
+    }
+    .nhsuk-tabs button:hover { color: var(--nhsuk-text); }
+    .nhsuk-tabs button:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
+    .nhsuk-tabs button.active { color: var(--nhsuk-text); border-bottom-color: var(--nhsuk-link); }
     section { display: none; }
     section.visible { display: block; }
-    label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
-    input, select, button { padding: 0.5rem; margin-bottom: 0.75rem; font-size: 1rem; }
-    input, select { width: 100%; max-width: 320px; border: 1px solid #aeb7bd; border-radius: 4px; }
-    button.primary { background: var(--nhs-blue); color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer; }
-    button.primary:hover { background: #004c8f; }
-    button.danger { background: #da291c; color: #fff; border: none; padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
-    .card {
-      border: 1px solid #dbe0e3;
-      border-radius: 8px;
-      padding: 1rem;
-      margin-bottom: 1rem;
-      background: #f8f9fa;
+    .nhsuk-form-group { margin-bottom: 1rem; }
+    .nhsuk-label { display: block; font-weight: 600; margin-bottom: 0.35rem; font-size: 1.125rem; }
+    .nhsuk-input, .nhsuk-select {
+      width: 100%;
+      max-width: 28rem;
+      padding: 0.75rem;
+      border: 2px solid var(--nhsuk-border);
+      border-radius: 4px;
+      font-size: 1rem;
+      font-family: inherit;
     }
-    .card.revoked { opacity: 0.7; }
-    .card .meta { font-size: 0.875rem; color: #4c6272; margin-bottom: 0.5rem; }
-    .card .status { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
-    .card .status.valid { background: #cce5d2; color: var(--valid); }
-    .card .status.expiring { background: #fff3cd; color: #856404; }
-    .card .status.expired { background: #f8d7da; color: var(--expired); }
-    .card .status.revoked { background: #fdecea; color: var(--expired); }
-    .card .actions { margin-top: 0.75rem; }
-    .card .actions button { margin-right: 0.5rem; margin-bottom: 0.25rem; }
-    .dashboard { margin-top: 1rem; }
-    .dashboard .stat { display: inline-block; margin-right: 1.5rem; margin-bottom: 0.5rem; }
-    .dashboard .stat strong { font-size: 1.5rem; color: var(--nhs-blue); }
-    #qrModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 10; }
+    .nhsuk-input:focus, .nhsuk-select:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 0;
+      border-color: var(--nhsuk-text);
+    }
+    .nhsuk-hint { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.25rem; }
+    .nhsuk-button {
+      background: var(--nhsuk-button);
+      color: #fff;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 4px;
+      font-size: 1.125rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .nhsuk-button:hover { background: var(--nhsuk-button-hover); }
+    .nhsuk-button:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
+    .nhsuk-button--secondary { background: var(--nhsuk-link); }
+    .nhsuk-button--secondary:hover { background: #004c8f; }
+    .nhsuk-button--warning { background: var(--nhsuk-error); }
+    .nhsuk-button--warning:hover { background: #a01e12; }
+    .nhsuk-card {
+      background: var(--nhsuk-panel-bg);
+      border: 1px solid var(--nhsuk-border);
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .nhsuk-card.revoked { opacity: 0.85; }
+    .nhsuk-card__meta { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-bottom: 0.5rem; }
+    .nhsuk-tag { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.875rem; font-weight: 600; }
+    .nhsuk-tag--valid { background: #cce5d2; color: var(--nhsuk-success); }
+    .nhsuk-tag--expiring { background: #fff3cd; color: #996a00; }
+    .nhsuk-tag--expired { background: #fdecea; color: var(--nhsuk-error); }
+    .nhsuk-tag--revoked { background: #fdecea; color: var(--nhsuk-error); }
+    .nhsuk-card__actions { margin-top: 1rem; }
+    .nhsuk-card__actions .nhsuk-button { margin-right: 0.5rem; margin-bottom: 0.5rem; }
+    .nhsuk-summary-list { margin: 1rem 0; }
+    .nhsuk-summary-list__row { display: flex; gap: 1rem; margin-bottom: 0.5rem; }
+    .nhsuk-summary-list__key { font-weight: 600; min-width: 8rem; }
+    .nhsuk-summary-list__value { color: var(--nhsuk-secondary-text); }
+    #qrModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); align-items: center; justify-content: center; z-index: 10; }
     #qrModal.show { display: flex; }
-    #qrModal .box { background: #fff; padding: 1.5rem; border-radius: 8px; max-width: 320px; text-align: center; }
-    #qrModal canvas { margin: 0.5rem 0; }
-    .hint { font-size: 0.875rem; color: #4c6272; }
+    #qrModal .nhsuk-modal { background: #fff; padding: 1.5rem; max-width: 22rem; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+    #qrModal .nhsuk-modal input { width: 100%; padding: 0.5rem; margin-top: 0.5rem; }
   </style>
 </head>
 <body>
-  <h1>My credentials</h1>
-  <p class="hint">Add e-learning completion records and share them with receiving Trusts. You can revoke any credential at any time.</p>
-
-  <div class="tabs">
-    <button type="button" data-tab="list" class="active">My credentials</button>
-    <button type="button" data-tab="add">Add credential</button>
-  </div>
-
-  <section id="list" class="visible">
-    <div class="dashboard">
-      <span class="stat">Valid: <strong id="countValid">0</strong></span>
-      <span class="stat">Expiring soon: <strong id="countExpiring">0</strong></span>
-      <span class="stat">Expired: <strong id="countExpired">0</strong></span>
-      <span class="stat">Revoked: <strong id="countRevoked">0</strong></span>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <h1 class="nhsuk-header__title"><a href="/">NHS E-Learning Credential Passport</a></h1>
     </div>
-    <div id="credentialList"></div>
-  </section>
+  </header>
 
-  <section id="add">
-    <form id="addForm">
-      <label>Your full name</label>
-      <input type="text" name="staff_full_name" required placeholder="Jane Smith">
-      <label>NHS number or ESR ID</label>
-      <input type="text" name="staff_identifier" required placeholder="1234567890">
-      <label>Module</label>
-      <select name="module_code" id="moduleSelect"></select>
-      <label>Completion date</label>
-      <input type="date" name="completion_date" required>
-      <label>Expiry date</label>
-      <input type="date" name="expiry_date" required>
-      <label>Issuing Trust ODS code</label>
-      <input type="text" name="issuing_trust_ods_code" placeholder="RGT" required>
-      <label>Issuing Trust name</label>
-      <input type="text" name="issuing_trust_name" placeholder="Royal General Trust" required>
-      <button type="submit" class="primary">Issue credential</button>
-    </form>
-    <p class="hint">At MVP this creates a credential from the data you enter. In production, credentials would be issued from ESR exports.</p>
-  </section>
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <h2 class="nhsuk-page-heading">My credentials</h2>
+    <p class="nhsuk-body-s">Add your e-learning completion records and share them with receiving Trusts. You can revoke any credential at any time.</p>
+
+    <div class="nhsuk-tabs" role="tablist">
+      <button type="button" role="tab" aria-selected="true" data-tab="list" class="active" id="tab-list">My credentials</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="add" id="tab-add">Add credential</button>
+    </div>
+
+    <section id="list" class="visible" role="tabpanel" aria-labelledby="tab-list">
+      <div class="nhsuk-summary-list">
+        <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Valid</span><span class="nhsuk-summary-list__value" id="countValid">0</span></div>
+        <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expiring soon</span><span class="nhsuk-summary-list__value" id="countExpiring">0</span></div>
+        <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expired</span><span class="nhsuk-summary-list__value" id="countExpired">0</span></div>
+        <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Revoked</span><span class="nhsuk-summary-list__value" id="countRevoked">0</span></div>
+      </div>
+      <div id="credentialList"></div>
+    </section>
+
+    <section id="add" role="tabpanel" aria-labelledby="tab-add" aria-hidden="true">
+      <form id="addForm">
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_full_name">Your full name</label><input class="nhsuk-input" id="staff_full_name" type="text" name="staff_full_name" required placeholder="Jane Smith"></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_identifier">NHS number or ESR ID</label><input class="nhsuk-input" id="staff_identifier" type="text" name="staff_identifier" required placeholder="1234567890"></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="moduleSelect">Module</label><select class="nhsuk-select" name="module_code" id="moduleSelect"></select></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="completion_date">Completion date</label><input class="nhsuk-input" id="completion_date" type="date" name="completion_date" required></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="expiry_date">Expiry date</label><input class="nhsuk-input" id="expiry_date" type="date" name="expiry_date" required></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_ods_code">Issuing Trust ODS code</label><input class="nhsuk-input" id="issuing_trust_ods_code" type="text" name="issuing_trust_ods_code" placeholder="RGT" required></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_name">Issuing Trust name</label><input class="nhsuk-input" id="issuing_trust_name" type="text" name="issuing_trust_name" placeholder="Royal General Trust" required></div>
+        <button type="submit" class="nhsuk-button">Issue credential</button>
+      </form>
+      <p class="nhsuk-hint" style="margin-top:1rem;">At MVP this creates a credential from the data you enter. In production, credentials would be issued from ESR exports.</p>
+    </section>
+
+    <div id="qrModal" aria-modal="true" aria-labelledby="qrModalTitle" role="dialog">
+      <div class="nhsuk-modal">
+        <h3 id="qrModalTitle">Share credential</h3>
+        <p>Scan the QR code or share the link below so a receiving Trust can verify this credential.</p>
+        <div id="qrTarget" style="display:inline-block; min-width:200px; min-height:200px;"></div>
+        <label class="nhsuk-label" for="shareLink">Verification link</label>
+        <input type="text" id="shareLink" readonly onclick="this.select()">
+        <button type="button" class="nhsuk-button" style="margin-top:1rem;" onclick="document.getElementById('qrModal').classList.remove('show')">Close</button>
+      </div>
+    </div>
+  </main>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-1/o4cF1sR9vRk49H0OojRr8Fm2Yx/g0SVh4bJ3iAPCzkn6OWmknR0bjkMJjK8N5Y5q0J/5PxwPm/NF0G5eqCqQ==" crossorigin="anonymous"></script>
-  <div id="qrModal">
-    <div class="box">
-      <p><strong>Scan to verify</strong></p>
-      <div id="qrTarget" style="display:inline-block; min-width:200px; min-height:200px;"></div>
-      <p class="hint">Or share the link below</p>
-      <input type="text" id="shareLink" readonly style="width:100%; font-size:0.85rem;" onclick="this.select()">
-      <button type="button" class="primary" style="margin-top:0.75rem;" onclick="document.getElementById('qrModal').classList.remove('show')">Close</button>
-    </div>
-  </div>
-
   <script>
     const MODULES = [
       { code: 'fire_safety', name: 'Fire Safety' },
@@ -111,12 +184,15 @@
     function getStored() { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
     function setStored(arr) { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); }
 
-    document.querySelectorAll('.tabs button').forEach(btn => {
+    document.querySelectorAll('.nhsuk-tabs button').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('section').forEach(s => s.classList.remove('visible'));
+        document.querySelectorAll('.nhsuk-tabs button').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+        document.querySelectorAll('main section').forEach(s => { s.classList.remove('visible'); s.setAttribute('aria-hidden', 'true'); });
         btn.classList.add('active');
-        document.getElementById(btn.dataset.tab).classList.add('visible');
+        btn.setAttribute('aria-selected', 'true');
+        const panel = document.getElementById(btn.dataset.tab);
+        panel.classList.add('visible');
+        panel.setAttribute('aria-hidden', 'false');
       });
     });
 
@@ -151,17 +227,17 @@
       document.getElementById('countRevoked').textContent = revoked;
 
       const html = list.length === 0
-        ? '<p class="hint">No credentials yet. Add one from the "Add credential" tab.</p>'
+        ? '<p class="nhsuk-body-s">No credentials yet. Add one from the "Add credential" tab.</p>'
         : list.map(c => {
             const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
             return `
-              <div class="card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
-                <div class="meta">${c.module_name} · Expires ${c.expiry_date} ${c.revoked ? '· Revoked' : ''}</div>
-                <span class="status ${status}">${status.toUpperCase()}</span>
-                <div class="actions">
-                  <button type="button" class="primary" onclick="shareCred('${c.credential_id}')">Share (link / QR)</button>
-                  <button type="button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
-                  ${!c.revoked ? `<button type="button" class="danger" onclick="revokeCred('${c.credential_id}')">Revoke</button>` : ''}
+              <div class="nhsuk-card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
+                <div class="nhsuk-card__meta">${c.module_name} · Expires ${c.expiry_date} ${c.revoked ? '· Revoked' : ''}</div>
+                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>
+                <div class="nhsuk-card__actions">
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="shareCred('${c.credential_id}')">Share (link / QR)</button>
+                  <button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
+                  ${!c.revoked ? `<button type="button" class="nhsuk-button nhsuk-button--warning" onclick="revokeCred('${c.credential_id}')">Revoke</button>` : ''}
                 </div>
               </div>`;
           }).join('');
@@ -175,9 +251,7 @@
       document.getElementById('shareLink').value = c.verification_url;
       const qrTarget = document.getElementById('qrTarget');
       qrTarget.innerHTML = '';
-      if (window.QRCode) {
-        new QRCode(qrTarget, { text: c.verification_url, width: 200, height: 200 });
-      }
+      if (window.QRCode) new QRCode(qrTarget, { text: c.verification_url, width: 200, height: 200 });
       document.getElementById('qrModal').classList.add('show');
     }
 
@@ -200,9 +274,7 @@
         const idx = list.findIndex(x => x.credential_id === credentialId);
         if (idx !== -1) { list[idx].revoked = true; setStored(list); }
         renderList();
-      } catch (e) {
-        alert(e.message);
-      }
+      } catch (e) { alert(e.message); }
     }
 
     document.getElementById('addForm').addEventListener('submit', async (e) => {
@@ -210,44 +282,19 @@
       const fd = new FormData(e.target);
       const module_code = fd.get('module_code');
       const module_name = MODULES.find(m => m.code === module_code)?.name || module_code;
-      const body = {
-        records: [{
-          staff_full_name: fd.get('staff_full_name'),
-          staff_identifier: fd.get('staff_identifier'),
-          module_code,
-          module_name,
-          completion_date: fd.get('completion_date'),
-          expiry_date: fd.get('expiry_date'),
-          issuing_trust_ods_code: fd.get('issuing_trust_ods_code'),
-          issuing_trust_name: fd.get('issuing_trust_name'),
-        }],
-      };
+      const body = { records: [{ staff_full_name: fd.get('staff_full_name'), staff_identifier: fd.get('staff_identifier'), module_code, module_name, completion_date: fd.get('completion_date'), expiry_date: fd.get('expiry_date'), issuing_trust_ods_code: fd.get('issuing_trust_ods_code'), issuing_trust_name: fd.get('issuing_trust_name') }] };
       try {
-        const res = await fetch('/api/credentials/issue', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
+        const res = await fetch('/api/credentials/issue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         const issued = data.credentials[0];
         const list = getStored();
-        list.push({
-          credential_id: issued.credential_id,
-          verification_url: issued.verification_url,
-          jwt: issued.jwt,
-          pdf_base64: issued.pdf_base64,
-          module_name,
-          expiry_date: fd.get('expiry_date'),
-          revoked: false,
-        });
+        list.push({ credential_id: issued.credential_id, verification_url: issued.verification_url, jwt: issued.jwt, pdf_base64: issued.pdf_base64, module_name, expiry_date: fd.get('expiry_date'), revoked: false });
         setStored(list);
         renderList();
         e.target.reset();
-        document.querySelector('.tabs button[data-tab="list"]').click();
-      } catch (err) {
-        alert(err.message);
-      }
+        document.querySelector('.nhsuk-tabs button[data-tab="list"]').click();
+      } catch (err) { alert(err.message); }
     });
 
     renderList();

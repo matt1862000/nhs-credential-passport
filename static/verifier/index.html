@@ -5,77 +5,113 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Verify credential — NHS E-Learning Credential Passport</title>
   <style>
+    /* NHS design system: https://service-manual.nhs.uk/design-system/styles/colour */
     :root {
-      --nhs-blue: #005eb8;
-      --valid: #007f3b;
-      --expired: #ffb81c;
-      --revoked: #da291c;
+      --nhsuk-text: #212b32;
+      --nhsuk-link: #005eb8;
+      --nhsuk-link-hover: #003d82;
+      --nhsuk-focus: #ffeb3b;
+      --nhsuk-success: #007f3b;
+      --nhsuk-error: #d5281b;
+      --nhsuk-button: #007f3b;
+      --nhsuk-button-hover: #00662f;
+      --nhsuk-border: #aeb7bd;
+      --nhsuk-body-bg: #f0f4f5;
+      --nhsuk-panel-bg: #fff;
+      --nhsuk-secondary-text: #4c6272;
+      --expired-warn: #ffb81c;
       --unverified: #6b7280;
     }
     * { box-sizing: border-box; }
     body {
-      font-family: 'Frutiger', 'Segoe UI', system-ui, sans-serif;
-      max-width: 560px;
-      margin: 0 auto;
-      padding: 1.5rem;
-      color: #212b32;
+      font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif;
+      background: var(--nhsuk-body-bg);
+      color: var(--nhsuk-text);
       line-height: 1.5;
+      margin: 0;
+      min-height: 100vh;
     }
-    h1 { font-size: 1.5rem; color: var(--nhs-blue); margin-bottom: 0.5rem; }
-    .sub { color: #4c6272; font-size: 0.95rem; margin-bottom: 1.5rem; }
-    label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
-    input[type="text"], textarea {
+    .nhsuk-header {
+      background: var(--nhsuk-link);
+      color: #fff;
+      padding: 1rem 0;
+    }
+    .nhsuk-header__container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+    .nhsuk-header__title { font-size: 1.5rem; font-weight: 700; margin: 0; }
+    .nhsuk-header__title a { color: #fff; text-decoration: none; }
+    .nhsuk-header__title a:hover { text-decoration: underline; }
+    .nhsuk-main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+    .nhsuk-page-heading { font-size: 2rem; font-weight: 700; margin: 0 0 0.5rem 0; color: var(--nhsuk-text); }
+    .nhsuk-body-s { font-size: 1rem; color: var(--nhsuk-secondary-text); margin-bottom: 1.5rem; }
+    .nhsuk-form-group { margin-bottom: 1.25rem; }
+    .nhsuk-label { display: block; font-weight: 600; margin-bottom: 0.35rem; font-size: 1.125rem; }
+    .nhsuk-input, .nhsuk-textarea {
       width: 100%;
-      padding: 0.6rem;
-      border: 1px solid #aeb7bd;
+      padding: 0.75rem;
+      border: 2px solid var(--nhsuk-border);
       border-radius: 4px;
       font-size: 1rem;
+      font-family: inherit;
     }
-    textarea { min-height: 100px; resize: vertical; }
-    button {
-      background: var(--nhs-blue);
+    .nhsuk-textarea { min-height: 120px; resize: vertical; }
+    .nhsuk-input:focus, .nhsuk-textarea:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 0;
+      border-color: var(--nhsuk-text);
+    }
+    .nhsuk-hint { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.25rem; }
+    .nhsuk-button {
+      background: var(--nhsuk-button);
       color: #fff;
       border: none;
-      padding: 0.6rem 1.2rem;
+      padding: 0.75rem 1.5rem;
       border-radius: 4px;
-      font-size: 1rem;
+      font-size: 1.125rem;
+      font-weight: 600;
       cursor: pointer;
-      margin-top: 0.5rem;
+      font-family: inherit;
     }
-    button:hover { background: #004c8f; }
-    button:disabled { background: #aeb7bd; cursor: not-allowed; }
-    .result {
-      margin-top: 1.5rem;
-      padding: 1rem;
-      border-radius: 8px;
-      border-left: 4px solid;
+    .nhsuk-button:hover { background: var(--nhsuk-button-hover); }
+    .nhsuk-button:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 2px;
     }
-    .result.valid   { background: #e8f5e9; border-color: var(--valid); }
-    .result.expired { background: #fff8e6; border-color: var(--expired); }
-    .result.revoked { background: #fdecea; border-color: var(--revoked); }
-    .result.unverified { background: #f3f4f6; border-color: var(--unverified); }
-    .result h2 { margin: 0 0 0.5rem 0; font-size: 1.25rem; }
-    .result.valid h2   { color: var(--valid); }
-    .result.expired h2 { color: #b38600; }
-    .result.revoked h2 { color: var(--revoked); }
-    .result.unverified h2 { color: var(--unverified); }
-    .result pre { background: #fff; padding: 0.75rem; border-radius: 4px; overflow-x: auto; font-size: 0.85rem; }
-    .hint { font-size: 0.875rem; color: #4c6272; margin-top: 0.25rem; }
-    .or { text-align: center; margin: 0.75rem 0; color: #4c6272; }
+    .nhsuk-button:disabled { background: var(--nhsuk-border); cursor: not-allowed; }
+    .nhsuk-panel { background: var(--nhsuk-panel-bg); padding: 1.5rem; margin-top: 1.5rem; border-left: 4px solid; }
+    .nhsuk-panel--valid   { border-color: var(--nhsuk-success); }
+    .nhsuk-panel--expired { border-color: var(--expired-warn); background: #fff9e6; }
+    .nhsuk-panel--revoked { border-color: var(--nhsuk-error); background: #fdecea; }
+    .nhsuk-panel--unverified { border-color: var(--unverified); background: #f3f4f6; }
+    .nhsuk-panel__title { margin: 0 0 0.5rem 0; font-size: 1.25rem; font-weight: 700; }
+    .nhsuk-panel--valid .nhsuk-panel__title   { color: var(--nhsuk-success); }
+    .nhsuk-panel--expired .nhsuk-panel__title { color: #996a00; }
+    .nhsuk-panel--revoked .nhsuk-panel__title { color: var(--nhsuk-error); }
+    .nhsuk-panel--unverified .nhsuk-panel__title { color: var(--unverified); }
+    .nhsuk-panel pre { background: var(--nhsuk-body-bg); padding: 1rem; border-radius: 4px; overflow-x: auto; font-size: 0.875rem; }
   </style>
 </head>
 <body>
-  <h1>Verify credential</h1>
-  <p class="sub">Paste a credential ID or the full verification link (with JWT) to check validity.</p>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <h1 class="nhsuk-header__title"><a href="/">NHS E-Learning Credential Passport</a></h1>
+    </div>
+  </header>
 
-  <form id="verifyForm">
-    <label for="input">Credential ID or verification URL</label>
-    <textarea id="input" name="input" placeholder="Paste credential ID (e.g. nhs-el-abc123...) or the full verification URL from a shared link"></textarea>
-    <p class="hint">If the staff member shared a link, paste the entire URL here.</p>
-    <button type="submit" id="btn">Verify</button>
-  </form>
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <h2 class="nhsuk-page-heading">Verify a credential</h2>
+    <p class="nhsuk-body-s">Check that a staff member’s e-learning credential is valid. Paste the credential ID or the full verification link they shared with you.</p>
 
-  <div id="result"></div>
+    <form id="verifyForm">
+      <div class="nhsuk-form-group">
+        <label class="nhsuk-label" for="input">Credential ID or verification URL</label>
+        <textarea class="nhsuk-textarea" id="input" name="input" placeholder="Paste credential ID (e.g. nhs-el-abc123...) or the full verification URL from a shared link" aria-describedby="input-hint"></textarea>
+        <span class="nhsuk-hint" id="input-hint">If the staff member shared a link, paste the entire URL here.</span>
+      </div>
+      <button type="submit" class="nhsuk-button" id="btn">Verify</button>
+    </form>
+
+    <div id="result"></div>
+  </main>
 
   <script>
     const form = document.getElementById('verifyForm');
@@ -113,15 +149,15 @@
         const res = await fetch(apiUrl);
         const data = await res.json();
         const status = (data.status || 'UNVERIFIED').toLowerCase();
-        resultEl.className = 'result ' + status;
+        resultEl.className = 'nhsuk-panel nhsuk-panel--' + status;
         resultEl.innerHTML = `
-          <h2>${data.status}</h2>
+          <h3 class="nhsuk-panel__title">${data.status}</h3>
           <p>${escapeHtml(data.message || '')}</p>
           ${data.claims ? '<pre>' + escapeHtml(JSON.stringify(data.claims, null, 2)) + '</pre>' : ''}
         `;
       } catch (err) {
-        resultEl.className = 'result unverified';
-        resultEl.innerHTML = '<h2>Error</h2><p>' + escapeHtml(err.message) + '</p>';
+        resultEl.className = 'nhsuk-panel nhsuk-panel--unverified';
+        resultEl.innerHTML = '<h3 class="nhsuk-panel__title">Error</h3><p>' + escapeHtml(err.message) + '</p>';
       }
       btn.disabled = false;
     });

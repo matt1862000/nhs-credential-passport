@@ -95,19 +95,56 @@ if os.path.isdir(static_dir):
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    """Redirect to staff app (holder) or show links."""
+    """Home page — NHS design principles."""
     return """
     <!DOCTYPE html>
-    <html><head><meta charset="utf-8"><title>NHS Credential Passport</title></head>
-    <body style="font-family: system-ui; max-width: 600px; margin: 2rem auto; padding: 1rem;">
-    <h1>NHS E-Learning Credential Passport</h1>
-    <p>Phase 2 MVP — no ESR integration.</p>
-    <ul>
-    <li><a href="/static/staff/">Staff app</a> — view credentials, share, revoke</li>
-    <li><a href="/static/verifier/">Verifier</a> — paste credential ID or scan QR to verify</li>
-    <li><a href="/.well-known/did.json">Public key (did:web)</a></li>
-    </ul>
-    </body></html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>NHS E-Learning Credential Passport</title>
+      <style>
+        :root {
+          --nhsuk-text: #212b32;
+          --nhsuk-link: #005eb8;
+          --nhsuk-link-hover: #003d82;
+          --nhsuk-focus: #ffeb3b;
+          --nhsuk-body-bg: #f0f4f5;
+          --nhsuk-secondary-text: #4c6272;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif; background: var(--nhsuk-body-bg); color: var(--nhsuk-text); line-height: 1.5; margin: 0; min-height: 100vh; }
+        .nhsuk-header { background: var(--nhsuk-link); color: #fff; padding: 1rem 0; }
+        .nhsuk-header__container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+        .nhsuk-header__title { font-size: 1.5rem; font-weight: 700; margin: 0; }
+        .nhsuk-main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+        .nhsuk-page-heading { font-size: 2rem; font-weight: 700; margin: 0 0 0.5rem 0; }
+        .nhsuk-body-s { color: var(--nhsuk-secondary-text); margin-bottom: 1.5rem; }
+        .nhsuk-list { list-style: none; padding: 0; margin: 0; }
+        .nhsuk-list li { margin-bottom: 1rem; padding: 1rem; background: #fff; border-left: 4px solid var(--nhsuk-link); }
+        .nhsuk-list a { color: var(--nhsuk-link); font-weight: 600; font-size: 1.125rem; text-decoration: none; }
+        .nhsuk-list a:hover { color: var(--nhsuk-link-hover); text-decoration: underline; }
+        .nhsuk-list a:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
+        .nhsuk-list p { margin: 0.25rem 0 0 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); font-weight: 400; }
+      </style>
+    </head>
+    <body>
+      <header class="nhsuk-header" role="banner">
+        <div class="nhsuk-header__container">
+          <h1 class="nhsuk-header__title">NHS E-Learning Credential Passport</h1>
+        </div>
+      </header>
+      <main class="nhsuk-main" id="maincontent" role="main">
+        <h2 class="nhsuk-page-heading">Welcome</h2>
+        <p class="nhsuk-body-s">Share and verify e-learning credentials so staff and Trusts can avoid duplicate training. Phase 2 MVP — no ESR integration yet.</p>
+        <ul class="nhsuk-list">
+          <li><a href="/static/staff/">Staff app</a><p>View your credentials, add new ones, share by link or QR, download PDF, or revoke.</p></li>
+          <li><a href="/static/verifier/">Verify a credential</a><p>Paste a credential ID or verification URL to check it is valid, expired, or revoked.</p></li>
+          <li><a href="/.well-known/did.json">Public key (did:web)</a><p>For verifiers: issuer public key for signature verification.</p></li>
+        </ul>
+      </main>
+    </body>
+    </html>
     """
 
 
