@@ -116,7 +116,7 @@ def index():
         body { font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif; background: var(--nhsuk-body-bg); color: var(--nhsuk-text); line-height: 1.5; margin: 0; min-height: 100vh; }
         .nhsuk-header { background: var(--nhsuk-link); color: #fff; padding: 1rem 0; }
         .nhsuk-header__container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
-        .nhsuk-header__logo { display: block; margin-bottom: 0.5rem; }
+        .nhsuk-header__logo { display: block; margin-bottom: 0.5rem; filter: brightness(0) invert(1); opacity: 0.95; }
         .nhsuk-header__title { font-size: 1.5rem; font-weight: 700; margin: 0; }
         .nhsuk-main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
         .nhsuk-page-heading { font-size: 2rem; font-weight: 700; margin: 0 0 0.5rem 0; }
