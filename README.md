@@ -33,9 +33,21 @@ Then open:
 
 ---
 
-## Deploy as a real web app
+## Deploy as a real web app (live URL, no local machine needed)
 
-### Option A — Render (recommended, free tier)
+### Option A — Fly.io (auto-deploy on push)
+
+**One-time setup:** Get a Fly deploy token and add it to GitHub so every push deploys.
+
+1. **Install Fly CLI** (if needed): `curl -L https://fly.io/install.sh | sh` then `export PATH="$HOME/.fly/bin:$PATH"`.
+2. **Log in:** `fly auth login` — complete the step in your browser.
+3. **Create deploy token:** `fly tokens create deploy` — copy the token (starts with `FlyV1...`).
+4. **Add token to GitHub:** Repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret** → name `FLY_API_TOKEN`, value = the token.
+5. **Deploy:** Push to `main` or run the workflow: **Actions** → **Deploy to Fly.io** → **Run workflow**.
+
+**Live URL:** https://nhs-credential-passport.fly.dev (Staff app: `/static/staff/`, Verifier: `/static/verifier/`).
+
+### Option B — Render (free tier)
 
 1. **Push this project to GitHub**  
    Either push the whole repo or create a new repo that contains only the `nhs-credential-passport` folder (so the repo root is this folder).
