@@ -142,6 +142,7 @@ def index():
           <li><a href="/static/verifier/">Verify a credential</a><p>Paste a credential ID or verification URL to check it is valid, expired, or revoked.</p></li>
           <li><a href="/.well-known/did.json">Public key (did:web)</a><p>For verifiers: issuer public key for signature verification.</p></li>
         </ul>
+        <p class="nhsuk-body-s" style="margin-top:2rem;">Built to the <a href="https://service-manual.nhs.uk/design-system/design-principles" target="_blank" rel="noopener" style="color:var(--nhsuk-link);">NHS design principles</a>.</p>
       </main>
     </body>
     </html>
