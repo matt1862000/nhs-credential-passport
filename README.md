@@ -37,27 +37,14 @@ Then open:
 
 ### Option A — Render (free tier, no card required)
 
-1. **Push this project to GitHub**  
-   Either push the whole repo or create a new repo that contains only the `nhs-credential-passport` folder (so the repo root is this folder).
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/matt1862000/nhs-credential-passport)
 
-2. **Create a Web Service on Render**  
-   - Go to [dashboard.render.com](https://dashboard.render.com) → **New** → **Web Service**.  
-   - Connect your GitHub and select the repo (and set **Root Directory** to `nhs-credential-passport` if this app lives in a subfolder).  
-   - **Build & deploy:**  
-     - **Environment:** Docker.  
-     - Render will use the `Dockerfile` in the repo (or in the root directory you set).  
-   - **Start command** is already in the Dockerfile; no need to set it.  
-   - Click **Create Web Service**.
+**One-click:** Click the button above (or open **[render.com/deploy?repo=https://github.com/matt1862000/nhs-credential-passport](https://render.com/deploy?repo=https://github.com/matt1862000/nhs-credential-passport)**). Sign in with GitHub, approve the Blueprint, and Render will create the Web Service from the repo’s `render.yaml`.
 
-3. **Set BASE_URL after first deploy**  
-   - Once the service is live, copy the URL (e.g. `https://nhs-credential-passport-xxxx.onrender.com`).  
-   - In the service → **Environment** → add:  
-     - **KEY:** `BASE_URL`  
-     - **VALUE:** `https://nhs-credential-passport-xxxx.onrender.com` (your actual URL, no trailing slash).  
-   - Save; Render will redeploy. Verification links and did:web will then use the correct public URL.
-
-4. **Optional: use Blueprint**  
-   If your repo root is this folder, you can use **New** → **Blueprint** and point to the `render.yaml` in the repo so the service is created from that file. You still need to set `BASE_URL` in the dashboard after the first deploy.
+**After the first deploy:**
+1. Copy your service URL (e.g. `https://nhs-credential-passport-xxxx.onrender.com`).
+2. In the Render dashboard → your service → **Environment** → **Add Environment Variable** → **KEY:** `BASE_URL`, **VALUE:** your URL (no trailing slash) → Save.
+3. Render will redeploy once; verification links and did:web will then use the correct URL.
 
 ### Option B — Docker (any host or cloud)
 
