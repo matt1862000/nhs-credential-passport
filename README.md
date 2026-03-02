@@ -35,19 +35,7 @@ Then open:
 
 ## Deploy as a real web app (live URL, no local machine needed)
 
-### Option A — Fly.io (auto-deploy on push)
-
-**One-time setup:** Get a Fly deploy token and add it to GitHub so every push deploys.
-
-1. **Install Fly CLI** (if needed): `curl -L https://fly.io/install.sh | sh` then `export PATH="$HOME/.fly/bin:$PATH"`.
-2. **Log in:** `fly auth login` — complete the step in your browser.
-3. **Create deploy token:** `fly tokens create deploy` — copy the token (starts with `FlyV1...`).
-4. **Add token to GitHub:** Repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret** → name `FLY_API_TOKEN`, value = the token.
-5. **Deploy:** Push to `main` or run the workflow: **Actions** → **Deploy to Fly.io** → **Run workflow**.
-
-**Live URL:** https://nhs-credential-passport.fly.dev (Staff app: `/static/staff/`, Verifier: `/static/verifier/`).
-
-### Option B — Render (free tier)
+### Option A — Render (free tier, no card required)
 
 1. **Push this project to GitHub**  
    Either push the whole repo or create a new repo that contains only the `nhs-credential-passport` folder (so the repo root is this folder).
@@ -87,17 +75,6 @@ docker compose up --build
 
 Then set `BASE_URL` in the environment or in `docker-compose.yml` to your public URL when you put it behind a domain/HTTPS.
 
-### Option C — Fly.io
-
-```bash
-cd nhs-credential-passport
-fly launch   # follow prompts; choose a region
-fly secrets set BASE_URL=https://your-app-name.fly.dev
-fly deploy
-```
-
-Use the URL Fly gives you (e.g. `https://your-app-name.fly.dev`) as `BASE_URL`.
-
 ---
 
 ## Environment variables
@@ -105,7 +82,7 @@ Use the URL Fly gives you (e.g. `https://your-app-name.fly.dev`) as `BASE_URL`.
 | Variable    | Description |
 |------------|-------------|
 | `BASE_URL` | Public URL of the app (no trailing slash). Required in production so verification links and did:web work. |
-| `PORT`     | Port to listen on. Set automatically by Render/Fly; default 8000 for local/Docker. |
+| `PORT`     | Port to listen on. Set automatically by Render; default 8000 for local/Docker. |
 
 See `.env.example`; copy to `.env` for local overrides (do not commit `.env`).
 
