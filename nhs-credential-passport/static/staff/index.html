@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My credentials — NHS E-Learning Credential Passport</title>
+  <style>
+    :root { --nhs-blue: #005eb8; --valid: #007f3b; --expired: #da291c; --warn: #ffb81c; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 0 auto; padding: 1.5rem; color: #212b32; }
+    h1 { font-size: 1.5rem; color: var(--nhs-blue); }
+    .tabs { display: flex; gap: 0.5rem; margin: 1rem 0; }
+    .tabs button { padding: 0.5rem 1rem; border: 1px solid #aeb7bd; background: #fff; border-radius: 4px; cursor: pointer; }
+    .tabs button.active { background: var(--nhs-blue); color: #fff; border-color: var(--nhs-blue); }
+    section { display: none; }
+    section.visible { display: block; }
+    label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
+    input, select, button { padding: 0.5rem; margin-bottom: 0.75rem; font-size: 1rem; }
+    input, select { width: 100%; max-width: 320px; border: 1px solid #aeb7bd; border-radius: 4px; }
+    button.primary { background: var(--nhs-blue); color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer; }
+    button.primary:hover { background: #004c8f; }
+    button.danger { background: #da291c; color: #fff; border: none; padding: 0.4rem 0.8rem; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
+    .card {
+      border: 1px solid #dbe0e3;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      background: #f8f9fa;
+    }
+    .card.revoked { opacity: 0.7; }
+    .card .meta { font-size: 0.875rem; color: #4c6272; margin-bottom: 0.5rem; }
+    .card .status { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
+    .card .status.valid { background: #cce5d2; color: var(--valid); }
+    .card .status.expiring { background: #fff3cd; color: #856404; }
+    .card .status.expired { background: #f8d7da; color: var(--expired); }
+    .card .status.revoked { background: #fdecea; color: var(--expired); }
+    .card .actions { margin-top: 0.75rem; }
+    .card .actions button { margin-right: 0.5rem; margin-bottom: 0.25rem; }
+    .dashboard { margin-top: 1rem; }
+    .dashboard .stat { display: inline-block; margin-right: 1.5rem; margin-bottom: 0.5rem; }
+    .dashboard .stat strong { font-size: 1.5rem; color: var(--nhs-blue); }
+    #qrModal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 10; }
+    #qrModal.show { display: flex; }
+    #qrModal .box { background: #fff; padding: 1.5rem; border-radius: 8px; max-width: 320px; text-align: center; }
+    #qrModal canvas { margin: 0.5rem 0; }
+    .hint { font-size: 0.875rem; color: #4c6272; }
+  </style>
+</head>
+<body>
+  <h1>My credentials</h1>
+  <p class="hint">Add e-learning completion records and share them with receiving Trusts. You can revoke any credential at any time.</p>
+
+  <div class="tabs">
+    <button type="button" data-tab="list" class="active">My credentials</button>
+    <button type="button" data-tab="add">Add credential</button>
+  </div>
+
+  <section id="list" class="visible">
+    <div class="dashboard">
+      <span class="stat">Valid: <strong id="countValid">0</strong></span>
+      <span class="stat">Expiring soon: <strong id="countExpiring">0</strong></span>
+      <span class="stat">Expired: <strong id="countExpired">0</strong></span>
+      <span class="stat">Revoked: <strong id="countRevoked">0</strong></span>
+    </div>
+    <div id="credentialList"></div>
+  </section>
+
+  <section id="add">
+    <form id="addForm">
+      <label>Your full name</label>
+      <input type="text" name="staff_full_name" required placeholder="Jane Smith">
+      <label>NHS number or ESR ID</label>
+      <input type="text" name="staff_identifier" required placeholder="1234567890">
+      <label>Module</label>
+      <select name="module_code" id="moduleSelect"></select>
+      <label>Completion date</label>
+      <input type="date" name="completion_date" required>
+      <label>Expiry date</label>
+      <input type="date" name="expiry_date" required>
+      <label>Issuing Trust ODS code</label>
+      <input type="text" name="issuing_trust_ods_code" placeholder="RGT" required>
+      <label>Issuing Trust name</label>
+      <input type="text" name="issuing_trust_name" placeholder="Royal General Trust" required>
+      <button type="submit" class="primary">Issue credential</button>
+    </form>
+    <p class="hint">At MVP this creates a credential from the data you enter. In production, credentials would be issued from ESR exports.</p>
+  </section>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" integrity="sha512-1/o4cF1sR9vRk49H0OojRr8Fm2Yx/g0SVh4bJ3iAPCzkn6OWmknR0bjkMJjK8N5Y5q0J/5PxwPm/NF0G5eqCqQ==" crossorigin="anonymous"></script>
+  <div id="qrModal">
+    <div class="box">
+      <p><strong>Scan to verify</strong></p>
+      <div id="qrTarget" style="display:inline-block; min-width:200px; min-height:200px;"></div>
+      <p class="hint">Or share the link below</p>
+      <input type="text" id="shareLink" readonly style="width:100%; font-size:0.85rem;" onclick="this.select()">
+      <button type="button" class="primary" style="margin-top:0.75rem;" onclick="document.getElementById('qrModal').classList.remove('show')">Close</button>
+    </div>
+  </div>
+
+  <script>
+    const MODULES = [
+      { code: 'fire_safety', name: 'Fire Safety' },
+      { code: 'infection_control', name: 'Infection Prevention and Control' },
+      { code: 'information_governance', name: 'Information Governance' },
+      { code: 'moving_handling', name: 'Moving and Handling' },
+      { code: 'resuscitation', name: 'Resuscitation Awareness' },
+      { code: 'conflict_resolution', name: 'Conflict Resolution' },
+    ];
+    const STORAGE_KEY = 'nhs_credentials';
+
+    function getStored() { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
+    function setStored(arr) { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); }
+
+    document.querySelectorAll('.tabs button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('section').forEach(s => s.classList.remove('visible'));
+        btn.classList.add('active');
+        document.getElementById(btn.dataset.tab).classList.add('visible');
+      });
+    });
+
+    const sel = document.getElementById('moduleSelect');
+    MODULES.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.code;
+      opt.textContent = m.name;
+      sel.appendChild(opt);
+    });
+
+    function statusClass(expiryDate, revoked) {
+      if (revoked) return 'revoked';
+      const exp = new Date(expiryDate);
+      const now = new Date();
+      const in30 = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+      if (exp < now) return 'expired';
+      if (exp < in30) return 'expiring';
+      return 'valid';
+    }
+
+    function renderList() {
+      const list = getStored();
+      const valid = list.filter(c => !c.revoked && statusClass(c.expiry_date, false) === 'valid').length;
+      const expiring = list.filter(c => !c.revoked && statusClass(c.expiry_date, false) === 'expiring').length;
+      const expired = list.filter(c => statusClass(c.expiry_date, c.revoked) === 'expired' && !c.revoked).length;
+      const revoked = list.filter(c => c.revoked).length;
+
+      document.getElementById('countValid').textContent = valid;
+      document.getElementById('countExpiring').textContent = expiring;
+      document.getElementById('countExpired').textContent = expired;
+      document.getElementById('countRevoked').textContent = revoked;
+
+      const html = list.length === 0
+        ? '<p class="hint">No credentials yet. Add one from the "Add credential" tab.</p>'
+        : list.map(c => {
+            const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
+            return `
+              <div class="card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
+                <div class="meta">${c.module_name} · Expires ${c.expiry_date} ${c.revoked ? '· Revoked' : ''}</div>
+                <span class="status ${status}">${status.toUpperCase()}</span>
+                <div class="actions">
+                  <button type="button" class="primary" onclick="shareCred('${c.credential_id}')">Share (link / QR)</button>
+                  <button type="button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
+                  ${!c.revoked ? `<button type="button" class="danger" onclick="revokeCred('${c.credential_id}')">Revoke</button>` : ''}
+                </div>
+              </div>`;
+          }).join('');
+      document.getElementById('credentialList').innerHTML = html;
+    }
+
+    function shareCred(credentialId) {
+      const list = getStored();
+      const c = list.find(x => x.credential_id === credentialId);
+      if (!c) return;
+      document.getElementById('shareLink').value = c.verification_url;
+      const qrTarget = document.getElementById('qrTarget');
+      qrTarget.innerHTML = '';
+      if (window.QRCode) {
+        new QRCode(qrTarget, { text: c.verification_url, width: 200, height: 200 });
+      }
+      document.getElementById('qrModal').classList.add('show');
+    }
+
+    function downloadPdf(credentialId) {
+      const list = getStored();
+      const c = list.find(x => x.credential_id === credentialId);
+      if (!c || !c.pdf_base64) { alert('PDF not available for this credential'); return; }
+      const a = document.createElement('a');
+      a.href = 'data:application/pdf;base64,' + c.pdf_base64;
+      a.download = 'credential-' + credentialId.slice(0, 12) + '.pdf';
+      a.click();
+    }
+
+    async function revokeCred(credentialId) {
+      if (!confirm('Revoke this credential? It will show as REVOKED to verifiers.')) return;
+      try {
+        const res = await fetch('/api/credentials/revoke/' + encodeURIComponent(credentialId), { method: 'POST' });
+        if (!res.ok) throw new Error('Revoke failed');
+        const list = getStored();
+        const idx = list.findIndex(x => x.credential_id === credentialId);
+        if (idx !== -1) { list[idx].revoked = true; setStored(list); }
+        renderList();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    document.getElementById('addForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const module_code = fd.get('module_code');
+      const module_name = MODULES.find(m => m.code === module_code)?.name || module_code;
+      const body = {
+        records: [{
+          staff_full_name: fd.get('staff_full_name'),
+          staff_identifier: fd.get('staff_identifier'),
+          module_code,
+          module_name,
+          completion_date: fd.get('completion_date'),
+          expiry_date: fd.get('expiry_date'),
+          issuing_trust_ods_code: fd.get('issuing_trust_ods_code'),
+          issuing_trust_name: fd.get('issuing_trust_name'),
+        }],
+      };
+      try {
+        const res = await fetch('/api/credentials/issue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        const issued = data.credentials[0];
+        const list = getStored();
+        list.push({
+          credential_id: issued.credential_id,
+          verification_url: issued.verification_url,
+          jwt: issued.jwt,
+          pdf_base64: issued.pdf_base64,
+          module_name,
+          expiry_date: fd.get('expiry_date'),
+          revoked: false,
+        });
+        setStored(list);
+        renderList();
+        e.target.reset();
+        document.querySelector('.tabs button[data-tab="list"]').click();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+
+    renderList();
+  </script>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verify credential — NHS E-Learning Credential Passport</title>
+  <style>
+    :root {
+      --nhs-blue: #005eb8;
+      --valid: #007f3b;
+      --expired: #ffb81c;
+      --revoked: #da291c;
+      --unverified: #6b7280;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Frutiger', 'Segoe UI', system-ui, sans-serif;
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 1.5rem;
+      color: #212b32;
+      line-height: 1.5;
+    }
+    h1 { font-size: 1.5rem; color: var(--nhs-blue); margin-bottom: 0.5rem; }
+    .sub { color: #4c6272; font-size: 0.95rem; margin-bottom: 1.5rem; }
+    label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
+    input[type="text"], textarea {
+      width: 100%;
+      padding: 0.6rem;
+      border: 1px solid #aeb7bd;
+      border-radius: 4px;
+      font-size: 1rem;
+    }
+    textarea { min-height: 100px; resize: vertical; }
+    button {
+      background: var(--nhs-blue);
+      color: #fff;
+      border: none;
+      padding: 0.6rem 1.2rem;
+      border-radius: 4px;
+      font-size: 1rem;
+      cursor: pointer;
+      margin-top: 0.5rem;
+    }
+    button:hover { background: #004c8f; }
+    button:disabled { background: #aeb7bd; cursor: not-allowed; }
+    .result {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      border-radius: 8px;
+      border-left: 4px solid;
+    }
+    .result.valid   { background: #e8f5e9; border-color: var(--valid); }
+    .result.expired { background: #fff8e6; border-color: var(--expired); }
+    .result.revoked { background: #fdecea; border-color: var(--revoked); }
+    .result.unverified { background: #f3f4f6; border-color: var(--unverified); }
+    .result h2 { margin: 0 0 0.5rem 0; font-size: 1.25rem; }
+    .result.valid h2   { color: var(--valid); }
+    .result.expired h2 { color: #b38600; }
+    .result.revoked h2 { color: var(--revoked); }
+    .result.unverified h2 { color: var(--unverified); }
+    .result pre { background: #fff; padding: 0.75rem; border-radius: 4px; overflow-x: auto; font-size: 0.85rem; }
+    .hint { font-size: 0.875rem; color: #4c6272; margin-top: 0.25rem; }
+    .or { text-align: center; margin: 0.75rem 0; color: #4c6272; }
+  </style>
+</head>
+<body>
+  <h1>Verify credential</h1>
+  <p class="sub">Paste a credential ID or the full verification link (with JWT) to check validity.</p>
+
+  <form id="verifyForm">
+    <label for="input">Credential ID or verification URL</label>
+    <textarea id="input" name="input" placeholder="Paste credential ID (e.g. nhs-el-abc123...) or the full verification URL from a shared link"></textarea>
+    <p class="hint">If the staff member shared a link, paste the entire URL here.</p>
+    <button type="submit" id="btn">Verify</button>
+  </form>
+
+  <div id="result"></div>
+
+  <script>
+    const form = document.getElementById('verifyForm');
+    const input = document.getElementById('input');
+    const resultEl = document.getElementById('result');
+    const btn = document.getElementById('btn');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const raw = (input.value || '').trim();
+      if (!raw) return;
+
+      btn.disabled = true;
+      resultEl.innerHTML = '<p>Checking…</p>';
+
+      let credentialId = null;
+      let jwtParam = null;
+
+      try {
+        if (raw.startsWith('http')) {
+          const url = new URL(raw);
+          credentialId = url.pathname.split('/').filter(Boolean).pop();
+          if (credentialId === 'verify') credentialId = url.pathname.split('/').filter(Boolean).slice(-1)[0];
+          jwtParam = url.searchParams.get('jwt') || null;
+        } else {
+          credentialId = raw.split(/[\s\n]/)[0].trim();
+        }
+      } catch (_) {
+        credentialId = raw.split(/[\s\n]/)[0].trim();
+      }
+
+      const apiUrl = `/api/credentials/verify/${encodeURIComponent(credentialId)}${jwtParam ? '?jwt=' + encodeURIComponent(jwtParam) : ''}`;
+
+      try {
+        const res = await fetch(apiUrl);
+        const data = await res.json();
+        const status = (data.status || 'UNVERIFIED').toLowerCase();
+        resultEl.className = 'result ' + status;
+        resultEl.innerHTML = `
+          <h2>${data.status}</h2>
+          <p>${escapeHtml(data.message || '')}</p>
+          ${data.claims ? '<pre>' + escapeHtml(JSON.stringify(data.claims, null, 2)) + '</pre>' : ''}
+        `;
+      } catch (err) {
+        resultEl.className = 'result unverified';
+        resultEl.innerHTML = '<h2>Error</h2><p>' + escapeHtml(err.message) + '</p>';
+      }
+      btn.disabled = false;
+    });
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>
