@@ -1,0 +1,15 @@
+# Render Blueprint — deploy as Web Service
+# 1. Push this repo (or nhs-credential-passport folder) to GitHub
+# 2. Go to https://dashboard.render.com → New → Blueprint
+# 3. Connect repo and select this file (or set root to nhs-credential-passport)
+# 4. Add env var BASE_URL = https://your-service-name.onrender.com (after first deploy)
+services:
+  - type: web
+    name: nhs-credential-passport
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: BASE_URL
+        sync: false
+        # In Render dashboard, set to https://<your-service>.onrender.com after first deploy
