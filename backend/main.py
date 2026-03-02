@@ -113,12 +113,11 @@ def index():
           --nhsuk-secondary-text: #4c6272;
         }
         * { box-sizing: border-box; }
-        html, body { margin: 0; padding: 0; }
-        body { font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif; background: var(--nhsuk-body-bg); color: var(--nhsuk-text); line-height: 1.5; min-height: 100vh; }
-        .nhsuk-header { background: #003d82; color: #fff; padding: 1.25rem 0; margin: 0; }
-        .nhsuk-header__container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; display: flex; justify-content: flex-end; align-items: center; gap: 1.25rem; }
-        .nhsuk-header__logo { display: block; margin: 0; filter: brightness(0) invert(1) drop-shadow(0 1px 2px rgba(0,0,0,0.25)); height: 56px; width: auto; order: 1; }
-        .nhsuk-header__title { font-size: 1.75rem; font-weight: 700; margin: 0; text-shadow: 0 1px 3px rgba(0,0,0,0.35); letter-spacing: 0.02em; order: 2; }
+        body { font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif; background: var(--nhsuk-body-bg); color: var(--nhsuk-text); line-height: 1.5; margin: 0; min-height: 100vh; }
+        .nhsuk-header { background: #003d82; color: #fff; padding: 1.25rem 0; }
+        .nhsuk-header__container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+        .nhsuk-header__logo { display: block; margin-bottom: 0.5rem; filter: brightness(0) invert(1) drop-shadow(0 1px 2px rgba(0,0,0,0.25)); height: 56px; width: auto; }
+        .nhsuk-header__title { font-size: 1.75rem; font-weight: 700; margin: 0; text-shadow: 0 1px 3px rgba(0,0,0,0.35); letter-spacing: 0.02em; }
         .nhsuk-main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
         .nhsuk-page-heading { font-size: 2rem; font-weight: 700; margin: 0 0 0.5rem 0; }
         .nhsuk-body-s { color: var(--nhsuk-secondary-text); margin-bottom: 1.5rem; }
@@ -133,8 +132,8 @@ def index():
     <body>
       <header class="nhsuk-header" role="banner">
         <div class="nhsuk-header__container">
-          <h1 class="nhsuk-header__title">NHS E-Learning Credential Passport</h1>
           <a href="/"><img src="https://www.sheffieldpartnership.nhs.uk/themes/custom/omega_bigbluedoor/logo.svg" alt="NHS Sheffield Partnership" class="nhsuk-header__logo" width="120" height="51"></a>
+          <h1 class="nhsuk-header__title">NHS E-Learning Credential Passport</h1>
         </div>
       </header>
       <main class="nhsuk-main" id="maincontent" role="main">
