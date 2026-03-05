@@ -124,8 +124,9 @@
     }
     .nhsuk-bulk-export-panel__title { font-size: 1.25rem; font-weight: 700; margin: 0 0 0.35rem 0; color: var(--nhsuk-text); }
     .nhsuk-bulk-export-panel__desc { font-size: 0.9375rem; color: var(--nhsuk-secondary-text); margin: 0 0 1rem 0; }
-    .nhsuk-bulk-export-panel__actions { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
-    .nhsuk-bulk-export-panel__count { font-size: 0.9375rem; font-weight: 600; color: var(--nhsuk-secondary-text); min-width: 5rem; }
+    .nhsuk-bulk-export-panel__actions { display: flex; flex-direction: column; gap: 0.75rem; }
+    .nhsuk-bulk-export-panel__count { font-size: 0.9375rem; font-weight: 600; color: var(--nhsuk-secondary-text); }
+    .nhsuk-bulk-export-panel__buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
     .nhsuk-bulk-export-panel__btn { padding: 0.5rem 1rem; font-size: 0.9375rem; }
     .nhsuk-bulk-export-panel__divider { color: var(--nhsuk-border); font-weight: 700; padding: 0 0.25rem; }
     .nhsuk-hint { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.25rem; }
@@ -144,6 +145,8 @@
     .nhsuk-button:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
     .nhsuk-button--secondary { background: var(--nhsuk-link); }
     .nhsuk-button--secondary:hover { background: #004c8f; }
+    .nhsuk-button--remove { background: var(--nhsuk-secondary-text); }
+    .nhsuk-button--remove:hover { background: #3d4f5c; }
     .nhsuk-button--warning { background: var(--nhsuk-error); }
     .nhsuk-button--warning:hover { background: #a01e12; }
     .nhsuk-card {
@@ -268,9 +271,11 @@
         <p class="nhsuk-bulk-export-panel__desc">Download all e-learning as one ZIP, or tick items below to <strong>Download selected as ZIP</strong> or <strong>Share selected</strong> (one link/QR for a verifier).</p>
         <div class="nhsuk-bulk-export-panel__actions">
           <span class="nhsuk-bulk-export-panel__count" id="bulkExportCount" aria-live="polite">0 selected</span>
-          <button type="button" class="nhsuk-button nhsuk-bulk-export-panel__btn" id="btnExportAll" title="Download all as one ZIP">Download all as ZIP</button>
-          <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnExportSelected" title="Download selected e-learning as PDFs in a ZIP" disabled>Download selected as ZIP</button>
-          <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnShareSelected" title="One link or QR a verifier can use to check all selected" disabled>Share selected (one link/QR)</button>
+          <div class="nhsuk-bulk-export-panel__buttons">
+            <button type="button" class="nhsuk-button nhsuk-bulk-export-panel__btn" id="btnExportAll" title="Download all as one ZIP">Download all as ZIP</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnExportSelected" title="Download selected e-learning as PDFs in a ZIP" disabled>Download selected as ZIP</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnShareSelected" title="One link or QR a verifier can use to check all selected" disabled>Share selected (one link/QR)</button>
+          </div>
         </div>
       </div>
       <div id="bulkCredentialList"></div>
@@ -446,6 +451,7 @@
                   <button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="shareCred('${c.credential_id}')">Share</button>
                   <button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
                   ${c.certificate_base64 ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">Download certificate</button>` : ''}
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
                 </div>
               </div>
             </div>
@@ -462,6 +468,13 @@
       const panel = document.getElementById('bulkExportPanel');
       if (panel) panel.style.display = filtered.length === 0 ? 'none' : 'block';
       updateBulkExportState();
+    }
+
+    function removeCred(credentialId) {
+      if (!confirm('Remove this e-learning from your list? This only removes it from this device; it will still show as revoked if someone verifies it.')) return;
+      const list = getStored().filter(c => c.credential_id !== credentialId);
+      setStored(list);
+      renderList();
     }
 
     function shareCred(credentialId) {
