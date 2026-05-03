@@ -142,13 +142,30 @@ def _parse_date(raw: str) -> Optional[date]:
         return None
 
 
+def _esr_infer_module_display(row: dict[str, str]) -> str:
+    """Same module text used for issuing — if empty, row is junk (e.g. blank line in export)."""
+
+    def gx(k: str) -> str:
+        v = row.get(k)
+        if v is None:
+            return ""
+        return str(v).strip()
+
+    bits = [
+        gx("module_name"),
+        _first_line(gx("esr_description")),
+        _parse_esr_competency_cell(gx("esr_competency_name")),
+    ]
+    return next((b for b in bits if b), "")
+
+
 def _parse_esr_competency_cell(raw: str) -> str:
     """Pipe-delimited ESR cell, e.g. NHS|CSTF|Fire Safety - 2 Years|."""
     t = (raw or "").strip().strip('"').strip()
     if not t:
         return ""
     parts = [p.strip() for p in t.split("|") if p.strip()]
-    if len(parts) >= 3 and parts[0] in ("NHS", "457") and parts[1] in ("CSTF", "LOCAL"):
+    if len(parts) >= 3 and parts[0] in ("NHS", "457", "DEMO") and parts[1] in ("CSTF", "LOCAL"):
         return parts[2]
     if parts:
         return parts[-1]
@@ -236,12 +253,7 @@ def _row_to_record(
         if not staff_full_name:
             return None, "missing staff (Last Updated By or Awarded By)"
 
-        module_bits = [
-            g("module_name"),
-            _first_line(g("esr_description")),
-            _parse_esr_competency_cell(g("esr_competency_name")),
-        ]
-        module_display = next((b for b in module_bits if b), "")
+        module_display = _esr_infer_module_display(row)
         if not module_display:
             return None, "missing module (Title, Description, or Competency Name)"
 
@@ -417,6 +429,14 @@ def parse_completion_csv(text: str) -> tuple[list[ParsedCsvRow], Optional[str]]:
     for file_row_num, cells in enumerate(reader, start=2):
         if all(not (c or "").strip() for c in cells):
             continue
+        row_dict: dict[str, str] = {}
+        for col_idx, canonical in col_map.items():
+            if col_idx < len(cells):
+                row_dict[canonical] = cells[col_idx]
+            else:
+                row_dict[canonical] = ""
+        if is_esr_layout and not _esr_infer_module_display(row_dict):
+            continue
         data_row_index += 1
         if data_row_index > MAX_DATA_ROWS:
             out.append(
@@ -427,12 +447,6 @@ def parse_completion_csv(text: str) -> tuple[list[ParsedCsvRow], Optional[str]]:
                 )
             )
             break
-        row_dict: dict[str, str] = {}
-        for col_idx, canonical in col_map.items():
-            if col_idx < len(cells):
-                row_dict[canonical] = cells[col_idx]
-            else:
-                row_dict[canonical] = ""
         rec, err = _row_to_record(row_dict, is_esr_layout=is_esr_layout)
         out.append(ParsedCsvRow(row_number=file_row_num, record=rec, error=err))
 
