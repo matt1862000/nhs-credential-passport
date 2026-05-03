@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sheffield — requirements & moving from Rotherham</title>
+  <style>
+    :root {
+      --nhsuk-text: #212b32;
+      --nhsuk-link: #005eb8;
+      --nhsuk-body-bg: #f0f4f5;
+      --nhsuk-border: #d8dde0;
+      --nhsuk-secondary: #4c6272;
+      --nhsuk-panel: #fff;
+      --nhsuk-warn-bg: #fff9e6;
+      --nhsuk-warn-border: #ffb81c;
+      --nhsuk-success: #007f3b;
+      --nhsuk-error: #d5281b;
+    }
+    * { box-sizing: border-box; }
+    body { font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif; margin: 0; background: var(--nhsuk-body-bg); color: var(--nhsuk-text); line-height: 1.5; }
+    .nhsuk-header { background: #005eb8; padding: 0.75rem 0; }
+    .nhsuk-header__container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
+    .nhsuk-header__service-logo { display: inline-flex; align-items: center; gap: 0.75rem; color: #fff; text-decoration: none; font-weight: 600; }
+    .nhsuk-main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem 3rem; }
+    h1 { font-size: 2rem; margin: 0 0 0.5rem; }
+    .lead { color: var(--nhsuk-secondary); margin: 0 0 1.5rem; max-width: 40em; }
+    .banner { background: var(--nhsuk-warn-bg); border: 1px solid var(--nhsuk-warn-border); border-left-width: 4px; padding: 1rem 1.25rem; margin-bottom: 1.75rem; border-radius: 4px; font-size: 0.9375rem; }
+    section { background: var(--nhsuk-panel); border: 1px solid var(--nhsuk-border); border-radius: 4px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 2px 8px rgba(33,43,50,0.06); }
+    h2 { font-size: 1.35rem; margin: 0 0 0.75rem; }
+    p { margin: 0 0 0.75rem; color: var(--nhsuk-secondary); }
+    ul { margin: 0.25rem 0 0 1.25rem; color: var(--nhsuk-secondary); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; margin-top: 0.5rem; }
+    th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--nhsuk-border); vertical-align: top; }
+    th { background: #f0f4f5; font-weight: 600; color: var(--nhsuk-text); }
+    .tag { display: inline-block; padding: 0.15rem 0.45rem; border-radius: 4px; font-size: 0.8125rem; font-weight: 600; }
+    .tag-met { background: #cce5d2; color: var(--nhsuk-success); }
+    .tag-miss { background: #fdecea; color: var(--nhsuk-error); }
+    .tag-maybe { background: #e8edff; color: #330072; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+    a { color: var(--nhsuk-link); }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <a class="nhsuk-header__service-logo" href="/">← Home</a>
+      <a class="nhsuk-header__service-logo" href="/static/staff/" style="margin-left:1rem;">Staff app</a>
+    </div>
+  </header>
+  <main class="nhsuk-main">
+    <h1>Starting at Sheffield</h1>
+    <p class="lead" id="leadText">Illustrative guide: common mandatory themes and how prior training from Rotherham might be viewed — plus a <strong>local-only</strong> check against e-learning already in this browser’s wallet.</p>
+    <div class="banner" id="disclaimerBox" role="status"></div>
+
+    <section>
+      <h2>Illustrative mandatory themes (Sheffield)</h2>
+      <p>Typical statutory / CSTF-aligned topics new starters are asked to evidence. Your specialty or contract may add more.</p>
+      <div id="mandatoryTableWrap"></div>
+    </section>
+
+    <section>
+      <h2>If you are moving from Rotherham</h2>
+      <p id="recognitionSummary"></p>
+      <div class="grid2">
+        <div>
+          <h3 style="font-size:1.05rem;margin:0 0 0.5rem;">Often portable (verify + policy)</h3>
+          <ul id="portableList"></ul>
+        </div>
+        <div>
+          <h3 style="font-size:1.05rem;margin:0 0 0.5rem;">Usually Sheffield-local</h3>
+          <ul id="localList"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Against your wallet (this device only)</h2>
+      <p>Uses e-learning saved in the <strong>staff app on this browser</strong>. Decodes your stored JWT payload to compare <code>module_code</code> and titles — no upload to a server.</p>
+      <div id="walletWrap"></div>
+    </section>
+  </main>
+  <script>
+    var STORAGE_KEY = 'nhs_credentials';
+
+    function parseJwtPayload(jwt) {
+      if (!jwt || typeof jwt !== 'string' || jwt.split('.').length < 2) return null;
+      try {
+        var b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        var pad = b64.length % 4 ? '='.repeat(4 - (b64.length % 4)) : '';
+        var json = decodeURIComponent(escape(atob(b64 + pad)));
+        return JSON.parse(json);
+      } catch (e) { return null; }
+    }
+
+    function credMatchesRequirement(req, pl) {
+      if (!pl) return false;
+      var code = (pl.module_code || '').toLowerCase();
+      var name = (pl.module_name || '').toLowerCase();
+      var codes = req.match_module_codes || [];
+      for (var i = 0; i < codes.length; i++) {
+        if (code === String(codes[i]).toLowerCase()) return true;
+      }
+      var subs = req.match_name_substrings || [];
+      for (var j = 0; j < subs.length; j++) {
+        if (name.indexOf(String(subs[j]).toLowerCase()) !== -1) return true;
+      }
+      return false;
+    }
+
+    function isFromRotherham(pl, hints, odsHints) {
+      var n = ((pl.issuing_trust_name || '') + ' ' + (pl.issuing_trust_ods || '')).toLowerCase();
+      for (var i = 0; i < hints.length; i++) {
+        if (n.indexOf(hints[i].toLowerCase()) !== -1) return true;
+      }
+      for (var j = 0; j < odsHints.length; j++) {
+        if ((pl.issuing_trust_ods || '').toUpperCase() === String(odsHints[j]).toUpperCase()) return true;
+      }
+      return false;
+    }
+
+    function todayIso() {
+      var d = new Date();
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
+    function notExpired(expiryDate) {
+      if (!expiryDate) return true;
+      return String(expiryDate) >= todayIso();
+    }
+
+    fetch('sheffield-welcome.json').then(function(r) {
+      if (!r.ok) throw new Error('Could not load requirements data');
+      return r.json();
+    }).then(function(data) {
+      document.getElementById('disclaimerBox').textContent = data.disclaimer || '';
+      var rt = data.receiving_trust || {};
+      document.getElementById('leadText').innerHTML =
+        'For <strong>' + escapeHtml(rt.name || 'Sheffield') + '</strong> (ODS example: <code>' + escapeHtml(rt.ods || '') + '</code>). ' +
+        document.getElementById('leadText').innerHTML;
+
+      var rows = (data.sheffield_mandatory_examples || []).map(function(req) {
+        return '<tr><td>' + escapeHtml(req.label) + '</td><td>' + escapeHtml(req.category || '') + '</td></tr>';
+      }).join('');
+      document.getElementById('mandatoryTableWrap').innerHTML =
+        '<table><thead><tr><th>Topic</th><th>Category</th></tr></thead><tbody>' + rows + '</tbody></table>';
+
+      var rec = data.recognition_from_rotherham || {};
+      document.getElementById('recognitionSummary').textContent = rec.summary || '';
+      document.getElementById('portableList').innerHTML = (rec.often_portable_cstf_topics || []).map(function(t) {
+        return '<li>' + escapeHtml(t) + '</li>';
+      }).join('');
+      document.getElementById('localList').innerHTML = (rec.typically_sheffield_local || []).map(function(t) {
+        return '<li>' + escapeHtml(t) + '</li>';
+      }).join('');
+
+      var list = [];
+      try { list = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch (e) { list = []; }
+      var payloads = [];
+      list.forEach(function(c) {
+        var pl = parseJwtPayload(c.jwt);
+        if (pl) payloads.push({ wallet: c, pl: pl });
+      });
+
+      var reqs = data.sheffield_mandatory_examples || [];
+      var hints = rec.issuer_trust_name_hints || [];
+      var odsHints = rec.issuer_ods_hints || [];
+
+      if (payloads.length === 0) {
+        document.getElementById('walletWrap').innerHTML =
+          '<p><strong>No e-learning in this browser’s wallet.</strong> Open the <a href="/static/staff/">staff app</a>, add or import credentials, then refresh this page.</p>';
+        return;
+      }
+
+      var body = reqs.map(function(req) {
+        var best = null;
+        var bestPl = null;
+        for (var i = 0; i < payloads.length; i++) {
+          if (credMatchesRequirement(req, payloads[i].pl)) {
+            best = payloads[i].wallet;
+            bestPl = payloads[i].pl;
+            break;
+          }
+        }
+        var status, tagClass, detail;
+        if (best && bestPl) {
+          var ok = notExpired(best.expiry_date);
+          var roth = isFromRotherham(bestPl, hints, odsHints);
+          if (!ok) {
+            status = 'Expired in wallet';
+            tagClass = 'tag-miss';
+          } else {
+            status = roth ? 'Met (from Rotherham-style issuer)' : 'Met';
+            tagClass = 'tag-met';
+          }
+          detail = escapeHtml(bestPl.module_name || '') + ' · expires ' + escapeHtml(best.expiry_date || '') +
+            ' · issued by ' + escapeHtml(bestPl.issuing_trust_name || bestPl.issuing_trust_ods || '?');
+        } else {
+          status = 'Not found in wallet';
+          tagClass = 'tag-miss';
+          detail = '—';
+        }
+        return '<tr><td>' + escapeHtml(req.label) + '</td><td><span class="tag ' + tagClass + '">' + escapeHtml(status) + '</span></td><td>' + detail + '</td></tr>';
+      }).join('');
+
+      document.getElementById('walletWrap').innerHTML =
+        '<table><thead><tr><th>Sheffield illustrative topic</th><th>Status</th><th>Best match in wallet</th></tr></thead><tbody>' + body + '</tbody></table>' +
+        '<p style="margin-top:0.75rem;font-size:0.875rem;">“Met” only means a plausible wallet match on this device — not formal acceptance by Sheffield.</p>';
+    }).catch(function(err) {
+      document.getElementById('walletWrap').innerHTML = '<p style="color:var(--nhsuk-error);">' + escapeHtml(err.message) + '</p>';
+    });
+
+    function escapeHtml(s) {
+      if (s == null) return '';
+      var d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+  </script>
+</body>
+</html>
