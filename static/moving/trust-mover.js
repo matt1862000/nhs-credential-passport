@@ -1,0 +1,251 @@
+/**
+ * Trust move planner: loads /static/trust/config/{join}.json and renders
+ * mandatory list, recognition (by leaving trust), and wallet match (localStorage).
+ */
+(function () {
+  var STORAGE_KEY = 'nhs_credentials';
+  var JOIN_OPTIONS = [
+    { id: 'sheffield', label: 'Sheffield Teaching Hospitals NHS FT (pilot example)' },
+    { id: 'example-north', label: 'Example Northern trust (placeholder)' },
+  ];
+  var LEAVE_OPTIONS = [
+    { id: 'rotherham', label: 'The Rotherham NHS Foundation Trust (example)' },
+    { id: 'other', label: 'Another trust (generic guidance)' },
+  ];
+
+  var joinSel = document.getElementById('joinTrust');
+  var leaveSel = document.getElementById('leaveTrust');
+  var btnRefresh = document.getElementById('btnRefreshChecklist');
+  var cache = {};
+
+  function escapeHtml(s) {
+    if (s == null) return '';
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function fillSelect(sel, options) {
+    sel.innerHTML = options.map(function (o) {
+      return '<option value="' + escapeHtml(o.id) + '">' + escapeHtml(o.label) + '</option>';
+    }).join('');
+  }
+
+  function parseJwtPayload(jwt) {
+    if (!jwt || typeof jwt !== 'string' || jwt.split('.').length < 2) return null;
+    try {
+      var b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      var pad = b64.length % 4 ? '='.repeat(4 - (b64.length % 4)) : '';
+      var json = decodeURIComponent(escape(atob(b64 + pad)));
+      return JSON.parse(json);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function credMatchesRequirement(req, pl) {
+    if (!pl) return false;
+    var code = (pl.module_code || '').toLowerCase();
+    var name = (pl.module_name || '').toLowerCase();
+    var codes = req.match_module_codes || [];
+    for (var i = 0; i < codes.length; i++) {
+      if (code === String(codes[i]).toLowerCase()) return true;
+    }
+    var subs = req.match_name_substrings || [];
+    for (var j = 0; j < subs.length; j++) {
+      if (name.indexOf(String(subs[j]).toLowerCase()) !== -1) return true;
+    }
+    return false;
+  }
+
+  function isFromLeavingTrust(pl, rec) {
+    if (!rec || !pl) return false;
+    var n = ((pl.issuing_trust_name || '') + ' ' + (pl.issuing_trust_ods || '')).toLowerCase();
+    var hints = rec.issuer_trust_name_hints || [];
+    for (var i = 0; i < hints.length; i++) {
+      if (n.indexOf(String(hints[i]).toLowerCase()) !== -1) return true;
+    }
+    var ods = rec.issuer_ods_hints || [];
+    for (var j = 0; j < ods.length; j++) {
+      if ((pl.issuing_trust_ods || '').toUpperCase() === String(ods[j]).toUpperCase()) return true;
+    }
+    return false;
+  }
+
+  function todayIso() {
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function notExpired(expiryDate) {
+    if (!expiryDate) return true;
+    return String(expiryDate) >= todayIso();
+  }
+
+  function recognitionBlock(leaveId, cfg) {
+    var map = cfg.recognition_when_joining || {};
+    var key = leaveId === 'other' ? '_default' : leaveId;
+    var rec = map[key] || map._default;
+    if (!rec) rec = { summary: '', often_portable_topics: [], typically_local_at_destination: [] };
+    var portable = (rec.often_portable_topics || []).map(function (t) {
+      return '<li>' + escapeHtml(t) + '</li>';
+    }).join('');
+    var local = (rec.typically_local_at_destination || []).map(function (t) {
+      return '<li>' + escapeHtml(t) + '</li>';
+    }).join('');
+    return (
+      '<p>' + escapeHtml(rec.summary || '') + '</p>' +
+      '<div class="moving-two-col">' +
+      '<div><h3 class="moving-h3">Often portable (verify + policy)</h3><ul>' + portable + '</ul></div>' +
+      '<div><h3 class="moving-h3">Usually required at your new trust</h3><ul>' + local + '</ul></div>' +
+      '</div>'
+    );
+  }
+
+  function walletTable(reqs, recHints) {
+    var list = [];
+    try {
+      list = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    } catch (e) {
+      list = [];
+    }
+    var payloads = [];
+    list.forEach(function (c) {
+      var pl = parseJwtPayload(c.jwt);
+      if (pl) payloads.push({ wallet: c, pl: pl });
+    });
+
+    if (payloads.length === 0) {
+      return '<p class="moving-muted">No e-learning in this browser’s wallet. Open the <a href="/static/staff/">staff app</a> to add or import credentials, then return here.</p>';
+    }
+
+    var body = (reqs || []).map(function (req) {
+      var best = null;
+      var bestPl = null;
+      for (var i = 0; i < payloads.length; i++) {
+        if (credMatchesRequirement(req, payloads[i].pl)) {
+          best = payloads[i].wallet;
+          bestPl = payloads[i].pl;
+          break;
+        }
+      }
+      var status, tagClass, detail;
+      if (best && bestPl) {
+        var ok = notExpired(best.expiry_date);
+        var fromLeave = recHints && isFromLeavingTrust(bestPl, recHints);
+        if (!ok) {
+          status = 'Expired in wallet';
+          tagClass = 'tag-miss';
+        } else {
+          status = fromLeave ? 'Met (issuer matches “leaving” trust hints)' : 'Met';
+          tagClass = 'tag-met';
+        }
+        detail =
+          escapeHtml(bestPl.module_name || '') +
+          ' · expires ' +
+          escapeHtml(best.expiry_date || '') +
+          ' · issued by ' +
+          escapeHtml(bestPl.issuing_trust_name || bestPl.issuing_trust_ods || '?');
+      } else {
+        status = 'Not in wallet';
+        tagClass = 'tag-miss';
+        detail = '—';
+      }
+      return (
+        '<tr><td>' +
+        escapeHtml(req.label) +
+        '</td><td><span class="moving-tag ' +
+        tagClass +
+        '">' +
+        escapeHtml(status) +
+        '</span></td><td>' +
+        detail +
+        '</td></tr>'
+      );
+    }).join('');
+
+    return (
+      '<table class="moving-table"><thead><tr><th>Topic</th><th>Your wallet (this device)</th><th>Detail</th></tr></thead><tbody>' +
+      body +
+      '</tbody></table><p class="moving-muted moving-footnote">“Met” is a rough local match only — not formal acceptance by your new trust.</p>'
+    );
+  }
+
+  function getRecognitionHints(cfg, leaveId) {
+    var map = cfg.recognition_when_joining || {};
+    return map[leaveId === 'other' ? '_default' : leaveId] || map._default || {};
+  }
+
+  function render(cfg, joinId, leaveId) {
+    document.getElementById('movingDisclaimer').textContent = cfg.disclaimer || '';
+    document.getElementById('movingDestinationTitle').textContent =
+      'Illustrative requirements — ' + (cfg.display_name || joinId);
+
+    var rows = (cfg.mandatory_examples || []).map(function (req) {
+      return (
+        '<tr><td>' +
+        escapeHtml(req.label) +
+        '</td><td>' +
+        escapeHtml(req.category || '') +
+        '</td></tr>'
+      );
+    }).join('');
+    document.getElementById('movingMandatoryWrap').innerHTML =
+      '<table class="moving-table"><thead><tr><th>Topic</th><th>Category</th></tr></thead><tbody>' + rows + '</tbody></table>';
+
+    var recHints = getRecognitionHints(cfg, leaveId);
+    document.getElementById('movingRecognitionWrap').innerHTML = recognitionBlock(leaveId, cfg);
+    document.getElementById('movingWalletWrap').innerHTML = walletTable(cfg.mandatory_examples || [], recHints);
+
+    document.getElementById('movingResults').hidden = false;
+    document.getElementById('movingResults').setAttribute('aria-hidden', 'false');
+  }
+
+  function loadConfig(joinId) {
+    if (cache[joinId]) return Promise.resolve(cache[joinId]);
+    return fetch('/static/trust/config/' + encodeURIComponent(joinId) + '.json')
+      .then(function (r) {
+        if (!r.ok) throw new Error('No checklist pack for this trust yet (' + r.status + ').');
+        return r.json();
+      })
+      .then(function (j) {
+        cache[joinId] = j;
+        return j;
+      });
+  }
+
+  function run() {
+    var joinId = joinSel.value;
+    var leaveId = leaveSel.value;
+    document.getElementById('movingError').textContent = '';
+    loadConfig(joinId)
+      .then(function (cfg) {
+        render(cfg, joinId, leaveId);
+      })
+      .catch(function (err) {
+        document.getElementById('movingError').textContent = err.message || String(err);
+        document.getElementById('movingResults').hidden = true;
+      });
+  }
+
+  function applyQueryParams() {
+    var p = new URLSearchParams(window.location.search);
+    var j = p.get('join');
+    var l = p.get('leave');
+    if (j && /^[a-z0-9-]+$/i.test(j) && joinSel.querySelector('option[value="' + j + '"]')) joinSel.value = j;
+    if (l && /^[a-z0-9-]+$/i.test(l) && leaveSel.querySelector('option[value="' + l + '"]')) leaveSel.value = l;
+    if (window.location.hash === '#moving-planner') {
+      document.getElementById('moving-planner').scrollIntoView({ behavior: 'smooth' });
+    }
+  }
+
+  fillSelect(joinSel, JOIN_OPTIONS);
+  fillSelect(leaveSel, LEAVE_OPTIONS);
+  applyQueryParams();
+
+  joinSel.addEventListener('change', run);
+  leaveSel.addEventListener('change', run);
+  if (btnRefresh) btnRefresh.addEventListener('click', run);
+
+  run();
+})();
