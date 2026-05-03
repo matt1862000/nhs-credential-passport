@@ -130,7 +130,7 @@
       return String(expiryDate) >= todayIso();
     }
 
-    fetch('../data/sheffield-welcome.json').then(function(r) {
+    fetch('sheffield-welcome.json').then(function(r) {
       if (!r.ok) throw new Error('Could not load requirements data');
       return r.json();
     }).then(function(data) {
