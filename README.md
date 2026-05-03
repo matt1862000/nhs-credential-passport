@@ -7,7 +7,7 @@ From-idea-to-pilot build: **issue**, **verify**, and **revoke** e-learning crede
 - **Credential schema** — W3C-aligned claims (staff name, NHS/ESR ID, CSTF module, completion/expiry, issuing Trust).
 - **Issuing service** — POST completion records → signed JWT + verification URL + PDF (with QR).
 - **Verifier portal** — Paste credential ID or full verification URL → VALID / EXPIRED / REVOKED / UNVERIFIED.
-- **Staff web app** — Add credentials (manual form), see list, share (link + QR + PDF), revoke, expiry dashboard.
+- **Staff web app** — Add credentials (manual form), **CSV / ESR import**, list, bulk export (ZIP + bundle link), share (link + QR + PDF), revoke, expiry view.
 - **did:web** — `/.well-known/did.json` exposes the issuer public key for signature verification.
 
 ---
@@ -45,6 +45,8 @@ Then open:
 1. Copy your service URL (e.g. `https://nhs-credential-passport-xxxx.onrender.com`).
 2. In the Render dashboard → your service → **Environment** → **Add Environment Variable** → **KEY:** `BASE_URL`, **VALUE:** your URL (no trailing slash) → Save.
 3. Render will redeploy once; verification links and did:web will then use the correct URL.
+
+**Pushes to GitHub but the live URL still shows old behaviour?** In the Render dashboard → your Web Service → **Settings** → **Build & Deploy**: ensure **Auto-Deploy** is enabled for branch `main`. If it already is, open **Manual Deploy** → **Deploy latest commit**, and check **Logs** / **Events** for a failed Docker build (fix errors, then redeploy).
 
 ### Option B — Docker (any host or cloud)
 
