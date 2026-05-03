@@ -143,7 +143,9 @@ async def api_import_csv(request: Request, file: UploadFile = File(...), dry_run
             invalid=invalid_rows,
         )
 
-    results = issue_credentials([p.record for p in valid], base)
+    # One JSON with dozens of PDFs exceeds typical proxy timeouts; skip PDFs for multi-row CSV.
+    include_pdf = len(valid) <= 1
+    results = issue_credentials([p.record for p in valid], base, include_pdf=include_pdf)
     credentials_out: list[IssuedCredentialInfo] = []
     for p, r in zip(valid, results):
         rec = p.record

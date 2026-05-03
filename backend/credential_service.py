@@ -15,8 +15,16 @@ def get_verification_url_base(base_url: str) -> str:
     return f"{base}/api/credentials/verify"
 
 
-def issue_credentials(records: list[CompletionRecord], base_url: str) -> list[dict]:
-    """Issue one credential per completion record; return list of { credential_id, verification_url, jwt, pdf_base64 }."""
+def issue_credentials(
+    records: list[CompletionRecord],
+    base_url: str,
+    *,
+    include_pdf: bool = True,
+) -> list[dict]:
+    """Issue one credential per completion record; return list of { credential_id, verification_url, jwt, pdf_base64 }.
+
+    Set include_pdf=False for large bulk issues (e.g. CSV import) to avoid huge responses and gateway timeouts.
+    """
     issuer_did = crypto.get_issuer_did(base_url)
     verify_base = get_verification_url_base(base_url)
     results = []
@@ -43,15 +51,17 @@ def issue_credentials(records: list[CompletionRecord], base_url: str) -> list[di
         db.init_db()
         db.register_credential(credential_id, rec.expiry_date.isoformat())
 
-        pdf_b64 = pdf_gen.credential_to_pdf_base64(
-            staff_name=rec.staff_full_name,
-            module_name=rec.module_name,
-            completion_date=rec.completion_date.isoformat(),
-            expiry_date=rec.expiry_date.isoformat(),
-            issuing_trust_name=rec.issuing_trust_name,
-            verification_url=verification_url,
-            credential_id=credential_id,
-        )
+        pdf_b64 = None
+        if include_pdf:
+            pdf_b64 = pdf_gen.credential_to_pdf_base64(
+                staff_name=rec.staff_full_name,
+                module_name=rec.module_name,
+                completion_date=rec.completion_date.isoformat(),
+                expiry_date=rec.expiry_date.isoformat(),
+                issuing_trust_name=rec.issuing_trust_name,
+                verification_url=verification_url,
+                credential_id=credential_id,
+            )
 
         results.append({
             "credential_id": credential_id,
