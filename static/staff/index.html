@@ -288,11 +288,14 @@
     <section id="bulk" role="tabpanel" aria-labelledby="tab-bulk" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel" id="bulkExportPanel">
         <h3 class="nhsuk-bulk-export-panel__title">Bulk export</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Download all e-learning as one ZIP, or tick items below to <strong>Download selected as ZIP</strong> or <strong>Share selected</strong> (one link/QR for a verifier).</p>
+        <p class="nhsuk-bulk-export-panel__desc">Tick items below, or use <strong>Select all</strong> then <strong>Share selected</strong> (one link/QR) or <strong>Download selected as ZIP</strong>. <strong>Download all as ZIP</strong> selects everything and downloads in one step.</p>
         <div class="nhsuk-bulk-export-panel__actions">
           <span class="nhsuk-bulk-export-panel__count" id="bulkExportCount" aria-live="polite">0 selected</span>
           <div class="nhsuk-bulk-export-panel__buttons">
-            <button type="button" class="nhsuk-button nhsuk-bulk-export-panel__btn" id="btnExportAll" title="Download all as one ZIP">Download all as ZIP</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkSelectAll" title="Select every e-learning below">Select all</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkClearSelection" title="Clear all ticks">Clear selection</button>
+            <span class="nhsuk-bulk-export-panel__divider" aria-hidden="true">|</span>
+            <button type="button" class="nhsuk-button nhsuk-bulk-export-panel__btn" id="btnExportAll" title="Select all and download as one ZIP">Download all as ZIP</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnExportSelected" title="Download selected e-learning as PDFs in a ZIP" disabled>Download selected as ZIP</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnShareSelected" title="One link or QR a verifier can use to check all selected" disabled>Share selected (one link/QR)</button>
           </div>
@@ -347,8 +350,16 @@
     var btnExport = document.getElementById('btnExportSelected');
     if (btnExport) btnExport.addEventListener('click', exportSelectedAsZip);
     document.getElementById('btnShareSelected').addEventListener('click', shareSelectedAsLink);
+    document.getElementById('btnBulkSelectAll').addEventListener('click', function() {
+      document.querySelectorAll('.credential-export-cb').forEach(function(cb) { cb.checked = true; });
+      updateBulkExportState();
+    });
+    document.getElementById('btnBulkClearSelection').addEventListener('click', function() {
+      document.querySelectorAll('.credential-export-cb').forEach(function(cb) { cb.checked = false; });
+      updateBulkExportState();
+    });
     document.getElementById('btnExportAll').addEventListener('click', function() {
-      document.querySelectorAll('.credential-export-cb').forEach(cb => { cb.checked = true; });
+      document.querySelectorAll('.credential-export-cb').forEach(function(cb) { cb.checked = true; });
       updateBulkExportState();
       exportSelectedAsZip();
     });
