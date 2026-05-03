@@ -4,19 +4,39 @@ Issuing service, verification endpoint, revoke, and did:web public key.
 """
 import os
 from contextlib import asynccontextmanager
+from typing import Optional
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
+from fastapi import FastAPI, Request, HTTPException, File, UploadFile, Query
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import crypto
 from . import db
 from .credential_service import issue_credentials, verify_credential, revoke_credential, get_verification_url_base
-from .models import CompletionRecord, IssueRequest, IssueResponse, IssuedCredentialInfo, VerifyResponse
+from .models import (
+    CompletionRecord,
+    IssueRequest,
+    IssueResponse,
+    IssuedCredentialInfo,
+    VerifyResponse,
+    CsvImportResponse,
+    CsvImportInvalidRow,
+)
+from .csv_import import parse_completion_csv, csv_template_header, MAX_CSV_BYTES
 
 # Base URL for verification links (default for local dev)
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
+
+
+def _decode_csv_bytes(raw: bytes) -> Optional[str]:
+    """ESR exports are often Windows-1252; browsers use UTF-8."""
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return None
 
 
 @asynccontextmanager
@@ -43,11 +63,14 @@ def api_issue(request: Request, body: IssueRequest):
     results = issue_credentials(body.records, base)
     credentials_out = []
     for i, r in enumerate(results):
+        rec = body.records[i] if i < len(body.records) else None
         info = IssuedCredentialInfo(
             credential_id=r["credential_id"],
             verification_url=r["verification_url"],
             jwt=r["jwt"],
             pdf_base64=r.get("pdf_base64"),
+            module_name=rec.module_name if rec else None,
+            expiry_date=rec.expiry_date.isoformat() if rec else None,
         )
         if i == 0 and body.certificate_base64:
             info.certificate_base64 = body.certificate_base64
@@ -68,6 +91,81 @@ def api_revoke(credential_id: str):
     if revoke_credential(credential_id):
         return {"ok": True, "credential_id": credential_id}
     raise HTTPException(status_code=404, detail="Credential not found")
+
+
+@app.get("/api/credentials/import-csv/template")
+def api_csv_template():
+    """Download a one-line CSV header template for bulk import."""
+    return Response(
+        content=csv_template_header(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="elearning-import-template.csv"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.post("/api/credentials/import-csv", response_model=CsvImportResponse)
+async def api_import_csv(request: Request, file: UploadFile = File(...), dry_run: bool = Query(False)):
+    """
+    Upload UTF-8 CSV: validate rows, optionally issue all valid rows (dry_run=false).
+    See GET .../import-csv/template for column names and aliases (e.g. employee_name).
+    """
+    raw = await file.read()
+    if len(raw) > MAX_CSV_BYTES:
+        raise HTTPException(status_code=413, detail="CSV file too large")
+    text = _decode_csv_bytes(raw)
+    if text is None:
+        raise HTTPException(status_code=400, detail="CSV encoding not recognised (try UTF-8 or Windows-1252)")
+
+    parsed, fatal = parse_completion_csv(text)
+    if fatal:
+        return CsvImportResponse(dry_run=dry_run, fatal_error=fatal)
+
+    invalid_rows = [CsvImportInvalidRow(row=p.row_number, message=p.error) for p in parsed if p.error]
+    valid = [p for p in parsed if p.record is not None]
+    base = str(request.base_url).rstrip("/")
+
+    if dry_run:
+        return CsvImportResponse(
+            dry_run=True,
+            total_data_rows=len(parsed),
+            valid_row_count=len(valid),
+            invalid=invalid_rows,
+        )
+
+    if not valid:
+        return CsvImportResponse(
+            dry_run=False,
+            total_data_rows=len(parsed),
+            valid_row_count=0,
+            invalid=invalid_rows,
+        )
+
+    results = issue_credentials([p.record for p in valid], base)
+    credentials_out: list[IssuedCredentialInfo] = []
+    for p, r in zip(valid, results):
+        rec = p.record
+        assert rec is not None
+        credentials_out.append(
+            IssuedCredentialInfo(
+                credential_id=r["credential_id"],
+                verification_url=r["verification_url"],
+                jwt=r["jwt"],
+                pdf_base64=r.get("pdf_base64"),
+                module_name=rec.module_name,
+                expiry_date=rec.expiry_date.isoformat(),
+            )
+        )
+
+    return CsvImportResponse(
+        dry_run=False,
+        total_data_rows=len(parsed),
+        valid_row_count=len(valid),
+        invalid=invalid_rows,
+        credentials=credentials_out,
+    )
 
 
 # ---------- did:web (public key for verifiers) ----------
