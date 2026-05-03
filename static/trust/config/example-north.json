@@ -1,0 +1,45 @@
+{
+  "trust_id": "example-north",
+  "display_name": "Example Northern NHS Trust (placeholder)",
+  "ods": "XXX",
+  "disclaimer": "Placeholder configuration for UI development. Replace with a real trust pack when agreed with that organisation.",
+  "mandatory_examples": [
+    {
+      "id": "ig",
+      "label": "Information Governance",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": ["information_governance"],
+      "match_name_substrings": ["information governance"]
+    },
+    {
+      "id": "fire",
+      "label": "Fire Safety",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": ["fire_safety"],
+      "match_name_substrings": ["fire safety"]
+    },
+    {
+      "id": "safeguarding",
+      "label": "Safeguarding (level for role)",
+      "category": "Trust policy",
+      "match_module_codes": [],
+      "match_name_substrings": ["safeguarding", "adult safeguarding", "child safeguarding"]
+    }
+  ],
+  "recognition_when_joining": {
+    "rotherham": {
+      "issuer_trust_name_hints": ["Rotherham", "rotherham"],
+      "issuer_ods_hints": ["RFR"],
+      "summary": "Illustrative: your new trust may recognise overlapping CSTF modules from Rotherham where verification and renewal dates satisfy their policy.",
+      "often_portable_topics": ["Information Governance", "Fire Safety", "Infection Prevention and Control"],
+      "typically_local_at_destination": ["Trust induction", "Local safeguarding", "IT access"]
+    },
+    "_default": {
+      "issuer_trust_name_hints": [],
+      "issuer_ods_hints": [],
+      "summary": "Generic placeholder: confirm mandatory topics with your new trust’s workforce team.",
+      "often_portable_topics": ["Clearly titled CSTF statutory modules with valid credentials"],
+      "typically_local_at_destination": ["All trust-specific induction and systems training"]
+    }
+  }
+}

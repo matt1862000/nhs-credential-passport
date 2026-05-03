@@ -1,0 +1,86 @@
+{
+  "trust_id": "sheffield",
+  "display_name": "Sheffield Teaching Hospitals NHS Foundation Trust",
+  "ods": "RHQ",
+  "disclaimer": "Pilot demonstration content only — not an official trust policy. Confirm with Medical Staffing, HR, and your specialty team.",
+  "mandatory_examples": [
+    {
+      "id": "ig",
+      "label": "Information Governance",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": ["information_governance"],
+      "match_name_substrings": ["information governance", "ig level"]
+    },
+    {
+      "id": "fire",
+      "label": "Fire Safety",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": ["fire_safety"],
+      "match_name_substrings": ["fire safety"]
+    },
+    {
+      "id": "ipc",
+      "label": "Infection Prevention and Control",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": ["infection_control"],
+      "match_name_substrings": ["infection prevention", "infection control", "ipc"]
+    },
+    {
+      "id": "hs",
+      "label": "Health, Safety and Welfare",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": [],
+      "match_name_substrings": ["health, safety and welfare", "health safety welfare"]
+    },
+    {
+      "id": "ed",
+      "label": "Equality, Diversity and Human Rights",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": [],
+      "match_name_substrings": ["equality", "diversity and human rights", "edhr"]
+    },
+    {
+      "id": "local_induction",
+      "label": "Trust / local induction (destination-specific)",
+      "category": "Local — usually not portable",
+      "match_module_codes": [],
+      "match_name_substrings": ["corporate induction", "local induction", "sheffield induction"]
+    }
+  ],
+  "recognition_when_joining": {
+    "rotherham": {
+      "issuer_trust_name_hints": ["Rotherham", "rotherham"],
+      "issuer_ods_hints": ["RFR"],
+      "summary": "Verifiable e-learning issued while you were at Rotherham may count towards overlapping UK CSTF statutory topics at Sheffield, if the credential verifies as VALID and meets local rules (role, grade, renewal, specialty).",
+      "often_portable_topics": [
+        "Information Governance",
+        "Fire Safety",
+        "Infection Prevention and Control",
+        "Equality, Diversity and Human Rights",
+        "Health, Safety and Welfare",
+        "Conflict resolution (where applicable)",
+        "Resuscitation (level-appropriate)"
+      ],
+      "typically_local_at_destination": [
+        "Corporate / trust induction and orientation",
+        "IT access and local systems",
+        "Safeguarding pathways not covered by generic CSTF titles",
+        "Specialty-specific mandatory courses"
+      ]
+    },
+    "_default": {
+      "issuer_trust_name_hints": [],
+      "issuer_ods_hints": [],
+      "summary": "When moving from another employer, only cryptographically verifiable training with clear CSTF-aligned titles is likely to be considered; everything else is decided by your new trust’s HR and Medical Staffing.",
+      "often_portable_topics": [
+        "UK CSTF statutory topics where titles clearly match",
+        "Resuscitation at the correct level for your role"
+      ],
+      "typically_local_at_destination": [
+        "Trust induction",
+        "Local safeguarding and security",
+        "Specialty-specific courses"
+      ]
+    }
+  }
+}
