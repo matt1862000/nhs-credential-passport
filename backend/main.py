@@ -4,19 +4,39 @@ Issuing service, verification endpoint, revoke, and did:web public key.
 """
 import os
 from contextlib import asynccontextmanager
+from typing import Optional
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, Request, HTTPException, File, UploadFile, Query
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import crypto
 from . import db
 from .credential_service import issue_credentials, verify_credential, revoke_credential, get_verification_url_base
-from .models import CompletionRecord, IssueRequest, IssueResponse, IssuedCredentialInfo, VerifyResponse
+from .models import (
+    CompletionRecord,
+    IssueRequest,
+    IssueResponse,
+    IssuedCredentialInfo,
+    VerifyResponse,
+    CsvImportResponse,
+    CsvImportInvalidRow,
+)
+from .csv_import import parse_completion_csv, csv_template_header, MAX_CSV_BYTES
 
 # Base URL for verification links (default for local dev)
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
+
+
+def _decode_csv_bytes(raw: bytes) -> Optional[str]:
+    """ESR exports are often Windows-1252; browsers use UTF-8."""
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return None
 
 
 @asynccontextmanager
@@ -38,20 +58,25 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.post("/api/credentials/issue", response_model=IssueResponse)
 def api_issue(request: Request, body: IssueRequest):
-    """Issue credentials from completion records. No auth at MVP."""
+    """Issue credentials from completion records. No auth at MVP. Optional certificate upload."""
     base = str(request.base_url).rstrip("/")
     results = issue_credentials(body.records, base)
-    return IssueResponse(
-        credentials=[
-            IssuedCredentialInfo(
-                credential_id=r["credential_id"],
-                verification_url=r["verification_url"],
-                jwt=r["jwt"],
-                pdf_base64=r.get("pdf_base64"),
-            )
-            for r in results
-        ]
-    )
+    credentials_out = []
+    for i, r in enumerate(results):
+        rec = body.records[i] if i < len(body.records) else None
+        info = IssuedCredentialInfo(
+            credential_id=r["credential_id"],
+            verification_url=r["verification_url"],
+            jwt=r["jwt"],
+            pdf_base64=r.get("pdf_base64"),
+            module_name=rec.module_name if rec else None,
+            expiry_date=rec.expiry_date.isoformat() if rec else None,
+        )
+        if i == 0 and body.certificate_base64:
+            info.certificate_base64 = body.certificate_base64
+            info.certificate_filename = body.certificate_filename or "certificate"
+        credentials_out.append(info)
+    return IssueResponse(credentials=credentials_out)
 
 
 @app.get("/api/credentials/verify/{credential_id}", response_model=VerifyResponse)
@@ -66,6 +91,81 @@ def api_revoke(credential_id: str):
     if revoke_credential(credential_id):
         return {"ok": True, "credential_id": credential_id}
     raise HTTPException(status_code=404, detail="Credential not found")
+
+
+@app.get("/api/credentials/import-csv/template")
+def api_csv_template():
+    """Download a one-line CSV header template for bulk import."""
+    return Response(
+        content=csv_template_header(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="elearning-import-template.csv"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.post("/api/credentials/import-csv", response_model=CsvImportResponse)
+async def api_import_csv(request: Request, file: UploadFile = File(...), dry_run: bool = Query(False)):
+    """
+    Upload UTF-8 CSV: validate rows, optionally issue all valid rows (dry_run=false).
+    See GET .../import-csv/template for column names and aliases (e.g. employee_name).
+    """
+    raw = await file.read()
+    if len(raw) > MAX_CSV_BYTES:
+        raise HTTPException(status_code=413, detail="CSV file too large")
+    text = _decode_csv_bytes(raw)
+    if text is None:
+        raise HTTPException(status_code=400, detail="CSV encoding not recognised (try UTF-8 or Windows-1252)")
+
+    parsed, fatal = parse_completion_csv(text)
+    if fatal:
+        return CsvImportResponse(dry_run=dry_run, fatal_error=fatal)
+
+    invalid_rows = [CsvImportInvalidRow(row=p.row_number, message=p.error) for p in parsed if p.error]
+    valid = [p for p in parsed if p.record is not None]
+    base = str(request.base_url).rstrip("/")
+
+    if dry_run:
+        return CsvImportResponse(
+            dry_run=True,
+            total_data_rows=len(parsed),
+            valid_row_count=len(valid),
+            invalid=invalid_rows,
+        )
+
+    if not valid:
+        return CsvImportResponse(
+            dry_run=False,
+            total_data_rows=len(parsed),
+            valid_row_count=0,
+            invalid=invalid_rows,
+        )
+
+    results = issue_credentials([p.record for p in valid], base)
+    credentials_out: list[IssuedCredentialInfo] = []
+    for p, r in zip(valid, results):
+        rec = p.record
+        assert rec is not None
+        credentials_out.append(
+            IssuedCredentialInfo(
+                credential_id=r["credential_id"],
+                verification_url=r["verification_url"],
+                jwt=r["jwt"],
+                pdf_base64=r.get("pdf_base64"),
+                module_name=rec.module_name,
+                expiry_date=rec.expiry_date.isoformat(),
+            )
+        )
+
+    return CsvImportResponse(
+        dry_run=False,
+        total_data_rows=len(parsed),
+        valid_row_count=len(valid),
+        invalid=invalid_rows,
+        credentials=credentials_out,
+    )
 
 
 # ---------- did:web (public key for verifiers) ----------
@@ -89,66 +189,22 @@ def well_known_did():
 
 # Mount static files (verifier and staff apps)
 static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
+index_html_path = os.path.join(static_dir, "index.html")
 if os.path.isdir(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir, html=True), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    """Home page — NHS design principles."""
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>NHS E-Learning Credential Passport</title>
-      <style>
-        :root {
-          --nhsuk-text: #212b32;
-          --nhsuk-link: #005eb8;
-          --nhsuk-link-hover: #003d82;
-          --nhsuk-focus: #ffeb3b;
-          --nhsuk-body-bg: #f0f4f5;
-          --nhsuk-secondary-text: #4c6272;
-        }
-        * { box-sizing: border-box; }
-        body { font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif; background: var(--nhsuk-body-bg); color: var(--nhsuk-text); line-height: 1.5; margin: 0; min-height: 100vh; }
-        .nhsuk-header { background: #003d82; color: #fff; padding: 1.25rem 0; }
-        .nhsuk-header__container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
-        .nhsuk-header__logo { display: block; margin-bottom: 0.5rem; filter: brightness(0) invert(1) drop-shadow(0 1px 2px rgba(0,0,0,0.25)); height: 56px; width: auto; }
-        .nhsuk-header__title { font-size: 1.75rem; font-weight: 700; margin: 0; text-shadow: 0 1px 3px rgba(0,0,0,0.35); letter-spacing: 0.02em; }
-        .nhsuk-main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
-        .nhsuk-page-heading { font-size: 2rem; font-weight: 700; margin: 0 0 0.5rem 0; }
-        .nhsuk-body-s { color: var(--nhsuk-secondary-text); margin-bottom: 1.5rem; }
-        .nhsuk-list { list-style: none; padding: 0; margin: 0; }
-        .nhsuk-list li { margin-bottom: 1rem; padding: 1rem; background: #fff; border-left: 4px solid var(--nhsuk-link); }
-        .nhsuk-list a { color: var(--nhsuk-link); font-weight: 600; font-size: 1.125rem; text-decoration: none; }
-        .nhsuk-list a:hover { color: var(--nhsuk-link-hover); text-decoration: underline; }
-        .nhsuk-list a:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
-        .nhsuk-list p { margin: 0.25rem 0 0 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); font-weight: 400; }
-      </style>
-    </head>
-    <body>
-      <header class="nhsuk-header" role="banner">
-        <div class="nhsuk-header__container">
-          <a href="/"><img src="https://www.sheffieldpartnership.nhs.uk/themes/custom/omega_bigbluedoor/logo.svg" alt="NHS Sheffield Partnership" class="nhsuk-header__logo" width="120" height="51"></a>
-          <h1 class="nhsuk-header__title">NHS E-Learning Credential Passport</h1>
-        </div>
-      </header>
-      <main class="nhsuk-main" id="maincontent" role="main">
-        <h2 class="nhsuk-page-heading">Welcome</h2>
-        <p class="nhsuk-body-s">Share and verify e-learning credentials so staff and Trusts can avoid duplicate training. Phase 2 MVP — no ESR integration yet.</p>
-        <ul class="nhsuk-list">
-          <li><a href="/static/staff/">Staff app</a><p>View your credentials, add new ones, share by link or QR, download PDF, or revoke.</p></li>
-          <li><a href="/static/verifier/">Verify a credential</a><p>Paste a credential ID or verification URL to check it is valid, expired, or revoked.</p></li>
-          <li><a href="/.well-known/did.json">Public key (did:web)</a><p>For verifiers: issuer public key for signature verification.</p></li>
-        </ul>
-        <p class="nhsuk-body-s" style="margin-top:2rem;">Built to the <a href="https://service-manual.nhs.uk/design-system/design-principles" target="_blank" rel="noopener" style="color:var(--nhsuk-link);">NHS design principles</a>.</p>
-      </main>
-    </body>
-    </html>
-    """
+    """Home page — NHS design principles. Served from static/index.html so design is always applied."""
+    if os.path.isfile(index_html_path):
+        with open(index_html_path, encoding="utf-8") as f:
+            return HTMLResponse(content=f.read(), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    # Fallback if file missing (e.g. in tests)
+    return HTMLResponse(
+        content="<html><body><h1>NHS E-Learning Credential Passport</h1><p><a href='/static/'>Go to app</a></p></body></html>",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.get("/verifier", response_class=RedirectResponse)

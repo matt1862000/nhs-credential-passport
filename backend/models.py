@@ -16,6 +16,8 @@ CSTF_MODULES = [
     ("moving_handling", "Moving and Handling"),
     ("resuscitation", "Resuscitation Awareness"),
     ("conflict_resolution", "Conflict Resolution"),
+    # Used when ESR / local competencies do not map to a CSTF subject
+    ("non_cstf", "Non-CSTF competency (ESR / local)"),
 ]
 
 
@@ -49,6 +51,8 @@ class CredentialPayload(BaseModel):
 class IssueRequest(BaseModel):
     """Request body for issuing one or more credentials."""
     records: list[CompletionRecord]
+    certificate_base64: Optional[str] = None   # optional uploaded certificate (PDF/image)
+    certificate_filename: Optional[str] = None
 
 
 class IssueResponse(BaseModel):
@@ -61,6 +65,10 @@ class IssuedCredentialInfo(BaseModel):
     verification_url: str
     jwt: str
     pdf_base64: Optional[str] = None  # optional: include PDF in response
+    certificate_base64: Optional[str] = None   # optional: uploaded certificate file
+    certificate_filename: Optional[str] = None
+    module_name: Optional[str] = None  # wallet / CSV import display
+    expiry_date: Optional[str] = None  # ISO date
 
 
 class VerifyResponse(BaseModel):
@@ -70,4 +78,21 @@ class VerifyResponse(BaseModel):
     claims: Optional[dict] = None
 
 
+class CsvImportInvalidRow(BaseModel):
+    row: int
+    message: str
+
+
+class CsvImportResponse(BaseModel):
+    """Bulk CSV import: validate and optionally issue."""
+
+    dry_run: bool
+    fatal_error: Optional[str] = None
+    total_data_rows: int = 0
+    valid_row_count: int = 0
+    invalid: list[CsvImportInvalidRow] = []
+    credentials: list[IssuedCredentialInfo] = []
+
+
 IssueResponse.model_rebuild()
+CsvImportResponse.model_rebuild()

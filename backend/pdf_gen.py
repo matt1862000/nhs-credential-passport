@@ -61,7 +61,7 @@ def credential_to_pdf(
         ["Completion date", completion_date],
         ["Expiry date", expiry_date],
         ["Issuing organisation", issuing_trust_name],
-        ["Credential ID", credential_id[:16] + "..."],
+        ["Credential ID", credential_id],
     ]
     t = Table(data, colWidths=[45*mm, 120*mm])
     t.setStyle(TableStyle([
@@ -81,7 +81,6 @@ def credential_to_pdf(
     story.append(qr_img)
     story.append(Spacer(1, 8))
     story.append(Paragraph(f"Verification URL: {verification_url}", ParagraphStyle("Small", parent=styles["Normal"], fontSize=8)))
-    story.append(Paragraph("The signature can be verified using the issuer's public key.", body_style))
 
     doc.build(story)
     buf.seek(0)

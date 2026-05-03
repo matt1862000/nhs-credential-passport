@@ -77,7 +77,7 @@ See `.env.example`; copy to `.env` for local overrides (do not commit `.env`).
 
 ## Flow
 
-1. **Staff** — In the staff app, add a completion record (name, ID, module, dates, Trust). Submit to issue a credential. It appears in “My credentials” with Share (link/QR) and Download PDF. You can revoke any credential.
+1. **Staff** — In the staff app, add a completion record (name, ID, module, dates, Trust). Submit to issue a credential. It appears in “My credentials” with Share and Download PDF. You can revoke any credential.
 2. **Verifier** — In the verifier, paste the credential ID or the full verification link. The app shows VALID (green), EXPIRED (amber), REVOKED (red), or UNVERIFIED (grey). Valid/Expired responses include the decoded claims when a JWT is provided.
 
 ## Tech
