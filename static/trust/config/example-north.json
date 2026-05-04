@@ -19,11 +19,14 @@
       "match_name_substrings": ["fire safety"]
     },
     {
-      "id": "safeguarding",
-      "label": "Safeguarding (level for role)",
+      "id": "safeguarding_l3",
+      "label": "Safeguarding Level 3 (example requirement)",
       "category": "Trust policy",
-      "match_module_codes": [],
-      "match_name_substrings": ["safeguarding", "adult safeguarding", "child safeguarding"]
+      "match_module_codes": ["safeguarding_level_3"],
+      "match_name_substrings": ["safeguarding level 3"],
+      "partial_module_codes": ["safeguarding_level_1", "safeguarding_level_2"],
+      "partial_name_substrings": ["safeguarding level 1", "safeguarding level 2"],
+      "partial_hint": "Partial match: you have safeguarding at a lower level than this illustrative trust expects."
     }
   ],
   "recognition_when_joining": {

@@ -26,6 +26,16 @@
       "match_name_substrings": ["infection prevention", "infection control", "ipc"]
     },
     {
+      "id": "sg_l3",
+      "label": "Safeguarding (adults & children) Level 3",
+      "category": "UK CSTF / trust policy",
+      "match_module_codes": ["safeguarding_level_3"],
+      "match_name_substrings": ["safeguarding level 3", "adult safeguarding level 3", "sg3"],
+      "partial_module_codes": ["safeguarding_level_1", "safeguarding_level_2"],
+      "partial_name_substrings": ["safeguarding level 1", "safeguarding level 2", "level 1 safeguarding", "level 2 safeguarding"],
+      "partial_hint": "You may have a lower safeguarding level in your wallet; many clinical roles at this trust require Level 3. Confirm with Medical Staffing / HR."
+    },
+    {
       "id": "hs",
       "label": "Health, Safety and Welfare",
       "category": "UK CSTF / statutory",

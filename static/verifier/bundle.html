@@ -30,20 +30,63 @@
     .nhsuk-header__service-name { white-space: nowrap; }
     .nhsuk-main { max-width: 960px; margin: 0 auto; padding: 2.5rem 1.5rem; }
     .nhsuk-page-heading { font-size: 2.25rem; font-weight: 700; margin: 0 0 0.5rem 0; color: var(--nhsuk-text); letter-spacing: -0.02em; }
-    .nhsuk-panel { background: var(--nhsuk-panel-bg); padding: 1.25rem 1.5rem; margin-top: 1rem; border: 1px solid var(--nhsuk-border); border-left: 4px solid; border-radius: 4px; box-shadow: var(--nhsuk-card-shadow); }
-    .nhsuk-panel--valid   { border-color: var(--nhsuk-success); }
-    .nhsuk-panel--expired { border-color: var(--expired-warn); background: #fff9e6; }
-    .nhsuk-panel--revoked { border-color: var(--nhsuk-error); background: #fdecea; }
-    .nhsuk-panel--unverified { border-color: var(--unverified); background: #f3f4f6; }
-    .nhsuk-panel__title { margin: 0 0 0.5rem 0; font-size: 1.125rem; font-weight: 700; }
-    .nhsuk-panel--valid .nhsuk-panel__title   { color: var(--nhsuk-success); }
-    .nhsuk-panel--expired .nhsuk-panel__title { color: #996a00; }
-    .nhsuk-panel--revoked .nhsuk-panel__title { color: var(--nhsuk-error); }
-    .nhsuk-panel--unverified .nhsuk-panel__title { color: var(--unverified); }
-    .nhsuk-panel pre { background: var(--nhsuk-body-bg); padding: 0.75rem; border-radius: 4px; overflow-x: auto; font-size: 0.8125rem; margin: 0.5rem 0 0 0; }
-    .nhsuk-panel__meta { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.25rem; }
+    .nhsuk-body-s { font-size: 1.0625rem; color: var(--nhsuk-secondary-text); margin: 0 0 1.25rem 0; max-width: 42em; }
+    .bundle-upload-panel {
+      background: var(--nhsuk-panel-bg);
+      border: 1px solid var(--nhsuk-border);
+      border-left: 4px solid var(--nhsuk-link);
+      border-radius: 4px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: var(--nhsuk-card-shadow);
+    }
+    .bundle-upload-panel h3 { margin: 0 0 0.5rem 0; font-size: 1.125rem; }
+    .bundle-upload-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; margin-top: 0.75rem; }
+    .nhsuk-button {
+      display: inline-block; background: var(--nhsuk-success); color: #fff; border: none;
+      padding: 0.75rem 1.25rem; border-radius: 4px; font-size: 1rem; font-weight: 600; cursor: pointer; font-family: inherit;
+    }
+    .nhsuk-button:hover { background: #00662f; }
+    .nhsuk-button:focus { outline: 3px solid #ffeb3b; outline-offset: 2px; }
+    .nhsuk-button--secondary { background: var(--nhsuk-link); }
+    .nhsuk-button--secondary:hover { background: #004c8f; }
+    .bundle-dash {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .bundle-dash__card {
+      background: #fff;
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 4px;
+      padding: 1rem 1.1rem;
+      text-align: center;
+      box-shadow: var(--nhsuk-card-shadow);
+    }
+    .bundle-dash__card strong { display: block; font-size: 1.75rem; line-height: 1.2; }
+    .bundle-dash__card span { font-size: 0.875rem; color: var(--nhsuk-secondary-text); }
+    .bundle-dash__card--valid { border-top: 3px solid var(--nhsuk-success); }
+    .bundle-dash__card--expired { border-top: 3px solid var(--expired-warn); }
+    .bundle-dash__card--bad { border-top: 3px solid var(--nhsuk-error); }
+    .bundle-table-wrap { overflow-x: auto; background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 4px; box-shadow: var(--nhsuk-card-shadow); }
+    .bundle-table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
+    .bundle-table th, .bundle-table td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--nhsuk-border); vertical-align: top; }
+    .bundle-table th { background: #f0f4f5; font-weight: 600; }
+    .bundle-table tr:last-child td { border-bottom: none; }
+    .bundle-badge {
+      display: inline-block; padding: 0.2rem 0.55rem; border-radius: 4px; font-weight: 700; font-size: 0.75rem; letter-spacing: 0.02em;
+    }
+    .bundle-badge--valid { background: #cce5d2; color: var(--nhsuk-success); }
+    .bundle-badge--expired { background: #fff4e5; color: #996a00; }
+    .bundle-badge--revoked { background: #fdecea; color: var(--nhsuk-error); }
+    .bundle-badge--unverified { background: #eef0f2; color: var(--unverified); }
+    .bundle-cred-id { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); word-break: break-all; }
+    .bundle-details { margin-top: 0.5rem; }
+    .bundle-details summary { cursor: pointer; font-weight: 600; color: var(--nhsuk-link); }
+    .bundle-details pre { background: var(--nhsuk-body-bg); padding: 0.75rem; border-radius: 4px; overflow-x: auto; font-size: 0.75rem; margin: 0.5rem 0 0 0; }
     #result { margin-top: 1rem; }
-    .bundle-summary { background: #fff; padding: 1.25rem; margin-bottom: 1.25rem; border-radius: 4px; border: 1px solid var(--nhsuk-border); box-shadow: var(--nhsuk-card-shadow); }
+    .bundle-summary-line { margin-bottom: 1rem; font-size: 1rem; }
   </style>
 </head>
 <body>
@@ -60,9 +103,22 @@
     </div>
   </header>
   <main class="nhsuk-main" id="maincontent" role="main">
-    <h2 class="nhsuk-page-heading">Verify bundle</h2>
-    <p class="nhsuk-body-s" id="intro">Verifying e-learning…</p>
-    <div id="result"></div>
+    <h2 class="nhsuk-page-heading">Compliance dashboard — verify bundle</h2>
+    <p class="nhsuk-body-s" id="intro">Each row is checked against the issuer registry and JWT signature. No accounts — only the credentials you load or open from a shared link.</p>
+
+    <div class="bundle-upload-panel">
+      <h3>Load credentials without a share link</h3>
+      <p class="nhsuk-body-s" style="margin:0 0 0.75rem 0;">Use a wallet JSON from the staff app, or a JSON array of <code>{ "id", "jwt" }</code> objects. JWT-only entries are fine — we read <code>credential_id</code> from the token.</p>
+      <div class="bundle-upload-actions">
+        <label for="bundleFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Choose JSON file…</label>
+        <input type="file" id="bundleFileInput" accept=".json,application/json" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose bundle or wallet JSON">
+        <button type="button" class="nhsuk-button" id="btnVerifyPaste" aria-controls="bundlePasteArea">Verify pasted JSON</button>
+      </div>
+      <label class="nhsuk-body-s" for="bundlePasteArea" style="display:block;margin-top:1rem;font-weight:600;">Or paste JSON</label>
+      <textarea id="bundlePasteArea" rows="6" style="width:100%;max-width:100%;font-family:ui-monospace,monospace;font-size:0.8125rem;padding:0.75rem;border:2px solid var(--nhsuk-border);border-radius:4px;margin-top:0.35rem;" placeholder='[{"id":"nhs-el-…","jwt":"eyJ…"}] or wallet: { "credentials": [ { "credential_id", "jwt" } ] }'></textarea>
+    </div>
+
+    <div id="result" role="region" aria-live="polite"></div>
   </main>
 
   <script>
@@ -79,56 +135,226 @@
 
     function escapeHtml(s) {
       const div = document.createElement('div');
-      div.textContent = s;
+      div.textContent = s == null ? '' : String(s);
       return div.innerHTML;
     }
 
-    const params = new URLSearchParams(window.location.search);
-    const b = params.get('b');
-    const resultEl = document.getElementById('result');
-    const introEl = document.getElementById('intro');
-
-    if (!b) {
-      introEl.textContent = 'No bundle in URL. The staff member should share a link or QR that includes their selected e-learning.';
-      resultEl.innerHTML = '<p><a href="' + (window.location.pathname.replace(/\/[^/]*$/, '/') || '/static/verifier/') + '">Verify a single e-learning</a> instead.</p>';
-    } else {
-      const bundle = base64urlDecode(b);
-      if (!bundle || !Array.isArray(bundle) || bundle.length === 0) {
-        introEl.textContent = 'Invalid bundle. Ask the staff member to share the link or QR again.';
-      } else {
-        introEl.textContent = 'Verifying ' + bundle.length + ' e-learning…';
-        (async function() {
-          const panels = [];
-          for (let i = 0; i < bundle.length; i++) {
-            const item = bundle[i];
-            const id = item && item.id;
-            const jwt = item && item.jwt;
-            if (!id) continue;
-            try {
-              const url = '/api/credentials/verify/' + encodeURIComponent(id) + (jwt ? '?jwt=' + encodeURIComponent(jwt) : '');
-              const res = await fetch(url);
-              const data = await res.json();
-              const status = (data.status || 'UNVERIFIED').toLowerCase();
-              const moduleName = (data.claims && data.claims.module_name) || 'E-learning ' + (i + 1);
-              panels.push({
-                title: moduleName,
-                status,
-                message: data.message || '',
-                claims: data.claims,
-              });
-            } catch (err) {
-              panels.push({ title: 'E-learning ' + (i + 1), status: 'unverified', message: err.message || 'Verify failed', claims: null });
-            }
-          }
-          introEl.textContent = 'Bundle: ' + panels.length + ' e-learning checked.';
-          const validCount = panels.filter(p => p.status === 'valid').length;
-          resultEl.innerHTML = '<div class="bundle-summary"><strong>Summary:</strong> ' + validCount + ' valid, ' + (panels.length - validCount) + ' not valid (expired, revoked, or unverified).</div>' +
-            panels.map(p => {
-              const cls = 'nhsuk-panel nhsuk-panel--' + p.status;
-              return '<div class="' + cls + '"><h3 class="nhsuk-panel__title">' + escapeHtml(p.title) + ' — ' + p.status.toUpperCase() + '</h3><p class="nhsuk-panel__meta">' + escapeHtml(p.message) + '</p>' + (p.claims ? '<pre>' + escapeHtml(JSON.stringify(p.claims, null, 2)) + '</pre>' : '') + '</div>';
-            }).join('');
-        })();
+    function parseJwtPayload(jwt) {
+      if (!jwt || typeof jwt !== 'string' || jwt.split('.').length < 2) return null;
+      try {
+        let b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        const pad = b64.length % 4;
+        if (pad) b64 += '===='.slice(0, 4 - pad);
+        const json = decodeURIComponent(escape(atob(b64)));
+        return JSON.parse(json);
+      } catch (e) {
+        return null;
       }
+    }
+
+    function normalizeBundleItems(raw) {
+      let arr = null;
+      if (Array.isArray(raw)) arr = raw;
+      else if (raw && Array.isArray(raw.credentials)) arr = raw.credentials;
+      else if (raw && Array.isArray(raw.bundle)) arr = raw.bundle;
+      if (!arr || !arr.length) return [];
+
+      return arr
+        .map(function (item, idx) {
+          if (!item) return null;
+          var jwt = item.jwt;
+          if (!jwt) return null;
+          var id = item.id || item.credential_id;
+          if (!id) {
+            var pl = parseJwtPayload(jwt);
+            if (pl && pl.credential_id) id = pl.credential_id;
+          }
+          if (!id) return null;
+          return { id: id, jwt: jwt, _i: idx };
+        })
+        .filter(Boolean);
+    }
+
+    function badgeClass(status) {
+      if (status === 'valid') return 'bundle-badge bundle-badge--valid';
+      if (status === 'expired') return 'bundle-badge bundle-badge--expired';
+      if (status === 'revoked') return 'bundle-badge bundle-badge--revoked';
+      return 'bundle-badge bundle-badge--unverified';
+    }
+
+    async function verifyBundle(items, introEl, resultEl) {
+      if (!items.length) {
+        if (introEl) introEl.textContent = 'No credentials to verify. Load a file, paste JSON, or open a link that includes ?b=…';
+        if (resultEl) resultEl.innerHTML = '';
+        return;
+      }
+      if (introEl) introEl.textContent = 'Verifying ' + items.length + ' credential(s)…';
+      if (resultEl) resultEl.innerHTML = '<p class="nhsuk-body-s">Please wait.</p>';
+
+      var panels = [];
+      for (var i = 0; i < items.length; i++) {
+        var item = items[i];
+        try {
+          var url = '/api/credentials/verify/' + encodeURIComponent(item.id) + '?jwt=' + encodeURIComponent(item.jwt);
+          var res = await fetch(url);
+          var data = await res.json();
+          var status = (data.status || 'UNVERIFIED').toLowerCase();
+          var claims = data.claims || null;
+          var moduleName = (claims && claims.module_name) || 'E-learning ' + (i + 1);
+          var expiry = (claims && claims.expiry_date) || '—';
+          var esr = (claims && (claims.esr_id || claims.sub)) || '—';
+          panels.push({
+            title: moduleName,
+            status: status,
+            message: data.message || '',
+            claims: claims,
+            credId: item.id,
+            expiry: expiry,
+            esr: esr,
+          });
+        } catch (err) {
+          panels.push({
+            title: 'Credential ' + (i + 1),
+            status: 'unverified',
+            message: err.message || 'Verify failed',
+            claims: null,
+            credId: item.id,
+            expiry: '—',
+            esr: '—',
+          });
+        }
+      }
+
+      var nValid = panels.filter(function (p) { return p.status === 'valid'; }).length;
+      var nExpired = panels.filter(function (p) { return p.status === 'expired'; }).length;
+      var nRevoked = panels.filter(function (p) { return p.status === 'revoked'; }).length;
+      var nOther = panels.length - nValid - nExpired - nRevoked;
+
+      if (introEl) introEl.textContent = 'Compliance check complete: ' + panels.length + ' credential(s).';
+
+      var dash =
+        '<div class="bundle-dash" role="group" aria-label="Summary counts">' +
+        '<div class="bundle-dash__card bundle-dash__card--valid"><strong>' +
+        nValid +
+        '</strong><span>Valid</span></div>' +
+        '<div class="bundle-dash__card bundle-dash__card--expired"><strong>' +
+        nExpired +
+        '</strong><span>Expired</span></div>' +
+        '<div class="bundle-dash__card bundle-dash__card--bad"><strong>' +
+        nRevoked +
+        '</strong><span>Revoked</span></div>' +
+        '<div class="bundle-dash__card bundle-dash__card--bad"><strong>' +
+        nOther +
+        '</strong><span>Unverified / other</span></div>' +
+        '</div>';
+
+      var rows = panels
+        .map(function (p) {
+          var claimsJson = p.claims ? JSON.stringify(p.claims, null, 2) : '';
+          return (
+            '<tr>' +
+            '<td><span class="' +
+            badgeClass(p.status) +
+            '">' +
+            escapeHtml(p.status.toUpperCase()) +
+            '</span></td>' +
+            '<td><strong>' +
+            escapeHtml(p.title) +
+            '</strong><div class="bundle-cred-id">' +
+            escapeHtml(p.credId) +
+            '</div></td>' +
+            '<td>' +
+            escapeHtml(String(p.expiry)) +
+            '</td>' +
+            '<td>' +
+            escapeHtml(String(p.esr)) +
+            '</td>' +
+            '<td>' +
+            escapeHtml(p.message) +
+            (claimsJson
+              ? '<details class="bundle-details"><summary>Technical claims (JWT)</summary><pre>' +
+                escapeHtml(claimsJson) +
+                '</pre></details>'
+              : '') +
+            '</td>' +
+            '</tr>'
+          );
+        })
+        .join('');
+
+      resultEl.innerHTML =
+        '<p class="bundle-summary-line"><strong>Outcome:</strong> ' +
+        nValid +
+        ' valid of ' +
+        panels.length +
+        '. Expired and revoked rows need renewal or re-issue before they count as compliant.</p>' +
+        dash +
+        '<div class="bundle-table-wrap"><table class="bundle-table"><thead><tr><th>Status</th><th>Module</th><th>Expiry (claim)</th><th>ESR / subject id</th><th>Notes</th></tr></thead><tbody>' +
+        rows +
+        '</tbody></table></div>';
+    }
+
+    var introEl = document.getElementById('intro');
+    var resultEl = document.getElementById('result');
+    var params = new URLSearchParams(window.location.search);
+    var b = params.get('b');
+
+    function runFromItems(items) {
+      verifyBundle(items, introEl, resultEl);
+    }
+
+    document.getElementById('bundleFileInput').addEventListener('change', function () {
+      var input = this;
+      if (!input.files || !input.files[0]) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        try {
+          var raw = JSON.parse(String(reader.result));
+          var items = normalizeBundleItems(raw);
+          if (!items.length) throw new Error('No { id, jwt } or wallet credentials found in file.');
+          runFromItems(items);
+          try {
+            history.replaceState(null, '', window.location.pathname + '?local=1');
+          } catch (e) {}
+        } catch (err) {
+          alert(err.message || String(err));
+        }
+        input.value = '';
+      };
+      reader.onerror = function () {
+        alert('Could not read file.');
+        input.value = '';
+      };
+      reader.readAsText(input.files[0], 'UTF-8');
+    });
+
+    document.getElementById('btnVerifyPaste').addEventListener('click', function () {
+      var text = (document.getElementById('bundlePasteArea') || {}).value || '';
+      try {
+        var raw = JSON.parse(text);
+        var items = normalizeBundleItems(raw);
+        if (!items.length) throw new Error('No credentials found. Expected an array of { id, jwt } or wallet JSON with credentials[].');
+        runFromItems(items);
+      } catch (err) {
+        alert(err.message || String(err));
+      }
+    });
+
+    if (b) {
+      var bundle = base64urlDecode(b);
+      if (!bundle || !Array.isArray(bundle) || bundle.length === 0) {
+        introEl.textContent = 'Invalid bundle in URL. Ask the staff member to share the link or QR again, or load a JSON file above.';
+        resultEl.innerHTML = '';
+      } else {
+        var items = normalizeBundleItems(bundle);
+        verifyBundle(items, introEl, resultEl);
+      }
+    } else {
+      introEl.textContent = 'No bundle in URL yet — paste JSON or choose a wallet / bundle file, or open a share link with ?b=…';
+      resultEl.innerHTML =
+        '<p class="nhsuk-body-s"><a href="' +
+        (window.location.pathname.replace(/\/[^/]*$/, '/') || '/static/verifier/') +
+        '">Verify a single e-learning</a> instead.</p>';
     }
   </script>
 </body>
