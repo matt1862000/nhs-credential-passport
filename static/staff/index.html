@@ -211,7 +211,7 @@
   <main class="nhsuk-main" id="maincontent" role="main">
     <h2 class="nhsuk-page-heading">My e-learning</h2>
     <p class="nhsuk-body-s">Add your e-learning completion records and share them with receiving Trusts.</p>
-    <p class="nhsuk-body-s" style="margin-top:-0.5rem;"><a href="/#moving-planner" style="font-weight:600;">Moving trusts?</a> Open the home page planner — choose trusts you are leaving and joining to see illustrative requirements, recognition notes, and how your wallet on this device lines up.</p>
+    <p class="nhsuk-body-s" style="margin-top:-0.5rem;"><a href="/#moving-planner" style="font-weight:600;">Moving trusts?</a> Open the home page planner — choose trusts you are leaving and joining to see illustrative requirements, recognition notes, and how your saved wallet lines up. Use a <strong>wallet JSON file</strong> below so the same list works in another browser or session.</p>
 
     <div class="nhsuk-tabs" role="tablist">
       <button type="button" role="tab" aria-selected="true" data-tab="list" class="active" id="tab-list">My e-learning</button>
@@ -221,6 +221,18 @@
     </div>
 
     <section id="list" class="visible" role="tabpanel" aria-labelledby="tab-list">
+      <div class="nhsuk-bulk-export-panel" id="walletFilePanel" style="margin-bottom:1.25rem;">
+        <h3 class="nhsuk-bulk-export-panel__title">Wallet file (any browser)</h3>
+        <p class="nhsuk-bulk-export-panel__desc">Download a JSON copy of your wallet to move between computers or browsers, or load a file you saved earlier. A quick copy is still kept in this browser so the move planner on the home page can read it. In <strong>Chrome or Edge</strong> you can <strong>link a file</strong> so every add, import, or removal updates that file automatically.</p>
+        <div style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center;">
+          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletDownload">Download wallet JSON</button>
+          <label for="walletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Load wallet JSON…</label>
+          <input type="file" id="walletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose wallet JSON file">
+          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletLink">Link file for auto-save</button>
+          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletUnlink" hidden>Stop linking file</button>
+        </div>
+        <p class="nhsuk-body-s" id="walletFileStatus" style="margin-top:0.75rem;" aria-live="polite"></p>
+      </div>
       <div class="nhsuk-summary-list">
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Valid</span><span class="nhsuk-summary-list__value" id="countValid">0</span></div>
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expiring soon</span><span class="nhsuk-summary-list__value" id="countExpiring">0</span></div>
@@ -318,6 +330,7 @@
   </main>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
+  <script src="/static/wallet/wallet-store.js"></script>
   <script>
     const MODULES = [
       { code: 'fire_safety', name: 'Fire Safety' },
@@ -327,10 +340,79 @@
       { code: 'resuscitation', name: 'Resuscitation Awareness' },
       { code: 'conflict_resolution', name: 'Conflict Resolution' },
     ];
-    const STORAGE_KEY = 'nhs_credentials';
+    function getStored() { return window.NHSWallet ? NHSWallet.getWallet() : JSON.parse(localStorage.getItem('nhs_credentials') || '[]'); }
+    function setStored(arr) {
+      if (window.NHSWallet) NHSWallet.saveWallet(arr);
+      else localStorage.setItem('nhs_credentials', JSON.stringify(arr));
+    }
 
-    function getStored() { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
-    function setStored(arr) { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); }
+    function updateWalletFileUi() {
+      var st = document.getElementById('walletFileStatus');
+      var linkBtn = document.getElementById('btnWalletLink');
+      var unlinkBtn = document.getElementById('btnWalletUnlink');
+      if (!st || !window.NHSWallet) return;
+      if (linkBtn && NHSWallet.hasFilePicker) linkBtn.hidden = !NHSWallet.hasFilePicker();
+      if (NHSWallet.isLinked && NHSWallet.isLinked()) {
+        if (unlinkBtn) unlinkBtn.hidden = false;
+        st.textContent = 'Linked file: ' + (NHSWallet.getLinkedFileName() || 'wallet') + ' — changes are saved to this file when your browser allows.';
+      } else {
+        if (unlinkBtn) unlinkBtn.hidden = true;
+        st.textContent = '';
+      }
+    }
+
+    document.getElementById('btnWalletDownload').addEventListener('click', function () {
+      if (!window.NHSWallet) return;
+      NHSWallet.downloadWalletBackup(NHSWallet.getWallet());
+    });
+    document.getElementById('walletFileInput').addEventListener('change', function () {
+      var input = this;
+      if (!input.files || !input.files[0] || !window.NHSWallet) {
+        input.value = '';
+        return;
+      }
+      var file = input.files[0];
+      var reader = new FileReader();
+      reader.onload = function () {
+        try {
+          var replace = window.confirm(
+            'Replace your whole wallet with this file?\n\nOK = replace everything with the file.\nCancel = merge with what is already saved (same credential IDs updated from file).'
+          );
+          NHSWallet.loadWalletFromFileText(String(reader.result), replace ? 'replace' : 'merge').then(function () {
+            renderList();
+            updateWalletFileUi();
+            alert('Wallet loaded from "' + file.name + '".');
+          }).catch(function (e) {
+            alert(e.message || String(e));
+          });
+        } finally {
+          input.value = '';
+        }
+      };
+      reader.onerror = function () {
+        alert('Could not read file.');
+        input.value = '';
+      };
+      reader.readAsText(file, 'UTF-8');
+    });
+    document.getElementById('btnWalletLink').addEventListener('click', async function () {
+      if (!window.NHSWallet) return;
+      var cur = NHSWallet.getWallet();
+      if (cur.length && !window.confirm('Your browser list will be replaced by the contents of the file you pick. (You can download a backup first.) Continue?')) return;
+      try {
+        var r = await NHSWallet.linkWalletFile();
+        renderList();
+        updateWalletFileUi();
+        alert('Linked "' + (r.name || 'wallet') + '" (' + r.count + ' credential(s)). Changes will be written to this file when possible.');
+      } catch (e) {
+        alert(e.message || String(e));
+      }
+    });
+    document.getElementById('btnWalletUnlink').addEventListener('click', async function () {
+      if (!window.NHSWallet) return;
+      await NHSWallet.unlinkWalletFile();
+      updateWalletFileUi();
+    });
 
     document.querySelectorAll('.nhsuk-tabs button').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -774,7 +856,11 @@
       } catch (err) { alert(err.message); }
     });
 
-    renderList();
+    (async function boot() {
+      if (window.NHSWallet && NHSWallet.restoreLinkedHandle) await NHSWallet.restoreLinkedHandle();
+      updateWalletFileUi();
+      renderList();
+    })();
   </script>
 </body>
 </html>
