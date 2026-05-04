@@ -204,6 +204,42 @@
     .moving-gap-summary { font-size: 1rem; margin: 0 0 1rem 0; padding: 0.75rem 1rem; background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 4px; }
     .moving-muted { color: var(--nhsuk-secondary-text); font-size: 0.9375rem; }
     .moving-footnote { margin-top: 0.6rem; font-size: 0.875rem; }
+    .moving-steps { list-style: none; margin: 1.25rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 1rem; }
+    .moving-step {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 1rem 1.25rem;
+      align-items: start;
+      padding: 1.15rem 1.35rem;
+      background: #fff;
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(33, 43, 50, 0.04);
+    }
+    .moving-step-badge {
+      width: 2.75rem;
+      height: 2.75rem;
+      border-radius: 50%;
+      background: var(--nhsuk-link);
+      color: #fff;
+      font-weight: 800;
+      font-size: 0.95rem;
+      letter-spacing: 0.02em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .moving-step-body { min-width: 0; }
+    .moving-step-title {
+      margin: 0 0 0.4rem 0;
+      font-size: 1.1875rem;
+      font-weight: 700;
+      color: var(--nhsuk-text);
+      letter-spacing: -0.02em;
+    }
+    .moving-step-desc { margin: 0; font-size: 1rem; color: var(--nhsuk-secondary-text); line-height: 1.5; max-width: 40em; }
+    .moving-step-tools { margin-top: 0.85rem; }
     .nhsuk-list {
       list-style: none;
       padding: 0;
@@ -254,30 +290,54 @@
     <div id="moving-planner">
       <p class="moving-kicker">Moving trusts</p>
       <h1 class="nhsuk-page-heading" style="margin-bottom:0.35rem;">Plan your move</h1>
-      <p class="nhsuk-lead" style="margin-bottom:0;">Select the organisation you are <strong>joining</strong> and where you are <strong>leaving</strong> from. The planner loads the <strong>mandatory-training checklist</strong> configured for that destination (UK CSTF–aligned modules where the pack lists them) and compares it to <strong>your e-learning list</strong> — the same verifiable credentials you manage in the staff app. <strong>Recognition and sign-off always sit with your new trust’s HR, Medical Staffing, and local policy</strong>; this view helps you prepare evidence and spot gaps before you start. This page only sees training saved in <strong>this</strong> browser — on another computer or phone, <strong>bring your saved list</strong> using the button below (use the copy you downloaded from the staff app).</p>
+      <p class="nhsuk-lead" style="margin-bottom:0;">Work through <strong>Steps A to C</strong>. This tool compares your training list to a destination checklist so you can prepare evidence before you start. <strong>Your new trust’s HR and Medical Staffing always decide final recognition.</strong></p>
 
-      <div class="moving-wallet-row" style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; margin:1rem 0 0.25rem 0;">
-        <label for="movingWalletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring your saved training list…</label>
-        <input type="file" id="movingWalletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose your saved training list file from another device">
-        <span class="moving-muted" style="font-size:0.875rem;">You can download that saved copy from the <a href="/static/staff/">staff app</a> under “Use your list on another device.”</span>
-      </div>
-
-      <div class="moving-select-row" role="group" aria-labelledby="moving-planner-heading">
-        <span id="moving-planner-heading" class="visually-hidden">Trust selection</span>
-        <div class="nhsuk-form-group">
-          <label for="joinTrust">I am joining</label>
-          <select id="joinTrust" name="joinTrust" aria-describedby="join-hint"></select>
-          <span id="join-hint" class="moving-muted" style="display:block;margin-top:0.35rem;font-size:0.875rem;">Destination trust — packs are JSON under <code>/static/trust/config/</code></span>
-        </div>
-        <div class="nhsuk-form-group">
-          <label for="leaveTrust">I am leaving</label>
-          <select id="leaveTrust" name="leaveTrust" aria-describedby="leave-hint"></select>
-          <span id="leave-hint" class="moving-muted" style="display:block;margin-top:0.35rem;font-size:0.875rem;">Affects “recognition” notes where we have a mapping</span>
-        </div>
-        <div class="nhsuk-form-group moving-btn-row">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnRefreshChecklist">Refresh checklist</button>
-        </div>
-      </div>
+      <ol class="moving-steps" aria-label="Steps to plan your move">
+        <li class="moving-step">
+          <span class="moving-step-badge" aria-hidden="true">A</span>
+          <div class="moving-step-body">
+            <h2 class="moving-step-title">Step A — Get your training list on this device</h2>
+            <p class="moving-step-desc">Add or import records in the <a href="/static/staff/">staff app</a> first if you need to. If your list was saved on another computer or phone, bring it here.</p>
+            <div class="moving-step-tools moving-wallet-row" style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center;">
+              <label for="movingWalletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring your saved training list…</label>
+              <input type="file" id="movingWalletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose your saved training list file from another device">
+              <span class="moving-muted" style="font-size:0.875rem;">Download that copy from the staff app under <strong>Use your list on another device</strong>.</span>
+            </div>
+          </div>
+        </li>
+        <li class="moving-step">
+          <span class="moving-step-badge" aria-hidden="true">B</span>
+          <div class="moving-step-body">
+            <h2 class="moving-step-title">Step B — Choose trusts and load the checklist</h2>
+            <p class="moving-step-desc">Pick where you are <strong>joining</strong> and <strong>leaving</strong>. Then run the checklist so we can load that destination’s mandatory topics (UK CSTF–aligned where the pack lists them).</p>
+            <div class="moving-step-tools">
+              <div class="moving-select-row" role="group" aria-labelledby="moving-planner-heading" style="margin-top:0.5rem;">
+                <span id="moving-planner-heading" class="visually-hidden">Trust selection</span>
+                <div class="nhsuk-form-group">
+                  <label for="joinTrust">I am joining</label>
+                  <select id="joinTrust" name="joinTrust" aria-describedby="join-hint"></select>
+                  <span id="join-hint" class="moving-muted" style="display:block;margin-top:0.35rem;font-size:0.875rem;">Destination organisation</span>
+                </div>
+                <div class="nhsuk-form-group">
+                  <label for="leaveTrust">I am leaving</label>
+                  <select id="leaveTrust" name="leaveTrust" aria-describedby="leave-hint"></select>
+                  <span id="leave-hint" class="moving-muted" style="display:block;margin-top:0.35rem;font-size:0.875rem;">Where you are moving from (for recognition notes)</span>
+                </div>
+                <div class="nhsuk-form-group moving-btn-row">
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnRefreshChecklist">Refresh checklist</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </li>
+        <li class="moving-step">
+          <span class="moving-step-badge" aria-hidden="true">C</span>
+          <div class="moving-step-body">
+            <h2 class="moving-step-title">Step C — Review gaps, recognition, and what to do next</h2>
+            <p class="moving-step-desc">After Step B, scroll down for the mandatory topic list, how your old trust’s training may be viewed, and a line-by-line comparison with your training list. Use this to gather verifiable evidence and questions for your new trust — it is not automatic sign-off.</p>
+          </div>
+        </li>
+      </ol>
 
       <p id="movingDisclaimer" role="status"></p>
       <p id="movingError" role="alert"></p>
