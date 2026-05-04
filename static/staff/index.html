@@ -257,12 +257,12 @@
     <div class="nhsuk-bulk-export-panel" style="margin-bottom:1.25rem;">
       <h3 class="nhsuk-bulk-export-panel__title">How this works</h3>
       <ol style="margin:0;padding-left:1.25rem;line-height:1.65;color:var(--nhsuk-secondary-text);font-size:1.0625rem;">
-        <li style="margin-bottom:0.5rem;"><strong>Add your completions</strong> using the <strong>Add e-learning</strong> or <strong>Import CSV</strong> tabs. They will show under <strong>My e-learning</strong>.</li>
+        <li style="margin-bottom:0.5rem;">For a trust move, the <a href="/#moving-planner">home page</a> walks you through <strong>account</strong> then <strong>ESR → Import CSV</strong> here. Use <strong>Import CSV</strong> (or <strong>Add e-learning</strong> for one-off records); issued rows show under <strong>My e-learning</strong>. When signed in, imports sync to your account.</li>
         <li style="margin-bottom:0.5rem;"><strong>Switching device or browser?</strong> On this page, open <strong>Save or restore your list</strong>: on the device that already has your training, press <strong>Save a copy to my device</strong>; on the other device, press <strong>Bring my saved list</strong> and choose that file.</li>
         <li><strong>Moving trust or sending evidence</strong> — Open the <a href="/#moving-planner">move planner on the home page</a>, or use <strong>Bulk export</strong> / Share from your list to send records to a verifier.</li>
       </ol>
     </div>
-    <p class="nhsuk-body-s" style="margin-top:-0.5rem;"><a href="/#moving-planner" style="font-weight:600;">Moving trusts?</a> The home page uses the same order: get your list on that device → choose trusts → read the comparison below.</p>
+    <p class="nhsuk-body-s" style="margin-top:-0.5rem;"><a href="/#moving-planner" style="font-weight:600;">Moving trusts?</a> The home page order is: account → ESR CSV import → optional JSON from another device → choose trusts → gap comparison.</p>
 
     <div class="nhsuk-tabs" role="tablist">
       <button type="button" role="tab" aria-selected="true" data-tab="list" class="active" id="tab-list">My e-learning</button>
@@ -1108,6 +1108,10 @@
       renderList();
       updateWalletSaveBanner();
     })();
+    if (window.location.hash === '#import') {
+      var _importTab = document.querySelector('.nhsuk-tabs button[data-tab="import"]');
+      if (_importTab) _importTab.click();
+    }
   </script>
 </body>
 </html>

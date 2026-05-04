@@ -280,6 +280,11 @@
       margin-bottom: 2rem;
       box-shadow: var(--nhsuk-card-shadow);
     }
+    .home-account-panel--in-step {
+      margin: 0.85rem 0 0;
+      padding: 1.15rem 1.25rem 1.1rem;
+      box-shadow: none;
+    }
     .home-account-panel h2 {
       margin: 0 0 0.5rem 0;
       font-size: 1.25rem;
@@ -352,56 +357,61 @@
     </div>
   </header>
   <main class="nhsuk-main" id="maincontent" role="main">
-    <section class="home-account-panel" id="homeAccountPanel" aria-labelledby="home-account-heading">
-      <h2 id="home-account-heading">Optional account</h2>
-      <p class="home-account-desc">If you are a <strong>clinician or doctor</strong> preparing a trust move, you can create a free account here so your <strong>training list is saved on this service</strong> (as well as in your browser). You can then use the move planner below on this device without opening another page first. This is the same kind of data as when you <strong>save a copy to a file</strong> — use whichever approach fits your trust’s information governance. You can use the whole site without an account.</p>
-      <div id="homeAuthGuest">
-        <div class="home-account-grid">
-          <div>
-            <h3>Create account</h3>
-            <form id="homeFormRegister">
-              <div class="nhsuk-form-group"><label for="homeRegEmail">Email</label><input id="homeRegEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
-              <div class="nhsuk-form-group"><label for="homeRegPassword">Password (8+ characters)</label><input id="homeRegPassword" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="Choose a password"></div>
-              <button type="submit" class="nhsuk-button">Create account</button>
-            </form>
-          </div>
-          <div>
-            <h3>Sign in</h3>
-            <form id="homeFormLogin">
-              <div class="nhsuk-form-group"><label for="homeLoginEmail">Email</label><input id="homeLoginEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
-              <div class="nhsuk-form-group"><label for="homeLoginPassword">Password</label><input id="homeLoginPassword" name="password" type="password" autocomplete="current-password" required placeholder="Password"></div>
-              <button type="submit" class="nhsuk-button">Sign in</button>
-            </form>
-          </div>
-        </div>
-        <p id="homeAuthFeedback" hidden role="alert"></p>
-      </div>
-      <div id="homeAuthUser" hidden>
-        <p class="home-account-desc" style="margin:0;">Signed in as <span id="homeAuthUserEmail"></span></p>
-        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="homeBtnLogout" style="margin-top:0.75rem;">Sign out</button>
-      </div>
-    </section>
-
     <div id="moving-planner">
       <p class="moving-kicker">Moving trusts</p>
       <h1 class="nhsuk-page-heading" style="margin-bottom:0.35rem;">Plan your move</h1>
-      <p class="nhsuk-lead" style="margin-bottom:0;">Follow the <strong>three steps below in order</strong>. This compares your training list to a destination checklist so you can prepare evidence before you start. <strong>Your new trust’s HR and Medical Staffing always decide final recognition.</strong></p>
+      <p class="nhsuk-lead" style="margin-bottom:0;">Follow the <strong>four steps below in order</strong>. Start with an account so ESR imports can be saved to the service; then bring your ESR export into this app; then compare your list to your new trust’s checklist. <strong>Your new trust’s HR and Medical Staffing always decide final recognition.</strong></p>
 
       <ol class="moving-steps" aria-label="Steps to plan your move">
         <li class="moving-step">
           <span class="moving-step-badge" aria-hidden="true">1</span>
           <div class="moving-step-body">
-            <h2 class="moving-step-title">Get your training list on this device</h2>
-            <p class="moving-step-desc">Add or import records in <a href="/static/staff/">My e-learning</a> if you need to. If your list lives on another computer or phone, bring the file you saved there.</p>
-            <div class="moving-step-tools moving-wallet-row" style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center;">
-              <label for="movingWalletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring your saved training list…</label>
-              <input type="file" id="movingWalletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose your saved training list file from another device">
-              <span class="moving-muted" style="font-size:0.875rem;">In My e-learning, open <strong>Save or restore your list</strong> → <strong>Save a copy to my device</strong>.</span>
+            <h2 class="moving-step-title" id="home-step1-title">Create an account or sign in</h2>
+            <p class="moving-step-desc">Use a work email you can access. When you are <strong>signed in</strong>, your training list is saved to this service as well as in your browser, so CSV imports from the next step stay with your account on this device. If your trust does not allow accounts here, you can still continue using file backup only — but you will not get server sync.</p>
+            <div class="home-account-panel home-account-panel--in-step" id="homeAccountPanel" aria-labelledby="home-step1-title">
+              <div id="homeAuthGuest">
+                <div class="home-account-grid">
+                  <div>
+                    <h3>Create account</h3>
+                    <form id="homeFormRegister">
+                      <div class="nhsuk-form-group"><label for="homeRegEmail">Email</label><input id="homeRegEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
+                      <div class="nhsuk-form-group"><label for="homeRegPassword">Password (8+ characters)</label><input id="homeRegPassword" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="Choose a password"></div>
+                      <button type="submit" class="nhsuk-button">Create account</button>
+                    </form>
+                  </div>
+                  <div>
+                    <h3>Sign in</h3>
+                    <form id="homeFormLogin">
+                      <div class="nhsuk-form-group"><label for="homeLoginEmail">Email</label><input id="homeLoginEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
+                      <div class="nhsuk-form-group"><label for="homeLoginPassword">Password</label><input id="homeLoginPassword" name="password" type="password" autocomplete="current-password" required placeholder="Password"></div>
+                      <button type="submit" class="nhsuk-button">Sign in</button>
+                    </form>
+                  </div>
+                </div>
+                <p id="homeAuthFeedback" hidden role="alert"></p>
+              </div>
+              <div id="homeAuthUser" hidden>
+                <p class="home-account-desc" style="margin:0;">Signed in as <span id="homeAuthUserEmail"></span>. <a href="#home-step-esr">Go to step 2 — ESR export and CSV import</a>.</p>
+                <button type="button" class="nhsuk-button nhsuk-button--secondary" id="homeBtnLogout" style="margin-top:0.75rem;">Sign out</button>
+              </div>
             </div>
           </div>
         </li>
         <li class="moving-step">
           <span class="moving-step-badge" aria-hidden="true">2</span>
+          <div class="moving-step-body">
+            <h2 class="moving-step-title" id="home-step-esr">Export from ESR and import CSV</h2>
+            <p class="moving-step-desc">In <strong>ESR</strong> (Electronic Staff Record), open the area your trust uses for learning and compliance — for example <strong>Compliance and Competency</strong> — and <strong>export</strong> the data you need, usually as a <strong>CSV</strong> file. Stay in <strong>this same browser</strong> (so your sign-in from step 1 still applies), then open <a href="/static/staff/#import">My e-learning → Import CSV</a>. Run <strong>Check CSV</strong>, then <strong>Issue all valid rows</strong>. Your completions appear under <strong>My e-learning</strong> and, when signed in, sync to your account.</p>
+            <p class="moving-step-desc moving-muted" style="margin-top:0.75rem; font-size:0.9375rem;"><strong>Optional:</strong> If you already saved a <strong>JSON backup</strong> from My e-learning on another device, you can bring it here instead of or as well as CSV — same browser as step 1.</p>
+            <div class="moving-step-tools moving-wallet-row" style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; margin-top:0.5rem;">
+              <label for="movingWalletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring saved training list (JSON)…</label>
+              <input type="file" id="movingWalletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose a saved training list JSON file from another device">
+              <span class="moving-muted" style="font-size:0.875rem;">From My e-learning: <strong>Save or restore your list</strong> → <strong>Save a copy to my device</strong> on the other device, then choose the file here.</span>
+            </div>
+          </div>
+        </li>
+        <li class="moving-step">
+          <span class="moving-step-badge" aria-hidden="true">3</span>
           <div class="moving-step-body">
             <h2 class="moving-step-title">Choose trusts and load the checklist</h2>
             <p class="moving-step-desc">Pick where you are <strong>joining</strong> and <strong>leaving</strong>. Then run the checklist so we can load that destination’s mandatory topics (UK CSTF–aligned where the pack lists them).</p>
@@ -426,10 +436,10 @@
           </div>
         </li>
         <li class="moving-step">
-          <span class="moving-step-badge" aria-hidden="true">3</span>
+          <span class="moving-step-badge" aria-hidden="true">4</span>
           <div class="moving-step-body">
             <h2 class="moving-step-title">Review gaps, recognition, and what to do next</h2>
-            <p class="moving-step-desc">After you press <strong>Refresh checklist</strong> in step 2, scroll down for the mandatory topic list, how your old trust’s training may be viewed, and a line-by-line comparison with your training list. Use this to gather evidence and questions for your new trust — it is not automatic sign-off.</p>
+            <p class="moving-step-desc">After you press <strong>Refresh checklist</strong> in step 3, scroll down for the mandatory topic list, how your old trust’s training may be viewed, and a line-by-line comparison with your training list. Use this to gather evidence and questions for your new trust — it is not automatic sign-off.</p>
           </div>
         </li>
       </ol>

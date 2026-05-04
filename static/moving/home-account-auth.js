@@ -140,6 +140,8 @@
         await refreshAuthState();
         await pullMergeFromServer();
         fr.reset();
+        var esr = document.getElementById('home-step-esr');
+        if (esr) esr.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     }
     if (fl) {
@@ -158,6 +160,8 @@
         await refreshAuthState();
         await pullMergeFromServer();
         fl.reset();
+        var esr2 = document.getElementById('home-step-esr');
+        if (esr2) esr2.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     }
     if (lo) {
