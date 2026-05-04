@@ -7,7 +7,30 @@
   var DB_NAME = 'nhs_credential_wallet_v1';
   var STORE_NAME = 'handles';
   var LINK_ID = 'wallet_json';
+  var DIRTY_KEY = 'nhs_wallet_dirty';
+  var BANNER_DISMISS_KEY = 'nhs_wallet_save_banner_dismissed';
   var linkedHandle = null;
+
+  function markDirty() {
+    try {
+      sessionStorage.setItem(DIRTY_KEY, '1');
+      sessionStorage.removeItem(BANNER_DISMISS_KEY);
+    } catch (e) {}
+  }
+
+  function clearDirty() {
+    try {
+      sessionStorage.removeItem(DIRTY_KEY);
+    } catch (e) {}
+  }
+
+  function isDirty() {
+    try {
+      return sessionStorage.getItem(DIRTY_KEY) === '1';
+    } catch (e) {
+      return false;
+    }
+  }
 
   function getWallet() {
     try {
@@ -58,6 +81,7 @@
     a.download = 'nhs-elearning-training-list.json';
     a.click();
     URL.revokeObjectURL(a.href);
+    clearDirty();
   }
 
   function openDB() {
@@ -124,22 +148,27 @@
   }
 
   async function writeToLinked(arr) {
-    if (!linkedHandle) return;
+    if (!linkedHandle) return false;
     try {
       var perm = await linkedHandle.queryPermission({ mode: 'readwrite' });
       if (perm !== 'granted') perm = await linkedHandle.requestPermission({ mode: 'readwrite' });
-      if (perm !== 'granted') return;
+      if (perm !== 'granted') return false;
       var w = await linkedHandle.createWritable();
       await w.write(serializeWallet(arr));
       await w.close();
+      return true;
     } catch (e) {
       console.warn('NHSWallet: could not write linked file', e);
+      return false;
     }
   }
 
-  function saveWallet(arr) {
+  function saveWallet(arr, skipDirty) {
     setWalletLocal(arr);
-    void writeToLinked(arr);
+    if (!skipDirty) markDirty();
+    void (async function () {
+      if (await writeToLinked(arr)) clearDirty();
+    })();
   }
 
   async function restoreLinkedHandle() {
@@ -157,6 +186,7 @@
       var text = await file.text();
       var imported = parseWalletJson(text);
       setWalletLocal(imported);
+      clearDirty();
     } catch (e) {
       console.warn('NHSWallet: could not restore linked file', e);
     }
@@ -177,12 +207,15 @@
     var file = await handle.getFile();
     var arr = parseWalletJson(await file.text());
     setWalletLocal(arr);
+    await writeToLinked(arr);
+    clearDirty();
     return { count: arr.length, name: file.name };
   }
 
   async function unlinkWalletFile() {
     linkedHandle = null;
     await idbDeleteHandle();
+    markDirty();
   }
 
   async function loadWalletFromFileText(text, mode) {
@@ -191,6 +224,20 @@
     var next = mode === 'replace' ? incoming : mergeByCredentialId(existing, incoming);
     saveWallet(next);
     return { count: next.length, merged: mode !== 'replace' };
+  }
+
+  function dismissSaveBanner() {
+    try {
+      sessionStorage.setItem(BANNER_DISMISS_KEY, '1');
+    } catch (e) {}
+  }
+
+  function isSaveBannerDismissed() {
+    try {
+      return sessionStorage.getItem(BANNER_DISMISS_KEY) === '1';
+    } catch (e) {
+      return false;
+    }
   }
 
   function hasFilePicker() {
@@ -220,5 +267,10 @@
     hasFilePicker: hasFilePicker,
     isLinked: isLinked,
     getLinkedFileName: getLinkedFileName,
+    isDirty: isDirty,
+    clearDirty: clearDirty,
+    markDirty: markDirty,
+    dismissSaveBanner: dismissSaveBanner,
+    isSaveBannerDismissed: isSaveBannerDismissed,
   };
 })();

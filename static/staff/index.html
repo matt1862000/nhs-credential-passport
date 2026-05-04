@@ -193,6 +193,15 @@
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
     }
     #qrModal .nhsuk-modal input { width: 100%; padding: 0.6rem; margin-top: 0.5rem; border-radius: 4px; border: 1px solid var(--nhsuk-border); }
+    .wallet-save-banner {
+      margin-top: 1rem;
+      padding: 1rem 1.15rem;
+      background: #fff9e6;
+      border: 2px solid #ffb81c;
+      border-radius: 4px;
+    }
+    .wallet-save-banner p { margin: 0 0 0.75rem 0; font-size: 1rem; color: var(--nhsuk-text); max-width: 40em; }
+    .wallet-save-banner .wallet-save-banner__actions { display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; }
   </style>
 </head>
 <body>
@@ -215,7 +224,7 @@
       <h3 class="nhsuk-bulk-export-panel__title">How this works</h3>
       <ol style="margin:0;padding-left:1.25rem;line-height:1.65;color:var(--nhsuk-secondary-text);font-size:1.0625rem;">
         <li style="margin-bottom:0.5rem;"><strong>Add your completions</strong> using the <strong>Add e-learning</strong> or <strong>Import CSV</strong> tabs. They will show under <strong>My e-learning</strong>.</li>
-        <li style="margin-bottom:0.5rem;"><strong>Switching device or browser?</strong> On this page, open the <strong>Save or restore your list</strong> section: on the device that already has your training, press <strong>Download a copy of my list</strong>; on the other device, press <strong>Bring my saved list</strong> and choose that file.</li>
+        <li style="margin-bottom:0.5rem;"><strong>Switching device or browser?</strong> On this page, open <strong>Save or restore your list</strong>: on the device that already has your training, press <strong>Save a copy to my device</strong>; on the other device, press <strong>Bring my saved list</strong> and choose that file.</li>
         <li><strong>Moving trust or sending evidence</strong> — Open the <a href="/#moving-planner">move planner on the home page</a>, or use <strong>Bulk export</strong> / Share from your list to send records to a verifier.</li>
       </ol>
     </div>
@@ -231,9 +240,16 @@
     <section id="list" class="visible" role="tabpanel" aria-labelledby="tab-list">
       <div class="nhsuk-bulk-export-panel" id="walletFilePanel" style="margin-bottom:1.25rem;">
         <h3 class="nhsuk-bulk-export-panel__title">Save or restore your list</h3>
-        <p class="nhsuk-bulk-export-panel__desc"><strong>Download a copy</strong> of your training list to keep somewhere safe (your trust’s drive, your own cloud, or email to yourself), or <strong>bring that copy back</strong> here when you log in from another computer or browser. A copy also stays on this device so the move planner on the home page can read it. In <strong>Chrome or Edge</strong> you can <strong>pick one file to keep in sync</strong> so adds, imports, and removals update that file automatically when the browser allows.</p>
+        <p class="nhsuk-bulk-export-panel__desc"><strong>The copy that matters is the one you save to a file</strong> (your trust drive, your cloud, or email to yourself). The browser also keeps a working copy so the app is quick and the home page move planner can read it — that browser copy can be lost if you clear site data or change device. <strong>Save a copy after adding or importing.</strong> You can <strong>bring a copy back</strong> on another computer or browser. In <strong>Chrome or Edge</strong> you can <strong>pick one file to keep in sync</strong> so changes are written to that file when the browser allows.</p>
+        <div id="walletSaveBanner" class="wallet-save-banner" role="status" hidden>
+          <p><strong>You have changes not saved to a file on this device yet.</strong> Save a copy so you do not lose them if you clear browser data or switch computers.</p>
+          <div class="wallet-save-banner__actions">
+            <button type="button" class="nhsuk-button" id="btnWalletSaveNow">Save a copy now</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletSaveBannerDismiss">Not now</button>
+          </div>
+        </div>
         <div style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center;">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletDownload">Download a copy of my list</button>
+          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletDownload">Save a copy to my device</button>
           <label for="walletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring my saved list…</label>
           <input type="file" id="walletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose the training list file you saved from another device">
           <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletLink">Pick a file to keep in sync</button>
@@ -370,11 +386,41 @@
         if (unlinkBtn) unlinkBtn.hidden = true;
         st.textContent = '';
       }
+      updateWalletSaveBanner();
+    }
+
+    function updateWalletSaveBanner() {
+      var el = document.getElementById('walletSaveBanner');
+      if (!el || !window.NHSWallet || !NHSWallet.isDirty) return;
+      var show =
+        NHSWallet.isDirty() &&
+        NHSWallet.getWallet().length > 0 &&
+        !(NHSWallet.isSaveBannerDismissed && NHSWallet.isSaveBannerDismissed());
+      el.hidden = !show;
+    }
+
+    function triggerSaveCopyDownload() {
+      if (!window.NHSWallet) return;
+      NHSWallet.downloadWalletBackup(NHSWallet.getWallet());
+      updateWalletSaveBanner();
     }
 
     document.getElementById('btnWalletDownload').addEventListener('click', function () {
-      if (!window.NHSWallet) return;
-      NHSWallet.downloadWalletBackup(NHSWallet.getWallet());
+      triggerSaveCopyDownload();
+    });
+    document.getElementById('btnWalletSaveNow').addEventListener('click', function () {
+      triggerSaveCopyDownload();
+    });
+    document.getElementById('btnWalletSaveBannerDismiss').addEventListener('click', function () {
+      if (window.NHSWallet && NHSWallet.dismissSaveBanner) NHSWallet.dismissSaveBanner();
+      updateWalletSaveBanner();
+    });
+
+    window.addEventListener('beforeunload', function (e) {
+      if (window.NHSWallet && NHSWallet.isDirty && NHSWallet.isDirty() && NHSWallet.getWallet().length > 0) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
     });
     document.getElementById('walletFileInput').addEventListener('change', function () {
       var input = this;
@@ -392,6 +438,7 @@
           NHSWallet.loadWalletFromFileText(String(reader.result), replace ? 'replace' : 'merge').then(function () {
             renderList();
             updateWalletFileUi();
+            updateWalletSaveBanner();
             alert('Your training list was updated from "' + file.name + '".');
           }).catch(function (e) {
             alert(e.message || String(e));
@@ -409,11 +456,12 @@
     document.getElementById('btnWalletLink').addEventListener('click', async function () {
       if (!window.NHSWallet) return;
       var cur = NHSWallet.getWallet();
-      if (cur.length && !window.confirm('What is in the file you pick will replace the list on this device. (You can download a copy first.) Continue?')) return;
+      if (cur.length && !window.confirm('What is in the file you pick will replace the list on this device. (You can save a copy first.) Continue?')) return;
       try {
         var r = await NHSWallet.linkWalletFile();
         renderList();
         updateWalletFileUi();
+        updateWalletSaveBanner();
         alert('This device will stay in sync with "' + (r.name || 'your file') + '" (' + r.count + ' training record(s)). Changes will be saved there when your browser allows.');
       } catch (e) {
         alert(e.message || String(e));
@@ -423,6 +471,7 @@
       if (!window.NHSWallet) return;
       await NHSWallet.unlinkWalletFile();
       updateWalletFileUi();
+      updateWalletSaveBanner();
     });
 
     document.querySelectorAll('.nhsuk-tabs button').forEach(btn => {
@@ -734,6 +783,7 @@
       const panel = document.getElementById('bulkExportPanel');
       if (panel) panel.style.display = filtered.length === 0 ? 'none' : 'block';
       updateBulkExportState();
+      updateWalletSaveBanner();
     }
 
     function removeCred(credentialId) {
@@ -871,6 +921,7 @@
       if (window.NHSWallet && NHSWallet.restoreLinkedHandle) await NHSWallet.restoreLinkedHandle();
       updateWalletFileUi();
       renderList();
+      updateWalletSaveBanner();
     })();
   </script>
 </body>
