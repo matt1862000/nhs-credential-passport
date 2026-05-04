@@ -32,8 +32,10 @@ def issue_credentials(
     for rec in records:
         credential_id = f"nhs-el-{uuid.uuid4().hex[:24]}"
         issued_at = datetime.utcnow().isoformat() + "Z"
+        sid = (rec.staff_identifier or "").strip()
         payload = {
-            "sub": rec.staff_identifier,
+            "sub": sid,
+            "esr_id": sid,
             "name": rec.staff_full_name,
             "module_code": rec.module_code,
             "module_name": rec.module_name,

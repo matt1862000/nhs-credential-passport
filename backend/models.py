@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 
 # CSTF-aligned module codes (core set from plan)
+# Add new codes here first; csv_import fuzzy matcher maps ESR wording into these.
 CSTF_MODULES = [
     ("fire_safety", "Fire Safety"),
     ("infection_control", "Infection Prevention and Control"),
@@ -16,6 +17,9 @@ CSTF_MODULES = [
     ("moving_handling", "Moving and Handling"),
     ("resuscitation", "Resuscitation Awareness"),
     ("conflict_resolution", "Conflict Resolution"),
+    ("safeguarding_level_1", "Safeguarding Adults and Children Level 1"),
+    ("safeguarding_level_2", "Safeguarding Adults and Children Level 2"),
+    ("safeguarding_level_3", "Safeguarding Adults and Children Level 3"),
     # Used when ESR / local competencies do not map to a CSTF subject
     ("non_cstf", "Non-CSTF competency (ESR / local)"),
 ]
@@ -36,6 +40,7 @@ class CompletionRecord(BaseModel):
 class CredentialPayload(BaseModel):
     """W3C Verifiable Credential claims (what goes inside the signed JWT)."""
     sub: str                    # staff identifier
+    esr_id: Optional[str] = None  # same as sub when issued from this service (older JWTs may omit)
     name: str                   # staff full name
     module_code: str
     module_name: str

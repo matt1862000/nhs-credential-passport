@@ -58,6 +58,22 @@
     return false;
   }
 
+  function credMatchesPartialOnly(req, pl) {
+    if (!pl || credMatchesRequirement(req, pl)) return false;
+    var codes = req.partial_module_codes || [];
+    var code = (pl.module_code || '').toLowerCase();
+    var k;
+    for (k = 0; k < codes.length; k++) {
+      if (code === String(codes[k]).toLowerCase()) return true;
+    }
+    var ps = req.partial_name_substrings || [];
+    var name = (pl.module_name || '').toLowerCase();
+    for (k = 0; k < ps.length; k++) {
+      if (name.indexOf(String(ps[k]).toLowerCase()) !== -1) return true;
+    }
+    return false;
+  }
+
   function isFromLeavingTrust(pl, rec) {
     if (!rec || !pl) return false;
     var n = ((pl.issuing_trust_name || '') + ' ' + (pl.issuing_trust_ods || '')).toLowerCase();
@@ -116,58 +132,107 @@
     });
 
     if (payloads.length === 0) {
-      return '<p class="moving-muted">No e-learning in this browser’s wallet. Open the <a href="/static/staff/">staff app</a> to add or import credentials, then return here.</p>';
+      return '<p class="moving-muted">No credentials in this browser’s wallet. Open the <a href="/static/staff/">staff app</a> to add or import, or <strong>Load wallet JSON</strong> above, then refresh the checklist.</p>';
     }
 
-    var body = (reqs || []).map(function (req) {
-      var best = null;
-      var bestPl = null;
-      for (var i = 0; i < payloads.length; i++) {
-        if (credMatchesRequirement(req, payloads[i].pl)) {
-          best = payloads[i].wallet;
-          bestPl = payloads[i].pl;
-          break;
+    var nMet = 0;
+    var nPartial = 0;
+    var nGap = 0;
+    var body = (reqs || [])
+      .map(function (req) {
+        var best = null;
+        var bestPl = null;
+        var i;
+        for (i = 0; i < payloads.length; i++) {
+          if (credMatchesRequirement(req, payloads[i].pl)) {
+            best = payloads[i].wallet;
+            bestPl = payloads[i].pl;
+            break;
+          }
         }
-      }
-      var status, tagClass, detail;
-      if (best && bestPl) {
-        var ok = notExpired(best.expiry_date);
-        var fromLeave = recHints && isFromLeavingTrust(bestPl, recHints);
-        if (!ok) {
-          status = 'Expired in wallet';
-          tagClass = 'tag-miss';
+        var status, tagClass, detail;
+        if (best && bestPl) {
+          var ok = notExpired(best.expiry_date);
+          var fromLeave = recHints && isFromLeavingTrust(bestPl, recHints);
+          if (!ok) {
+            status = 'Expired in wallet';
+            tagClass = 'tag-miss';
+            nGap++;
+          } else {
+            status = fromLeave ? 'Met (issuer matches “leaving” trust hints)' : 'Met';
+            tagClass = 'tag-met';
+            nMet++;
+          }
+          detail =
+            escapeHtml(bestPl.module_name || '') +
+            ' · expires ' +
+            escapeHtml(best.expiry_date || '') +
+            ' · issued by ' +
+            escapeHtml(bestPl.issuing_trust_name || bestPl.issuing_trust_ods || '?');
         } else {
-          status = fromLeave ? 'Met (issuer matches “leaving” trust hints)' : 'Met';
-          tagClass = 'tag-met';
+          var part = null;
+          var partPl = null;
+          for (i = 0; i < payloads.length; i++) {
+            if (credMatchesPartialOnly(req, payloads[i].pl)) {
+              part = payloads[i].wallet;
+              partPl = payloads[i].pl;
+              break;
+            }
+          }
+          if (part && partPl) {
+            var okp = notExpired(part.expiry_date);
+            if (!okp) {
+              status = 'Partial — expired';
+              tagClass = 'tag-miss';
+              nGap++;
+            } else {
+              status = 'Partial — related / lower level only';
+              tagClass = 'tag-partial';
+              nPartial++;
+            }
+            var hint = req.partial_hint ? escapeHtml(req.partial_hint) + ' ' : '';
+            detail =
+              hint +
+              '<span class="moving-muted">' +
+              escapeHtml(partPl.module_name || '') +
+              ' · expires ' +
+              escapeHtml(part.expiry_date || '') +
+              '</span>';
+          } else {
+            status = 'Gap — not in wallet';
+            tagClass = 'tag-miss';
+            nGap++;
+            detail = '—';
+          }
         }
-        detail =
-          escapeHtml(bestPl.module_name || '') +
-          ' · expires ' +
-          escapeHtml(best.expiry_date || '') +
-          ' · issued by ' +
-          escapeHtml(bestPl.issuing_trust_name || bestPl.issuing_trust_ods || '?');
-      } else {
-        status = 'Not in wallet';
-        tagClass = 'tag-miss';
-        detail = '—';
-      }
-      return (
-        '<tr><td>' +
-        escapeHtml(req.label) +
-        '</td><td><span class="moving-tag ' +
-        tagClass +
-        '">' +
-        escapeHtml(status) +
-        '</span></td><td>' +
-        detail +
-        '</td></tr>'
-      );
-    }).join('');
+        return (
+          '<tr><td>' +
+          escapeHtml(req.label) +
+          '</td><td><span class="moving-tag ' +
+          tagClass +
+          '">' +
+          escapeHtml(status) +
+          '</span></td><td>' +
+          detail +
+          '</td></tr>'
+        );
+      })
+      .join('');
+
+    var summary =
+      '<p class="moving-gap-summary" role="status"><strong>Gap analysis (illustrative):</strong> ' +
+      nMet +
+      ' met · ' +
+      nPartial +
+      ' partial · ' +
+      nGap +
+      ' gap or expired</p>';
 
     return (
-      '<table class="moving-table"><thead><tr><th>Topic</th><th>Your wallet (this device)</th><th>Detail</th></tr></thead><tbody>' +
+      summary +
+      '<table class="moving-table"><thead><tr><th>Required topic (pack)</th><th>Your wallet</th><th>Detail</th></tr></thead><tbody>' +
       body +
-      '</tbody></table><p class="moving-muted moving-footnote">“Met” is a rough local match only — not formal acceptance by your new trust.</p>'
+      '</tbody></table><p class="moving-muted moving-footnote">Green = plausible match to this pack. Amber = related credential that may not satisfy the stated requirement. Red = missing or expired. Not formal acceptance by your new trust.</p>'
     );
   }
 

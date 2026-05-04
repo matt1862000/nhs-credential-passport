@@ -4,6 +4,7 @@ Parse completion CSV for bulk issue. Supports canonical headers and common alias
 """
 import csv
 import io
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional
@@ -84,7 +85,15 @@ HEADER_ALIASES: dict[str, tuple[str, ...]] = {
         "employer",
     ),
     # --- ESR "Compliance and Competency" (and similar) exports ---
-    "esr_competency_name": ("competency_name",),
+    "esr_competency_name": (
+        "competency_name",
+        "competency",
+        "competency_title",
+        "competencyname",
+        "mandatory_training_competency",
+        "core_competency",
+        "competancy_name",
+    ),
     "esr_person_line": ("last_updated_by",),
     "esr_awarded_by": ("awarded_by",),
     "date_last_awarded": ("date_last_awarded",),
@@ -172,6 +181,64 @@ def _parse_esr_competency_cell(raw: str) -> str:
     return t
 
 
+def _cstf_match_order() -> list[tuple[str, str]]:
+    """Safeguarding levels 3→1 first so generic 'safeguarding' substring does not latch Level 1."""
+    sg = [(c, t) for c, t in CSTF_MODULES if c.startswith("safeguarding_level_")]
+    sg.sort(key=lambda x: int(x[0].rsplit("_", 1)[-1]), reverse=True)
+    rest = [(c, t) for c, t in CSTF_MODULES if not c.startswith("safeguarding_level_") and c != "non_cstf"]
+    return sg + rest
+
+
+def _infer_cstf_synonym(name_raw: str) -> tuple[Optional[str], Optional[str]]:
+    """Map messy ESR / trust competency text onto CSTF codes (Fire, BLS/CPR/resus, Safeguarding L1–3)."""
+    name = (name_raw or "").strip()
+    if not name:
+        return None, None
+    n = name.lower()
+
+    if re.search(
+        r"fire\s*(safety|awareness|warden|marshal|marshall|extinguisher|drill|prevention|risk|training|e\-?learning|aware)",
+        n,
+    ) or re.search(r"\b(fire\s+safety|fire\s+awareness)\b", n):
+        return "fire_safety", CODE_TO_NAME["fire_safety"]
+
+    if re.search(r"\bbls\b", n) or "basic life support" in n:
+        return "resuscitation", CODE_TO_NAME["resuscitation"]
+    if re.search(r"\b(cpr|cardiopulmonary\s+resuscitation)\b", n) and (
+        "adult" in n
+        or "basic" in n
+        or "training" in n
+        or "resus" in n
+        or "immediate" in n
+        or "life support" in n
+        or "aed" in n
+    ):
+        return "resuscitation", CODE_TO_NAME["resuscitation"]
+    if re.search(r"\b(als|ils)\b", n) or "advanced life support" in n or "immediate life support" in n:
+        return "resuscitation", CODE_TO_NAME["resuscitation"]
+    if "resuscitation" in n or ("life support" in n and "safeguarding" not in n and "mental health" not in n):
+        return "resuscitation", CODE_TO_NAME["resuscitation"]
+
+    sg_kw = ("safeguarding", "child protection", "adult protection")
+    if any(k in n for k in sg_kw):
+        lev: Optional[int] = None
+        m = re.search(r"(?:level|l\.?)\s*([123])\b", n, re.I)
+        if m:
+            lev = int(m.group(1))
+        if lev is None:
+            m2 = re.search(r"\b([123])\s*(?:st|nd|rd)?\s*level\b", n, re.I)
+            if m2:
+                lev = int(m2.group(1))
+        if lev == 1:
+            return "safeguarding_level_1", CODE_TO_NAME["safeguarding_level_1"]
+        if lev == 2:
+            return "safeguarding_level_2", CODE_TO_NAME["safeguarding_level_2"]
+        if lev == 3:
+            return "safeguarding_level_3", CODE_TO_NAME["safeguarding_level_3"]
+
+    return None, None
+
+
 def _first_line(text: str, limit: int = 240) -> str:
     line = (text or "").replace("\r\n", "\n").split("\n", 1)[0].strip()
     if len(line) > limit:
@@ -207,15 +274,14 @@ def _resolve_module(
             return code, canonical_name, None
         return code, canonical_name, None
     if name:
+        syn_c, syn_n = _infer_cstf_synonym(name)
+        if syn_c and syn_n:
+            return syn_c, syn_n, None
         nlow = name.lower()
-        for c, title in CSTF_MODULES:
-            if c == "non_cstf":
-                continue
+        for c, title in _cstf_match_order():
             if title.lower() == nlow:
                 return c, title, None
-        for c, title in CSTF_MODULES:
-            if c == "non_cstf":
-                continue
+        for c, title in _cstf_match_order():
             if nlow in title.lower() or title.lower() in nlow:
                 return c, title, None
         if allow_non_cstf:
