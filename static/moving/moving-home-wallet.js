@@ -19,6 +19,11 @@
           );
           NHSWallet.loadWalletFromFileText(String(reader.result), replace ? 'replace' : 'merge')
             .then(function () {
+              if (typeof window.__nhsAfterWalletLocalChange === 'function') {
+                try {
+                  window.__nhsAfterWalletLocalChange();
+                } catch (e) {}
+              }
               window.dispatchEvent(new CustomEvent('nhs-wallet-updated'));
               alert('Your training list was updated from "' + file.name + '". The checklist was refreshed if it was already open.');
             })

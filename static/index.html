@@ -271,6 +271,71 @@
     }
     .nhsuk-body-s a { color: var(--nhsuk-link); }
     .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+    .home-account-panel {
+      background: var(--nhsuk-panel);
+      border: 1px solid var(--nhsuk-border);
+      border-left: 4px solid var(--nhsuk-link);
+      border-radius: 4px;
+      padding: 1.5rem 1.5rem 1.35rem;
+      margin-bottom: 2rem;
+      box-shadow: var(--nhsuk-card-shadow);
+    }
+    .home-account-panel h2 {
+      margin: 0 0 0.5rem 0;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--nhsuk-text);
+    }
+    .home-account-panel .home-account-desc {
+      margin: 0 0 1rem 0;
+      font-size: 1rem;
+      color: var(--nhsuk-secondary-text);
+      line-height: 1.55;
+      max-width: 42em;
+    }
+    .home-account-panel h3 {
+      margin: 0 0 0.75rem 0;
+      font-size: 1.0625rem;
+      font-weight: 600;
+      color: var(--nhsuk-text);
+    }
+    .home-account-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.25rem;
+      align-items: start;
+    }
+    @media (max-width: 720px) {
+      .home-account-grid { grid-template-columns: 1fr; }
+    }
+    .home-account-panel .nhsuk-form-group { margin-bottom: 0.85rem; }
+    .home-account-panel label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+      font-size: 1rem;
+    }
+    .home-account-panel input[type="email"],
+    .home-account-panel input[type="password"] {
+      width: 100%;
+      max-width: 22rem;
+      padding: 0.65rem 0.75rem;
+      border: 2px solid var(--nhsuk-border);
+      border-radius: 4px;
+      font-size: 1rem;
+      font-family: inherit;
+    }
+    .home-account-panel input:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 0;
+      border-color: var(--nhsuk-text);
+    }
+    #homeAuthUserEmail { font-weight: 600; color: var(--nhsuk-link); }
+    #homeAuthFeedback {
+      margin: 0.75rem 0 0;
+      font-size: 0.9375rem;
+      color: var(--nhsuk-error);
+    }
   </style>
 </head>
 <body>
@@ -287,6 +352,36 @@
     </div>
   </header>
   <main class="nhsuk-main" id="maincontent" role="main">
+    <section class="home-account-panel" id="homeAccountPanel" aria-labelledby="home-account-heading">
+      <h2 id="home-account-heading">Optional account</h2>
+      <p class="home-account-desc">If you are a <strong>clinician or doctor</strong> preparing a trust move, you can create a free account here so your <strong>training list is saved on this service</strong> (as well as in your browser). You can then use the move planner below on this device without opening another page first. This is the same kind of data as when you <strong>save a copy to a file</strong> — use whichever approach fits your trust’s information governance. You can use the whole site without an account.</p>
+      <div id="homeAuthGuest">
+        <div class="home-account-grid">
+          <div>
+            <h3>Create account</h3>
+            <form id="homeFormRegister">
+              <div class="nhsuk-form-group"><label for="homeRegEmail">Email</label><input id="homeRegEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
+              <div class="nhsuk-form-group"><label for="homeRegPassword">Password (8+ characters)</label><input id="homeRegPassword" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="Choose a password"></div>
+              <button type="submit" class="nhsuk-button">Create account</button>
+            </form>
+          </div>
+          <div>
+            <h3>Sign in</h3>
+            <form id="homeFormLogin">
+              <div class="nhsuk-form-group"><label for="homeLoginEmail">Email</label><input id="homeLoginEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
+              <div class="nhsuk-form-group"><label for="homeLoginPassword">Password</label><input id="homeLoginPassword" name="password" type="password" autocomplete="current-password" required placeholder="Password"></div>
+              <button type="submit" class="nhsuk-button">Sign in</button>
+            </form>
+          </div>
+        </div>
+        <p id="homeAuthFeedback" hidden role="alert"></p>
+      </div>
+      <div id="homeAuthUser" hidden>
+        <p class="home-account-desc" style="margin:0;">Signed in as <span id="homeAuthUserEmail"></span></p>
+        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="homeBtnLogout" style="margin-top:0.75rem;">Sign out</button>
+      </div>
+    </section>
+
     <div id="moving-planner">
       <p class="moving-kicker">Moving trusts</p>
       <h1 class="nhsuk-page-heading" style="margin-bottom:0.35rem;">Plan your move</h1>
@@ -297,11 +392,11 @@
           <span class="moving-step-badge" aria-hidden="true">1</span>
           <div class="moving-step-body">
             <h2 class="moving-step-title">Get your training list on this device</h2>
-            <p class="moving-step-desc">Add or import records in the <a href="/static/staff/">staff app</a> if you need to. If your list lives on another computer or phone, bring the file you saved there.</p>
+            <p class="moving-step-desc">Add or import records in <a href="/static/staff/">My e-learning</a> if you need to. If your list lives on another computer or phone, bring the file you saved there.</p>
             <div class="moving-step-tools moving-wallet-row" style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center;">
               <label for="movingWalletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring your saved training list…</label>
               <input type="file" id="movingWalletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose your saved training list file from another device">
-              <span class="moving-muted" style="font-size:0.875rem;">In the staff app, open <strong>Save or restore your list</strong> → <strong>Save a copy to my device</strong>.</span>
+              <span class="moving-muted" style="font-size:0.875rem;">In My e-learning, open <strong>Save or restore your list</strong> → <strong>Save a copy to my device</strong>.</span>
             </div>
           </div>
         </li>
@@ -363,8 +458,8 @@
     <p class="nhsuk-lead" style="font-size:1.0625rem;">Add credentials, import from CSV, share verification links, or check someone else’s credential.</p>
     <ul class="nhsuk-list">
       <li>
-        <a href="/static/staff/">Staff app</a>
-        <p>Add, import CSV, bulk share, download PDFs where available. <strong>Save or bring back your training list</strong> so the same records open on another browser or device.</p>
+        <a href="/static/staff/">My e-learning</a>
+        <p>Add completions, import CSV, bulk share, download PDFs where available. <strong>Save or bring back your training list</strong> so the same records open on another browser or device.</p>
       </li>
       <li>
         <a href="/static/verifier/">Verifier</a>
@@ -376,5 +471,6 @@
   <script src="/static/wallet/wallet-store.js" defer></script>
   <script src="/static/moving/trust-mover.js" defer></script>
   <script src="/static/moving/moving-home-wallet.js" defer></script>
+  <script src="/static/moving/home-account-auth.js" defer></script>
 </body>
 </html>
