@@ -211,7 +211,7 @@
   <main class="nhsuk-main" id="maincontent" role="main">
     <h2 class="nhsuk-page-heading">My e-learning</h2>
     <p class="nhsuk-body-s">Add your e-learning completion records and share them with receiving Trusts.</p>
-    <p class="nhsuk-body-s" style="margin-top:-0.5rem;"><a href="/#moving-planner" style="font-weight:600;">Moving trusts?</a> Open the home page planner — choose trusts you are leaving and joining to see illustrative requirements, recognition notes, and how your saved wallet lines up. Use a <strong>wallet JSON file</strong> below so the same list works in another browser or session.</p>
+    <p class="nhsuk-body-s" style="margin-top:-0.5rem;"><a href="/#moving-planner" style="font-weight:600;">Moving trusts?</a> On the home page planner, pick where you are leaving and joining to see requirements, recognition notes, and how your training list compares. <strong>Download or bring back your saved list</strong> below if you use more than one browser or device.</p>
 
     <div class="nhsuk-tabs" role="tablist">
       <button type="button" role="tab" aria-selected="true" data-tab="list" class="active" id="tab-list">My e-learning</button>
@@ -222,14 +222,14 @@
 
     <section id="list" class="visible" role="tabpanel" aria-labelledby="tab-list">
       <div class="nhsuk-bulk-export-panel" id="walletFilePanel" style="margin-bottom:1.25rem;">
-        <h3 class="nhsuk-bulk-export-panel__title">Wallet file (any browser)</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Download a JSON copy of your wallet to move between computers or browsers, or load a file you saved earlier. A quick copy is still kept in this browser so the move planner on the home page can read it. In <strong>Chrome or Edge</strong> you can <strong>link a file</strong> so every add, import, or removal updates that file automatically.</p>
+        <h3 class="nhsuk-bulk-export-panel__title">Use your list on another device</h3>
+        <p class="nhsuk-bulk-export-panel__desc"><strong>Download a copy</strong> of your training list to keep somewhere safe (your trust’s drive, your own cloud, or email to yourself), or <strong>bring that copy back</strong> here when you log in from another computer or browser. A copy also stays on this device so the move planner on the home page can read it. In <strong>Chrome or Edge</strong> you can <strong>pick one file to keep in sync</strong> so adds, imports, and removals update that file automatically when the browser allows.</p>
         <div style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center;">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletDownload">Download wallet JSON</button>
-          <label for="walletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Load wallet JSON…</label>
-          <input type="file" id="walletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose wallet JSON file">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletLink">Link file for auto-save</button>
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletUnlink" hidden>Stop linking file</button>
+          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletDownload">Download a copy of my list</button>
+          <label for="walletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring my saved list…</label>
+          <input type="file" id="walletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose the training list file you saved from another device">
+          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletLink">Pick a file to keep in sync</button>
+          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletUnlink" hidden>Stop syncing to that file</button>
         </div>
         <p class="nhsuk-body-s" id="walletFileStatus" style="margin-top:0.75rem;" aria-live="polite"></p>
       </div>
@@ -282,7 +282,7 @@
     <section id="import" role="tabpanel" aria-labelledby="tab-import" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel">
         <h3 class="nhsuk-bulk-export-panel__title">Import from CSV</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Upload a CSV with one row per completion. The template uses UTF-8; <strong>ESR “Compliance and Competency”</strong> exports are often Windows-1252 — the server detects encoding. ESR columns such as <strong>Competency Name</strong>, <strong>Title</strong>, <strong>Date Last Awarded</strong>, <strong>Date Start</strong>, <strong>Expiry Date</strong>, <strong>Last Updated By</strong> (<code>assignment|Name</code>), and <strong>VPD</strong> are mapped automatically. Rows without a person line are skipped. Check the file first, then issue all valid rows. <strong>Bulk import</strong> (more than one row) does not attach PDFs to each item so the request can finish in time — verification links and QR still work; use single-row add if you need a PDF in the wallet.</p>
+        <p class="nhsuk-bulk-export-panel__desc">Upload a CSV with one row per completion. The template uses UTF-8; <strong>ESR “Compliance and Competency”</strong> exports are often Windows-1252 — the server detects encoding. ESR columns such as <strong>Competency Name</strong>, <strong>Title</strong>, <strong>Date Last Awarded</strong>, <strong>Date Start</strong>, <strong>Expiry Date</strong>, <strong>Last Updated By</strong> (<code>assignment|Name</code>), and <strong>VPD</strong> are mapped automatically. Rows without a person line are skipped. Check the file first, then issue all valid rows. <strong>Bulk import</strong> (more than one row) does not attach PDFs to each item so the request can finish in time — verification links and QR still work; use single-row add if you need a PDF saved next to a record.</p>
         <p class="nhsuk-body-s" style="margin:0 0 1rem 0;"><a href="/api/credentials/import-csv/template" download="elearning-import-template.csv" style="color:var(--nhsuk-link); font-weight:600;">Download CSV template</a></p>
         <div class="nhsuk-form-group nhsuk-file-upload">
           <label class="nhsuk-label" for="csv_upload">CSV file</label>
@@ -357,7 +357,7 @@
       if (linkBtn && NHSWallet.hasFilePicker) linkBtn.hidden = !NHSWallet.hasFilePicker();
       if (NHSWallet.isLinked && NHSWallet.isLinked()) {
         if (unlinkBtn) unlinkBtn.hidden = false;
-        st.textContent = 'Linked file: ' + (NHSWallet.getLinkedFileName() || 'wallet') + ' — changes are saved to this file when your browser allows.';
+        st.textContent = 'Saving to file: ' + (NHSWallet.getLinkedFileName() || 'your chosen file') + ' — updates are written there when your browser allows.';
       } else {
         if (unlinkBtn) unlinkBtn.hidden = true;
         st.textContent = '';
@@ -379,12 +379,12 @@
       reader.onload = function () {
         try {
           var replace = window.confirm(
-            'Replace your whole wallet with this file?\n\nOK = replace everything with the file.\nCancel = merge with what is already saved (same credential IDs updated from file).'
+            'Replace everything on this device with this file?\n\nOK = use only what is in the file.\nCancel = merge with what is already here (same training records are updated from the file).'
           );
           NHSWallet.loadWalletFromFileText(String(reader.result), replace ? 'replace' : 'merge').then(function () {
             renderList();
             updateWalletFileUi();
-            alert('Wallet loaded from "' + file.name + '".');
+            alert('Your training list was updated from "' + file.name + '".');
           }).catch(function (e) {
             alert(e.message || String(e));
           });
@@ -401,12 +401,12 @@
     document.getElementById('btnWalletLink').addEventListener('click', async function () {
       if (!window.NHSWallet) return;
       var cur = NHSWallet.getWallet();
-      if (cur.length && !window.confirm('Your browser list will be replaced by the contents of the file you pick. (You can download a backup first.) Continue?')) return;
+      if (cur.length && !window.confirm('What is in the file you pick will replace the list on this device. (You can download a copy first.) Continue?')) return;
       try {
         var r = await NHSWallet.linkWalletFile();
         renderList();
         updateWalletFileUi();
-        alert('Linked "' + (r.name || 'wallet') + '" (' + r.count + ' credential(s)). Changes will be written to this file when possible.');
+        alert('This device will stay in sync with "' + (r.name || 'your file') + '" (' + r.count + ' training record(s)). Changes will be saved there when your browser allows.');
       } catch (e) {
         alert(e.message || String(e));
       }

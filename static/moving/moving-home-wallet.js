@@ -15,12 +15,12 @@
       reader.onload = function () {
         try {
           var replace = window.confirm(
-            'Replace your whole wallet with this file?\n\nOK = replace everything.\nCancel = merge with what is already in this browser.'
+            'Replace everything on this device with this file?\n\nOK = use only what is in the file.\nCancel = merge with what is already here.'
           );
           NHSWallet.loadWalletFromFileText(String(reader.result), replace ? 'replace' : 'merge')
             .then(function () {
               window.dispatchEvent(new CustomEvent('nhs-wallet-updated'));
-              alert('Wallet loaded from "' + file.name + '". Checklist refreshed if it was already open.');
+              alert('Your training list was updated from "' + file.name + '". The checklist was refreshed if it was already open.');
             })
             .catch(function (e) {
               alert(e.message || String(e));

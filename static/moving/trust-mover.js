@@ -132,7 +132,7 @@
     });
 
     if (payloads.length === 0) {
-      return '<p class="moving-muted">No credentials in this browser’s wallet. Open the <a href="/static/staff/">staff app</a> to add or import, or <strong>Load wallet JSON</strong> above, then refresh the checklist.</p>';
+      return '<p class="moving-muted">No training records in this browser yet. Open the <a href="/static/staff/">staff app</a> to add or import, or use <strong>Bring your saved training list</strong> above if your list lives on another device, then refresh the checklist.</p>';
     }
 
     var nMet = 0;
@@ -155,7 +155,7 @@
           var ok = notExpired(best.expiry_date);
           var fromLeave = recHints && isFromLeavingTrust(bestPl, recHints);
           if (!ok) {
-            status = 'Expired in wallet';
+            status = 'Expired on your list';
             tagClass = 'tag-miss';
             nGap++;
           } else {
@@ -199,7 +199,7 @@
               escapeHtml(part.expiry_date || '') +
               '</span>';
           } else {
-            status = 'Gap — not in wallet';
+            status = 'Gap — not in your list';
             tagClass = 'tag-miss';
             nGap++;
             detail = '—';
@@ -230,9 +230,9 @@
 
     return (
       summary +
-      '<table class="moving-table"><thead><tr><th>Required topic (pack)</th><th>Your wallet</th><th>Detail</th></tr></thead><tbody>' +
+      '<table class="moving-table"><thead><tr><th>Required topic (pack)</th><th>Your training list</th><th>Detail</th></tr></thead><tbody>' +
       body +
-      '</tbody></table><p class="moving-muted moving-footnote">Green = plausible match to this pack. Amber = related credential that may not satisfy the stated requirement. Red = missing or expired. Not formal acceptance by your new trust.</p>'
+      '</tbody></table><p class="moving-muted moving-footnote">Green = plausible match to this pack. Amber = related training that may not meet the stated requirement. Red = missing or expired. Not formal acceptance by your new trust.</p>'
     );
   }
 

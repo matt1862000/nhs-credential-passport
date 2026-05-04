@@ -104,18 +104,18 @@
   </header>
   <main class="nhsuk-main" id="maincontent" role="main">
     <h2 class="nhsuk-page-heading">Compliance dashboard — verify bundle</h2>
-    <p class="nhsuk-body-s" id="intro">Each row is checked against the issuer registry and JWT signature. No accounts — only the credentials you load or open from a shared link.</p>
+    <p class="nhsuk-body-s" id="intro">Each row is checked against the issuer registry and the digital signature on the record. There are no logins — only the training list you load or open from a shared link.</p>
 
     <div class="bundle-upload-panel">
-      <h3>Load credentials without a share link</h3>
-      <p class="nhsuk-body-s" style="margin:0 0 0.75rem 0;">Use a wallet JSON from the staff app, or a JSON array of <code>{ "id", "jwt" }</code> objects. JWT-only entries are fine — we read <code>credential_id</code> from the token.</p>
+      <h3>If you don’t have a share link</h3>
+      <p class="nhsuk-body-s" style="margin:0 0 0.75rem 0;">Use the <strong>same saved file</strong> you downloaded from the staff app (“Download a copy of my list”), or any file your organisation gives you that contains your verifiable training records. If you are helping IT test the system, you can also paste the raw technical export below.</p>
       <div class="bundle-upload-actions">
-        <label for="bundleFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Choose JSON file…</label>
-        <input type="file" id="bundleFileInput" accept=".json,application/json" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose bundle or wallet JSON">
-        <button type="button" class="nhsuk-button" id="btnVerifyPaste" aria-controls="bundlePasteArea">Verify pasted JSON</button>
+        <label for="bundleFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Choose saved list file…</label>
+        <input type="file" id="bundleFileInput" accept=".json,application/json" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose your saved training list file">
+        <button type="button" class="nhsuk-button" id="btnVerifyPaste" aria-controls="bundlePasteArea">Check pasted technical list</button>
       </div>
-      <label class="nhsuk-body-s" for="bundlePasteArea" style="display:block;margin-top:1rem;font-weight:600;">Or paste JSON</label>
-      <textarea id="bundlePasteArea" rows="6" style="width:100%;max-width:100%;font-family:ui-monospace,monospace;font-size:0.8125rem;padding:0.75rem;border:2px solid var(--nhsuk-border);border-radius:4px;margin-top:0.35rem;" placeholder='[{"id":"nhs-el-…","jwt":"eyJ…"}] or wallet: { "credentials": [ { "credential_id", "jwt" } ] }'></textarea>
+      <label class="nhsuk-body-s" for="bundlePasteArea" style="display:block;margin-top:1rem;font-weight:600;">Or paste technical backup (IT / advanced)</label>
+      <textarea id="bundlePasteArea" rows="6" style="width:100%;max-width:100%;font-family:ui-monospace,monospace;font-size:0.8125rem;padding:0.75rem;border:2px solid var(--nhsuk-border);border-radius:4px;margin-top:0.35rem;" placeholder="Paste the contents of your saved .json file from the staff app, or the data you were sent for verification."></textarea>
     </div>
 
     <div id="result" role="region" aria-live="polite"></div>
@@ -184,7 +184,7 @@
 
     async function verifyBundle(items, introEl, resultEl) {
       if (!items.length) {
-        if (introEl) introEl.textContent = 'No credentials to verify. Load a file, paste JSON, or open a link that includes ?b=…';
+        if (introEl) introEl.textContent = 'Nothing to check yet. Choose a saved list file, paste a backup, or open a share link from the staff app.';
         if (resultEl) resultEl.innerHTML = '';
         return;
       }
@@ -272,7 +272,7 @@
             '<td>' +
             escapeHtml(p.message) +
             (claimsJson
-              ? '<details class="bundle-details"><summary>Technical claims (JWT)</summary><pre>' +
+              ? '<details class="bundle-details"><summary>Full technical details</summary><pre>' +
                 escapeHtml(claimsJson) +
                 '</pre></details>'
               : '') +
@@ -311,7 +311,7 @@
         try {
           var raw = JSON.parse(String(reader.result));
           var items = normalizeBundleItems(raw);
-          if (!items.length) throw new Error('No { id, jwt } or wallet credentials found in file.');
+          if (!items.length) throw new Error('We could not find any training records in that file. Use the copy from the staff app, or ask your team for the correct file.');
           runFromItems(items);
           try {
             history.replaceState(null, '', window.location.pathname + '?local=1');
@@ -333,7 +333,7 @@
       try {
         var raw = JSON.parse(text);
         var items = normalizeBundleItems(raw);
-        if (!items.length) throw new Error('No credentials found. Expected an array of { id, jwt } or wallet JSON with credentials[].');
+        if (!items.length) throw new Error('We could not find any training records in what you pasted. Copy the full contents of your saved file from the staff app.');
         runFromItems(items);
       } catch (err) {
         alert(err.message || String(err));
@@ -343,14 +343,14 @@
     if (b) {
       var bundle = base64urlDecode(b);
       if (!bundle || !Array.isArray(bundle) || bundle.length === 0) {
-        introEl.textContent = 'Invalid bundle in URL. Ask the staff member to share the link or QR again, or load a JSON file above.';
+        introEl.textContent = 'That link does not contain a valid list. Ask the person sharing to send the link or QR again, or use “Choose saved list file” above.';
         resultEl.innerHTML = '';
       } else {
         var items = normalizeBundleItems(bundle);
         verifyBundle(items, introEl, resultEl);
       }
     } else {
-      introEl.textContent = 'No bundle in URL yet — paste JSON or choose a wallet / bundle file, or open a share link with ?b=…';
+      introEl.textContent = 'Open a share link from the staff app, or choose your saved training list file above.';
       resultEl.innerHTML =
         '<p class="nhsuk-body-s"><a href="' +
         (window.location.pathname.replace(/\/[^/]*$/, '/') || '/static/verifier/') +

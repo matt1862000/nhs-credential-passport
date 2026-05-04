@@ -27,7 +27,7 @@
     var o = JSON.parse(text);
     if (Array.isArray(o)) return o;
     if (o && Array.isArray(o.credentials)) return o.credentials;
-    throw new Error('Wallet file must be a JSON array or an object with a "credentials" array.');
+    throw new Error('This file should be a list of training records: either a JSON array or an object with a "credentials" section.');
   }
 
   function serializeWallet(arr) {
@@ -55,7 +55,7 @@
     var blob = new Blob([serializeWallet(arr)], { type: 'application/json;charset=utf-8' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'nhs-elearning-wallet.json';
+    a.download = 'nhs-elearning-training-list.json';
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -164,10 +164,10 @@
 
   async function linkWalletFile() {
     if (typeof window.showOpenFilePicker !== 'function') {
-      throw new Error('Linking a file for automatic saves needs a Chromium-based browser (Chrome or Edge).');
+      throw new Error('To keep one file updated automatically, use Google Chrome or Microsoft Edge on a computer.');
     }
     var handles = await window.showOpenFilePicker({
-      types: [{ description: 'Wallet JSON', accept: { 'application/json': ['.json'] } }],
+      types: [{ description: 'Training list backup', accept: { 'application/json': ['.json'] } }],
       excludeAcceptAllOption: false,
       multiple: false,
     });
