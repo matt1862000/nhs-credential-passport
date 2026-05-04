@@ -193,6 +193,10 @@
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
     }
     #qrModal .nhsuk-modal input { width: 100%; padding: 0.6rem; margin-top: 0.5rem; border-radius: 4px; border: 1px solid var(--nhsuk-border); }
+    .auth-panel h4 { margin: 0 0 0.75rem 0; font-size: 1.125rem; font-weight: 600; color: var(--nhsuk-text); }
+    .auth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
+    @media (max-width: 720px) { .auth-grid { grid-template-columns: 1fr; } }
+    #authUserEmail { font-weight: 600; color: var(--nhsuk-link); }
     .wallet-save-banner {
       margin-top: 1rem;
       padding: 1rem 1.15rem;
@@ -218,6 +222,36 @@
     </div>
   </header>
   <main class="nhsuk-main" id="maincontent" role="main">
+    <div class="nhsuk-bulk-export-panel auth-panel" id="authPanel" style="margin-bottom:1.25rem;">
+      <div id="authGuest">
+        <h3 class="nhsuk-bulk-export-panel__title">Account (optional)</h3>
+        <p class="nhsuk-bulk-export-panel__desc">Sign in to <strong>save your training list on the server</strong> as well as in this browser — useful if you switch devices or clear site data. Your list is stored as the same JSON you would download (including JWTs). You can still use everything below without an account.</p>
+        <div class="auth-grid">
+          <div>
+            <h4>Create account</h4>
+            <form id="formRegister" class="auth-form">
+              <div class="nhsuk-form-group"><label class="nhsuk-label" for="regEmail">Email</label><input class="nhsuk-input" id="regEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
+              <div class="nhsuk-form-group"><label class="nhsuk-label" for="regPassword">Password (8+ characters)</label><input class="nhsuk-input" id="regPassword" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="Choose a password"></div>
+              <button type="submit" class="nhsuk-button">Create account</button>
+            </form>
+          </div>
+          <div>
+            <h4>Sign in</h4>
+            <form id="formLogin" class="auth-form">
+              <div class="nhsuk-form-group"><label class="nhsuk-label" for="loginEmail">Email</label><input class="nhsuk-input" id="loginEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
+              <div class="nhsuk-form-group"><label class="nhsuk-label" for="loginPassword">Password</label><input class="nhsuk-input" id="loginPassword" name="password" type="password" autocomplete="current-password" required placeholder="Password"></div>
+              <button type="submit" class="nhsuk-button">Sign in</button>
+            </form>
+          </div>
+        </div>
+        <p id="authFeedback" class="nhsuk-body-s" style="margin-top:0.75rem; margin-bottom:0; color:var(--nhsuk-error);" hidden role="alert"></p>
+      </div>
+      <div id="authUser" hidden>
+        <p class="nhsuk-bulk-export-panel__desc" style="margin:0;">Signed in as <span id="authUserEmail"></span></p>
+        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnLogout" style="margin-top:0.75rem;">Sign out</button>
+      </div>
+    </div>
+
     <h2 class="nhsuk-page-heading">My e-learning</h2>
     <p class="nhsuk-body-s">Add your e-learning completion records and share them with receiving Trusts.</p>
     <div class="nhsuk-bulk-export-panel" style="margin-bottom:1.25rem;">
@@ -368,10 +402,157 @@
       { code: 'safeguarding_level_3', name: 'Safeguarding Adults and Children Level 3' },
     ];
     function getStored() { return window.NHSWallet ? NHSWallet.getWallet() : JSON.parse(localStorage.getItem('nhs_credentials') || '[]'); }
+
+    window.__nhsAuthUser = null;
+
+    function showAuthFeedback(msg) {
+      var el = document.getElementById('authFeedback');
+      if (!el) return;
+      if (msg) {
+        el.textContent = msg;
+        el.hidden = false;
+      } else {
+        el.textContent = '';
+        el.hidden = true;
+      }
+    }
+
+    async function syncWalletToServer(arr) {
+      if (!window.__nhsAuthUser) return;
+      try {
+        await fetch('/api/me/wallet', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(arr),
+        });
+      } catch (e) {
+        console.warn('Wallet server sync failed', e);
+      }
+    }
+
     function setStored(arr) {
       if (window.NHSWallet) NHSWallet.saveWallet(arr);
       else localStorage.setItem('nhs_credentials', JSON.stringify(arr));
+      void syncWalletToServer(arr);
     }
+
+    async function refreshAuthState() {
+      window.__nhsAuthUser = null;
+      try {
+        var r = await fetch('/api/auth/me', { credentials: 'include' });
+        if (r.ok) window.__nhsAuthUser = await r.json();
+      } catch (e) {}
+      updateAuthUi();
+    }
+
+    function updateAuthUi() {
+      var g = document.getElementById('authGuest');
+      var u = document.getElementById('authUser');
+      if (!g || !u) return;
+      if (window.__nhsAuthUser) {
+        showAuthFeedback('');
+        g.hidden = true;
+        u.hidden = false;
+        var em = document.getElementById('authUserEmail');
+        if (em) em.textContent = __nhsAuthUser.email || '';
+      } else {
+        g.hidden = false;
+        u.hidden = true;
+      }
+    }
+
+    function mergeServerAndLocal(serverArr, localArr) {
+      if (window.NHSWallet && NHSWallet.mergeByCredentialId) {
+        return NHSWallet.mergeByCredentialId(serverArr || [], localArr || []);
+      }
+      var map = {};
+      (serverArr || []).forEach(function (c) {
+        if (c && c.credential_id) map[c.credential_id] = c;
+      });
+      (localArr || []).forEach(function (c) {
+        if (c && c.credential_id) map[c.credential_id] = c;
+      });
+      return Object.keys(map).map(function (k) { return map[k]; });
+    }
+
+    async function pullMergeFromServer() {
+      if (!window.__nhsAuthUser) return;
+      try {
+        var r = await fetch('/api/me/wallet', { credentials: 'include' });
+        if (!r.ok) return;
+        var server = await r.json();
+        if (!Array.isArray(server)) server = [];
+        var merged = mergeServerAndLocal(server, getStored());
+        setStored(merged);
+      } catch (e) {
+        console.warn('Wallet merge from server', e);
+      }
+    }
+
+    async function authJson(path, body) {
+      var res = await fetch(path, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      var text = await res.text();
+      var data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch (e) {
+        data = null;
+      }
+      return { ok: res.ok, status: res.status, data: data, text: text };
+    }
+
+    document.getElementById('formRegister').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      showAuthFeedback('');
+      var fd = new FormData(e.target);
+      var email = (fd.get('email') || '').trim();
+      var password = fd.get('password') || '';
+      var out = await authJson('/api/auth/register', { email: email, password: password });
+      if (!out.ok) {
+        var det = out.data && out.data.detail;
+        showAuthFeedback(typeof det === 'string' ? det : (out.text || 'Could not create account'));
+        return;
+      }
+      await refreshAuthState();
+      await pullMergeFromServer();
+      renderList();
+      updateWalletSaveBanner();
+      e.target.reset();
+    });
+
+    document.getElementById('formLogin').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      showAuthFeedback('');
+      var fd = new FormData(e.target);
+      var email = (fd.get('email') || '').trim();
+      var password = fd.get('password') || '';
+      var out = await authJson('/api/auth/login', { email: email, password: password });
+      if (!out.ok) {
+        var det = out.data && out.data.detail;
+        showAuthFeedback(typeof det === 'string' ? det : (out.text || 'Could not sign in'));
+        return;
+      }
+      await refreshAuthState();
+      await pullMergeFromServer();
+      renderList();
+      updateWalletSaveBanner();
+      e.target.reset();
+    });
+
+    document.getElementById('btnLogout').addEventListener('click', async function () {
+      try {
+        await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      } catch (err) {}
+      showAuthFeedback('');
+      await refreshAuthState();
+      renderList();
+    });
 
     function updateWalletFileUi() {
       var st = document.getElementById('walletFileStatus');
@@ -436,6 +617,7 @@
             'Replace everything on this device with this file?\n\nOK = use only what is in the file.\nCancel = merge with what is already here (same training records are updated from the file).'
           );
           NHSWallet.loadWalletFromFileText(String(reader.result), replace ? 'replace' : 'merge').then(function () {
+            void syncWalletToServer(NHSWallet.getWallet());
             renderList();
             updateWalletFileUi();
             updateWalletSaveBanner();
@@ -459,6 +641,7 @@
       if (cur.length && !window.confirm('What is in the file you pick will replace the list on this device. (You can save a copy first.) Continue?')) return;
       try {
         var r = await NHSWallet.linkWalletFile();
+        void syncWalletToServer(NHSWallet.getWallet());
         renderList();
         updateWalletFileUi();
         updateWalletSaveBanner();
@@ -919,6 +1102,8 @@
 
     (async function boot() {
       if (window.NHSWallet && NHSWallet.restoreLinkedHandle) await NHSWallet.restoreLinkedHandle();
+      await refreshAuthState();
+      if (window.__nhsAuthUser) await pullMergeFromServer();
       updateWalletFileUi();
       renderList();
       updateWalletSaveBanner();

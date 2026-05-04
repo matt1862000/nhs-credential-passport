@@ -24,6 +24,7 @@ from .models import (
     CsvImportInvalidRow,
 )
 from .csv_import import parse_completion_csv, csv_template_header, MAX_CSV_BYTES
+from .auth_api import router as auth_router
 
 # Base URL for verification links (default for local dev)
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
@@ -52,6 +53,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.include_router(auth_router)
 
 
 # ---------- API ----------
