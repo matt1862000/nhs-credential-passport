@@ -246,6 +246,7 @@
   joinSel.addEventListener('change', run);
   leaveSel.addEventListener('change', run);
   if (btnRefresh) btnRefresh.addEventListener('click', run);
+  window.addEventListener('nhs-wallet-updated', run);
 
   run();
 })();

@@ -252,7 +252,13 @@
     <div id="moving-planner">
       <p class="moving-kicker">Moving trusts</p>
       <h1 class="nhsuk-page-heading" style="margin-bottom:0.35rem;">Plan your move</h1>
-      <p class="nhsuk-lead" style="margin-bottom:0;">Choose the trust you are <strong>joining</strong> and the one you are <strong>leaving</strong>. We load an <strong>illustrative</strong> checklist pack (replace with real data when each trust agrees). Your e-learning wallet on <strong>this device</strong> is matched below.</p>
+      <p class="nhsuk-lead" style="margin-bottom:0;">Choose the trust you are <strong>joining</strong> and the one you are <strong>leaving</strong>. We load an <strong>illustrative</strong> checklist pack (replace with real data when each trust agrees). Your wallet is matched from what is saved in this browser — use <strong>Load wallet JSON</strong> (same file as the staff app) if you work across machines or browsers.</p>
+
+      <div class="moving-wallet-row" style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; margin:1rem 0 0.25rem 0;">
+        <label for="movingWalletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Load wallet JSON…</label>
+        <input type="file" id="movingWalletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Load wallet JSON file">
+        <span class="moving-muted" style="font-size:0.875rem;">Optional — download or manage the file in the <a href="/static/staff/">staff app</a>.</span>
+      </div>
 
       <div class="moving-select-row" role="group" aria-labelledby="moving-planner-heading">
         <span id="moving-planner-heading" class="visually-hidden">Trust selection</span>
@@ -285,7 +291,7 @@
           <div id="movingRecognitionWrap"></div>
         </section>
         <section aria-labelledby="movingWalletTitle">
-          <h2 id="movingWalletTitle">Your wallet on this device</h2>
+          <h2 id="movingWalletTitle">Your wallet (this browser)</h2>
           <div id="movingWalletWrap"></div>
         </section>
       </div>
@@ -296,7 +302,7 @@
     <ul class="nhsuk-list">
       <li>
         <a href="/static/staff/">Staff app</a>
-        <p>Your wallet on this browser: add, import CSV, bulk share, download PDFs where available.</p>
+        <p>Add, import CSV, bulk share, download PDFs where available. Save or load a <strong>wallet JSON file</strong> to use the same wallet in another browser or session.</p>
       </li>
       <li>
         <a href="/static/verifier/">Verifier</a>
@@ -305,6 +311,8 @@
     </ul>
     <p class="nhsuk-body-s">Technical: <a href="/docs">API documentation</a> · <a href="/.well-known/did.json">Issuer public key (JSON)</a></p>
   </main>
+  <script src="/static/wallet/wallet-store.js" defer></script>
   <script src="/static/moving/trust-mover.js" defer></script>
+  <script src="/static/moving/moving-home-wallet.js" defer></script>
 </body>
 </html>
