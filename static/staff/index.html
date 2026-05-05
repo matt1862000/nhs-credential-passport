@@ -262,8 +262,8 @@
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="moduleSelect">Module</label><select class="nhsuk-select" name="module_code" id="moduleSelect"></select></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="completion_date">Completion date</label><input class="nhsuk-input" id="completion_date" type="date" name="completion_date" required></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="expiry_date">Expiry date</label><input class="nhsuk-input" id="expiry_date" type="date" name="expiry_date" required></div>
-        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_ods_code">Issuing Trust ODS code</label><input class="nhsuk-input" id="issuing_trust_ods_code" type="text" name="issuing_trust_ods_code" placeholder="RGT" required></div>
-        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_name">Issuing Trust name</label><input class="nhsuk-input" id="issuing_trust_name" type="text" name="issuing_trust_name" placeholder="Royal General Trust" required autocomplete="organization"></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_name">Issuing Trust name</label><input class="nhsuk-input" id="issuing_trust_name" type="text" name="issuing_trust_name" placeholder="e.g. Sheffield Teaching Hospitals" required autocomplete="organization" aria-describedby="issuing_trust_name_hint"><span class="nhsuk-hint" id="issuing_trust_name_hint">Type at least three characters; the ODS code below is filled from the NHS Organisation Directory when there is a clear match.</span></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_ods_code">Issuing Trust ODS code</label><input class="nhsuk-input" id="issuing_trust_ods_code" type="text" name="issuing_trust_ods_code" placeholder="e.g. RHQ" required maxlength="16" autocomplete="off" spellcheck="false" aria-describedby="issuing_trust_ods_hint"><span class="nhsuk-hint" id="issuing_trust_ods_hint">Filled automatically from the trust name when possible; change it if the wrong organisation is suggested.</span></div>
         <div class="nhsuk-form-group nhsuk-file-upload">
           <label class="nhsuk-label" for="certificate_upload">Upload certificate (optional)</label>
           <span class="nhsuk-hint" id="certificate_hint">PDF or image (PNG, JPG) — e.g. your course completion certificate.</span>
@@ -364,6 +364,89 @@
       if (window.NHSAuth) await NHSAuth.pullWalletMerge();
     }
 
+    var trustNameOdsDebounce = null;
+    var lastAutoOdsSuggested = { name: '', ods: '' };
+
+    function scoreOrdOrg(org, q) {
+      var nm = org.Name || '';
+      var name = nm.toLowerCase().replace(/\s+/g, ' ').trim();
+      if ((org.Status || '').toUpperCase() !== 'ACTIVE') return -Infinity;
+      var s = 0;
+      if (/trial|covid|octave|comcov|research database|nhs app/i.test(nm)) s -= 55;
+      var rid = org.PrimaryRoleId || '';
+      if (rid === 'RO197') s += 100;
+      else if (rid === 'RO198') s += 38;
+      else if (rid === 'RO76') s += 18;
+      var rc = org.OrgRecordClass || '';
+      if (rc === 'RC1') s += 48;
+      else if (rc === 'RC2') s += 12;
+      if (name === q) s += 75;
+      else if (name.startsWith(q)) s += 52;
+      else if (name.includes(q)) s += 34;
+      else {
+        var qw = q.split(' ').filter(function (w) { return w.length > 2; });
+        for (var wi = 0; wi < qw.length; wi++) {
+          if (name.includes(qw[wi])) s += 8;
+        }
+      }
+      return s;
+    }
+
+    function pickBestOrdOrg(orgs, rawQuery) {
+      var q = (rawQuery || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!orgs || !orgs.length) return null;
+      var best = null;
+      var bestS = -Infinity;
+      for (var i = 0; i < orgs.length; i++) {
+        var org = orgs[i];
+        var sc = scoreOrdOrg(org, q);
+        if (sc > bestS) {
+          bestS = sc;
+          best = org;
+        }
+      }
+      if (!best || bestS < 62) return null;
+      return best;
+    }
+
+    async function fetchOrdOrgForTrustName(trustName) {
+      var t = (trustName || '').trim();
+      if (t.length < 3) return null;
+      var url = 'https://directory.spineservices.nhs.uk/ORD/2-0-0/organisations?Name=' + encodeURIComponent(t) + '&Limit=30';
+      var res = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!res.ok) return null;
+      var data = await res.json();
+      var orgs = data.Organisations || [];
+      return pickBestOrdOrg(orgs, t);
+    }
+
+    function scheduleTrustNameOdsLookup() {
+      if (trustNameOdsDebounce) clearTimeout(trustNameOdsDebounce);
+      trustNameOdsDebounce = setTimeout(function () {
+        trustNameOdsDebounce = null;
+        void runTrustNameOdsLookup();
+      }, 480);
+    }
+
+    async function runTrustNameOdsLookup() {
+      var nameEl = document.getElementById('issuing_trust_name');
+      var odsEl = document.getElementById('issuing_trust_ods_code');
+      if (!nameEl || !odsEl) return;
+      var t = nameEl.value.trim();
+      if (t.length < 3) return;
+      var curOds = odsEl.value.trim();
+      var shouldReplace = !curOds || curOds === lastAutoOdsSuggested.ods;
+      if (!shouldReplace) return;
+      try {
+        var org = await fetchOrdOrgForTrustName(t);
+        if (!org || !org.OrgId) return;
+        lastAutoOdsSuggested = { name: t, ods: org.OrgId };
+        odsEl.value = org.OrgId;
+      } catch (e) {
+        console.warn('Trust ODS lookup failed', e);
+      }
+    }
+
     function applyProfileToAddForm() {
       const u = window.NHSAuth && NHSAuth.user;
       if (!u) return;
@@ -373,7 +456,31 @@
       if (fn && u.display_name && !String(fn.value || '').trim()) fn.value = u.display_name;
       if (sid && u.gmc_number && !String(sid.value || '').trim()) sid.value = u.gmc_number;
       if (tn && u.current_trust && !String(tn.value || '').trim()) tn.value = u.current_trust;
+      scheduleTrustNameOdsLookup();
     }
+
+    (function wireTrustNameOdsLookup() {
+      var nameEl = document.getElementById('issuing_trust_name');
+      var odsEl = document.getElementById('issuing_trust_ods_code');
+      if (nameEl) {
+        nameEl.addEventListener('input', function () {
+          if (!String(nameEl.value || '').trim()) {
+            lastAutoOdsSuggested = { name: '', ods: '' };
+          }
+          scheduleTrustNameOdsLookup();
+        });
+        nameEl.addEventListener('change', function () {
+          void runTrustNameOdsLookup();
+        });
+      }
+      if (odsEl) {
+        odsEl.addEventListener('input', function () {
+          var v = String(odsEl.value || '').trim();
+          if (!v) lastAutoOdsSuggested = { name: '', ods: '' };
+          else if (v !== lastAutoOdsSuggested.ods) lastAutoOdsSuggested = { name: '', ods: '' };
+        });
+      }
+    })();
 
     document.getElementById('btnSignOut').addEventListener('click', async function () {
       if (window.NHSAuth) await NHSAuth.signOut();
@@ -833,6 +940,7 @@
         setStored(list);
         renderList();
         e.target.reset();
+        lastAutoOdsSuggested = { name: '', ods: '' };
         applyProfileToAddForm();
         document.querySelector('.nhsuk-tabs button[data-tab="list"]').click();
       } catch (err) { alert(err.message); }
