@@ -15,11 +15,17 @@ from . import db, session_auth
 
 router = APIRouter(prefix="/api")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+GMC_RE = re.compile(r"^\d{7}$")
 MAX_WALLET_BYTES = 4 * 1024 * 1024
 
 
 def _normalize_email(email: str) -> str:
     return (email or "").strip().lower()
+
+
+def _normalize_gmc(raw: str) -> str:
+    """UK GMC registration number: seven digits (ignore spaces and non-digits)."""
+    return re.sub(r"\D", "", raw or "")
 
 
 def _current_user_id(request: Request) -> Optional[int]:
@@ -58,13 +64,16 @@ def _session_response(data: dict, user_id: int, email: str, request: Request) ->
 def auth_register(request: Request, body: dict):
     email = _normalize_email(body.get("email") or "")
     password = body.get("password") or ""
+    gmc = _normalize_gmc(str(body.get("gmc_number") or body.get("gmcNumber") or ""))
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Invalid email")
+    if not GMC_RE.match(gmc):
+        raise HTTPException(status_code=400, detail="Enter a valid 7-digit GMC number")
     if len(str(password)) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     h = bcrypt.hashpw(str(password).encode("utf-8"), bcrypt.gensalt()).decode("ascii")
     try:
-        uid = db.user_create(email, h)
+        uid = db.user_create(email, h, gmc)
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail="Email already registered")
     return _session_response({"ok": True, "email": email}, uid, email, request)
@@ -115,6 +124,7 @@ def auth_me(request: Request):
         "id": u["id"],
         "email": u["email"],
         "premium": db.user_is_premium(u),
+        "gmc_number": u.get("gmc_number"),
     }
 
 

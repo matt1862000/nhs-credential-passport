@@ -14,6 +14,7 @@
     .auth-toggle button[aria-selected="true"] { background: var(--nhsuk-link); color: #fff; }
     .auth-toggle button:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
     .auth-card { max-width: 28rem; }
+    .auth-card .nhsuk-hint { display: block; font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.35rem; }
   </style>
 </head>
 <body>
@@ -46,7 +47,7 @@
       <h2>Sign in</h2>
       <form id="formSignIn" novalidate>
         <div class="nhsuk-form-group">
-          <label class="nhsuk-label" for="loginEmail">Work email</label>
+          <label class="nhsuk-label" for="loginEmail">Email address</label>
           <input class="nhsuk-input" type="email" id="loginEmail" name="email" autocomplete="email" required placeholder="you@nhs.net">
         </div>
         <div class="nhsuk-form-group">
@@ -62,8 +63,13 @@
       <h2>Create account</h2>
       <form id="formRegister" novalidate>
         <div class="nhsuk-form-group">
-          <label class="nhsuk-label" for="regEmail">Work email</label>
+          <label class="nhsuk-label" for="regEmail">Email address</label>
           <input class="nhsuk-input" type="email" id="regEmail" name="email" autocomplete="email" required placeholder="you@nhs.net">
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="regGmc">GMC number</label>
+          <input class="nhsuk-input" type="text" id="regGmc" name="gmc_number" inputmode="numeric" autocomplete="off" required pattern="[0-9 ]{7,11}" maxlength="11" title="Seven-digit GMC number" placeholder="e.g. 1234567" aria-describedby="regGmcHint">
+          <span class="nhsuk-hint" id="regGmcHint">Your 7-digit GMC registration number (spaces optional).</span>
         </div>
         <div class="nhsuk-form-group">
           <label class="nhsuk-label" for="regPassword">Password (8+ characters)</label>
@@ -97,7 +103,7 @@
         cardReg.hidden = !isReg;
         title.textContent = isReg ? 'Create account' : 'Sign in';
         lead.textContent = isReg
-          ? 'Use a work email you can access. Your password is hashed.'
+          ? 'Use an email you can access, your GMC number, and a password (hashed on the server).'
           : 'Use the same account on any device to keep your training list in sync.';
         var url = new URL(window.location.href);
         url.searchParams.set('mode', isReg ? 'register' : 'signin');
@@ -140,7 +146,11 @@
         showErr('registerError', '');
         var fd = new FormData(this);
         try {
-          await NHSAuth.register((fd.get('email') || '').trim(), fd.get('password') || '');
+          await NHSAuth.register(
+            (fd.get('email') || '').trim(),
+            fd.get('password') || '',
+            (fd.get('gmc_number') || '').trim()
+          );
           /* Do not merge an old browser list into a brand-new account (shared device / prior anonymous use). */
           if (window.NHSWallet && typeof NHSWallet.resetDeviceWalletCache === 'function') {
             await NHSWallet.resetDeviceWalletCache();

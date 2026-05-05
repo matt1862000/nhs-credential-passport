@@ -32,6 +32,7 @@ def init_db():
             )
         """)
         _ensure_users_premium_column(conn)
+        _ensure_users_gmc_number_column(conn)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS user_wallets (
                 user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -47,6 +48,13 @@ def _ensure_users_premium_column(conn: sqlite3.Connection) -> None:
     cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
     if "premium" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN premium INTEGER NOT NULL DEFAULT 0")
+
+
+def _ensure_users_gmc_number_column(conn: sqlite3.Connection) -> None:
+    """SQLite: add GMC number collected at registration (existing DBs)."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "gmc_number" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN gmc_number TEXT")
 
 
 def register_credential(credential_id: str, expiry_date: str):
@@ -92,14 +100,15 @@ def is_revoked(credential_id: str) -> bool:
 # ---------- Accounts (wallet sync; JWT payloads still not stored in registry) ----------
 
 
-def user_create(email: str, password_hash: str) -> int:
+def user_create(email: str, password_hash: str, gmc_number: str) -> int:
     """Insert user; raises sqlite3.IntegrityError if email exists."""
     premium = 1 if _email_in_premium_env(email) else 0
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_premium_column(conn)
+        _ensure_users_gmc_number_column(conn)
         cur = conn.execute(
-            "INSERT INTO users (email, password_hash, created_at, premium) VALUES (?, ?, ?, ?)",
-            (email, password_hash, datetime.utcnow().isoformat(), premium),
+            "INSERT INTO users (email, password_hash, created_at, premium, gmc_number) VALUES (?, ?, ?, ?, ?)",
+            (email, password_hash, datetime.utcnow().isoformat(), premium, gmc_number),
         )
         conn.commit()
         return int(cur.lastrowid)
@@ -108,9 +117,10 @@ def user_create(email: str, password_hash: str) -> int:
 def user_get_by_email(email: str):
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_premium_column(conn)
+        _ensure_users_gmc_number_column(conn)
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT id, email, password_hash, premium FROM users WHERE email = ?", (email,)
+            "SELECT id, email, password_hash, premium, gmc_number FROM users WHERE email = ?", (email,)
         ).fetchone()
     if not row:
         return None
@@ -119,20 +129,25 @@ def user_get_by_email(email: str):
         "email": row["email"],
         "password_hash": row["password_hash"],
         "premium": bool(row["premium"]) if row["premium"] is not None else False,
+        "gmc_number": row["gmc_number"],
     }
 
 
 def user_get_by_id(user_id: int):
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_premium_column(conn)
+        _ensure_users_gmc_number_column(conn)
         conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT id, email, premium FROM users WHERE id = ?", (user_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id, email, premium, gmc_number FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
     if not row:
         return None
     return {
         "id": row["id"],
         "email": row["email"],
         "premium": bool(row["premium"]) if row["premium"] is not None else False,
+        "gmc_number": row["gmc_number"],
     }
 
 
