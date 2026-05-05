@@ -4,502 +4,79 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NHS E-Learning Credential Passport</title>
-  <style>
-    :root {
-      --nhsuk-text: #212b32;
-      --nhsuk-link: #005eb8;
-      --nhsuk-link-hover: #003087;
-      --nhsuk-focus: #ffeb3b;
-      --nhsuk-body-bg: #f0f4f5;
-      --nhsuk-secondary-text: #4c6272;
-      --nhsuk-border: #d8dde0;
-      --nhsuk-card-shadow: 0 2px 8px rgba(33, 43, 50, 0.08);
-      --nhsuk-success: #007f3b;
-      --nhsuk-error: #d5281b;
-      --nhsuk-panel: #fff;
-    }
-    * { box-sizing: border-box; }
-    body {
-      font-family: Frutiger, 'Frutiger Linotype', Arial, sans-serif;
-      background: var(--nhsuk-body-bg);
-      color: var(--nhsuk-text);
-      line-height: 1.5;
-      margin: 0;
-      min-height: 100vh;
-    }
-    .nhsuk-header {
-      background-color: #005eb8;
-      padding: 0.75rem 0;
-    }
-    .nhsuk-header__container {
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 0 1.5rem;
-    }
-    .nhsuk-header__service { display: flex; align-items: center; }
-    .nhsuk-header__service-logo {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      color: #fff;
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 1.25rem;
-    }
-    .nhsuk-header__service-logo:hover { color: #fff; text-decoration: underline; }
-    .nhsuk-header__service-logo:focus {
-      outline: 3px solid var(--nhsuk-focus);
-      outline-offset: 2px;
-    }
-    .nhsuk-header__logo {
-      flex-shrink: 0;
-      height: 40px;
-      width: 100px;
-      fill: currentColor;
-    }
-    .nhsuk-header__service-name { white-space: nowrap; }
-    .nhsuk-main {
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 2.5rem 1.5rem;
-    }
-    .nhsuk-page-heading {
-      font-size: 2.25rem;
-      font-weight: 700;
-      margin: 0 0 0.5rem 0;
-      color: var(--nhsuk-text);
-      letter-spacing: -0.02em;
-    }
-    .nhsuk-lead {
-      font-size: 1.1875rem;
-      color: var(--nhsuk-secondary-text);
-      margin: 0 0 1.5rem 0;
-      max-width: 42em;
-    }
-    #moving-planner {
-      background: var(--nhsuk-panel);
-      border: 1px solid var(--nhsuk-border);
-      border-left: 4px solid var(--nhsuk-link);
-      border-radius: 4px;
-      padding: 1.75rem 1.75rem 1.5rem;
-      margin-bottom: 2.5rem;
-      box-shadow: var(--nhsuk-card-shadow);
-    }
-    #moving-planner .moving-kicker {
-      font-size: 0.8125rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: var(--nhsuk-link);
-      margin: 0 0 0.35rem 0;
-    }
-    .moving-select-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1rem 1.5rem;
-      align-items: flex-end;
-      margin: 1.25rem 0 1rem;
-    }
-    .moving-select-row .nhsuk-form-group { margin: 0; min-width: 14rem; flex: 1 1 200px; }
-    .moving-select-row label {
-      display: block;
-      font-weight: 600;
-      margin-bottom: 0.35rem;
-      font-size: 1.0625rem;
-    }
-    .moving-select-row select {
-      width: 100%;
-      max-width: 100%;
-      padding: 0.75rem 2.25rem 0.75rem 0.75rem;
-      font-size: 1rem;
-      border: 2px solid var(--nhsuk-border);
-      border-radius: 4px;
-      font-family: inherit;
-      background: #fff;
-    }
-    .moving-select-row select:focus {
-      outline: 3px solid var(--nhsuk-focus);
-      outline-offset: 0;
-      border-color: var(--nhsuk-text);
-    }
-    .moving-btn-row { margin-top: 0.5rem; }
-    .nhsuk-button {
-      background: #007f3b;
-      color: #fff;
-      border: none;
-      padding: 0.65rem 1.35rem;
-      border-radius: 4px;
-      font-size: 1.0625rem;
-      font-weight: 600;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    .nhsuk-button:hover { background: #00662f; }
-    .nhsuk-button:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
-    .nhsuk-button--secondary {
-      background: var(--nhsuk-link);
-    }
-    .nhsuk-button--secondary:hover { background: #004c8f; }
-    #movingDisclaimer {
-      font-size: 0.9375rem;
-      color: var(--nhsuk-secondary-text);
-      margin: 1rem 0 0;
-      padding: 0.9rem 1rem;
-      background: #fff9e6;
-      border: 1px solid #ffb81c;
-      border-radius: 4px;
-    }
-    #movingError {
-      color: var(--nhsuk-error);
-      font-weight: 600;
-      margin-top: 0.75rem;
-    }
-    #movingResults section {
-      margin-top: 1.75rem;
-      padding-top: 1.5rem;
-      border-top: 1px solid var(--nhsuk-border);
-    }
-    #movingResults h2 {
-      font-size: 1.35rem;
-      margin: 0 0 0.5rem;
-    }
-    .moving-h3 {
-      font-size: 1.05rem;
-      margin: 0 0 0.5rem;
-    }
-    .moving-two-col {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.25rem;
-    }
-    @media (max-width: 720px) {
-      .moving-two-col { grid-template-columns: 1fr; }
-    }
-    .moving-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.9375rem;
-      margin-top: 0.5rem;
-    }
-    .moving-table th, .moving-table td {
-      text-align: left;
-      padding: 0.5rem 0.6rem;
-      border-bottom: 1px solid var(--nhsuk-border);
-      vertical-align: top;
-    }
-    .moving-table th {
-      background: #f0f4f5;
-      font-weight: 600;
-    }
-    .moving-tag {
-      display: inline-block;
-      padding: 0.15rem 0.45rem;
-      border-radius: 4px;
-      font-size: 0.8125rem;
-      font-weight: 600;
-    }
-    .moving-tag.tag-met { background: #cce5d2; color: var(--nhsuk-success); }
-    .moving-tag.tag-partial { background: #fff4e5; color: #996a00; border: 1px solid #ffb81c; }
-    .moving-tag.tag-miss { background: #fdecea; color: var(--nhsuk-error); }
-    .moving-gap-summary { font-size: 1rem; margin: 0 0 1rem 0; padding: 0.75rem 1rem; background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 4px; }
-    .moving-muted { color: var(--nhsuk-secondary-text); font-size: 0.9375rem; }
-    .moving-footnote { margin-top: 0.6rem; font-size: 0.875rem; }
-    .moving-steps { list-style: none; margin: 1.25rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 1rem; }
-    .moving-step {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 1rem 1.25rem;
-      align-items: start;
-      padding: 1.15rem 1.35rem;
-      background: #fff;
-      border: 1px solid var(--nhsuk-border);
-      border-radius: 4px;
-      box-shadow: 0 1px 4px rgba(33, 43, 50, 0.04);
-    }
-    .moving-step-badge {
-      width: 2.75rem;
-      height: 2.75rem;
-      border-radius: 50%;
-      background: var(--nhsuk-link);
-      color: #fff;
-      font-weight: 800;
-      font-size: 0.95rem;
-      letter-spacing: 0.02em;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-    .moving-step-body { min-width: 0; }
-    .moving-step-title {
-      margin: 0 0 0.4rem 0;
-      font-size: 1.1875rem;
-      font-weight: 700;
-      color: var(--nhsuk-text);
-      letter-spacing: -0.02em;
-    }
-    .moving-step-desc { margin: 0; font-size: 1rem; color: var(--nhsuk-secondary-text); line-height: 1.5; max-width: 40em; }
-    .moving-step-tools { margin-top: 0.85rem; }
-    .nhsuk-list {
-      list-style: none;
-      padding: 0;
-      margin: 0;
-      display: grid;
-      gap: 1.25rem;
-    }
-    .nhsuk-list li {
-      margin: 0;
-      padding: 1.5rem 1.5rem 1.25rem;
-      background: #fff;
-      border: 1px solid var(--nhsuk-border);
-      border-left: 4px solid var(--nhsuk-link);
-      border-radius: 4px;
-      box-shadow: var(--nhsuk-card-shadow);
-    }
-    .nhsuk-list a {
-      color: var(--nhsuk-link);
-      font-weight: 600;
-      font-size: 1.25rem;
-      text-decoration: none;
-    }
-    .nhsuk-list a:hover { color: var(--nhsuk-link-hover); text-decoration: underline; }
-    .nhsuk-list p { margin: 0; color: var(--nhsuk-secondary-text); }
-    .nhsuk-body-s {
-      font-size: 0.9375rem;
-      color: var(--nhsuk-secondary-text);
-      margin-top: 2rem;
-    }
-    .nhsuk-body-s a { color: var(--nhsuk-link); }
-    .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
-    .home-account-panel {
-      background: var(--nhsuk-panel);
-      border: 1px solid var(--nhsuk-border);
-      border-left: 4px solid var(--nhsuk-link);
-      border-radius: 4px;
-      padding: 1.5rem 1.5rem 1.35rem;
-      margin-bottom: 2rem;
-      box-shadow: var(--nhsuk-card-shadow);
-    }
-    .home-account-panel--in-step {
-      margin: 0.85rem 0 0;
-      padding: 1.15rem 1.25rem 1.1rem;
-      box-shadow: none;
-    }
-    .home-account-panel h2 {
-      margin: 0 0 0.5rem 0;
-      font-size: 1.25rem;
-      font-weight: 700;
-      color: var(--nhsuk-text);
-    }
-    .home-account-panel .home-account-desc {
-      margin: 0 0 1rem 0;
-      font-size: 1rem;
-      color: var(--nhsuk-secondary-text);
-      line-height: 1.55;
-      max-width: 42em;
-    }
-    .home-account-panel h3 {
-      margin: 0 0 0.75rem 0;
-      font-size: 1.0625rem;
-      font-weight: 600;
-      color: var(--nhsuk-text);
-    }
-    .home-account-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.25rem;
-      align-items: start;
-    }
-    @media (max-width: 720px) {
-      .home-account-grid { grid-template-columns: 1fr; }
-    }
-    .home-account-panel .nhsuk-form-group { margin-bottom: 0.85rem; }
-    .home-account-panel label {
-      display: block;
-      font-weight: 600;
-      margin-bottom: 0.35rem;
-      font-size: 1rem;
-    }
-    .home-account-panel input[type="email"],
-    .home-account-panel input[type="password"] {
-      width: 100%;
-      max-width: 22rem;
-      padding: 0.65rem 0.75rem;
-      border: 2px solid var(--nhsuk-border);
-      border-radius: 4px;
-      font-size: 1rem;
-      font-family: inherit;
-    }
-    .home-account-panel input:focus {
-      outline: 3px solid var(--nhsuk-focus);
-      outline-offset: 0;
-      border-color: var(--nhsuk-text);
-    }
-    #homeAuthUserEmail { font-weight: 600; color: var(--nhsuk-link); }
-    #homeAuthFeedback {
-      margin: 0.75rem 0 0;
-      font-size: 0.9375rem;
-      color: var(--nhsuk-error);
-    }
-    .moving-step-locked {
-      border: 1px dashed var(--nhsuk-border);
-      border-radius: 4px;
-      padding: 0.75rem 0.85rem;
-      background: #f8fbfc;
-      color: var(--nhsuk-secondary-text);
-      font-size: 0.9375rem;
-      margin-top: 0.75rem;
-    }
-    .moving-step.is-locked .moving-step-title,
-    .moving-step.is-locked .moving-step-desc {
-      opacity: 0.88;
-    }
-    .moving-step.is-locked .moving-step-badge {
-      background: #7b8b99;
-    }
-  </style>
+  <link rel="stylesheet" href="/static/shared/app.css">
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
     <div class="nhsuk-header__container">
       <div class="nhsuk-header__service">
         <a class="nhsuk-header__service-logo" href="/" aria-label="NHS E-Learning Credential Passport homepage">
-          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" height="40" width="100" focusable="false" role="img" aria-label="NHS">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" focusable="false" role="img" aria-label="NHS">
             <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
           </svg>
           <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
         </a>
       </div>
+      <nav class="nhsuk-topnav" aria-label="Top">
+        <a href="/static/auth/?mode=signin">Sign in</a>
+        <a href="/static/auth/?mode=register">Create account</a>
+      </nav>
     </div>
   </header>
-  <main class="nhsuk-main" id="maincontent" role="main">
-    <div id="moving-planner">
-      <p class="moving-kicker">Moving trusts</p>
-      <h1 class="nhsuk-page-heading" style="margin-bottom:0.35rem;">Plan your move</h1>
-      <p class="nhsuk-lead" style="margin-bottom:0;">Follow the <strong>four steps below in order</strong>. Start with an account so ESR imports can be saved to the service; then bring your ESR export into this app; then compare your list to your new trust’s checklist. <strong>Your new trust’s HR and Medical Staffing always decide final recognition.</strong></p>
 
-      <ol class="moving-steps" aria-label="Steps to plan your move">
-        <li class="moving-step">
-          <span class="moving-step-badge" aria-hidden="true">1</span>
-          <div class="moving-step-body">
-            <h2 class="moving-step-title" id="home-step1-title">Create an account or sign in</h2>
-            <p class="moving-step-desc">Use a work email you can access. When you are <strong>signed in</strong>, your training list is saved to this service as well as in your browser, so CSV imports from the next step stay with your account on this device. If your trust does not allow accounts here, you can still continue using file backup only — but you will not get server sync.</p>
-            <div class="home-account-panel home-account-panel--in-step" id="homeAccountPanel" aria-labelledby="home-step1-title">
-              <div id="homeAuthGuest">
-                <div class="home-account-grid">
-                  <div>
-                    <h3>Create account</h3>
-                    <form id="homeFormRegister">
-                      <div class="nhsuk-form-group"><label for="homeRegEmail">Email</label><input id="homeRegEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
-                      <div class="nhsuk-form-group"><label for="homeRegPassword">Password (8+ characters)</label><input id="homeRegPassword" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="Choose a password"></div>
-                      <button type="submit" class="nhsuk-button">Create account</button>
-                    </form>
-                  </div>
-                  <div>
-                    <h3>Sign in</h3>
-                    <form id="homeFormLogin">
-                      <div class="nhsuk-form-group"><label for="homeLoginEmail">Email</label><input id="homeLoginEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
-                      <div class="nhsuk-form-group"><label for="homeLoginPassword">Password</label><input id="homeLoginPassword" name="password" type="password" autocomplete="current-password" required placeholder="Password"></div>
-                      <button type="submit" class="nhsuk-button">Sign in</button>
-                    </form>
-                  </div>
-                </div>
-                <p id="homeAuthFeedback" hidden role="alert"></p>
-              </div>
-              <div id="homeAuthUser" hidden>
-                <p class="home-account-desc" style="margin:0;">Signed in as <span id="homeAuthUserEmail"></span>. <a href="#home-step-esr">Go to step 2 — ESR export and CSV import</a>.</p>
-                <button type="button" class="nhsuk-button nhsuk-button--secondary" id="homeBtnLogout" style="margin-top:0.75rem;">Sign out</button>
-              </div>
-            </div>
-          </div>
-        </li>
-        <li class="moving-step">
-          <span class="moving-step-badge" aria-hidden="true">2</span>
-          <div class="moving-step-body" id="homeStep2">
-            <h2 class="moving-step-title" id="home-step-esr">Export from ESR and import CSV</h2>
-            <p class="moving-step-desc" id="homeStep2Desc">In <strong>ESR</strong> (Electronic Staff Record), open the area your trust uses for learning and compliance — for example <strong>Compliance and Competency</strong> — and <strong>export</strong> the data you need, usually as a <strong>CSV</strong> file. Stay in <strong>this same browser</strong> (so your sign-in from step 1 still applies), then open <a id="homeStep2ImportLink" href="/static/staff/#import">My e-learning → Import CSV</a>. Run <strong>Check CSV</strong>, then <strong>Issue all valid rows</strong>. Your completions appear under <strong>My e-learning</strong> and, when signed in, sync to your account.</p>
-            <p class="moving-step-desc moving-muted" id="homeStep2OptionalDesc" style="margin-top:0.75rem; font-size:0.9375rem;"><strong>Optional:</strong> If you already saved a <strong>JSON backup</strong> from My e-learning on another device, you can bring it here instead of or as well as CSV — same browser as step 1.</p>
-            <p class="moving-step-locked" id="homeStep2LockedMsg" hidden>Sign in at step 1 to unlock ESR import and JSON upload.</p>
-            <div class="moving-step-tools moving-wallet-row" id="homeStep2WalletTools" style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; margin-top:0.5rem;">
-              <label for="movingWalletFileInput" id="homeStep2WalletLabel" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring saved training list (JSON)…</label>
-              <input type="file" id="movingWalletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose a saved training list JSON file from another device">
-              <span class="moving-muted" style="font-size:0.875rem;">From My e-learning: <strong>Save or restore your list</strong> → <strong>Save a copy to my device</strong> on the other device, then choose the file here.</span>
-            </div>
-          </div>
-        </li>
-        <li class="moving-step">
-          <span class="moving-step-badge" aria-hidden="true">3</span>
-          <div class="moving-step-body" id="homeStep3">
-            <h2 class="moving-step-title">Choose trusts and load the checklist</h2>
-            <p class="moving-step-desc">Pick where you are <strong>joining</strong> and <strong>leaving</strong>. Then run the checklist so we can load that destination’s mandatory topics (UK CSTF–aligned where the pack lists them).</p>
-            <p class="moving-step-locked" id="homeStep3LockedMsg" hidden>Sign in and finish step 2 first, then choose trusts and run this checklist.</p>
-            <div class="moving-step-tools">
-              <div class="moving-select-row" role="group" aria-labelledby="moving-planner-heading" style="margin-top:0.5rem;" id="homeStep3Controls">
-                <span id="moving-planner-heading" class="visually-hidden">Trust selection</span>
-                <div class="nhsuk-form-group">
-                  <label for="joinTrust">I am joining</label>
-                  <select id="joinTrust" name="joinTrust" aria-describedby="join-hint"></select>
-                  <span id="join-hint" class="moving-muted" style="display:block;margin-top:0.35rem;font-size:0.875rem;">Destination organisation</span>
-                </div>
-                <div class="nhsuk-form-group">
-                  <label for="leaveTrust">I am leaving</label>
-                  <select id="leaveTrust" name="leaveTrust" aria-describedby="leave-hint"></select>
-                  <span id="leave-hint" class="moving-muted" style="display:block;margin-top:0.35rem;font-size:0.875rem;">Where you are moving from (for recognition notes)</span>
-                </div>
-                <div class="nhsuk-form-group moving-btn-row">
-                  <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnRefreshChecklist">Refresh checklist</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </li>
-        <li class="moving-step">
-          <span class="moving-step-badge" aria-hidden="true">4</span>
-          <div class="moving-step-body" id="homeStep4">
-            <h2 class="moving-step-title">Review gaps, recognition, and what to do next</h2>
-            <p class="moving-step-desc">After you press <strong>Refresh checklist</strong> in step 3, scroll down for the mandatory topic list, how your old trust’s training may be viewed, and a line-by-line comparison with your training list. Use this to gather evidence and questions for your new trust — it is not automatic sign-off.</p>
-            <p class="moving-step-locked" id="homeStep4LockedMsg" hidden>This section unlocks after you sign in and run the checklist in step 3.</p>
-          </div>
-        </li>
-      </ol>
-
-      <p id="movingDisclaimer" role="status"></p>
-      <p id="movingError" role="alert"></p>
-
-      <div id="movingResults" hidden aria-hidden="true">
-        <section aria-labelledby="movingMandatoryTitle">
-          <h2 id="movingMandatoryTitle">Mandatory topics (example)</h2>
-          <p id="movingDestinationTitle" class="moving-muted" style="margin-top:0;"></p>
-          <div id="movingMandatoryWrap"></div>
-        </section>
-        <section aria-labelledby="movingRecTitle">
-          <h2 id="movingRecTitle">What your new trust may recognise from your old trust</h2>
-          <div id="movingRecognitionWrap"></div>
-        </section>
-        <section aria-labelledby="movingWalletTitle">
-          <h2 id="movingWalletTitle">Gap analysis — your training list vs this checklist</h2>
-          <div id="movingWalletWrap"></div>
-        </section>
+  <section class="nhs-hero" aria-labelledby="heroTitle">
+    <div class="nhs-hero__inner">
+      <div>
+        <h1 id="heroTitle">Take your NHS e-learning record between trusts.</h1>
+        <p class="lead">Import your existing completions from ESR, then compare them against your new trust&rsquo;s mandatory training checklist before you start.</p>
+        <div class="nhs-hero__ctas">
+          <a class="nhsuk-button" href="/static/auth/?mode=register">Create an account</a>
+          <a class="nhsuk-button nhsuk-button--ghost" href="/static/auth/?mode=signin">Sign in</a>
+        </div>
+        <p class="nhsuk-body-s" style="margin-top:1.5rem; max-width:36em;">An account stores your training list securely on this service so you can use it on any device. Your new trust&rsquo;s HR and Medical Staffing always decide final recognition.</p>
       </div>
+      <aside class="nhs-hero__steps" aria-labelledby="heroStepsTitle">
+        <h2 id="heroStepsTitle">How it works</h2>
+        <ol>
+          <li>Sign in or create an account</li>
+          <li>Import your e-learning from your ESR CSV export</li>
+          <li>Pick the trust you are joining and review the gap analysis</li>
+        </ol>
+      </aside>
     </div>
+  </section>
 
-    <h2 class="nhsuk-page-heading" style="font-size:1.5rem;">Issue &amp; verify e-learning</h2>
-    <p class="nhsuk-lead" style="font-size:1.0625rem;">Add credentials, import from CSV, share verification links, or check someone else’s credential.</p>
-    <ul class="nhsuk-list">
-      <li>
-        <a href="/static/staff/">My e-learning</a>
-        <p>Add completions, import CSV, bulk share, download PDFs where available. <strong>Save or bring back your training list</strong> so the same records open on another browser or device.</p>
-      </li>
-      <li>
-        <a href="/static/verifier/">Verifier</a>
-        <p>Paste a verification URL or ID for a receiving trust.</p>
-      </li>
-    </ul>
-    <p class="nhsuk-body-s">Technical: <a href="/docs">API documentation</a> · <a href="/.well-known/did.json">Issuer public key (JSON)</a></p>
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <h2 class="nhsuk-page-heading" style="font-size:1.5rem;">Other tools</h2>
+    <p class="nhsuk-lead" style="font-size:1.0625rem;">For receiving trusts and verifiers.</p>
+    <div class="nhs-action-grid" role="list">
+      <a class="nhs-action-card" href="/static/verifier/" role="listitem">
+        <div class="nhs-action-title">Verifier</div>
+        <p class="nhs-action-desc">Paste a verification URL or credential ID to check someone else&rsquo;s record.</p>
+        <span class="nhs-action-cta">Open verifier &rsaquo;</span>
+      </a>
+      <a class="nhs-action-card" href="/.well-known/did.json" role="listitem">
+        <div class="nhs-action-title">Issuer public key</div>
+        <p class="nhs-action-desc">JSON web key (did:web) for technical integration with verifiers and HR systems.</p>
+        <span class="nhs-action-cta">View key &rsaquo;</span>
+      </a>
+      <a class="nhs-action-card" href="/docs" role="listitem">
+        <div class="nhs-action-title">API documentation</div>
+        <p class="nhs-action-desc">OpenAPI / Swagger reference for the issuance and verification endpoints.</p>
+        <span class="nhs-action-cta">View API &rsaquo;</span>
+      </a>
+    </div>
   </main>
-  <script src="/static/wallet/wallet-store.js" defer></script>
-  <script src="/static/moving/trust-mover.js" defer></script>
-  <script src="/static/moving/moving-home-wallet.js" defer></script>
-  <script src="/static/moving/home-account-auth.js" defer></script>
+
+  <script src="/static/shared/auth.js"></script>
+  <script>
+    /* If already signed in, jump straight to the dashboard. */
+    (async function () {
+      try {
+        await NHSAuth.refresh();
+        if (NHSAuth.user) window.location.replace('/static/dashboard/');
+      } catch (e) {}
+    })();
+  </script>
 </body>
 </html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard &mdash; NHS E-Learning Credential Passport</title>
+  <link rel="stylesheet" href="/static/shared/app.css">
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/static/dashboard/" aria-label="Dashboard">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+        <button type="button" id="btnSignOut">Sign out</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading" id="welcomeTitle">Your dashboard</h1>
+    <p class="nhsuk-lead">Pick a task. You can come back here at any time from the logo at the top.</p>
+
+    <section aria-labelledby="statsTitle">
+      <h2 id="statsTitle" class="visually-hidden">Your training summary</h2>
+      <div class="nhs-stat-grid">
+        <div class="nhs-stat nhs-stat--ok">
+          <div class="nhs-stat__num" id="statValid">&mdash;</div>
+          <div class="nhs-stat__label">Valid records</div>
+        </div>
+        <div class="nhs-stat nhs-stat--warn">
+          <div class="nhs-stat__num" id="statExpiring">&mdash;</div>
+          <div class="nhs-stat__label">Expiring within 90 days</div>
+        </div>
+        <div class="nhs-stat nhs-stat--bad">
+          <div class="nhs-stat__num" id="statExpired">&mdash;</div>
+          <div class="nhs-stat__label">Expired</div>
+        </div>
+        <div class="nhs-stat">
+          <div class="nhs-stat__num" id="statTotal">&mdash;</div>
+          <div class="nhs-stat__label">Total records</div>
+        </div>
+      </div>
+    </section>
+
+    <section style="margin-top:2.25rem;" aria-labelledby="actionsTitle">
+      <h2 id="actionsTitle">What would you like to do?</h2>
+      <div class="nhs-action-grid" role="list">
+        <a class="nhs-action-card" href="/static/staff/#import" role="listitem">
+          <div class="nhs-action-title">Import e-learning</div>
+          <p class="nhs-action-desc">Bring your training in from an ESR CSV export, or add a single record by hand.</p>
+          <span class="nhs-action-cta">Import &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/plan-move/" role="listitem">
+          <div class="nhs-action-title">Plan a trust move</div>
+          <p class="nhs-action-desc">Pick the trust you are joining and see which mandatory topics you already meet.</p>
+          <span class="nhs-action-cta">Plan move &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/staff/#list" role="listitem">
+          <div class="nhs-action-title">View &amp; share my list</div>
+          <p class="nhs-action-desc">See every record, share by link or QR, download PDFs, or save a backup file.</p>
+          <span class="nhs-action-cta">Open my list &rsaquo;</span>
+        </a>
+      </div>
+    </section>
+
+    <section style="margin-top:2.25rem;" aria-labelledby="verifierTitle">
+      <h2 id="verifierTitle">For verifiers</h2>
+      <p class="nhsuk-body-s">If a colleague has sent you a verification link or credential ID:</p>
+      <a class="nhsuk-button nhsuk-button--ghost" href="/static/verifier/">Open verifier</a>
+    </section>
+  </main>
+
+  <script src="/static/wallet/wallet-store.js"></script>
+  <script src="/static/shared/auth.js"></script>
+  <script>
+    (function () {
+      function statusOf(c) {
+        if (c.revoked) return 'revoked';
+        if (!c.expiry_date) return 'valid';
+        var now = new Date();
+        var exp = new Date(c.expiry_date + 'T23:59:59');
+        if (isNaN(exp.getTime())) return 'valid';
+        var diffDays = Math.floor((exp - now) / (1000 * 60 * 60 * 24));
+        if (diffDays < 0) return 'expired';
+        if (diffDays <= 90) return 'expiring';
+        return 'valid';
+      }
+
+      function renderStats() {
+        var list = window.NHSWallet ? NHSWallet.getWallet() : [];
+        var valid = 0, expiring = 0, expired = 0;
+        list.forEach(function (c) {
+          var s = statusOf(c);
+          if (s === 'valid') valid++;
+          else if (s === 'expiring') expiring++;
+          else if (s === 'expired') expired++;
+        });
+        document.getElementById('statValid').textContent = valid;
+        document.getElementById('statExpiring').textContent = expiring;
+        document.getElementById('statExpired').textContent = expired;
+        document.getElementById('statTotal').textContent = list.length;
+      }
+
+      (async function boot() {
+        await NHSAuth.refresh();
+        if (!NHSAuth.requireAuth()) return;
+        document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
+        var first = (NHSAuth.user.email || '').split('@')[0];
+        if (first) document.getElementById('welcomeTitle').textContent = 'Hello, ' + first;
+
+        if (window.NHSWallet && NHSWallet.restoreLinkedHandle) {
+          await NHSWallet.restoreLinkedHandle();
+        }
+        await NHSAuth.pullWalletMerge();
+        renderStats();
+        window.addEventListener('nhs-wallet-updated', renderStats);
+      })();
+
+      document.getElementById('btnSignOut').addEventListener('click', async function () {
+        await NHSAuth.signOut();
+        window.location.replace('/');
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -210,59 +210,25 @@
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
-    <div class="nhsuk-header__container">
+    <div class="nhsuk-header__container" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;">
       <div class="nhsuk-header__service">
-        <a class="nhsuk-header__service-logo" href="/" aria-label="NHS E-Learning Credential Passport homepage">
+        <a class="nhsuk-header__service-logo" href="/static/dashboard/" aria-label="Dashboard">
           <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" height="40" width="100" focusable="false" role="img" aria-label="NHS">
             <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
           </svg>
           <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
         </a>
       </div>
+      <nav aria-label="Account" style="display:flex;align-items:center;gap:0.85rem;color:#fff;font-size:0.9375rem;">
+        <a href="/static/dashboard/" style="color:#fff;background:transparent;border:1px solid rgba(255,255,255,0.4);padding:0.4rem 0.8rem;border-radius:4px;text-decoration:none;font-size:0.875rem;">&larr; Dashboard</a>
+        <span id="navEmail" style="font-weight:600;white-space:nowrap;">&nbsp;</span>
+        <button type="button" id="btnSignOut" style="color:#fff;background:transparent;border:1px solid rgba(255,255,255,0.4);padding:0.4rem 0.8rem;border-radius:4px;font-family:inherit;font-size:0.875rem;cursor:pointer;">Sign out</button>
+      </nav>
     </div>
   </header>
   <main class="nhsuk-main" id="maincontent" role="main">
-    <div class="nhsuk-bulk-export-panel auth-panel" id="authPanel" style="margin-bottom:1.25rem;">
-      <div id="authGuest">
-        <h3 class="nhsuk-bulk-export-panel__title">Account (optional)</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Sign in to <strong>save your training list on the server</strong> as well as in this browser — useful if you switch devices or clear site data. Your list is stored as the same JSON you would download (including JWTs). You can create the same kind of account on the <a href="/">home page</a> before opening My e-learning. You can still use everything below without an account.</p>
-        <div class="auth-grid">
-          <div>
-            <h4>Create account</h4>
-            <form id="formRegister" class="auth-form">
-              <div class="nhsuk-form-group"><label class="nhsuk-label" for="regEmail">Email</label><input class="nhsuk-input" id="regEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
-              <div class="nhsuk-form-group"><label class="nhsuk-label" for="regPassword">Password (8+ characters)</label><input class="nhsuk-input" id="regPassword" name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="Choose a password"></div>
-              <button type="submit" class="nhsuk-button">Create account</button>
-            </form>
-          </div>
-          <div>
-            <h4>Sign in</h4>
-            <form id="formLogin" class="auth-form">
-              <div class="nhsuk-form-group"><label class="nhsuk-label" for="loginEmail">Email</label><input class="nhsuk-input" id="loginEmail" name="email" type="email" autocomplete="email" required placeholder="you@nhs.net"></div>
-              <div class="nhsuk-form-group"><label class="nhsuk-label" for="loginPassword">Password</label><input class="nhsuk-input" id="loginPassword" name="password" type="password" autocomplete="current-password" required placeholder="Password"></div>
-              <button type="submit" class="nhsuk-button">Sign in</button>
-            </form>
-          </div>
-        </div>
-        <p id="authFeedback" class="nhsuk-body-s" style="margin-top:0.75rem; margin-bottom:0; color:var(--nhsuk-error);" hidden role="alert"></p>
-      </div>
-      <div id="authUser" hidden>
-        <p class="nhsuk-bulk-export-panel__desc" style="margin:0;">Signed in as <span id="authUserEmail"></span></p>
-        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnLogout" style="margin-top:0.75rem;">Sign out</button>
-      </div>
-    </div>
-
     <h2 class="nhsuk-page-heading">My e-learning</h2>
-    <p class="nhsuk-body-s">Add your e-learning completion records and share them with receiving Trusts.</p>
-    <div class="nhsuk-bulk-export-panel" style="margin-bottom:1.25rem;">
-      <h3 class="nhsuk-bulk-export-panel__title">How this works</h3>
-      <ol style="margin:0;padding-left:1.25rem;line-height:1.65;color:var(--nhsuk-secondary-text);font-size:1.0625rem;">
-        <li style="margin-bottom:0.5rem;">For a trust move, the <a href="/#moving-planner">home page</a> walks you through <strong>account</strong> then <strong>ESR → Import CSV</strong> here. Use <strong>Import CSV</strong> (or <strong>Add e-learning</strong> for one-off records); issued rows show under <strong>My e-learning</strong>. When signed in, imports sync to your account.</li>
-        <li style="margin-bottom:0.5rem;"><strong>Switching device or browser?</strong> On this page, open <strong>Save or restore your list</strong>: on the device that already has your training, press <strong>Save a copy to my device</strong>; on the other device, press <strong>Bring my saved list</strong> and choose that file.</li>
-        <li><strong>Moving trust or sending evidence</strong> — Open the <a href="/#moving-planner">move planner on the home page</a>, or use <strong>Bulk export</strong> / Share from your list to send records to a verifier.</li>
-      </ol>
-    </div>
-    <p class="nhsuk-body-s" style="margin-top:-0.5rem;"><a href="/#moving-planner" style="font-weight:600;">Moving trusts?</a> The home page order is: account → ESR CSV import → optional JSON from another device → choose trusts → gap comparison.</p>
+    <p class="nhsuk-body-s">Manage your training list. Use the tabs to add, import from ESR (CSV), or bulk-share records with verifiers.</p>
 
     <div class="nhsuk-tabs" role="tablist">
       <button type="button" role="tab" aria-selected="true" data-tab="list" class="active" id="tab-list">My e-learning</button>
@@ -389,6 +355,7 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
   <script src="/static/wallet/wallet-store.js"></script>
+  <script src="/static/shared/auth.js"></script>
   <script>
     const MODULES = [
       { code: 'fire_safety', name: 'Fire Safety' },
@@ -403,29 +370,10 @@
     ];
     function getStored() { return window.NHSWallet ? NHSWallet.getWallet() : JSON.parse(localStorage.getItem('nhs_credentials') || '[]'); }
 
-    window.__nhsAuthUser = null;
-
-    function showAuthFeedback(msg) {
-      var el = document.getElementById('authFeedback');
-      if (!el) return;
-      if (msg) {
-        el.textContent = msg;
-        el.hidden = false;
-      } else {
-        el.textContent = '';
-        el.hidden = true;
-      }
-    }
-
     async function syncWalletToServer(arr) {
-      if (!window.__nhsAuthUser) return;
+      if (!window.NHSAuth || !NHSAuth.user) return;
       try {
-        await fetch('/api/me/wallet', {
-          method: 'PUT',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(arr),
-        });
+        await NHSAuth.pushWallet(arr);
       } catch (e) {
         console.warn('Wallet server sync failed', e);
       }
@@ -437,121 +385,13 @@
       void syncWalletToServer(arr);
     }
 
-    async function refreshAuthState() {
-      window.__nhsAuthUser = null;
-      try {
-        var r = await fetch('/api/auth/me', { credentials: 'include' });
-        if (r.ok) window.__nhsAuthUser = await r.json();
-      } catch (e) {}
-      updateAuthUi();
-    }
-
-    function updateAuthUi() {
-      var g = document.getElementById('authGuest');
-      var u = document.getElementById('authUser');
-      if (!g || !u) return;
-      if (window.__nhsAuthUser) {
-        showAuthFeedback('');
-        g.hidden = true;
-        u.hidden = false;
-        var em = document.getElementById('authUserEmail');
-        if (em) em.textContent = __nhsAuthUser.email || '';
-      } else {
-        g.hidden = false;
-        u.hidden = true;
-      }
-    }
-
-    function mergeServerAndLocal(serverArr, localArr) {
-      if (window.NHSWallet && NHSWallet.mergeByCredentialId) {
-        return NHSWallet.mergeByCredentialId(serverArr || [], localArr || []);
-      }
-      var map = {};
-      (serverArr || []).forEach(function (c) {
-        if (c && c.credential_id) map[c.credential_id] = c;
-      });
-      (localArr || []).forEach(function (c) {
-        if (c && c.credential_id) map[c.credential_id] = c;
-      });
-      return Object.keys(map).map(function (k) { return map[k]; });
-    }
-
     async function pullMergeFromServer() {
-      if (!window.__nhsAuthUser) return;
-      try {
-        var r = await fetch('/api/me/wallet', { credentials: 'include' });
-        if (!r.ok) return;
-        var server = await r.json();
-        if (!Array.isArray(server)) server = [];
-        var merged = mergeServerAndLocal(server, getStored());
-        setStored(merged);
-      } catch (e) {
-        console.warn('Wallet merge from server', e);
-      }
+      if (window.NHSAuth) await NHSAuth.pullWalletMerge();
     }
 
-    async function authJson(path, body) {
-      var res = await fetch(path, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      var text = await res.text();
-      var data = null;
-      try {
-        data = text ? JSON.parse(text) : null;
-      } catch (e) {
-        data = null;
-      }
-      return { ok: res.ok, status: res.status, data: data, text: text };
-    }
-
-    document.getElementById('formRegister').addEventListener('submit', async function (e) {
-      e.preventDefault();
-      showAuthFeedback('');
-      var fd = new FormData(e.target);
-      var email = (fd.get('email') || '').trim();
-      var password = fd.get('password') || '';
-      var out = await authJson('/api/auth/register', { email: email, password: password });
-      if (!out.ok) {
-        var det = out.data && out.data.detail;
-        showAuthFeedback(typeof det === 'string' ? det : (out.text || 'Could not create account'));
-        return;
-      }
-      await refreshAuthState();
-      await pullMergeFromServer();
-      renderList();
-      updateWalletSaveBanner();
-      e.target.reset();
-    });
-
-    document.getElementById('formLogin').addEventListener('submit', async function (e) {
-      e.preventDefault();
-      showAuthFeedback('');
-      var fd = new FormData(e.target);
-      var email = (fd.get('email') || '').trim();
-      var password = fd.get('password') || '';
-      var out = await authJson('/api/auth/login', { email: email, password: password });
-      if (!out.ok) {
-        var det = out.data && out.data.detail;
-        showAuthFeedback(typeof det === 'string' ? det : (out.text || 'Could not sign in'));
-        return;
-      }
-      await refreshAuthState();
-      await pullMergeFromServer();
-      renderList();
-      updateWalletSaveBanner();
-      e.target.reset();
-    });
-
-    document.getElementById('btnLogout').addEventListener('click', async function () {
-      try {
-        await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-      } catch (err) {}
-      showAuthFeedback('');
-      await refreshAuthState();
-      renderList();
+    document.getElementById('btnSignOut').addEventListener('click', async function () {
+      if (window.NHSAuth) await NHSAuth.signOut();
+      window.location.replace('/');
     });
 
     function updateWalletFileUi() {
@@ -1101,17 +941,20 @@
     });
 
     (async function boot() {
+      await NHSAuth.refresh();
+      if (!NHSAuth.requireAuth()) return;
+      var em = document.getElementById('navEmail');
+      if (em) em.textContent = NHSAuth.user.email || '';
       if (window.NHSWallet && NHSWallet.restoreLinkedHandle) await NHSWallet.restoreLinkedHandle();
-      await refreshAuthState();
-      if (window.__nhsAuthUser) await pullMergeFromServer();
+      await pullMergeFromServer();
       updateWalletFileUi();
       renderList();
       updateWalletSaveBanner();
+      if (window.location.hash === '#import' || window.location.hash === '#add' || window.location.hash === '#bulk') {
+        var tab = document.querySelector('.nhsuk-tabs button[data-tab="' + window.location.hash.slice(1) + '"]');
+        if (tab) tab.click();
+      }
     })();
-    if (window.location.hash === '#import') {
-      var _importTab = document.querySelector('.nhsuk-tabs button[data-tab="import"]');
-      if (_importTab) _importTab.click();
-    }
   </script>
 </body>
 </html>

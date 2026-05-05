@@ -316,8 +316,9 @@
     var l = p.get('leave');
     if (j && /^[a-z0-9-]+$/i.test(j) && joinSel.querySelector('option[value="' + j + '"]')) joinSel.value = j;
     if (l && /^[a-z0-9-]+$/i.test(l) && leaveSel.querySelector('option[value="' + l + '"]')) leaveSel.value = l;
-    if (window.location.hash === '#moving-planner') {
-      document.getElementById('moving-planner').scrollIntoView({ behavior: 'smooth' });
+    var planner = document.getElementById('moving-planner');
+    if (planner && window.location.hash === '#moving-planner') {
+      planner.scrollIntoView({ behavior: 'smooth' });
     }
   }
 

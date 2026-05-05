@@ -219,3 +219,28 @@ def verifier_redirect():
 @app.get("/staff", response_class=RedirectResponse)
 def staff_redirect():
     return RedirectResponse(url="/static/staff/", status_code=302)
+
+
+@app.get("/dashboard", response_class=RedirectResponse)
+def dashboard_redirect():
+    return RedirectResponse(url="/static/dashboard/", status_code=302)
+
+
+@app.get("/auth", response_class=RedirectResponse)
+def auth_redirect():
+    return RedirectResponse(url="/static/auth/", status_code=302)
+
+
+@app.get("/sign-in", response_class=RedirectResponse)
+def sign_in_redirect():
+    return RedirectResponse(url="/static/auth/?mode=signin", status_code=302)
+
+
+@app.get("/register", response_class=RedirectResponse)
+def register_redirect():
+    return RedirectResponse(url="/static/auth/?mode=register", status_code=302)
+
+
+@app.get("/plan-move", response_class=RedirectResponse)
+def plan_move_redirect():
+    return RedirectResponse(url="/static/plan-move/", status_code=302)
