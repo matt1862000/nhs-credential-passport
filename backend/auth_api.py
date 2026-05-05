@@ -103,7 +103,11 @@ def auth_me(request: Request):
     u = db.user_get_by_id(uid)
     if not u:
         raise HTTPException(status_code=401, detail="Not signed in")
-    return {"id": u["id"], "email": u["email"]}
+    return {
+        "id": u["id"],
+        "email": u["email"],
+        "premium": db.user_is_premium(u),
+    }
 
 
 @router.get("/me/wallet")

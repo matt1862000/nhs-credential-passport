@@ -20,3 +20,6 @@ services:
       - key: SESSION_SECRET
         sync: false
         # Long random string (32+ chars) for staff login session cookies (HS256). Generate once and set in the dashboard.
+      - key: PREMIUM_EMAILS
+        sync: false
+        # Optional comma-separated emails that get premium trust tools on the dashboard (verifier, did.json, /docs).

@@ -71,10 +71,26 @@
       </div>
     </section>
 
-    <section style="margin-top:2.25rem;" aria-labelledby="verifierTitle">
-      <h2 id="verifierTitle">For verifiers</h2>
-      <p class="nhsuk-body-s">If a colleague has sent you a verification link or credential ID:</p>
-      <a class="nhsuk-button nhsuk-button--ghost" href="/static/verifier/">Open verifier</a>
+    <section id="premiumTrustTools" style="margin-top:2.25rem;" hidden aria-labelledby="premiumToolsTitle">
+      <h2 id="premiumToolsTitle" class="nhsuk-page-heading" style="font-size:1.5rem;">Trust tools (premium)</h2>
+      <p class="nhsuk-lead" style="font-size:1.0625rem;">Verifier, issuer key, and API docs are only shown for premium trust accounts.</p>
+      <div class="nhs-action-grid" role="list">
+        <a class="nhs-action-card" href="/static/verifier/" role="listitem">
+          <div class="nhs-action-title">Verifier</div>
+          <p class="nhs-action-desc">Paste a verification URL or credential ID to check someone else&rsquo;s record.</p>
+          <span class="nhs-action-cta">Open verifier &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/.well-known/did.json" role="listitem">
+          <div class="nhs-action-title">Issuer public key</div>
+          <p class="nhs-action-desc">JSON web key (did:web) for technical integration with verifiers and HR systems.</p>
+          <span class="nhs-action-cta">View key &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/docs" role="listitem">
+          <div class="nhs-action-title">API documentation</div>
+          <p class="nhs-action-desc">OpenAPI / Swagger reference for the issuance and verification endpoints.</p>
+          <span class="nhs-action-cta">View API &rsaquo;</span>
+        </a>
+      </div>
     </section>
   </main>
 
@@ -115,6 +131,9 @@
         document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
         var first = (NHSAuth.user.email || '').split('@')[0];
         if (first) document.getElementById('welcomeTitle').textContent = 'Hello, ' + first;
+
+        var premiumEl = document.getElementById('premiumTrustTools');
+        if (premiumEl && NHSAuth.user.premium) premiumEl.hidden = false;
 
         if (window.NHSWallet && NHSWallet.restoreLinkedHandle) {
           await NHSWallet.restoreLinkedHandle();
