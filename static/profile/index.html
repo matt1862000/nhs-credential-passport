@@ -20,6 +20,21 @@
     #profileStatus { margin-top: 1rem; min-height: 1.25rem; }
     #profileStatus.ok { color: var(--nhsuk-success); font-weight: 600; }
     #profileStatus.err { color: var(--nhsuk-error); font-weight: 600; }
+    .profile-ac-wrap { position: relative; }
+    .profile-suggest-list {
+      position: absolute; left: 0; right: 0; top: 100%; margin: 0.15rem 0 0 0;
+      padding: 0; list-style: none; max-height: 14rem; overflow-y: auto;
+      z-index: 40; background: #fff; border: 1px solid var(--nhsuk-border);
+      border-radius: 4px; box-shadow: 0 4px 14px rgba(33, 43, 50, 0.12);
+    }
+    .profile-suggest-list li {
+      padding: 0.5rem 0.75rem; cursor: pointer; font-size: 1rem; line-height: 1.35;
+      border-bottom: 1px solid var(--nhsuk-border);
+    }
+    .profile-suggest-list li:last-child { border-bottom: none; }
+    .profile-suggest-list li:hover,
+    .profile-suggest-list li[aria-selected="true"] { background: var(--nhsuk-panel); }
+    .profile-suggest-meta { display: block; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
   </style>
 </head>
 <body>
@@ -62,7 +77,11 @@
         </div>
         <div class="nhsuk-form-group">
           <label class="nhsuk-label" for="currentTrust">Current trust</label>
-          <input class="nhsuk-input" type="text" id="currentTrust" name="current_trust" autocomplete="organization" maxlength="200" placeholder="e.g. Sheffield Teaching Hospitals">
+          <div class="profile-ac-wrap" id="trustAcWrap">
+            <input class="nhsuk-input" type="text" id="currentTrust" name="current_trust" autocomplete="off" maxlength="200" placeholder="e.g. Sheffield Teaching Hospitals" role="combobox" aria-autocomplete="list" aria-controls="trustSuggestList" aria-expanded="false" spellcheck="false">
+            <ul id="trustSuggestList" class="profile-suggest-list" role="listbox" hidden aria-label="Matching NHS organisations"></ul>
+          </div>
+          <span class="profile-hint">Start typing a few letters (even with typos). Suggestions use the NHS Organisation Directory; pick one or keep your own text.</span>
         </div>
         <button type="submit" class="nhsuk-button">Save profile</button>
       </form>
@@ -76,6 +95,7 @@
 
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/ods-trust-suggest.js"></script>
   <script>
     (function () {
       function setStatus(msg, kind) {
@@ -85,11 +105,113 @@
         el.className = kind ? kind : '';
       }
 
+      var trustSuggestDebounce = null;
+      var trustSuggestItems = [];
+      var trustSuggestActive = -1;
+
+      function hideTrustSuggest() {
+        var list = document.getElementById('trustSuggestList');
+        var inp = document.getElementById('currentTrust');
+        if (list) {
+          list.hidden = true;
+          list.innerHTML = '';
+        }
+        trustSuggestItems = [];
+        trustSuggestActive = -1;
+        if (inp) {
+          inp.setAttribute('aria-expanded', 'false');
+          inp.removeAttribute('aria-activedescendant');
+        }
+      }
+
+      function applyTrustSuggestIndex(idx) {
+        var inp = document.getElementById('currentTrust');
+        if (!inp || idx < 0 || idx >= trustSuggestItems.length) return;
+        inp.value = trustSuggestItems[idx].name;
+        hideTrustSuggest();
+      }
+
+      function updateTrustSuggestHighlight() {
+        var list = document.getElementById('trustSuggestList');
+        var inp = document.getElementById('currentTrust');
+        if (!list) return;
+        var lis = list.querySelectorAll('li[role="option"]');
+        for (var j = 0; j < lis.length; j++) {
+          lis[j].setAttribute('aria-selected', j === trustSuggestActive ? 'true' : 'false');
+        }
+        if (trustSuggestActive >= 0 && lis[trustSuggestActive] && inp) {
+          inp.setAttribute('aria-activedescendant', lis[trustSuggestActive].id);
+          try {
+            lis[trustSuggestActive].scrollIntoView({ block: 'nearest' });
+          } catch (e2) {}
+        } else if (inp) {
+          inp.removeAttribute('aria-activedescendant');
+        }
+      }
+
+      function renderTrustSuggest(items) {
+        var list = document.getElementById('trustSuggestList');
+        var inp = document.getElementById('currentTrust');
+        if (!list || !inp) return;
+        trustSuggestItems = items || [];
+        list.innerHTML = '';
+        trustSuggestActive = -1;
+        if (!trustSuggestItems.length) {
+          hideTrustSuggest();
+          return;
+        }
+        for (var i = 0; i < trustSuggestItems.length; i++) {
+          var it = trustSuggestItems[i];
+          var li = document.createElement('li');
+          li.setAttribute('role', 'option');
+          li.id = 'trust-suggest-opt-' + i;
+          li.dataset.index = String(i);
+          var nameSpan = document.createElement('span');
+          nameSpan.textContent = it.name;
+          li.appendChild(nameSpan);
+          if (it.ods) {
+            var meta = document.createElement('span');
+            meta.className = 'profile-suggest-meta';
+            meta.textContent = 'ODS ' + it.ods;
+            li.appendChild(meta);
+          }
+          list.appendChild(li);
+        }
+        list.hidden = false;
+        inp.setAttribute('aria-expanded', 'true');
+      }
+
+      function scheduleTrustSuggest() {
+        if (trustSuggestDebounce) clearTimeout(trustSuggestDebounce);
+        trustSuggestDebounce = setTimeout(function () {
+          trustSuggestDebounce = null;
+          void runTrustSuggest();
+        }, 320);
+      }
+
+      async function runTrustSuggest() {
+        if (!window.NHSOdsTrustSuggest) return;
+        var inp = document.getElementById('currentTrust');
+        if (!inp) return;
+        var q = String(inp.value || '').trim();
+        if (q.length < 2) {
+          hideTrustSuggest();
+          return;
+        }
+        try {
+          var items = await NHSOdsTrustSuggest.search(q, { minLength: 2, limit: 8 });
+          renderTrustSuggest(items);
+        } catch (e) {
+          hideTrustSuggest();
+        }
+      }
+
       function fillFromUser(u) {
         if (!u) return;
         document.getElementById('displayName').value = u.display_name || '';
         document.getElementById('gmcNumber').value = u.gmc_number || '';
         document.getElementById('currentTrust').value = u.current_trust || '';
+        hideTrustSuggest();
       }
 
       (async function boot() {
@@ -106,6 +228,52 @@
         await NHSAuth.signOut();
         window.location.replace('/');
       });
+
+      (function wireTrustAutocomplete() {
+        var inp = document.getElementById('currentTrust');
+        var wrap = document.getElementById('trustAcWrap');
+        var list = document.getElementById('trustSuggestList');
+        if (!inp) return;
+        if (list) {
+          list.addEventListener('mousedown', function (ev) {
+            if (ev.target.closest('li[role="option"]')) ev.preventDefault();
+          });
+          list.addEventListener('click', function (ev) {
+            var li = ev.target.closest('li[role="option"]');
+            if (!li) return;
+            applyTrustSuggestIndex(parseInt(li.dataset.index, 10));
+          });
+        }
+        inp.addEventListener('input', scheduleTrustSuggest);
+        inp.addEventListener('keydown', function (e) {
+          var list = document.getElementById('trustSuggestList');
+          if (!list || list.hidden || !trustSuggestItems.length) return;
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            hideTrustSuggest();
+            return;
+          }
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            trustSuggestActive = Math.min(trustSuggestActive + 1, trustSuggestItems.length - 1);
+            if (trustSuggestActive < 0) trustSuggestActive = 0;
+            updateTrustSuggestHighlight();
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            trustSuggestActive = Math.max(trustSuggestActive - 1, 0);
+            updateTrustSuggestHighlight();
+          } else if (e.key === 'Enter' && trustSuggestActive >= 0) {
+            e.preventDefault();
+            applyTrustSuggestIndex(trustSuggestActive);
+          }
+        });
+        inp.addEventListener('blur', function () {
+          setTimeout(hideTrustSuggest, 200);
+        });
+        document.addEventListener('click', function (e) {
+          if (wrap && !wrap.contains(e.target)) hideTrustSuggest();
+        });
+      })();
 
       document.getElementById('profileForm').addEventListener('submit', async function (e) {
         e.preventDefault();

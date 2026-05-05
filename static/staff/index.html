@@ -329,6 +329,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/ods-trust-suggest.js"></script>
   <script>
     const MODULES = [
       { code: 'fire_safety', name: 'Fire Safety' },
@@ -367,59 +368,6 @@
     var trustNameOdsDebounce = null;
     var lastAutoOdsSuggested = { name: '', ods: '' };
 
-    function scoreOrdOrg(org, q) {
-      var nm = org.Name || '';
-      var name = nm.toLowerCase().replace(/\s+/g, ' ').trim();
-      if ((org.Status || '').toUpperCase() !== 'ACTIVE') return -Infinity;
-      var s = 0;
-      if (/trial|covid|octave|comcov|research database|nhs app/i.test(nm)) s -= 55;
-      var rid = org.PrimaryRoleId || '';
-      if (rid === 'RO197') s += 100;
-      else if (rid === 'RO198') s += 38;
-      else if (rid === 'RO76') s += 18;
-      var rc = org.OrgRecordClass || '';
-      if (rc === 'RC1') s += 48;
-      else if (rc === 'RC2') s += 12;
-      if (name === q) s += 75;
-      else if (name.startsWith(q)) s += 52;
-      else if (name.includes(q)) s += 34;
-      else {
-        var qw = q.split(' ').filter(function (w) { return w.length > 2; });
-        for (var wi = 0; wi < qw.length; wi++) {
-          if (name.includes(qw[wi])) s += 8;
-        }
-      }
-      return s;
-    }
-
-    function pickBestOrdOrg(orgs, rawQuery) {
-      var q = (rawQuery || '').toLowerCase().replace(/\s+/g, ' ').trim();
-      if (!orgs || !orgs.length) return null;
-      var best = null;
-      var bestS = -Infinity;
-      for (var i = 0; i < orgs.length; i++) {
-        var org = orgs[i];
-        var sc = scoreOrdOrg(org, q);
-        if (sc > bestS) {
-          bestS = sc;
-          best = org;
-        }
-      }
-      if (!best || bestS < 62) return null;
-      return best;
-    }
-
-    async function fetchOrdOrgForTrustName(trustName) {
-      var t = (trustName || '').trim();
-      if (t.length < 3) return null;
-      var url = 'https://directory.spineservices.nhs.uk/ORD/2-0-0/organisations?Name=' + encodeURIComponent(t) + '&Limit=30';
-      var res = await fetch(url, { headers: { Accept: 'application/json' } });
-      if (!res.ok) return null;
-      var data = await res.json();
-      var orgs = data.Organisations || [];
-      return pickBestOrdOrg(orgs, t);
-    }
-
     function scheduleTrustNameOdsLookup() {
       if (trustNameOdsDebounce) clearTimeout(trustNameOdsDebounce);
       trustNameOdsDebounce = setTimeout(function () {
@@ -438,7 +386,8 @@
       var shouldReplace = !curOds || curOds === lastAutoOdsSuggested.ods;
       if (!shouldReplace) return;
       try {
-        var org = await fetchOrdOrgForTrustName(t);
+        if (!window.NHSOdsTrustSuggest) return;
+        var org = await NHSOdsTrustSuggest.pickBestOrg(t, { minLength: 3 });
         if (!org || !org.OrgId) return;
         lastAutoOdsSuggested = { name: t, ods: org.OrgId };
         odsEl.value = org.OrgId;
