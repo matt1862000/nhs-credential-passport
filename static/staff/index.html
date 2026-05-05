@@ -950,7 +950,7 @@
       updateWalletFileUi();
       renderList();
       updateWalletSaveBanner();
-      if (window.location.hash === '#import' || window.location.hash === '#add' || window.location.hash === '#bulk') {
+      if (/^#(list|add|import|bulk)$/.test(window.location.hash)) {
         var tab = document.querySelector('.nhsuk-tabs button[data-tab="' + window.location.hash.slice(1) + '"]');
         if (tab) tab.click();
       }

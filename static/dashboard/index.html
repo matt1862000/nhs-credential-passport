@@ -26,7 +26,7 @@
 
   <main class="nhsuk-main" id="maincontent" role="main">
     <h1 class="nhsuk-page-heading" id="welcomeTitle">Your dashboard</h1>
-    <p class="nhsuk-lead">Pick a task. You can come back here at any time from the logo at the top.</p>
+    <p class="nhsuk-lead">Choose one of the five areas below. You can return here any time from the logo at the top.</p>
 
     <section aria-labelledby="statsTitle">
       <h2 id="statsTitle" class="visually-hidden">Your training summary</h2>
@@ -51,22 +51,32 @@
     </section>
 
     <section style="margin-top:2.25rem;" aria-labelledby="actionsTitle">
-      <h2 id="actionsTitle">What would you like to do?</h2>
+      <h2 id="actionsTitle">Your e-learning</h2>
       <div class="nhs-action-grid" role="list">
+        <a class="nhs-action-card" href="/static/staff/#list" role="listitem">
+          <div class="nhs-action-title">1. View e-learning</div>
+          <p class="nhs-action-desc">Browse everything on your list, filter by status or module, and open each record.</p>
+          <span class="nhs-action-cta">View list &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/staff/#add" role="listitem">
+          <div class="nhs-action-title">2. Add e-learning</div>
+          <p class="nhs-action-desc">Enter one completion by hand (with optional certificate upload) and issue a credential.</p>
+          <span class="nhs-action-cta">Add record &rsaquo;</span>
+        </a>
         <a class="nhs-action-card" href="/static/staff/#import" role="listitem">
-          <div class="nhs-action-title">Import e-learning</div>
-          <p class="nhs-action-desc">Bring your training in from an ESR CSV export, or add a single record by hand.</p>
-          <span class="nhs-action-cta">Import &rsaquo;</span>
+          <div class="nhs-action-title">3. Import from ESR</div>
+          <p class="nhs-action-desc">Upload a CSV from ESR (for example Compliance and Competency). Check the file, then issue all valid rows.</p>
+          <span class="nhs-action-cta">Import CSV &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/plan-move/" role="listitem">
-          <div class="nhs-action-title">Plan a trust move</div>
-          <p class="nhs-action-desc">Pick the trust you are joining and see which mandatory topics you already meet.</p>
-          <span class="nhs-action-cta">Plan move &rsaquo;</span>
+          <div class="nhs-action-title">4. Plan a trust move</div>
+          <p class="nhs-action-desc">Choose where you are joining and leaving, then compare your list to the destination checklist.</p>
+          <span class="nhs-action-cta">Open planner &rsaquo;</span>
         </a>
-        <a class="nhs-action-card" href="/static/staff/#list" role="listitem">
-          <div class="nhs-action-title">View &amp; share my list</div>
-          <p class="nhs-action-desc">See every record, share by link or QR, download PDFs, or save a backup file.</p>
-          <span class="nhs-action-cta">Open my list &rsaquo;</span>
+        <a class="nhs-action-card" href="/static/staff/#bulk" role="listitem">
+          <div class="nhs-action-title">5. Export e-learning</div>
+          <p class="nhs-action-desc">Download selected or all records as a ZIP, share by link or QR, or save a JSON backup from <strong>My e-learning</strong>.</p>
+          <span class="nhs-action-cta">Bulk export &rsaquo;</span>
         </a>
       </div>
     </section>

@@ -243,7 +243,7 @@ a:hover {
 /* Action card grid */
 .nhs-action-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 1.25rem;
   margin: 1.25rem 0 0;
 }
