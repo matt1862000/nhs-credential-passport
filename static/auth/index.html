@@ -67,11 +67,6 @@
           <input class="nhsuk-input" type="email" id="regEmail" name="email" autocomplete="email" required placeholder="you@nhs.net">
         </div>
         <div class="nhsuk-form-group">
-          <label class="nhsuk-label" for="regGmc">GMC number</label>
-          <input class="nhsuk-input" type="text" id="regGmc" name="gmc_number" inputmode="numeric" autocomplete="off" required pattern="[0-9 ]{7,11}" maxlength="11" title="Seven-digit GMC number" placeholder="e.g. 1234567" aria-describedby="regGmcHint">
-          <span class="nhsuk-hint" id="regGmcHint">Your 7-digit GMC registration number (spaces optional).</span>
-        </div>
-        <div class="nhsuk-form-group">
           <label class="nhsuk-label" for="regPassword">Password (8+ characters)</label>
           <input class="nhsuk-input" type="password" id="regPassword" name="password" autocomplete="new-password" required minlength="8">
         </div>
@@ -103,7 +98,7 @@
         cardReg.hidden = !isReg;
         title.textContent = isReg ? 'Create account' : 'Sign in';
         lead.textContent = isReg
-          ? 'Use an email you can access, your GMC number, and a password (hashed on the server).'
+          ? 'Use an email you can access and a password (hashed on the server). You can add your name, GMC number, and trust on the next page if you wish.'
           : 'Use the same account on any device to keep your training list in sync.';
         var url = new URL(window.location.href);
         url.searchParams.set('mode', isReg ? 'register' : 'signin');
@@ -146,17 +141,13 @@
         showErr('registerError', '');
         var fd = new FormData(this);
         try {
-          await NHSAuth.register(
-            (fd.get('email') || '').trim(),
-            fd.get('password') || '',
-            (fd.get('gmc_number') || '').trim()
-          );
+          await NHSAuth.register((fd.get('email') || '').trim(), fd.get('password') || '');
           /* Do not merge an old browser list into a brand-new account (shared device / prior anonymous use). */
           if (window.NHSWallet && typeof NHSWallet.resetDeviceWalletCache === 'function') {
             await NHSWallet.resetDeviceWalletCache();
           }
           await NHSAuth.pullWalletMerge();
-          NHSAuth.redirectAfterAuth('/static/dashboard/');
+          NHSAuth.redirectAfterAuth('/static/profile/?welcome=1');
         } catch (err) {
           showErr('registerError', err.message || 'Could not create account');
         }

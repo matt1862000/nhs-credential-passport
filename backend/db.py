@@ -6,6 +6,7 @@ import os
 import sqlite3
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "credentials.db"
 
@@ -33,6 +34,7 @@ def init_db():
         """)
         _ensure_users_premium_column(conn)
         _ensure_users_gmc_number_column(conn)
+        _ensure_users_profile_extra_columns(conn)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS user_wallets (
                 user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -55,6 +57,15 @@ def _ensure_users_gmc_number_column(conn: sqlite3.Connection) -> None:
     cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
     if "gmc_number" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN gmc_number TEXT")
+
+
+def _ensure_users_profile_extra_columns(conn: sqlite3.Connection) -> None:
+    """Optional profile: full name, current trust (GMC uses gmc_number column)."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "display_name" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
+    if "current_trust" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN current_trust TEXT")
 
 
 def register_credential(credential_id: str, expiry_date: str):
@@ -100,15 +111,16 @@ def is_revoked(credential_id: str) -> bool:
 # ---------- Accounts (wallet sync; JWT payloads still not stored in registry) ----------
 
 
-def user_create(email: str, password_hash: str, gmc_number: str) -> int:
+def user_create(email: str, password_hash: str, gmc_number: Optional[str] = None) -> int:
     """Insert user; raises sqlite3.IntegrityError if email exists."""
     premium = 1 if _email_in_premium_env(email) else 0
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_premium_column(conn)
         _ensure_users_gmc_number_column(conn)
+        _ensure_users_profile_extra_columns(conn)
         cur = conn.execute(
-            "INSERT INTO users (email, password_hash, created_at, premium, gmc_number) VALUES (?, ?, ?, ?, ?)",
-            (email, password_hash, datetime.utcnow().isoformat(), premium, gmc_number),
+            "INSERT INTO users (email, password_hash, created_at, premium, gmc_number, display_name, current_trust) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (email, password_hash, datetime.utcnow().isoformat(), premium, gmc_number, None, None),
         )
         conn.commit()
         return int(cur.lastrowid)
@@ -118,9 +130,11 @@ def user_get_by_email(email: str):
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_premium_column(conn)
         _ensure_users_gmc_number_column(conn)
+        _ensure_users_profile_extra_columns(conn)
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT id, email, password_hash, premium, gmc_number FROM users WHERE email = ?", (email,)
+            "SELECT id, email, password_hash, premium, gmc_number, display_name, current_trust FROM users WHERE email = ?",
+            (email,),
         ).fetchone()
     if not row:
         return None
@@ -130,6 +144,8 @@ def user_get_by_email(email: str):
         "password_hash": row["password_hash"],
         "premium": bool(row["premium"]) if row["premium"] is not None else False,
         "gmc_number": row["gmc_number"],
+        "display_name": row["display_name"],
+        "current_trust": row["current_trust"],
     }
 
 
@@ -137,9 +153,11 @@ def user_get_by_id(user_id: int):
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_premium_column(conn)
         _ensure_users_gmc_number_column(conn)
+        _ensure_users_profile_extra_columns(conn)
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT id, email, premium, gmc_number FROM users WHERE id = ?", (user_id,)
+            "SELECT id, email, premium, gmc_number, display_name, current_trust FROM users WHERE id = ?",
+            (user_id,),
         ).fetchone()
     if not row:
         return None
@@ -148,7 +166,26 @@ def user_get_by_id(user_id: int):
         "email": row["email"],
         "premium": bool(row["premium"]) if row["premium"] is not None else False,
         "gmc_number": row["gmc_number"],
+        "display_name": row["display_name"],
+        "current_trust": row["current_trust"],
     }
+
+
+def user_set_profile(
+    user_id: int,
+    display_name: Optional[str],
+    gmc_number: Optional[str],
+    current_trust: Optional[str],
+) -> None:
+    """Replace optional profile fields (None clears)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_gmc_number_column(conn)
+        _ensure_users_profile_extra_columns(conn)
+        conn.execute(
+            "UPDATE users SET display_name = ?, gmc_number = ?, current_trust = ? WHERE id = ?",
+            (display_name, gmc_number, current_trust, user_id),
+        )
+        conn.commit()
 
 
 def _email_in_premium_env(email: str) -> bool:

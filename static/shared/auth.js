@@ -86,16 +86,12 @@
       return this.user;
     },
 
-    async register(email, password, gmcNumber) {
+    async register(email, password) {
       var r = await fetch('/api/auth/register', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: email,
-          password: password,
-          gmc_number: gmcNumber == null ? '' : String(gmcNumber),
-        }),
+        body: JSON.stringify({ email: email, password: password }),
       });
       var parsed = await readJsonOrText(r);
       if (!r.ok) {
@@ -168,6 +164,22 @@
       } catch (e) {
         console.warn('Wallet push failed', e);
       }
+    },
+
+    async updateProfile(payload) {
+      if (!this.user) return;
+      var r = await fetch('/api/me/profile', {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      });
+      var parsed = await readJsonOrText(r);
+      if (!r.ok) {
+        var d = parsed.data && parsed.data.detail;
+        throw new Error(typeof d === 'string' ? d : 'Could not save profile');
+      }
+      await this.refresh();
     },
 
     /**

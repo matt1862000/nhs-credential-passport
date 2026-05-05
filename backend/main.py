@@ -230,6 +230,11 @@ def dashboard_redirect():
     return RedirectResponse(url="/static/dashboard/", status_code=302)
 
 
+@app.get("/profile", response_class=RedirectResponse)
+def profile_redirect():
+    return RedirectResponse(url="/static/profile/", status_code=302)
+
+
 @app.get("/auth", response_class=RedirectResponse)
 def auth_redirect():
     return RedirectResponse(url="/static/auth/", status_code=302)

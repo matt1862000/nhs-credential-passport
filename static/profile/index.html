@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your profile &mdash; NHS E-Learning Credential Passport</title>
+  <link rel="stylesheet" href="/static/shared/app.css">
+  <style>
+    .profile-hint { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.35rem; display: block; }
+    .profile-welcome {
+      margin: 0 0 1.25rem 0;
+      padding: 1rem 1.15rem;
+      border-left: 4px solid var(--nhsuk-link);
+      background: var(--nhsuk-panel);
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 4px;
+      font-size: 0.9375rem;
+      color: var(--nhsuk-secondary-text);
+    }
+    #profileStatus { margin-top: 1rem; min-height: 1.25rem; }
+    #profileStatus.ok { color: var(--nhsuk-success); font-weight: 600; }
+    #profileStatus.err { color: var(--nhsuk-error); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/static/dashboard/" aria-label="Dashboard">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <a href="/static/dashboard/">Dashboard</a>
+        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+        <button type="button" id="btnSignOut">Sign out</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">Your profile</h1>
+    <p class="nhsuk-lead">You can add or update these details any time. Nothing here is required to use the service.</p>
+
+    <p id="welcomeNote" class="profile-welcome" hidden>
+      Welcome. Optionally add your name, GMC number, and current trust below, then continue to your dashboard when you are ready.
+    </p>
+
+    <section class="nhsuk-card" style="max-width: 32rem;">
+      <form id="profileForm" novalidate>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="displayName">Full name</label>
+          <input class="nhsuk-input" type="text" id="displayName" name="display_name" autocomplete="name" maxlength="200" placeholder="e.g. Jane Smith">
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="gmcNumber">GMC number</label>
+          <input class="nhsuk-input" type="text" id="gmcNumber" name="gmc_number" inputmode="numeric" autocomplete="off" maxlength="11" placeholder="e.g. 1234567">
+          <span class="profile-hint">Seven digits if you add one (optional).</span>
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="currentTrust">Current trust</label>
+          <input class="nhsuk-input" type="text" id="currentTrust" name="current_trust" autocomplete="organization" maxlength="200" placeholder="e.g. Sheffield Teaching Hospitals">
+        </div>
+        <button type="submit" class="nhsuk-button">Save profile</button>
+      </form>
+      <p id="profileStatus" role="status" aria-live="polite"></p>
+      <p style="margin-top: 1.5rem;">
+        <a class="nhsuk-button nhsuk-button--secondary" href="/static/dashboard/">Go to dashboard</a>
+        <a class="nhsuk-button nhsuk-button--secondary" href="/static/staff/#list" style="margin-left: 0.5rem;">My e-learning</a>
+      </p>
+    </section>
+  </main>
+
+  <script src="/static/wallet/wallet-store.js"></script>
+  <script src="/static/shared/auth.js"></script>
+  <script>
+    (function () {
+      function setStatus(msg, kind) {
+        var el = document.getElementById('profileStatus');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.className = kind ? kind : '';
+      }
+
+      function fillFromUser(u) {
+        if (!u) return;
+        document.getElementById('displayName').value = u.display_name || '';
+        document.getElementById('gmcNumber').value = u.gmc_number || '';
+        document.getElementById('currentTrust').value = u.current_trust || '';
+      }
+
+      (async function boot() {
+        await NHSAuth.refresh();
+        if (!NHSAuth.requireAuth()) return;
+        document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
+        fillFromUser(NHSAuth.user);
+        if (new URLSearchParams(window.location.search).get('welcome') === '1') {
+          document.getElementById('welcomeNote').hidden = false;
+        }
+      })();
+
+      document.getElementById('btnSignOut').addEventListener('click', async function () {
+        await NHSAuth.signOut();
+        window.location.replace('/');
+      });
+
+      document.getElementById('profileForm').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        setStatus('');
+        var fd = new FormData(e.target);
+        var payload = {
+          display_name: (fd.get('display_name') || '').trim(),
+          gmc_number: (fd.get('gmc_number') || '').trim(),
+          current_trust: (fd.get('current_trust') || '').trim(),
+        };
+        try {
+          await NHSAuth.updateProfile(payload);
+          fillFromUser(NHSAuth.user);
+          setStatus('Profile saved.', 'ok');
+        } catch (err) {
+          setStatus(err.message || 'Could not save profile', 'err');
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

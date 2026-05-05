@@ -64,16 +64,13 @@ def _session_response(data: dict, user_id: int, email: str, request: Request) ->
 def auth_register(request: Request, body: dict):
     email = _normalize_email(body.get("email") or "")
     password = body.get("password") or ""
-    gmc = _normalize_gmc(str(body.get("gmc_number") or body.get("gmcNumber") or ""))
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Invalid email")
-    if not GMC_RE.match(gmc):
-        raise HTTPException(status_code=400, detail="Enter a valid 7-digit GMC number")
     if len(str(password)) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     h = bcrypt.hashpw(str(password).encode("utf-8"), bcrypt.gensalt()).decode("ascii")
     try:
-        uid = db.user_create(email, h, gmc)
+        uid = db.user_create(email, h, None)
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail="Email already registered")
     return _session_response({"ok": True, "email": email}, uid, email, request)
@@ -125,7 +122,45 @@ def auth_me(request: Request):
         "email": u["email"],
         "premium": db.user_is_premium(u),
         "gmc_number": u.get("gmc_number"),
+        "display_name": u.get("display_name"),
+        "current_trust": u.get("current_trust"),
     }
+
+
+@router.put("/me/profile")
+async def me_profile_put(request: Request):
+    uid = require_user_id(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+
+    u = db.user_get_by_id(uid)
+    if not u:
+        raise HTTPException(status_code=401, detail="Not signed in")
+
+    if "display_name" in body:
+        display_name = (body.get("display_name") or "").strip() or None
+    else:
+        display_name = u.get("display_name")
+
+    if "gmc_number" in body:
+        gmc = _normalize_gmc(str(body.get("gmc_number") or ""))
+        if gmc and not GMC_RE.match(gmc):
+            raise HTTPException(status_code=400, detail="GMC number must be exactly 7 digits")
+        gmc = gmc or None
+    else:
+        gmc = u.get("gmc_number")
+
+    if "current_trust" in body:
+        current_trust = (body.get("current_trust") or "").strip() or None
+    else:
+        current_trust = u.get("current_trust")
+
+    db.user_set_profile(uid, display_name, gmc, current_trust)
+    return {"ok": True}
 
 
 @router.get("/me/wallet")
