@@ -24,7 +24,7 @@ from .models import (
     CsvImportInvalidRow,
 )
 from .csv_import import parse_completion_csv, csv_template_header, MAX_CSV_BYTES
-from .auth_api import router as auth_router
+from .auth_api import router as auth_router, require_user_id
 
 # Base URL for verification links (default for local dev)
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
@@ -60,7 +60,8 @@ app.include_router(auth_router)
 
 @app.post("/api/credentials/issue", response_model=IssueResponse)
 def api_issue(request: Request, body: IssueRequest):
-    """Issue credentials from completion records. No auth at MVP. Optional certificate upload."""
+    """Issue credentials from completion records. Requires a signed-in account."""
+    require_user_id(request)
     base = str(request.base_url).rstrip("/")
     results = issue_credentials(body.records, base)
     credentials_out = []
@@ -88,16 +89,18 @@ def api_verify(credential_id: str, jwt: str = None):
 
 
 @app.post("/api/credentials/revoke/{credential_id}")
-def api_revoke(credential_id: str):
-    """Revoke a credential. No auth at MVP (in production, holder-only)."""
+def api_revoke(request: Request, credential_id: str):
+    """Revoke a credential. Requires a signed-in account."""
+    require_user_id(request)
     if revoke_credential(credential_id):
         return {"ok": True, "credential_id": credential_id}
     raise HTTPException(status_code=404, detail="Credential not found")
 
 
 @app.get("/api/credentials/import-csv/template")
-def api_csv_template():
-    """Download a one-line CSV header template for bulk import."""
+def api_csv_template(request: Request):
+    """Download a one-line CSV header template for bulk import (signed-in users only)."""
+    require_user_id(request)
     return Response(
         content=csv_template_header(),
         media_type="text/csv; charset=utf-8",
@@ -114,6 +117,7 @@ async def api_import_csv(request: Request, file: UploadFile = File(...), dry_run
     Upload UTF-8 CSV: validate rows, optionally issue all valid rows (dry_run=false).
     See GET .../import-csv/template for column names and aliases (e.g. employee_name).
     """
+    require_user_id(request)
     raw = await file.read()
     if len(raw) > MAX_CSV_BYTES:
         raise HTTPException(status_code=413, detail="CSV file too large")

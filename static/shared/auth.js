@@ -14,6 +14,17 @@
     else localStorage.setItem('nhs_credentials', JSON.stringify(arr));
   }
 
+  function setLocalWalletFromServer(arr) {
+    try {
+      localStorage.setItem('nhs_credentials', JSON.stringify(arr || []));
+    } catch (e) {}
+    if (window.NHSWallet && NHSWallet.clearDirty) {
+      try {
+        NHSWallet.clearDirty();
+      } catch (e2) {}
+    }
+  }
+
   function mergeByCredentialId(a, b) {
     if (window.NHSWallet && NHSWallet.mergeByCredentialId) {
       return NHSWallet.mergeByCredentialId(a || [], b || []);
@@ -88,6 +99,10 @@
         throw new Error(typeof d === 'string' ? d : 'Could not create account');
       }
       await this.refresh();
+      /* New accounts must start with an empty server wallet, regardless of prior device state. */
+      await this.pushWallet([]);
+      setLocalWalletFromServer([]);
+      window.dispatchEvent(new CustomEvent('nhs-wallet-updated'));
       return this.user;
     },
 
@@ -100,6 +115,15 @@
       } catch (e) {}
       this.user = null;
       window.__nhsAuthUser = null;
+      try {
+        if (window.NHSWallet && typeof NHSWallet.resetDeviceWalletCache === 'function') {
+          await NHSWallet.resetDeviceWalletCache();
+        } else {
+          try {
+            localStorage.removeItem('nhs_credentials');
+          } catch (e2) {}
+        }
+      } catch (e) {}
       window.dispatchEvent(
         new CustomEvent('nhs-auth-changed', { detail: { user: null } })
       );
@@ -112,8 +136,16 @@
         if (!r.ok) return;
         var server = await r.json();
         if (!Array.isArray(server)) server = [];
-        var merged = mergeByCredentialId(server, getLocalWallet());
-        setLocalWallet(merged);
+        var local = getLocalWallet();
+        var merged;
+        /* Empty server wallet = account never used; do not merge stale localStorage from this browser
+           (another user / old anonymous data). Once server has rows, merge: server wins on same credential_id. */
+        if (server.length === 0) {
+          merged = [];
+        } else {
+          merged = mergeByCredentialId(local, server);
+        }
+        setLocalWalletFromServer(merged);
         window.dispatchEvent(new CustomEvent('nhs-wallet-updated'));
       } catch (e) {
         console.warn('Wallet pull failed', e);
@@ -155,13 +187,6 @@
       }
       window.location.replace(fallback || '/static/dashboard/');
     },
-  };
-
-  /** Wraps NHSWallet.saveWallet + auto-pushes to server when signed in. */
-  window.__nhsAfterWalletLocalChange = function () {
-    if (NHSAuth.user && window.NHSWallet) {
-      void NHSAuth.pushWallet(NHSWallet.getWallet());
-    }
   };
 
   window.NHSAuth = NHSAuth;

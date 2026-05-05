@@ -25,8 +25,10 @@
 
   function setStored(arr) {
     if (window.NHSWallet) NHSWallet.saveWallet(arr);
-    else localStorage.setItem('nhs_credentials', JSON.stringify(arr));
-    void syncWalletToServer(arr);
+    else {
+      localStorage.setItem('nhs_credentials', JSON.stringify(arr));
+      void syncWalletToServer(arr);
+    }
     window.dispatchEvent(new CustomEvent('nhs-wallet-updated'));
   }
 
@@ -120,15 +122,16 @@
     }
   }
 
-  function mergeServerAndLocal(serverArr, localArr) {
+  /** First array fills the map; second wins on duplicate credential_id (caller passes local, then server). */
+  function mergeServerAndLocal(a, b) {
     if (window.NHSWallet && NHSWallet.mergeByCredentialId) {
-      return NHSWallet.mergeByCredentialId(serverArr || [], localArr || []);
+      return NHSWallet.mergeByCredentialId(a || [], b || []);
     }
     var map = {};
-    (serverArr || []).forEach(function (c) {
+    (a || []).forEach(function (c) {
       if (c && c.credential_id) map[c.credential_id] = c;
     });
-    (localArr || []).forEach(function (c) {
+    (b || []).forEach(function (c) {
       if (c && c.credential_id) map[c.credential_id] = c;
     });
     return Object.keys(map).map(function (k) {
@@ -143,7 +146,16 @@
       if (!r.ok) return;
       var server = await r.json();
       if (!Array.isArray(server)) server = [];
-      var merged = mergeServerAndLocal(server, getStored());
+      var local = getStored();
+      var merged;
+      if (!server.length) {
+        merged = [];
+      } else {
+        merged =
+          window.NHSWallet && NHSWallet.mergeByCredentialId
+            ? NHSWallet.mergeByCredentialId(local, server)
+            : mergeServerAndLocal(local, server);
+      }
       setStored(merged);
     } catch (e) {
       console.warn('Wallet merge from server', e);
@@ -167,12 +179,6 @@
     return { ok: res.ok, status: res.status, data: data, text: text };
   }
 
-  /** Called from moving-home-wallet.js after file merge/replace. */
-  window.__nhsAfterWalletLocalChange = function () {
-    if (!window.__nhsAuthUser || !window.NHSWallet) return;
-    void syncWalletToServer(NHSWallet.getWallet());
-  };
-
   function wireForms() {
     var fr = document.getElementById('homeFormRegister');
     var fl = document.getElementById('homeFormLogin');
@@ -191,6 +197,10 @@
           return;
         }
         await refreshAuthState();
+        await syncWalletToServer([]);
+        if (window.NHSWallet && typeof NHSWallet.resetDeviceWalletCache === 'function') {
+          await NHSWallet.resetDeviceWalletCache();
+        }
         await pullMergeFromServer();
         fr.reset();
         var esr = document.getElementById('home-step-esr');
@@ -215,6 +225,9 @@
           return;
         }
         await refreshAuthState();
+        if (window.NHSWallet && typeof NHSWallet.resetDeviceWalletCache === 'function') {
+          await NHSWallet.resetDeviceWalletCache();
+        }
         await pullMergeFromServer();
         fl.reset();
         var esr2 = document.getElementById('home-step-esr');
@@ -239,10 +252,8 @@
 
   async function boot() {
     if (!window.NHSWallet) return;
-    if (NHSWallet.restoreLinkedHandle) await NHSWallet.restoreLinkedHandle();
     await refreshAuthState();
     if (window.__nhsAuthUser) await pullMergeFromServer();
-    /* Re-run move planner after linked-file restore or server merge (trust-mover may have run earlier). */
     window.dispatchEvent(new CustomEvent('nhs-wallet-updated'));
   }
 

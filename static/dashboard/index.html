@@ -58,15 +58,15 @@
           <p class="nhs-action-desc">Browse everything on your list, filter by status or module, and open each record.</p>
           <span class="nhs-action-cta">View list &rsaquo;</span>
         </a>
-        <a class="nhs-action-card" href="/static/staff/#add" role="listitem">
-          <div class="nhs-action-title">2. Add e-learning</div>
-          <p class="nhs-action-desc">Enter one completion by hand (with optional certificate upload) and issue a credential.</p>
-          <span class="nhs-action-cta">Add record &rsaquo;</span>
-        </a>
         <a class="nhs-action-card" href="/static/staff/#import" role="listitem">
-          <div class="nhs-action-title">3. Import from ESR</div>
+          <div class="nhs-action-title">2. Import from ESR</div>
           <p class="nhs-action-desc">Upload a CSV from ESR (for example Compliance and Competency). Check the file, then issue all valid rows.</p>
           <span class="nhs-action-cta">Import CSV &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/staff/#add" role="listitem">
+          <div class="nhs-action-title">3. Add e-learning</div>
+          <p class="nhs-action-desc">Enter one completion by hand (with optional certificate upload) and issue a credential.</p>
+          <span class="nhs-action-cta">Add record &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/plan-move/" role="listitem">
           <div class="nhs-action-title">4. Plan a trust move</div>
@@ -75,7 +75,7 @@
         </a>
         <a class="nhs-action-card" href="/static/staff/#bulk" role="listitem">
           <div class="nhs-action-title">5. Export e-learning</div>
-          <p class="nhs-action-desc">Download selected or all records as a ZIP, share by link or QR, or save a JSON backup from <strong>My e-learning</strong>.</p>
+          <p class="nhs-action-desc">Download selected or all records as a ZIP and share by link or QR.</p>
           <span class="nhs-action-cta">Bulk export &rsaquo;</span>
         </a>
       </div>
@@ -120,8 +120,8 @@
         return 'valid';
       }
 
-      function renderStats() {
-        var list = window.NHSWallet ? NHSWallet.getWallet() : [];
+      function renderStats(list) {
+        list = Array.isArray(list) ? list : (window.NHSWallet ? NHSWallet.getWallet() : []);
         var valid = 0, expiring = 0, expired = 0;
         list.forEach(function (c) {
           var s = statusOf(c);
@@ -135,6 +135,17 @@
         document.getElementById('statTotal').textContent = list.length;
       }
 
+      async function fetchServerWallet() {
+        try {
+          var r = await fetch('/api/me/wallet', { credentials: 'include' });
+          if (!r.ok) return [];
+          var arr = await r.json();
+          return Array.isArray(arr) ? arr : [];
+        } catch (e) {
+          return [];
+        }
+      }
+
       (async function boot() {
         await NHSAuth.refresh();
         if (!NHSAuth.requireAuth()) return;
@@ -145,11 +156,9 @@
         var premiumEl = document.getElementById('premiumTrustTools');
         if (premiumEl && NHSAuth.user.premium) premiumEl.hidden = false;
 
-        if (window.NHSWallet && NHSWallet.restoreLinkedHandle) {
-          await NHSWallet.restoreLinkedHandle();
-        }
+        /* Linked JSON file is applied from My e-learning only; avoid repopulating stats from disk before server merge. */
         await NHSAuth.pullWalletMerge();
-        renderStats();
+        renderStats(await fetchServerWallet());
         window.addEventListener('nhs-wallet-updated', renderStats);
       })();
 

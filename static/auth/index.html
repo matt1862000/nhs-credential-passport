@@ -76,6 +76,7 @@
     </section>
   </main>
 
+  <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
   <script>
     (function () {
@@ -124,6 +125,9 @@
         var fd = new FormData(this);
         try {
           await NHSAuth.signIn((fd.get('email') || '').trim(), fd.get('password') || '');
+          if (window.NHSWallet && typeof NHSWallet.resetDeviceWalletCache === 'function') {
+            await NHSWallet.resetDeviceWalletCache();
+          }
           await NHSAuth.pullWalletMerge();
           NHSAuth.redirectAfterAuth('/static/dashboard/');
         } catch (err) {
@@ -137,6 +141,10 @@
         var fd = new FormData(this);
         try {
           await NHSAuth.register((fd.get('email') || '').trim(), fd.get('password') || '');
+          /* Do not merge an old browser list into a brand-new account (shared device / prior anonymous use). */
+          if (window.NHSWallet && typeof NHSWallet.resetDeviceWalletCache === 'function') {
+            await NHSWallet.resetDeviceWalletCache();
+          }
           await NHSAuth.pullWalletMerge();
           NHSAuth.redirectAfterAuth('/static/dashboard/');
         } catch (err) {

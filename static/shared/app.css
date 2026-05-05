@@ -24,6 +24,8 @@ body {
   line-height: 1.5;
   margin: 0;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 a {
   color: var(--nhsuk-link);
@@ -36,6 +38,7 @@ a:hover {
 .nhsuk-header {
   background-color: #005eb8;
   padding: 0.75rem 0;
+  flex-shrink: 0;
 }
 .nhsuk-header__container {
   max-width: 1040px;
@@ -116,6 +119,8 @@ a:hover {
   max-width: 1040px;
   margin: 0 auto;
   padding: 2.5rem 1.5rem;
+  flex: 1 1 auto;
+  width: 100%;
 }
 .nhsuk-page-heading {
   font-size: 2.25rem;
@@ -319,11 +324,12 @@ a:hover {
   color: var(--nhsuk-error);
 }
 
-/* Hero (landing) */
+/* Hero (landing) — grows with the viewport so short pages are not a band of empty body colour */
 .nhs-hero {
-  background: linear-gradient(180deg, #ffffff 0%, #f0f4f5 100%);
+  flex: 1 1 auto;
+  background: linear-gradient(180deg, #ffffff 0%, #eef3f5 55%, var(--nhsuk-body-bg) 100%);
   border-bottom: 1px solid var(--nhsuk-border);
-  padding: 3.5rem 1.5rem 3rem;
+  padding: 2.5rem 1.5rem 2.5rem;
 }
 .nhs-hero__inner {
   max-width: 1040px;

@@ -30,6 +30,14 @@ def _current_user_id(request: Request) -> Optional[int]:
     return dec[0] if dec else None
 
 
+def require_user_id(request: Request) -> int:
+    """Use on issuance and wallet-mutating routes so only signed-in users can build a list."""
+    uid = _current_user_id(request)
+    if uid is None:
+        raise HTTPException(status_code=401, detail="Sign in to manage your training list")
+    return uid
+
+
 def _session_response(data: dict, user_id: int, email: str, request: Request) -> JSONResponse:
     token = session_auth.create_session_token(user_id, email)
     resp = JSONResponse(data)

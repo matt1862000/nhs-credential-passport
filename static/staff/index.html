@@ -197,15 +197,6 @@
     .auth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
     @media (max-width: 720px) { .auth-grid { grid-template-columns: 1fr; } }
     #authUserEmail { font-weight: 600; color: var(--nhsuk-link); }
-    .wallet-save-banner {
-      margin-top: 1rem;
-      padding: 1rem 1.15rem;
-      background: #fff9e6;
-      border: 2px solid #ffb81c;
-      border-radius: 4px;
-    }
-    .wallet-save-banner p { margin: 0 0 0.75rem 0; font-size: 1rem; color: var(--nhsuk-text); max-width: 40em; }
-    .wallet-save-banner .wallet-save-banner__actions { display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; }
   </style>
 </head>
 <body>
@@ -238,25 +229,6 @@
     </div>
 
     <section id="list" class="visible" role="tabpanel" aria-labelledby="tab-list">
-      <div class="nhsuk-bulk-export-panel" id="walletFilePanel" style="margin-bottom:1.25rem;">
-        <h3 class="nhsuk-bulk-export-panel__title">Save or restore your list</h3>
-        <p class="nhsuk-bulk-export-panel__desc"><strong>The copy that matters is the one you save to a file</strong> (your trust drive, your cloud, or email to yourself). The browser also keeps a working copy so the app is quick and the home page move planner can read it — that browser copy can be lost if you clear site data or change device. <strong>Save a copy after adding or importing.</strong> You can <strong>bring a copy back</strong> on another computer or browser. In <strong>Chrome or Edge</strong> you can <strong>pick one file to keep in sync</strong> so changes are written to that file when the browser allows.</p>
-        <div id="walletSaveBanner" class="wallet-save-banner" role="status" hidden>
-          <p><strong>You have changes not saved to a file on this device yet.</strong> Save a copy so you do not lose them if you clear browser data or switch computers.</p>
-          <div class="wallet-save-banner__actions">
-            <button type="button" class="nhsuk-button" id="btnWalletSaveNow">Save a copy now</button>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletSaveBannerDismiss">Not now</button>
-          </div>
-        </div>
-        <div style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center;">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletDownload">Save a copy to my device</button>
-          <label for="walletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring my saved list…</label>
-          <input type="file" id="walletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose the training list file you saved from another device">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletLink">Pick a file to keep in sync</button>
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletUnlink" hidden>Stop syncing to that file</button>
-        </div>
-        <p class="nhsuk-body-s" id="walletFileStatus" style="margin-top:0.75rem;" aria-live="polite"></p>
-      </div>
       <div class="nhsuk-summary-list">
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Valid</span><span class="nhsuk-summary-list__value" id="countValid">0</span></div>
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expiring soon</span><span class="nhsuk-summary-list__value" id="countExpiring">0</span></div>
@@ -381,8 +353,10 @@
 
     function setStored(arr) {
       if (window.NHSWallet) NHSWallet.saveWallet(arr);
-      else localStorage.setItem('nhs_credentials', JSON.stringify(arr));
-      void syncWalletToServer(arr);
+      else {
+        localStorage.setItem('nhs_credentials', JSON.stringify(arr));
+        void syncWalletToServer(arr);
+      }
     }
 
     async function pullMergeFromServer() {
@@ -392,109 +366,6 @@
     document.getElementById('btnSignOut').addEventListener('click', async function () {
       if (window.NHSAuth) await NHSAuth.signOut();
       window.location.replace('/');
-    });
-
-    function updateWalletFileUi() {
-      var st = document.getElementById('walletFileStatus');
-      var linkBtn = document.getElementById('btnWalletLink');
-      var unlinkBtn = document.getElementById('btnWalletUnlink');
-      if (!st || !window.NHSWallet) return;
-      if (linkBtn && NHSWallet.hasFilePicker) linkBtn.hidden = !NHSWallet.hasFilePicker();
-      if (NHSWallet.isLinked && NHSWallet.isLinked()) {
-        if (unlinkBtn) unlinkBtn.hidden = false;
-        st.textContent = 'Saving to file: ' + (NHSWallet.getLinkedFileName() || 'your chosen file') + ' — updates are written there when your browser allows.';
-      } else {
-        if (unlinkBtn) unlinkBtn.hidden = true;
-        st.textContent = '';
-      }
-      updateWalletSaveBanner();
-    }
-
-    function updateWalletSaveBanner() {
-      var el = document.getElementById('walletSaveBanner');
-      if (!el || !window.NHSWallet || !NHSWallet.isDirty) return;
-      var show =
-        NHSWallet.isDirty() &&
-        NHSWallet.getWallet().length > 0 &&
-        !(NHSWallet.isSaveBannerDismissed && NHSWallet.isSaveBannerDismissed());
-      el.hidden = !show;
-    }
-
-    function triggerSaveCopyDownload() {
-      if (!window.NHSWallet) return;
-      NHSWallet.downloadWalletBackup(NHSWallet.getWallet());
-      updateWalletSaveBanner();
-    }
-
-    document.getElementById('btnWalletDownload').addEventListener('click', function () {
-      triggerSaveCopyDownload();
-    });
-    document.getElementById('btnWalletSaveNow').addEventListener('click', function () {
-      triggerSaveCopyDownload();
-    });
-    document.getElementById('btnWalletSaveBannerDismiss').addEventListener('click', function () {
-      if (window.NHSWallet && NHSWallet.dismissSaveBanner) NHSWallet.dismissSaveBanner();
-      updateWalletSaveBanner();
-    });
-
-    window.addEventListener('beforeunload', function (e) {
-      if (window.NHSWallet && NHSWallet.isDirty && NHSWallet.isDirty() && NHSWallet.getWallet().length > 0) {
-        e.preventDefault();
-        e.returnValue = '';
-      }
-    });
-    document.getElementById('walletFileInput').addEventListener('change', function () {
-      var input = this;
-      if (!input.files || !input.files[0] || !window.NHSWallet) {
-        input.value = '';
-        return;
-      }
-      var file = input.files[0];
-      var reader = new FileReader();
-      reader.onload = function () {
-        try {
-          var replace = window.confirm(
-            'Replace everything on this device with this file?\n\nOK = use only what is in the file.\nCancel = merge with what is already here (same training records are updated from the file).'
-          );
-          NHSWallet.loadWalletFromFileText(String(reader.result), replace ? 'replace' : 'merge').then(function () {
-            void syncWalletToServer(NHSWallet.getWallet());
-            renderList();
-            updateWalletFileUi();
-            updateWalletSaveBanner();
-            alert('Your training list was updated from "' + file.name + '".');
-          }).catch(function (e) {
-            alert(e.message || String(e));
-          });
-        } finally {
-          input.value = '';
-        }
-      };
-      reader.onerror = function () {
-        alert('Could not read file.');
-        input.value = '';
-      };
-      reader.readAsText(file, 'UTF-8');
-    });
-    document.getElementById('btnWalletLink').addEventListener('click', async function () {
-      if (!window.NHSWallet) return;
-      var cur = NHSWallet.getWallet();
-      if (cur.length && !window.confirm('What is in the file you pick will replace the list on this device. (You can save a copy first.) Continue?')) return;
-      try {
-        var r = await NHSWallet.linkWalletFile();
-        void syncWalletToServer(NHSWallet.getWallet());
-        renderList();
-        updateWalletFileUi();
-        updateWalletSaveBanner();
-        alert('This device will stay in sync with "' + (r.name || 'your file') + '" (' + r.count + ' training record(s)). Changes will be saved there when your browser allows.');
-      } catch (e) {
-        alert(e.message || String(e));
-      }
-    });
-    document.getElementById('btnWalletUnlink').addEventListener('click', async function () {
-      if (!window.NHSWallet) return;
-      await NHSWallet.unlinkWalletFile();
-      updateWalletFileUi();
-      updateWalletSaveBanner();
     });
 
     document.querySelectorAll('.nhsuk-tabs button').forEach(btn => {
@@ -623,7 +494,11 @@
       }
       var fd = new FormData();
       fd.append('file', input.files[0], input.files[0].name || 'import.csv');
-      var res = await fetch('/api/credentials/import-csv?dry_run=' + (dryRun ? 'true' : 'false'), { method: 'POST', body: fd });
+      var res = await fetch('/api/credentials/import-csv?dry_run=' + (dryRun ? 'true' : 'false'), {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+      });
       if (!res.ok) {
         var t = await res.text();
         throw new Error(t || res.statusText);
@@ -917,7 +792,12 @@
         } catch (err) { alert('Could not read certificate file: ' + err.message); return; }
       }
       try {
-        const res = await fetch('/api/credentials/issue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const res = await fetch('/api/credentials/issue', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         const issued = data.credentials[0];
@@ -945,11 +825,8 @@
       if (!NHSAuth.requireAuth()) return;
       var em = document.getElementById('navEmail');
       if (em) em.textContent = NHSAuth.user.email || '';
-      if (window.NHSWallet && NHSWallet.restoreLinkedHandle) await NHSWallet.restoreLinkedHandle();
       await pullMergeFromServer();
-      updateWalletFileUi();
       renderList();
-      updateWalletSaveBanner();
       if (/^#(list|add|import|bulk)$/.test(window.location.hash)) {
         var tab = document.querySelector('.nhsuk-tabs button[data-tab="' + window.location.hash.slice(1) + '"]');
         if (tab) tab.click();
