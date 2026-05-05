@@ -42,6 +42,58 @@
     }
   }
 
+  function updateHomeStepGating() {
+    var isAuthed = !!window.__nhsAuthUser;
+    var step2 = document.getElementById('homeStep2');
+    var step3 = document.getElementById('homeStep3');
+    var step4 = document.getElementById('homeStep4');
+    var step2Lock = document.getElementById('homeStep2LockedMsg');
+    var step3Lock = document.getElementById('homeStep3LockedMsg');
+    var step4Lock = document.getElementById('homeStep4LockedMsg');
+    var step2Import = document.getElementById('homeStep2ImportLink');
+    var step2WalletLabel = document.getElementById('homeStep2WalletLabel');
+    var step2WalletInput = document.getElementById('movingWalletFileInput');
+    var join = document.getElementById('joinTrust');
+    var leave = document.getElementById('leaveTrust');
+    var refresh = document.getElementById('btnRefreshChecklist');
+    var movingResults = document.getElementById('movingResults');
+    var movingError = document.getElementById('movingError');
+
+    [step2, step3, step4].forEach(function (el) {
+      if (!el) return;
+      if (isAuthed) el.classList.remove('is-locked');
+      else el.classList.add('is-locked');
+    });
+    if (step2Lock) step2Lock.hidden = isAuthed;
+    if (step3Lock) step3Lock.hidden = isAuthed;
+    if (step4Lock) step4Lock.hidden = isAuthed;
+
+    if (step2Import) {
+      if (isAuthed) step2Import.removeAttribute('aria-disabled');
+      else step2Import.setAttribute('aria-disabled', 'true');
+      step2Import.style.pointerEvents = isAuthed ? '' : 'none';
+      step2Import.style.opacity = isAuthed ? '' : '0.65';
+    }
+    if (step2WalletLabel) {
+      step2WalletLabel.style.pointerEvents = isAuthed ? '' : 'none';
+      step2WalletLabel.style.opacity = isAuthed ? '' : '0.65';
+    }
+    if (step2WalletInput) step2WalletInput.disabled = !isAuthed;
+    if (join) join.disabled = !isAuthed;
+    if (leave) leave.disabled = !isAuthed;
+    if (refresh) refresh.disabled = !isAuthed;
+
+    if (!isAuthed) {
+      if (movingResults) {
+        movingResults.hidden = true;
+        movingResults.setAttribute('aria-hidden', 'true');
+      }
+      if (movingError) movingError.textContent = '';
+    }
+
+    window.dispatchEvent(new CustomEvent('nhs-auth-changed', { detail: { authed: isAuthed } }));
+  }
+
   async function refreshAuthState() {
     window.__nhsAuthUser = null;
     try {
@@ -49,6 +101,7 @@
       if (r.ok) window.__nhsAuthUser = await r.json();
     } catch (e) {}
     updateHomeAuthUi();
+    updateHomeStepGating();
   }
 
   function updateHomeAuthUi() {
@@ -141,7 +194,11 @@
         await pullMergeFromServer();
         fr.reset();
         var esr = document.getElementById('home-step-esr');
-        if (esr) esr.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (esr) {
+          esr.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          esr.setAttribute('tabindex', '-1');
+          esr.focus();
+        }
       });
     }
     if (fl) {
@@ -161,7 +218,11 @@
         await pullMergeFromServer();
         fl.reset();
         var esr2 = document.getElementById('home-step-esr');
-        if (esr2) esr2.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (esr2) {
+          esr2.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          esr2.setAttribute('tabindex', '-1');
+          esr2.focus();
+        }
       });
     }
     if (lo) {

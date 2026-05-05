@@ -279,7 +279,24 @@
       });
   }
 
+  function isSignedInForPlanner() {
+    return !!window.__nhsAuthUser;
+  }
+
+  function hideResults() {
+    var results = document.getElementById('movingResults');
+    if (results) {
+      results.hidden = true;
+      results.setAttribute('aria-hidden', 'true');
+    }
+  }
+
   function run() {
+    if (!isSignedInForPlanner()) {
+      document.getElementById('movingError').textContent = '';
+      hideResults();
+      return;
+    }
     var joinId = joinSel.value;
     var leaveId = leaveSel.value;
     document.getElementById('movingError').textContent = '';
@@ -312,6 +329,7 @@
   leaveSel.addEventListener('change', run);
   if (btnRefresh) btnRefresh.addEventListener('click', run);
   window.addEventListener('nhs-wallet-updated', run);
+  window.addEventListener('nhs-auth-changed', run);
 
   run();
 })();

@@ -341,6 +341,22 @@
       font-size: 0.9375rem;
       color: var(--nhsuk-error);
     }
+    .moving-step-locked {
+      border: 1px dashed var(--nhsuk-border);
+      border-radius: 4px;
+      padding: 0.75rem 0.85rem;
+      background: #f8fbfc;
+      color: var(--nhsuk-secondary-text);
+      font-size: 0.9375rem;
+      margin-top: 0.75rem;
+    }
+    .moving-step.is-locked .moving-step-title,
+    .moving-step.is-locked .moving-step-desc {
+      opacity: 0.88;
+    }
+    .moving-step.is-locked .moving-step-badge {
+      background: #7b8b99;
+    }
   </style>
 </head>
 <body>
@@ -399,12 +415,13 @@
         </li>
         <li class="moving-step">
           <span class="moving-step-badge" aria-hidden="true">2</span>
-          <div class="moving-step-body">
+          <div class="moving-step-body" id="homeStep2">
             <h2 class="moving-step-title" id="home-step-esr">Export from ESR and import CSV</h2>
-            <p class="moving-step-desc">In <strong>ESR</strong> (Electronic Staff Record), open the area your trust uses for learning and compliance — for example <strong>Compliance and Competency</strong> — and <strong>export</strong> the data you need, usually as a <strong>CSV</strong> file. Stay in <strong>this same browser</strong> (so your sign-in from step 1 still applies), then open <a href="/static/staff/#import">My e-learning → Import CSV</a>. Run <strong>Check CSV</strong>, then <strong>Issue all valid rows</strong>. Your completions appear under <strong>My e-learning</strong> and, when signed in, sync to your account.</p>
-            <p class="moving-step-desc moving-muted" style="margin-top:0.75rem; font-size:0.9375rem;"><strong>Optional:</strong> If you already saved a <strong>JSON backup</strong> from My e-learning on another device, you can bring it here instead of or as well as CSV — same browser as step 1.</p>
-            <div class="moving-step-tools moving-wallet-row" style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; margin-top:0.5rem;">
-              <label for="movingWalletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring saved training list (JSON)…</label>
+            <p class="moving-step-desc" id="homeStep2Desc">In <strong>ESR</strong> (Electronic Staff Record), open the area your trust uses for learning and compliance — for example <strong>Compliance and Competency</strong> — and <strong>export</strong> the data you need, usually as a <strong>CSV</strong> file. Stay in <strong>this same browser</strong> (so your sign-in from step 1 still applies), then open <a id="homeStep2ImportLink" href="/static/staff/#import">My e-learning → Import CSV</a>. Run <strong>Check CSV</strong>, then <strong>Issue all valid rows</strong>. Your completions appear under <strong>My e-learning</strong> and, when signed in, sync to your account.</p>
+            <p class="moving-step-desc moving-muted" id="homeStep2OptionalDesc" style="margin-top:0.75rem; font-size:0.9375rem;"><strong>Optional:</strong> If you already saved a <strong>JSON backup</strong> from My e-learning on another device, you can bring it here instead of or as well as CSV — same browser as step 1.</p>
+            <p class="moving-step-locked" id="homeStep2LockedMsg" hidden>Sign in at step 1 to unlock ESR import and JSON upload.</p>
+            <div class="moving-step-tools moving-wallet-row" id="homeStep2WalletTools" style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center; margin-top:0.5rem;">
+              <label for="movingWalletFileInput" id="homeStep2WalletLabel" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring saved training list (JSON)…</label>
               <input type="file" id="movingWalletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose a saved training list JSON file from another device">
               <span class="moving-muted" style="font-size:0.875rem;">From My e-learning: <strong>Save or restore your list</strong> → <strong>Save a copy to my device</strong> on the other device, then choose the file here.</span>
             </div>
@@ -412,11 +429,12 @@
         </li>
         <li class="moving-step">
           <span class="moving-step-badge" aria-hidden="true">3</span>
-          <div class="moving-step-body">
+          <div class="moving-step-body" id="homeStep3">
             <h2 class="moving-step-title">Choose trusts and load the checklist</h2>
             <p class="moving-step-desc">Pick where you are <strong>joining</strong> and <strong>leaving</strong>. Then run the checklist so we can load that destination’s mandatory topics (UK CSTF–aligned where the pack lists them).</p>
+            <p class="moving-step-locked" id="homeStep3LockedMsg" hidden>Sign in and finish step 2 first, then choose trusts and run this checklist.</p>
             <div class="moving-step-tools">
-              <div class="moving-select-row" role="group" aria-labelledby="moving-planner-heading" style="margin-top:0.5rem;">
+              <div class="moving-select-row" role="group" aria-labelledby="moving-planner-heading" style="margin-top:0.5rem;" id="homeStep3Controls">
                 <span id="moving-planner-heading" class="visually-hidden">Trust selection</span>
                 <div class="nhsuk-form-group">
                   <label for="joinTrust">I am joining</label>
@@ -437,9 +455,10 @@
         </li>
         <li class="moving-step">
           <span class="moving-step-badge" aria-hidden="true">4</span>
-          <div class="moving-step-body">
+          <div class="moving-step-body" id="homeStep4">
             <h2 class="moving-step-title">Review gaps, recognition, and what to do next</h2>
             <p class="moving-step-desc">After you press <strong>Refresh checklist</strong> in step 3, scroll down for the mandatory topic list, how your old trust’s training may be viewed, and a line-by-line comparison with your training list. Use this to gather evidence and questions for your new trust — it is not automatic sign-off.</p>
+            <p class="moving-step-locked" id="homeStep4LockedMsg" hidden>This section unlocks after you sign in and run the checklist in step 3.</p>
           </div>
         </li>
       </ol>
