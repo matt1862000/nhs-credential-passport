@@ -497,7 +497,8 @@
       return null;
     }
 
-    function credHasEvidence(c) { return !!(c && (c.certificate_base64 || c.import_evidence_batch)); }
+    /** True only for ESR CSV imports — manual competencies may have uploaded certificate_base64 but must not show "ESR evidence". */
+    function credHasEsrEvidence(c) { return !!(c && c.import_evidence_batch); }
 
     /** Mirrors backend credential_service completion_dedupe_key / JWT claims (offline duplicate hint). */
     function normalizeStaffIdForDedupe(raw) {
@@ -1320,7 +1321,7 @@
                 <div class="nhsuk-card__actions">
                   <button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>${verifyBtnText}</button>
                   ${!c.import_evidence_batch ? `<button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download evidence</button>` : ''}
-                  ${credHasEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
+                  ${credHasEsrEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
                 </div>
                 ${declinedNote}
@@ -1346,7 +1347,7 @@
                 <span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>
                 <div class="nhsuk-card__actions">
                   ${!c.import_evidence_batch ? `<button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download evidence</button>` : ''}
-                  ${credHasEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
+                  ${credHasEsrEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
                 </div>
               </div>
