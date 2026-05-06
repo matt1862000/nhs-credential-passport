@@ -901,6 +901,16 @@
           csvUploadInFlight = false;
           return;
         }
+        // Very large files can hit proxy timeouts on free hosting. For those, show results and require a click.
+        var validCount = Number(checked.valid_row_count || 0);
+        if (validCount > 250) {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Upload ' + validCount + ' rows';
+          }
+          csvUploadInFlight = false;
+          return;
+        }
         var resultEl = document.getElementById('csvImportResult');
         if (resultEl) {
           resultEl.insertAdjacentHTML('beforeend', '<p class="nhsuk-body-s" id="csvIssuingNote">Please wait — large uploads can take up to a minute.</p>');
