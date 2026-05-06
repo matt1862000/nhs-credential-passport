@@ -236,11 +236,14 @@
         lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
         renderSessionItems(sessionId, lastSessionPayload);
 
+        var actionInFlight = false;
         tbody.addEventListener('click', async function (e) {
-          var v = e.target && e.target.closest('button[data-verify=\"1\"]');
-          var d = e.target && e.target.closest('button[data-decline=\"1\"]');
+          if (actionInFlight) return;
+          var v = e.target && e.target.closest('button[data-verify="1"]');
+          var d = e.target && e.target.closest('button[data-decline="1"]');
           if (!v && !d) return;
           var cid = (v || d).getAttribute('data-cid');
+          actionInFlight = true;
           try {
             if (v) {
               v.disabled = true;
@@ -248,7 +251,7 @@
               await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid)) + '/verify', { method: 'POST' });
             } else {
               var reason = (prompt('Why are you declining this record? (This will be sent back to the doctor)') || '').trim();
-              if (!reason) return;
+              if (!reason) { actionInFlight = false; return; }
               d.disabled = true;
               d.textContent = 'Declining…';
               await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid)) + '/decline', {
@@ -263,8 +266,10 @@
             alert(err.message || err);
             lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
             renderSessionItems(sessionId, lastSessionPayload);
+          } finally {
+            actionInFlight = false;
           }
-        }, { once: true });
+        });
       }
 
       (async function boot() {
