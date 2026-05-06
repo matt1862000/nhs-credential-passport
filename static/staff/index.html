@@ -1169,7 +1169,7 @@
         }
         var list = getStored();
         var n = 0;
-        creds.forEach(function(issued, idx) {
+        creds.forEach(function(issued) {
           list.push({
             credential_id: issued.credential_id,
             verification_url: issued.verification_url,
@@ -1178,8 +1178,8 @@
             module_name: issued.module_name || 'Training',
             expiry_date: issued.expiry_date || '',
             revoked: false,
-            certificate_base64: idx === 0 && evB64 ? evB64 : null,
-            certificate_filename: idx === 0 && evName ? evName : null
+            certificate_base64: evB64 || null,
+            certificate_filename: evName || null
           });
           n++;
         });
