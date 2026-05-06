@@ -76,6 +76,22 @@
       outline-offset: 0;
       border-color: var(--nhsuk-text);
     }
+    .nhs-ac-wrap { position: relative; max-width: 28rem; }
+    .nhs-ac-wrap .nhsuk-input { max-width: none; }
+    .nhs-suggest-list {
+      position: absolute; left: 0; right: 0; top: 100%; margin: 0.15rem 0 0 0;
+      padding: 0; list-style: none; max-height: 14rem; overflow-y: auto;
+      z-index: 40; background: #fff; border: 1px solid var(--nhsuk-border);
+      border-radius: 4px; box-shadow: 0 4px 14px rgba(33, 43, 50, 0.12);
+    }
+    .nhs-suggest-list li {
+      padding: 0.5rem 0.75rem; cursor: pointer; font-size: 1rem; line-height: 1.35;
+      border-bottom: 1px solid var(--nhsuk-border);
+    }
+    .nhs-suggest-list li:last-child { border-bottom: none; }
+    .nhs-suggest-list li:hover,
+    .nhs-suggest-list li[aria-selected="true"] { background: rgba(240, 244, 245, 0.9); }
+    .nhs-suggest-meta { display: block; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
     .nhsuk-file-upload {
       display: block;
       max-width: 28rem;
@@ -262,7 +278,14 @@
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="moduleSelect">Module</label><select class="nhsuk-select" name="module_code" id="moduleSelect"></select></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="completion_date">Completion date</label><input class="nhsuk-input" id="completion_date" type="date" name="completion_date" required></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="expiry_date">Expiry date</label><input class="nhsuk-input" id="expiry_date" type="date" name="expiry_date" required></div>
-        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_name">Issuing Trust name</label><input class="nhsuk-input" id="issuing_trust_name" type="text" name="issuing_trust_name" placeholder="e.g. Sheffield Teaching Hospitals" required autocomplete="organization" aria-describedby="issuing_trust_name_hint"><span class="nhsuk-hint" id="issuing_trust_name_hint">Type at least three characters; the ODS code below is filled from the NHS Organisation Directory when there is a clear match.</span></div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="issuing_trust_name">Issuing Trust name</label>
+          <div class="nhs-ac-wrap" id="trustAcWrap">
+            <input class="nhsuk-input" id="issuing_trust_name" type="text" name="issuing_trust_name" placeholder="e.g. Sheffield Teaching Hospitals" required autocomplete="off" aria-describedby="issuing_trust_name_hint" role="combobox" aria-autocomplete="list" aria-controls="trustSuggestList" aria-expanded="false" spellcheck="false">
+            <ul id="trustSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching NHS organisations"></ul>
+          </div>
+          <span class="nhsuk-hint" id="issuing_trust_name_hint">Start typing to see suggestions from the NHS Organisation Directory. Picking one fills the ODS code automatically; you can still edit both fields.</span>
+        </div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_ods_code">Issuing Trust ODS code</label><input class="nhsuk-input" id="issuing_trust_ods_code" type="text" name="issuing_trust_ods_code" placeholder="e.g. RHQ" required maxlength="16" autocomplete="off" spellcheck="false" aria-describedby="issuing_trust_ods_hint"><span class="nhsuk-hint" id="issuing_trust_ods_hint">Filled automatically from the trust name when possible; change it if the wrong organisation is suggested.</span></div>
         <div class="nhsuk-form-group nhsuk-file-upload">
           <label class="nhsuk-label" for="certificate_upload">Upload certificate (optional)</label>
@@ -367,6 +390,111 @@
 
     var trustNameOdsDebounce = null;
     var lastAutoOdsSuggested = { name: '', ods: '' };
+    var trustSuggestItems = [];
+    var trustSuggestActive = -1;
+
+    function hideTrustSuggest() {
+      var list = document.getElementById('trustSuggestList');
+      var inp = document.getElementById('issuing_trust_name');
+      if (list) {
+        list.hidden = true;
+        list.innerHTML = '';
+      }
+      trustSuggestItems = [];
+      trustSuggestActive = -1;
+      if (inp) {
+        inp.setAttribute('aria-expanded', 'false');
+        inp.removeAttribute('aria-activedescendant');
+      }
+    }
+
+    function applyTrustSuggestIndex(idx) {
+      var inp = document.getElementById('issuing_trust_name');
+      var odsEl = document.getElementById('issuing_trust_ods_code');
+      if (!inp || idx < 0 || idx >= trustSuggestItems.length) return;
+      var it = trustSuggestItems[idx];
+      inp.value = it.name || inp.value;
+      if (odsEl && it.ods) {
+        var curOds = String(odsEl.value || '').trim();
+        var shouldReplace = !curOds || curOds === lastAutoOdsSuggested.ods;
+        if (shouldReplace) odsEl.value = it.ods;
+        lastAutoOdsSuggested = { name: String(inp.value || '').trim(), ods: it.ods };
+      }
+      hideTrustSuggest();
+    }
+
+    function updateTrustSuggestHighlight() {
+      var list = document.getElementById('trustSuggestList');
+      var inp = document.getElementById('issuing_trust_name');
+      if (!list) return;
+      var lis = list.querySelectorAll('li[role="option"]');
+      for (var j = 0; j < lis.length; j++) {
+        lis[j].setAttribute('aria-selected', j === trustSuggestActive ? 'true' : 'false');
+      }
+      if (trustSuggestActive >= 0 && lis[trustSuggestActive] && inp) {
+        inp.setAttribute('aria-activedescendant', lis[trustSuggestActive].id);
+        try { lis[trustSuggestActive].scrollIntoView({ block: 'nearest' }); } catch (e2) {}
+      } else if (inp) {
+        inp.removeAttribute('aria-activedescendant');
+      }
+    }
+
+    function renderTrustSuggest(items) {
+      var list = document.getElementById('trustSuggestList');
+      var inp = document.getElementById('issuing_trust_name');
+      if (!list || !inp) return;
+      trustSuggestItems = items || [];
+      list.innerHTML = '';
+      trustSuggestActive = -1;
+      if (!trustSuggestItems.length) {
+        hideTrustSuggest();
+        return;
+      }
+      for (var i = 0; i < trustSuggestItems.length; i++) {
+        var it = trustSuggestItems[i];
+        var li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.id = 'trust-suggest-opt-' + i;
+        li.dataset.index = String(i);
+        var nameSpan = document.createElement('span');
+        nameSpan.textContent = it.name;
+        li.appendChild(nameSpan);
+        if (it.ods) {
+          var meta = document.createElement('span');
+          meta.className = 'nhs-suggest-meta';
+          meta.textContent = 'ODS ' + it.ods;
+          li.appendChild(meta);
+        }
+        list.appendChild(li);
+      }
+      list.hidden = false;
+      inp.setAttribute('aria-expanded', 'true');
+    }
+
+    function scheduleTrustSuggest() {
+      if (trustNameOdsDebounce) clearTimeout(trustNameOdsDebounce);
+      trustNameOdsDebounce = setTimeout(function () {
+        trustNameOdsDebounce = null;
+        void runTrustSuggest();
+      }, 320);
+    }
+
+    async function runTrustSuggest() {
+      if (!window.NHSOdsTrustSuggest) return;
+      var inp = document.getElementById('issuing_trust_name');
+      if (!inp) return;
+      var q = String(inp.value || '').trim();
+      if (q.length < 2) {
+        hideTrustSuggest();
+        return;
+      }
+      try {
+        var items = await NHSOdsTrustSuggest.search(q, { minLength: 2, limit: 8 });
+        renderTrustSuggest(items);
+      } catch (e) {
+        hideTrustSuggest();
+      }
+    }
 
     function scheduleTrustNameOdsLookup() {
       if (trustNameOdsDebounce) clearTimeout(trustNameOdsDebounce);
@@ -417,6 +545,7 @@
             lastAutoOdsSuggested = { name: '', ods: '' };
           }
           scheduleTrustNameOdsLookup();
+          scheduleTrustSuggest();
         });
         nameEl.addEventListener('change', function () {
           void runTrustNameOdsLookup();
@@ -429,6 +558,50 @@
           else if (v !== lastAutoOdsSuggested.ods) lastAutoOdsSuggested = { name: '', ods: '' };
         });
       }
+    })();
+
+    (function wireTrustSuggestUi() {
+      var inp = document.getElementById('issuing_trust_name');
+      var wrap = document.getElementById('trustAcWrap');
+      var list = document.getElementById('trustSuggestList');
+      if (list) {
+        list.addEventListener('mousedown', function (ev) {
+          if (ev.target.closest('li[role="option"]')) ev.preventDefault();
+        });
+        list.addEventListener('click', function (ev) {
+          var li = ev.target.closest('li[role="option"]');
+          if (!li) return;
+          applyTrustSuggestIndex(parseInt(li.dataset.index, 10));
+        });
+      }
+      if (!inp) return;
+      inp.addEventListener('keydown', function (e) {
+        if (!list || list.hidden || !trustSuggestItems.length) return;
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          hideTrustSuggest();
+          return;
+        }
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          trustSuggestActive = Math.min(trustSuggestActive + 1, trustSuggestItems.length - 1);
+          if (trustSuggestActive < 0) trustSuggestActive = 0;
+          updateTrustSuggestHighlight();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          trustSuggestActive = Math.max(trustSuggestActive - 1, 0);
+          updateTrustSuggestHighlight();
+        } else if (e.key === 'Enter' && trustSuggestActive >= 0) {
+          e.preventDefault();
+          applyTrustSuggestIndex(trustSuggestActive);
+        }
+      });
+      inp.addEventListener('blur', function () {
+        setTimeout(hideTrustSuggest, 200);
+      });
+      document.addEventListener('click', function (e) {
+        if (wrap && !wrap.contains(e.target)) hideTrustSuggest();
+      });
     })();
 
     document.getElementById('btnSignOut').addEventListener('click', async function () {
