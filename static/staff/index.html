@@ -217,6 +217,8 @@
     .nhsuk-tag--expiring { background: #fff3cd; color: #996a00; }
     .nhsuk-tag--expired { background: #fdecea; color: var(--nhsuk-error); }
     .nhsuk-tag--revoked { background: #fdecea; color: var(--nhsuk-error); }
+    .nhsuk-tag--shared { background: #eef0f2; color: var(--nhsuk-secondary-text); border: 1px solid var(--nhsuk-border); }
+    .nhsuk-tag--verified { background: #dbeafe; color: #1d4ed8; border: 1px solid rgba(29, 78, 216, 0.25); }
     .nhsuk-card__actions { margin-top: 1rem; }
     .nhsuk-card__actions .nhsuk-button { margin-right: 0.5rem; margin-bottom: 0.5rem; }
     .nhsuk-summary-list {
@@ -437,6 +439,16 @@
     var lastAutoOdsSuggested = { name: '', ods: '' };
     var trustSuggestItems = [];
     var trustSuggestActive = -1;
+    var verifiedMap = {};
+
+    async function refreshVerifiedMap() {
+      try {
+        var r = await fetch('/api/me/verified-map', { credentials: 'include' });
+        verifiedMap = r.ok ? await r.json() : {};
+      } catch (e) {
+        verifiedMap = {};
+      }
+    }
 
     function hideTrustSuggest() {
       var list = document.getElementById('trustSuggestList');
@@ -771,27 +783,37 @@
       targetEl.appendChild(img);
     }
 
-    function shareSelectedAsLink() {
+    async function shareSelectedAsLink() {
       const checked = document.querySelectorAll('.credential-export-cb:checked');
       const ids = Array.from(checked).map(el => el.getAttribute('data-credential-id'));
       if (ids.length === 0) return;
-      const list = getStored();
-      const bundle = ids.map(id => {
-        const c = list.find(x => x.credential_id === id);
-        return c && c.credential_id ? { id: c.credential_id } : null;
-      }).filter(Boolean);
-      if (bundle.length === 0) {
-        alert('Nothing selected to share.');
-        return;
+      try {
+        var res = await fetch('/api/me/shares', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credential_ids: ids }),
+        });
+        var parsed = await res.text();
+        var data = null;
+        try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          var d = data && data.detail;
+          throw new Error(typeof d === 'string' ? d : 'Could not create share');
+        }
+        var shareUrl = (data && data.share_url) || '';
+        document.getElementById('shareLink').value = shareUrl;
+        const qrTarget = document.getElementById('qrTarget');
+        await renderQrCode(qrTarget, shareUrl);
+        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share with HR';
+        document.querySelector('#qrModal .nhsuk-modal p').textContent =
+          'Send this link or QR to HR. They can review and mark each record as verified.';
+        document.getElementById('qrModal').classList.add('show');
+        await refreshVerifiedMap();
+        renderList();
+      } catch (e) {
+        alert(e.message || e);
       }
-      const encoded = base64urlEncode(JSON.stringify(bundle));
-      const bundleUrl = window.location.origin + '/static/verifier/bundle.html?b=' + encoded;
-      document.getElementById('shareLink').value = bundleUrl;
-      const qrTarget = document.getElementById('qrTarget');
-      void renderQrCode(qrTarget, bundleUrl);
-      document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share selected training';
-      document.querySelector('#qrModal .nhsuk-modal p').textContent = 'One link or QR for all ' + bundle.length + ' selected. A verifier can open this to check them all at once.';
-      document.getElementById('qrModal').classList.add('show');
     }
     document.getElementById('certificate_upload').addEventListener('change', function() {
       const nameEl = document.getElementById('certificate_filename');
@@ -995,6 +1017,9 @@
 
       function cardHtml(c, withCheckbox) {
         const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
+        const v = (verifiedMap && verifiedMap[c.credential_id]) || null;
+        const shareTag = v && v.shared && !v.verified ? '<span class="nhsuk-tag nhsuk-tag--shared" style="margin-left:0.5rem;">SHARED</span>' : '';
+        const verifiedTag = v && v.verified ? '<span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>' : '';
         const checkboxBlock = withCheckbox
           ? `<label class="nhsuk-card__select" style="flex-shrink:0; margin:0.25rem 0 0 0;">
                <input type="checkbox" class="credential-export-cb" data-credential-id="${c.credential_id}" aria-label="Select for export">
@@ -1007,7 +1032,7 @@
               <div style="flex:1;">
                 <h3 class="nhsuk-card__title">${c.module_name}</h3>
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
-                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>
+                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>${verifiedTag}${shareTag}
                 <div class="nhsuk-card__actions">
                   <button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="shareCred('${c.credential_id}')">Share</button>
                   <button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
@@ -1174,6 +1199,7 @@
       var em = document.getElementById('navEmail');
       if (em) em.textContent = NHSAuth.user.email || '';
       await pullMergeFromServer();
+      await refreshVerifiedMap();
       applyProfileToAddForm();
       renderList();
       if (/^#(list|add|import|bulk)$/.test(window.location.hash)) {

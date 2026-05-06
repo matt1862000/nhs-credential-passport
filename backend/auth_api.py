@@ -45,6 +45,16 @@ def require_user_id(request: Request) -> int:
     return uid
 
 
+def require_premium_user(request: Request) -> dict:
+    uid = require_user_id(request)
+    u = db.user_get_by_id(uid)
+    if not u:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    if not db.user_is_premium(u):
+        raise HTTPException(status_code=403, detail="Premium account required")
+    return u
+
+
 def _session_response(data: dict, user_id: int, email: str, request: Request) -> JSONResponse:
     token = session_auth.create_session_token(user_id, email)
     resp = JSONResponse(data)
@@ -201,3 +211,97 @@ async def me_wallet_put(request: Request):
         raise HTTPException(status_code=400, detail="Too many credentials")
     db.user_wallet_put(uid, json.dumps(data))
     return {"ok": True, "count": len(data)}
+
+
+@router.post("/me/shares")
+async def me_shares_post(request: Request):
+    uid = require_user_id(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+    ids = body.get("credential_ids")
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(status_code=400, detail="Expected credential_ids: [..]")
+    ids = [str(x).strip() for x in ids if str(x).strip()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="No credential ids provided")
+    if len(ids) > 200:
+        raise HTTPException(status_code=400, detail="Too many items selected")
+
+    u = db.user_get_by_id(uid)
+    if not u:
+        raise HTTPException(status_code=401, detail="Not signed in")
+
+    # Enrich share items from the current wallet (best-effort)
+    wallet_raw = db.user_wallet_get(uid)
+    try:
+        wallet = json.loads(wallet_raw)
+    except Exception:
+        wallet = []
+    if not isinstance(wallet, list):
+        wallet = []
+    wallet_by_id = {}
+    for c in wallet:
+        if isinstance(c, dict) and c.get("credential_id"):
+            wallet_by_id[str(c.get("credential_id"))] = c
+
+    items = []
+    for cid in ids:
+        w = wallet_by_id.get(cid) or {}
+        items.append(
+            {
+                "credential_id": cid,
+                "module_name": w.get("module_name"),
+                "expiry_date": w.get("expiry_date"),
+            }
+        )
+
+    created = db.share_session_create(
+        doctor_user_id=uid,
+        doctor_email=u.get("email") or "",
+        items=items,
+    )
+    base = str(request.base_url).rstrip("/")
+    share_url = f"{base}/static/hr/?session={created['session_id']}"
+    return {
+        "ok": True,
+        "session_id": created["session_id"],
+        "share_url": share_url,
+    }
+
+
+@router.get("/me/verified-map")
+def me_verified_map(request: Request):
+    uid = require_user_id(request)
+    return db.doctor_verified_map(uid)
+
+
+@router.get("/hr/shares")
+def hr_shares_list(request: Request, limit: int = 50):
+    require_premium_user(request)
+    return {"sessions": db.share_inbox_list(limit=limit)}
+
+
+@router.get("/hr/shares/{session_id}")
+def hr_shares_get(request: Request, session_id: int):
+    require_premium_user(request)
+    s = db.share_session_get(int(session_id))
+    if not s:
+        raise HTTPException(status_code=404, detail="Share not found")
+    return s
+
+
+@router.post("/hr/shares/{session_id}/items/{credential_id}/verify")
+def hr_share_item_verify(request: Request, session_id: int, credential_id: str):
+    hr = require_premium_user(request)
+    s = db.share_session_get(int(session_id))
+    if not s:
+        raise HTTPException(status_code=404, detail="Share not found")
+    # Ensure item exists in session
+    if not any(it.get("credential_id") == credential_id for it in (s.get("items") or [])):
+        raise HTTPException(status_code=404, detail="Item not found in share")
+    db.share_item_set_verified(int(session_id), str(credential_id), int(hr["id"]), True)
+    return {"ok": True}

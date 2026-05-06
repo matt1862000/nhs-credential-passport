@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+import secrets
 
 try:
     import bcrypt  # type: ignore
@@ -49,9 +50,187 @@ def init_db():
                 updated_at TEXT NOT NULL
             )
         """)
+        _ensure_share_tables(conn)
         _ensure_seed_privileged_user(conn)
         conn.commit()
 
+
+def _ensure_share_tables(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS share_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            doctor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            doctor_email TEXT NOT NULL,
+            share_token TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'OPEN'
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS share_items (
+            session_id INTEGER NOT NULL REFERENCES share_sessions(id) ON DELETE CASCADE,
+            credential_id TEXT NOT NULL,
+            module_name TEXT,
+            expiry_date TEXT,
+            verified INTEGER NOT NULL DEFAULT 0,
+            verified_at TEXT,
+            verified_by_user_id INTEGER REFERENCES users(id),
+            PRIMARY KEY (session_id, credential_id)
+        )
+    """)
+
+
+def share_session_create(
+    *,
+    doctor_user_id: int,
+    doctor_email: str,
+    items: list[dict],
+) -> dict:
+    """
+    Create a share session containing credential ids.
+    items: [{ credential_id, module_name?, expiry_date? }, ...]
+    """
+    token = secrets.token_urlsafe(24)
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        cur = conn.execute(
+            "INSERT INTO share_sessions (created_at, doctor_user_id, doctor_email, share_token, status) VALUES (?, ?, ?, ?, 'OPEN')",
+            (now, doctor_user_id, (doctor_email or "").strip().lower(), token),
+        )
+        session_id = int(cur.lastrowid)
+        for it in items or []:
+            cid = (it.get("credential_id") or "").strip()
+            if not cid:
+                continue
+            conn.execute(
+                "INSERT OR IGNORE INTO share_items (session_id, credential_id, module_name, expiry_date) VALUES (?, ?, ?, ?)",
+                (session_id, cid, it.get("module_name"), it.get("expiry_date")),
+            )
+        conn.commit()
+    return {"session_id": session_id, "share_token": token, "created_at": now}
+
+
+def share_inbox_list(limit: int = 50) -> list[dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT
+              s.id as session_id,
+              s.created_at as created_at,
+              s.doctor_email as doctor_email,
+              s.status as status,
+              COUNT(i.credential_id) as total_count,
+              SUM(CASE WHEN i.verified = 1 THEN 1 ELSE 0 END) as verified_count
+            FROM share_sessions s
+            LEFT JOIN share_items i ON i.session_id = s.id
+            GROUP BY s.id
+            ORDER BY s.id DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(limit or 50), 200)),),
+        ).fetchall()
+    out = []
+    for r in rows:
+        out.append(
+            {
+                "session_id": r["session_id"],
+                "created_at": r["created_at"],
+                "doctor_email": r["doctor_email"],
+                "status": r["status"],
+                "total_count": int(r["total_count"] or 0),
+                "verified_count": int(r["verified_count"] or 0),
+            }
+        )
+    return out
+
+
+def share_session_get(session_id: int) -> Optional[dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        s = conn.execute(
+            "SELECT id as session_id, created_at, doctor_user_id, doctor_email, share_token, status FROM share_sessions WHERE id = ?",
+            (int(session_id),),
+        ).fetchone()
+        if not s:
+            return None
+        items = conn.execute(
+            """
+            SELECT credential_id, module_name, expiry_date, verified, verified_at, verified_by_user_id
+            FROM share_items
+            WHERE session_id = ?
+            ORDER BY credential_id
+            """,
+            (int(session_id),),
+        ).fetchall()
+    return {
+        "session_id": s["session_id"],
+        "created_at": s["created_at"],
+        "doctor_user_id": s["doctor_user_id"],
+        "doctor_email": s["doctor_email"],
+        "share_token": s["share_token"],
+        "status": s["status"],
+        "items": [
+            {
+                "credential_id": r["credential_id"],
+                "module_name": r["module_name"],
+                "expiry_date": r["expiry_date"],
+                "verified": bool(r["verified"]),
+                "verified_at": r["verified_at"],
+                "verified_by_user_id": r["verified_by_user_id"],
+            }
+            for r in items
+        ],
+    }
+
+
+def share_item_set_verified(session_id: int, credential_id: str, hr_user_id: int, verified: bool = True) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.execute(
+            """
+            UPDATE share_items
+            SET verified = ?, verified_at = ?, verified_by_user_id = ?
+            WHERE session_id = ? AND credential_id = ?
+            """,
+            (
+                1 if verified else 0,
+                datetime.utcnow().isoformat() if verified else None,
+                int(hr_user_id) if verified else None,
+                int(session_id),
+                str(credential_id),
+            ),
+        )
+        conn.commit()
+
+
+def doctor_verified_map(doctor_user_id: int) -> dict:
+    """Return { credential_id: { shared, verified, verified_at } } for a doctor."""
+    out: dict = {}
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT i.credential_id, i.verified, i.verified_at
+            FROM share_sessions s
+            JOIN share_items i ON i.session_id = s.id
+            WHERE s.doctor_user_id = ?
+            """,
+            (int(doctor_user_id),),
+        ).fetchall()
+    for r in rows:
+        cid = r["credential_id"]
+        prev = out.get(cid) or {"shared": True, "verified": False, "verified_at": None}
+        prev["shared"] = True
+        if bool(r["verified"]):
+            prev["verified"] = True
+            prev["verified_at"] = r["verified_at"]
+        out[cid] = prev
+    return out
 
 def _ensure_seed_privileged_user(conn: sqlite3.Connection) -> None:
     """
