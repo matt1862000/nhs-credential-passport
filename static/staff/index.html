@@ -237,6 +237,17 @@
     }
     .nhsuk-filter-bar .nhsuk-form-group { margin-bottom: 0; }
     .nhsuk-filter-bar .nhsuk-label { font-size: 0.9375rem; margin-bottom: 0.25rem; }
+    .staff-verify-all-banner {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem;
+      margin: 1rem 0 1.25rem 0; padding: 1rem 1.25rem;
+      background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
+      border: 1px solid rgba(29, 78, 216, 0.2); border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(33, 43, 50, 0.06);
+    }
+    .staff-verify-all-banner__text { flex: 1; min-width: 12rem; max-width: 36rem; }
+    .staff-verify-all-banner__title { margin: 0 0 0.35rem 0; font-size: 1.0625rem; font-weight: 700; color: var(--nhsuk-text); }
+    .staff-verify-all-banner__desc { margin: 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); line-height: 1.45; }
+    .staff-verify-all-banner .nhsuk-button { flex-shrink: 0; white-space: nowrap; }
     #qrModal { display: none; position: fixed; inset: 0; background: rgba(33, 43, 50, 0.35); align-items: center; justify-content: center; z-index: 10; }
     #qrModal.show { display: flex; }
     #qrModal .nhsuk-modal {
@@ -316,6 +327,13 @@
             <option value="">All modules</option>
           </select>
         </div>
+      </div>
+      <div id="verifyAllHrBanner" class="staff-verify-all-banner" hidden>
+        <div class="staff-verify-all-banner__text">
+          <p class="staff-verify-all-banner__title">Verify all with HR</p>
+          <p class="staff-verify-all-banner__desc">Sends every training record in your list to HR in one go — the same as tapping &ldquo;Verify with HR&rdquo; on each card.</p>
+        </div>
+        <button type="button" class="nhsuk-button" id="btnVerifyAllHrList" disabled title="Add training first">Verify all with HR</button>
       </div>
       <div id="credentialList"></div>
     </section>
@@ -737,6 +755,8 @@
     document.getElementById('btnShareSelected').addEventListener('click', function () { closeBulkActionsMenu(); shareSelectedAsLink(); });
     var btnVerifyAllHr = document.getElementById('btnVerifyAllHr');
     if (btnVerifyAllHr) btnVerifyAllHr.addEventListener('click', function () { closeBulkActionsMenu(); verifyAllWithHr(); });
+    var btnVerifyAllHrList = document.getElementById('btnVerifyAllHrList');
+    if (btnVerifyAllHrList) btnVerifyAllHrList.addEventListener('click', function () { verifyAllWithHr(); });
     document.getElementById('btnBulkSelectAll').addEventListener('click', function() {
       document.querySelectorAll('.credential-export-cb').forEach(function(cb) { cb.checked = true; });
       updateBulkExportState();
@@ -835,8 +855,14 @@
         alert('No training records to send to HR.');
         return;
       }
-      // Reuse the same backend flow; it creates a session and marks items as PENDING.
+      var btnList = document.getElementById('btnVerifyAllHrList');
+      var btnBulk = document.getElementById('btnVerifyAllHr');
+      function setBusy(busy) {
+        if (btnList) { btnList.disabled = busy || !isProfileComplete() || ids.length === 0; btnList.textContent = busy ? 'Sending…' : 'Verify all with HR'; }
+        if (btnBulk) { btnBulk.disabled = busy || !isProfileComplete(); btnBulk.textContent = busy ? 'Sending…' : 'Verify all with HR'; }
+      }
       try {
+        setBusy(true);
         var res = await fetch('/api/me/shares', {
           method: 'POST',
           credentials: 'include',
@@ -850,18 +876,15 @@
           var d = data && data.detail;
           throw new Error(typeof d === 'string' ? d : 'Could not create verification request');
         }
-        var shareUrl = (data && data.share_url) || '';
-        document.getElementById('shareLink').value = shareUrl;
-        const qrTarget = document.getElementById('qrTarget');
-        await renderQrCode(qrTarget, shareUrl);
-        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Verify with HR';
-        document.querySelector('#qrModal .nhsuk-modal p').textContent =
-          'Send this link or QR to HR. They can mark each record as verified or declined.';
-        document.getElementById('qrModal').classList.add('show');
         await refreshVerifiedMap();
         renderList();
       } catch (e) {
         alert(e.message || e);
+        renderList();
+      } finally {
+        if (btnList) btnList.textContent = 'Verify all with HR';
+        if (btnBulk) btnBulk.textContent = 'Verify all with HR';
+        updateVerifyAllHrControls();
       }
     }
     document.getElementById('certificate_upload').addEventListener('change', function() {
@@ -1131,6 +1154,7 @@
       const panel = document.getElementById('bulkExportPanel');
       if (panel) panel.style.display = filtered.length === 0 ? 'none' : 'block';
       updateBulkExportState();
+      updateVerifyAllHrControls();
     }
 
     function removeCred(credentialId) {
@@ -1285,13 +1309,31 @@
       return !!(u && (u.display_name || '').trim() && (u.gmc_number || '').trim() && (u.current_trust || '').trim());
     }
 
+    function updateVerifyAllHrControls() {
+      var list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
+      var count = list.length;
+      var ok = isProfileComplete();
+      var btnList = document.getElementById('btnVerifyAllHrList');
+      var btnBulk = document.getElementById('btnVerifyAllHr');
+      var banner = document.getElementById('verifyAllHrBanner');
+      if (banner) banner.hidden = count === 0;
+      var disable = !ok || count === 0;
+      if (btnList) {
+        btnList.disabled = disable;
+        btnList.title = !ok ? 'Complete your profile first' : (count === 0 ? 'Add training first' : 'Send all records to HR for verification');
+      }
+      if (btnBulk) {
+        btnBulk.disabled = disable;
+        btnBulk.title = btnList ? btnList.title : '';
+      }
+    }
+
     function applyProfileGateUi() {
       var ok = isProfileComplete();
       var n = document.getElementById('profileGateNotice');
       if (n) n.hidden = ok;
-      var btnAll = document.getElementById('btnVerifyAllHr');
-      if (btnAll) btnAll.disabled = !ok;
       updateBulkExportState();
+      updateVerifyAllHrControls();
     }
 
     function openProfileForVerification() {
