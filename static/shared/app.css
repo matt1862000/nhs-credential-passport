@@ -114,6 +114,48 @@ a:hover {
   white-space: nowrap;
 }
 
+/* Header hamburger menu */
+.nhsuk-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.nhsuk-menu__panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  min-width: 12.5rem;
+  background: #fff;
+  border: 1px solid var(--nhsuk-border);
+  border-radius: 6px;
+  box-shadow: 0 10px 28px rgba(33, 43, 50, 0.22);
+  padding: 0.35rem;
+  z-index: 60;
+}
+.nhsuk-menu__panel a,
+.nhsuk-menu__panel button {
+  display: flex;
+  width: 100%;
+  justify-content: flex-start;
+  color: var(--nhsuk-link);
+  background: transparent;
+  border: none;
+  padding: 0.6rem 0.7rem;
+  border-radius: 4px;
+  font-size: 0.9375rem;
+  cursor: pointer;
+  text-decoration: none;
+}
+.nhsuk-menu__panel a:hover,
+.nhsuk-menu__panel button:hover {
+  background: rgba(0, 94, 184, 0.08);
+}
+.nhsuk-menu__panel a:focus,
+.nhsuk-menu__panel button:focus {
+  outline: 3px solid var(--nhsuk-focus);
+  outline-offset: 1px;
+}
+
 /* Main */
 .nhsuk-main {
   max-width: 1040px;

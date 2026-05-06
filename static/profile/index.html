@@ -50,9 +50,14 @@
       </div>
       <nav class="nhsuk-topnav" aria-label="Account">
         <a href="/static/dashboard/">&larr; Dashboard</a>
-        <a href="/static/profile/">Profile</a>
         <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
-        <button type="button" id="btnSignOut">Sign out</button>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
       </nav>
     </div>
   </header>
@@ -314,6 +319,34 @@
           setStatus(err.message || 'Could not save profile', 'err');
         }
       });
+
+      (function wireHamburgerMenu() {
+        var btn = document.getElementById('btnMenu');
+        var panel = document.getElementById('menuPanel');
+        if (!btn || !panel) return;
+
+        function close() {
+          panel.hidden = true;
+          btn.setAttribute('aria-expanded', 'false');
+        }
+        function open() {
+          panel.hidden = false;
+          btn.setAttribute('aria-expanded', 'true');
+        }
+        btn.addEventListener('click', function (e) {
+          e.preventDefault();
+          if (panel.hidden) open();
+          else close();
+        });
+        document.addEventListener('click', function (e) {
+          if (panel.hidden) return;
+          if (btn.contains(e.target) || panel.contains(e.target)) return;
+          close();
+        }, true);
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') close();
+        });
+      })();
     })();
   </script>
 </body>
