@@ -1310,6 +1310,7 @@
         var verifyBtnTitle = !profileOk ? 'Complete your profile to verify with HR' : (alreadyPending ? 'Already sent to HR' : (alreadyDecided ? 'Decision already recorded' : ''));
         if (verifyBtnTitle) verifyBtnAttrs += ' title="' + verifyBtnTitle.replace(/"/g, '&quot;') + '"';
         var verifyBtnOnclick = profileOk ? `onclick="shareCred('${c.credential_id}')"` : `onclick="return openProfileForVerification();"`;
+        var showVerifyHrButton = !(v && v.shared && (st === 'VERIFIED' || st === 'DECLINED'));
         return `
           <div class="nhsuk-card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
             <div class="nhsuk-card__row" style="display:flex; align-items:flex-start; gap:0.75rem;">
@@ -1319,7 +1320,7 @@
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
                 <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>${verifiedTag}${declinedTag}
                 <div class="nhsuk-card__actions">
-                  <button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>${verifyBtnText}</button>
+                  ${showVerifyHrButton ? `<button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>${verifyBtnText}</button>` : ''}
                   ${!c.import_evidence_batch ? `<button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download evidence</button>` : ''}
                   ${credHasEsrEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
