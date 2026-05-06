@@ -394,6 +394,7 @@
   </main>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js" crossorigin="anonymous"></script>
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/ods-trust-suggest.js"></script>
@@ -748,6 +749,28 @@
       return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     }
 
+    async function renderQrCode(targetEl, text) {
+      if (!targetEl) return;
+      targetEl.innerHTML = '';
+      try {
+        if (window.QRCode && typeof QRCode.toCanvas === 'function') {
+          var canvas = document.createElement('canvas');
+          await QRCode.toCanvas(canvas, text, { width: 200, margin: 1 });
+          canvas.setAttribute('role', 'img');
+          canvas.setAttribute('aria-label', 'QR code – scan to verify training');
+          targetEl.appendChild(canvas);
+          return;
+        }
+      } catch (e) {}
+      // Fallback to external image service if library fails
+      const img = document.createElement('img');
+      img.width = 200;
+      img.height = 200;
+      img.alt = 'QR code – scan to verify training';
+      img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(text);
+      targetEl.appendChild(img);
+    }
+
     function shareSelectedAsLink() {
       const checked = document.querySelectorAll('.credential-export-cb:checked');
       const ids = Array.from(checked).map(el => el.getAttribute('data-credential-id'));
@@ -765,8 +788,7 @@
       const bundleUrl = window.location.origin + '/static/verifier/bundle.html?b=' + encoded;
       document.getElementById('shareLink').value = bundleUrl;
       const qrTarget = document.getElementById('qrTarget');
-      const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(bundleUrl);
-      qrTarget.innerHTML = '<img src="' + qrImg + '" alt="QR code – scan to verify training" width="200" height="200">';
+      void renderQrCode(qrTarget, bundleUrl);
       document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share selected training';
       document.querySelector('#qrModal .nhsuk-modal p').textContent = 'One link or QR for all ' + bundle.length + ' selected. A verifier can open this to check them all at once.';
       document.getElementById('qrModal').classList.add('show');
@@ -1023,8 +1045,7 @@
       document.getElementById('shareLink').value = c.verification_url;
       const qrTarget = document.getElementById('qrTarget');
       const url = c.verification_url;
-      const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(url);
-      qrTarget.innerHTML = '<img src="' + qrImg + '" alt="QR code – scan to verify training" width="200" height="200">';
+      void renderQrCode(qrTarget, url);
       document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share training';
       document.querySelector('#qrModal .nhsuk-modal p').textContent = 'Scan the QR code or share the link below so a receiving Trust can verify this training record.';
       document.getElementById('qrModal').classList.add('show');
