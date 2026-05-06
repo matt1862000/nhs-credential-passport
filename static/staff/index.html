@@ -1437,15 +1437,20 @@
 
     function updateVerifyAllHrControls() {
       var list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
-      var count = list.length;
+      var unverified = list.filter(function (c) {
+        var v = (verifiedMap && verifiedMap[String(c.credential_id).trim()]) || null;
+        var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
+        return !(v && v.shared && (st === 'VERIFIED' || st === 'PENDING'));
+      });
+      var count = unverified.length;
       var ok = isProfileComplete();
       var btnList = document.getElementById('btnVerifyAllHrList');
       var banner = document.getElementById('verifyAllHrBanner');
-      if (banner) banner.hidden = count === 0;
-      var disable = !ok || count === 0;
+      if (banner) banner.hidden = count <= 1;
+      var disable = !ok || count <= 1;
       if (btnList) {
         btnList.disabled = disable;
-        btnList.title = !ok ? 'Complete your profile first' : (count === 0 ? 'Add training first' : 'Send all records to HR for verification');
+        btnList.title = !ok ? 'Complete your profile first' : (count <= 1 ? 'Use the Verify with HR button on individual records' : 'Send all unverified records to HR for verification');
       }
     }
 
