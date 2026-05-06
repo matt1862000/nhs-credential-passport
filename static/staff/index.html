@@ -474,6 +474,31 @@
     ];
     function getStored() { return window.NHSWallet ? NHSWallet.getWallet() : JSON.parse(localStorage.getItem('nhs_credentials') || '[]'); }
 
+    var NHS_EV_PREFIX = 'nhs_ev_';
+
+    function saveImportEvidence(batchId, b64, filename) {
+      try {
+        localStorage.setItem(NHS_EV_PREFIX + batchId, JSON.stringify({ b64: b64, filename: filename }));
+      } catch (e) {}
+    }
+
+    function getImportEvidence(batchId) {
+      if (!batchId) return null;
+      try {
+        var raw = localStorage.getItem(NHS_EV_PREFIX + batchId);
+        return raw ? JSON.parse(raw) : null;
+      } catch (e) { return null; }
+    }
+
+    function resolveCredCertificate(c) {
+      if (!c) return null;
+      if (c.certificate_base64) return { b64: c.certificate_base64, filename: c.certificate_filename || 'evidence' };
+      if (c.import_evidence_batch) return getImportEvidence(c.import_evidence_batch);
+      return null;
+    }
+
+    function credHasEvidence(c) { return !!(c && (c.certificate_base64 || c.import_evidence_batch)); }
+
     /** Mirrors backend credential_service completion_dedupe_key / JWT claims (offline duplicate hint). */
     function normalizeStaffIdForDedupe(raw) {
       var s = String(raw || '').trim();
@@ -1167,6 +1192,8 @@
             evB64 = null;
           }
         }
+        var batchId = evB64 ? (Date.now().toString(36) + Math.random().toString(36).slice(2, 6)) : null;
+        if (batchId) saveImportEvidence(batchId, evB64, evName);
         var list = getStored();
         var n = 0;
         creds.forEach(function(issued, idx) {
@@ -1179,7 +1206,8 @@
             expiry_date: issued.expiry_date || '',
             revoked: false,
             certificate_base64: idx === 0 && evB64 ? evB64 : null,
-            certificate_filename: idx === 0 && evName ? evName : null
+            certificate_filename: idx === 0 && evName ? evName : null,
+            import_evidence_batch: batchId || null
           });
           n++;
         });
@@ -1292,7 +1320,7 @@
                 <div class="nhsuk-card__actions">
                   <button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>${verifyBtnText}</button>
                   <button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
-                  ${c.certificate_base64 ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
+                  ${credHasEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
                 </div>
                 ${declinedNote}
@@ -1318,7 +1346,7 @@
                 <span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>
                 <div class="nhsuk-card__actions">
                   <button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
-                  ${c.certificate_base64 ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
+                  ${credHasEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
                 </div>
               </div>
@@ -1429,12 +1457,13 @@
     function downloadCertificate(credentialId) {
       const list = getStored();
       const c = list.find(x => x.credential_id === credentialId);
-      if (!c || !c.certificate_base64) { alert('No ESR evidence for this training record'); return; }
-      const name = c.certificate_filename || 'certificate';
+      const ev = resolveCredCertificate(c);
+      if (!ev) { alert('No ESR evidence for this training record'); return; }
+      const name = ev.filename || 'evidence';
       const ext = (name.split('.').pop() || '').toLowerCase();
-      const mime = ext === 'pdf' ? 'application/pdf' : (ext === 'png' ? 'image/png' : 'image/jpeg');
+      const mime = ext === 'pdf' ? 'application/pdf' : (ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg'));
       const a = document.createElement('a');
-      a.href = 'data:' + mime + ';base64,' + c.certificate_base64;
+      a.href = 'data:' + mime + ';base64,' + ev.b64;
       a.download = name;
       a.click();
     }
