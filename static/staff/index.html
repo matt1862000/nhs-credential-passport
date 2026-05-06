@@ -778,10 +778,10 @@
       const list = getStored();
       const bundle = ids.map(id => {
         const c = list.find(x => x.credential_id === id);
-        return c && c.jwt ? { id: c.credential_id, jwt: c.jwt } : null;
+        return c && c.credential_id ? { id: c.credential_id } : null;
       }).filter(Boolean);
       if (bundle.length === 0) {
-        alert('Selected training records do not have verification data. Add them again to get shareable links.');
+        alert('Nothing selected to share.');
         return;
       }
       const encoded = base64urlEncode(JSON.stringify(bundle));

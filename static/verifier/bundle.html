@@ -195,7 +195,7 @@
       for (var i = 0; i < items.length; i++) {
         var item = items[i];
         try {
-          var url = '/api/credentials/verify/' + encodeURIComponent(item.id) + '?jwt=' + encodeURIComponent(item.jwt);
+          var url = '/api/credentials/verify/' + encodeURIComponent(item.id) + (item.jwt ? ('?jwt=' + encodeURIComponent(item.jwt)) : '');
           var res = await fetch(url);
           var data = await res.json();
           var status = (data.status || 'UNVERIFIED').toLowerCase();
