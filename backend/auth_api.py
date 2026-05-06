@@ -194,6 +194,24 @@ async def me_profile_put(request: Request):
     else:
         current_trust = u.get("current_trust")
 
+    merged = {
+        "display_name": display_name,
+        "gmc_number": gmc,
+        "current_trust": current_trust,
+    }
+    if not db.user_is_premium(u):
+        missing = _profile_missing_fields(merged)
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail="All profile fields are required (missing: "
+                + ", ".join(missing)
+                + ").",
+            )
+        gn = _normalize_gmc(str(gmc or ""))
+        if not gn or not GMC_RE.match(gn):
+            raise HTTPException(status_code=400, detail="GMC number must be exactly 7 digits")
+
     db.user_set_profile(uid, display_name, gmc, current_trust)
     return {"ok": True}
 

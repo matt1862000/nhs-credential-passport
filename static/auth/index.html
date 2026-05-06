@@ -130,7 +130,11 @@
             await NHSWallet.resetDeviceWalletCache();
           }
           await NHSAuth.pullWalletMerge();
-          NHSAuth.redirectAfterAuth('/static/dashboard/');
+          if (!NHSAuth.user.premium && !NHSAuth.isProfileComplete()) {
+            NHSAuth.redirectAfterAuth('/static/profile/?required=1');
+          } else {
+            NHSAuth.redirectAfterAuth('/static/dashboard/');
+          }
         } catch (err) {
           showErr('signInError', err.message || 'Could not sign in');
         }
@@ -156,7 +160,12 @@
       /* If already signed in, skip auth page. */
       (async function () {
         await NHSAuth.refresh();
-        if (NHSAuth.user) NHSAuth.redirectAfterAuth('/static/dashboard/');
+        if (!NHSAuth.user) return;
+        if (!NHSAuth.user.premium && !NHSAuth.isProfileComplete()) {
+          window.location.replace('/static/profile/?required=1');
+          return;
+        }
+        NHSAuth.redirectAfterAuth('/static/dashboard/');
       })();
     })();
   </script>

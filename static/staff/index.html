@@ -1313,6 +1313,7 @@
     (async function boot() {
       await NHSAuth.refresh();
       if (!NHSAuth.requireAuth()) return;
+      if (!NHSAuth.requireProfileComplete()) return;
       var em = document.getElementById('navEmail');
       if (em) em.textContent = NHSAuth.user.email || '';
       await pullMergeFromServer();

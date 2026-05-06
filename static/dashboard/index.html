@@ -161,6 +161,7 @@
       (async function boot() {
         await NHSAuth.refresh();
         if (!NHSAuth.requireAuth()) return;
+        if (!NHSAuth.requireProfileComplete()) return;
         document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
         var first = (NHSAuth.user.email || '').split('@')[0];
         if (first) document.getElementById('welcomeTitle').textContent = 'Hello, ' + first;

@@ -194,6 +194,30 @@
       return false;
     },
 
+    /** Full name, GMC, current trust — required for standard (non-premium) accounts. */
+    isProfileComplete() {
+      var u = this.user;
+      if (!u) return false;
+      return !!(
+        String(u.display_name || '').trim() &&
+        String(u.gmc_number || '').trim() &&
+        String(u.current_trust || '').trim()
+      );
+    },
+
+    /**
+     * Redirect doctors to profile until mandatory fields are filled.
+     * Premium (e.g. HR) accounts are exempt. Profile and auth pages are exempt.
+     */
+    requireProfileComplete() {
+      if (!this.user || this.user.premium) return true;
+      if (this.isProfileComplete()) return true;
+      var path = window.location.pathname || '';
+      if (path.indexOf('/static/profile/') === 0 || path.indexOf('/static/auth/') === 0) return true;
+      window.location.replace('/static/profile/?required=1');
+      return false;
+    },
+
     redirectAfterAuth(fallback) {
       var p = new URLSearchParams(window.location.search);
       var next = p.get('next');

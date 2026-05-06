@@ -109,6 +109,7 @@
     (async function () {
       await NHSAuth.refresh();
       if (!NHSAuth.requireAuth()) return;
+      if (!NHSAuth.requireProfileComplete()) return;
       document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
       await NHSAuth.pullWalletMerge();
       var list = window.NHSWallet ? NHSWallet.getWallet() : [];
