@@ -385,8 +385,8 @@
 
     <div id="qrModal" aria-modal="true" aria-labelledby="qrModalTitle" role="dialog">
       <div class="nhsuk-modal">
-        <h3 id="qrModalTitle">Share training</h3>
-        <p>Scan the QR code or share the link below so a receiving Trust can verify this training record.</p>
+        <h3 id="qrModalTitle">Share with HR</h3>
+        <p>Send this link or QR to HR. They can review and mark records as verified.</p>
         <div id="qrTarget" style="display:block; width:200px; height:200px; margin:0.5rem 0;"></div>
         <label class="nhsuk-label" for="shareLink">Verification link</label>
         <input type="text" id="shareLink" readonly onclick="this.select()">
@@ -1044,7 +1044,7 @@
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
                 <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>${verifiedTag}${shareTag}
                 <div class="nhsuk-card__actions">
-                  <button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="shareCred('${c.credential_id}')">Share</button>
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="shareCred('${c.credential_id}')">Share with HR</button>
                   <button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
                   ${c.certificate_base64 ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">Download certificate</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
@@ -1073,17 +1073,34 @@
       renderList();
     }
 
-    function shareCred(credentialId) {
-      const list = getStored();
-      const c = list.find(x => x.credential_id === credentialId);
-      if (!c) return;
-      document.getElementById('shareLink').value = c.verification_url;
-      const qrTarget = document.getElementById('qrTarget');
-      const url = c.verification_url;
-      void renderQrCode(qrTarget, url);
-      document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share training';
-      document.querySelector('#qrModal .nhsuk-modal p').textContent = 'Scan the QR code or share the link below so a receiving Trust can verify this training record.';
-      document.getElementById('qrModal').classList.add('show');
+    async function shareCred(credentialId) {
+      try {
+        var res = await fetch('/api/me/shares', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credential_ids: [credentialId] }),
+        });
+        var parsed = await res.text();
+        var data = null;
+        try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          var d = data && data.detail;
+          throw new Error(typeof d === 'string' ? d : 'Could not create share');
+        }
+        var shareUrl = (data && data.share_url) || '';
+        document.getElementById('shareLink').value = shareUrl;
+        const qrTarget = document.getElementById('qrTarget');
+        await renderQrCode(qrTarget, shareUrl);
+        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share with HR';
+        document.querySelector('#qrModal .nhsuk-modal p').textContent =
+          'Send this link or QR to HR. They can review and mark records as verified.';
+        document.getElementById('qrModal').classList.add('show');
+        await refreshVerifiedMap();
+        renderList();
+      } catch (e) {
+        alert(e.message || e);
+      }
     }
 
     function downloadPdf(credentialId) {
