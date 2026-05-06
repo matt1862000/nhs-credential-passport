@@ -112,7 +112,7 @@
     });
 
     if (payloads.length === 0) {
-      return '<p class="moving-muted">No training records yet.</p>';
+      return '<p class="moving-muted"><a href="/static/staff/#list">Add or import your previously completed training</a>.</p>';
     }
 
     var nMet = 0;
