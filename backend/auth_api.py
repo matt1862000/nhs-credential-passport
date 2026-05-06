@@ -297,6 +297,8 @@ async def me_shares_post(request: Request):
                 "credential_id": cid,
                 "module_name": w.get("module_name"),
                 "expiry_date": w.get("expiry_date"),
+                "certificate_base64": w.get("certificate_base64"),
+                "certificate_filename": w.get("certificate_filename"),
             }
         )
 

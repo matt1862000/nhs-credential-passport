@@ -139,6 +139,10 @@ def _ensure_share_tables(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE share_items ADD COLUMN decision_by_user_id INTEGER REFERENCES users(id)")
     if "decline_reason" not in cols:
         conn.execute("ALTER TABLE share_items ADD COLUMN decline_reason TEXT")
+    if "certificate_base64" not in cols:
+        conn.execute("ALTER TABLE share_items ADD COLUMN certificate_base64 TEXT")
+    if "certificate_filename" not in cols:
+        conn.execute("ALTER TABLE share_items ADD COLUMN certificate_filename TEXT")
 
 
 def share_session_create(
@@ -149,7 +153,7 @@ def share_session_create(
 ) -> dict:
     """
     Create a share session containing credential ids.
-    items: [{ credential_id, module_name?, expiry_date? }, ...]
+    items: [{ credential_id, module_name?, expiry_date?, certificate_base64?, certificate_filename? }, ...]
     """
     token = secrets.token_urlsafe(24)
     now = datetime.utcnow().isoformat()
@@ -165,8 +169,20 @@ def share_session_create(
             if not cid:
                 continue
             conn.execute(
-                "INSERT OR IGNORE INTO share_items (session_id, credential_id, module_name, expiry_date, status) VALUES (?, ?, ?, ?, 'PENDING')",
-                (session_id, cid, it.get("module_name"), it.get("expiry_date")),
+                """
+                INSERT OR IGNORE INTO share_items (
+                    session_id, credential_id, module_name, expiry_date, status,
+                    certificate_base64, certificate_filename
+                ) VALUES (?, ?, ?, ?, 'PENDING', ?, ?)
+                """,
+                (
+                    session_id,
+                    cid,
+                    it.get("module_name"),
+                    it.get("expiry_date"),
+                    it.get("certificate_base64"),
+                    it.get("certificate_filename"),
+                ),
             )
         conn.commit()
     return {"session_id": session_id, "share_token": token, "created_at": now}
@@ -238,7 +254,8 @@ def share_session_get(session_id: int) -> Optional[dict]:
             return None
         items = conn.execute(
             """
-            SELECT credential_id, module_name, expiry_date, status, decision_at, decision_by_user_id, decline_reason
+            SELECT credential_id, module_name, expiry_date, status, decision_at, decision_by_user_id, decline_reason,
+                   certificate_base64, certificate_filename
             FROM share_items
             WHERE session_id = ?
             ORDER BY credential_id
@@ -264,6 +281,8 @@ def share_session_get(session_id: int) -> Optional[dict]:
                 "decision_at": r["decision_at"],
                 "decision_by_user_id": r["decision_by_user_id"],
                 "decline_reason": r["decline_reason"],
+                "certificate_base64": r["certificate_base64"],
+                "certificate_filename": r["certificate_filename"],
             }
             for r in items
         ],

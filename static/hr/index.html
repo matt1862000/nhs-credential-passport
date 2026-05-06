@@ -43,6 +43,19 @@
     .hr-btn-small { padding: 0.55rem 0.9rem; font-size: 0.9375rem; }
     .hr-session-meta { display: block; margin: 0.35rem 0 0 0; font-size: 0.875rem; color: var(--nhsuk-secondary-text); line-height: 1.45; max-width: 42rem; }
     .hr-session-meta .hr-doctor-name { display: inline; font-size: inherit; }
+    .hr-module-name-btn {
+      display: inline; margin: 0; padding: 0; border: none; background: none; color: #005eb8;
+      font: inherit; font-weight: 700; text-align: left; cursor: pointer; text-decoration: underline;
+      text-underline-offset: 2px; max-width: 100%;
+    }
+    .hr-module-name-btn:hover { color: #003087; }
+    .hr-module-name-btn:focus { outline: 3px solid #ffbf47; outline-offset: 2px; }
+    .hr-modal { position: fixed; inset: 0; z-index: 200; background: rgba(15, 23, 42, 0.55); display: flex; align-items: center; justify-content: center; padding: 1rem; }
+    .hr-modal[hidden] { display: none !important; }
+    .hr-modal__panel { background: #fff; border-radius: 8px; max-width: min(900px, 96vw); max-height: 92vh; overflow: auto; padding: 1.25rem 1.5rem; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25); }
+    .hr-modal__title { margin: 0 0 0.75rem 0; font-size: 1.125rem; }
+    .hr-cert-img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+    .hr-cert-iframe { width: 100%; min-height: 70vh; border: 1px solid #d8dde0; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -128,6 +141,14 @@
         </table>
       </div>
     </div>
+
+    <div id="hrCertModal" class="hr-modal" hidden role="dialog" aria-modal="true" aria-labelledby="hrCertModalTitle">
+      <div class="hr-modal__panel">
+        <h3 id="hrCertModalTitle" class="hr-modal__title">Evidence</h3>
+        <div id="hrCertModalBody"></div>
+        <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="hrCertModalClose" style="margin-top:1rem;">Close</button>
+      </div>
+    </div>
   </main>
 
   <script src="/static/shared/auth.js"></script>
@@ -200,6 +221,32 @@
       var inboxTab = 'new';
       var itemsTab = 'new';
       var lastSessionPayload = null;
+
+      function closeHrCertModal() {
+        var modal = document.getElementById('hrCertModal');
+        var body = document.getElementById('hrCertModalBody');
+        if (body) body.innerHTML = '';
+        if (modal) modal.hidden = true;
+      }
+
+      function openHrCertModal(it) {
+        var modal = document.getElementById('hrCertModal');
+        var title = document.getElementById('hrCertModalTitle');
+        var body = document.getElementById('hrCertModalBody');
+        if (!modal || !body || !it || !it.certificate_base64) return;
+        var name = (it.module_name || it.credential_id || 'Evidence').trim();
+        if (title) title.textContent = name;
+        var fn = String(it.certificate_filename || 'evidence').toLowerCase();
+        var ext = (fn.split('.').pop() || '').toLowerCase();
+        var mime = ext === 'pdf' ? 'application/pdf' : (ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg'));
+        var b64 = String(it.certificate_base64).replace(/\s/g, '');
+        if (mime === 'application/pdf') {
+          body.innerHTML = '<iframe class="hr-cert-iframe" title="Uploaded evidence" src="data:' + mime + ';base64,' + b64 + '"></iframe>';
+        } else {
+          body.innerHTML = '<img class="hr-cert-img" alt="Uploaded evidence" src="data:' + mime + ';base64,' + b64 + '" />';
+        }
+        modal.hidden = false;
+      }
 
       function wireTabs(containerId, onPick) {
         var root = document.getElementById(containerId);
@@ -295,9 +342,14 @@
           var note = st === 'DECLINED' && it.decline_reason
             ? ('<div class=\"hr-muted\" style=\"margin-top:0.25rem;\">Reason: ' + esc(it.decline_reason) + '</div>')
             : '';
+          var hasCert = !!(it.certificate_base64 && String(it.certificate_base64).trim());
+          var modLabel = esc(it.module_name || it.credential_id || '—');
+          var modCell = hasCert
+            ? '<button type="button" class="hr-module-name-btn" data-view-cert="1" data-cid="' + esc(it.credential_id) + '" title="View evidence uploaded with this record">' + modLabel + '</button>'
+            : modLabel;
           return (
             '<tr>' +
-              '<td>' + esc(it.module_name || it.credential_id || '—') + note + '</td>' +
+              '<td>' + modCell + note + '</td>' +
               '<td>' + esc(it.expiry_date || '—') + '</td>' +
               '<td>' + pill + '</td>' +
               '<td>' + btn + '</td>' +
@@ -313,24 +365,32 @@
         renderSessionItems(sessionId, lastSessionPayload);
 
         var actionInFlight = false;
-        tbody.addEventListener('click', async function (e) {
+        tbody.onclick = async function (e) {
+          var viewCert = e.target && e.target.closest('button[data-view-cert="1"]');
+          if (viewCert) {
+            e.preventDefault();
+            var cid = viewCert.getAttribute('data-cid');
+            var it = (lastSessionPayload.items || []).find(function (x) { return String(x.credential_id) === String(cid); });
+            if (it && it.certificate_base64) openHrCertModal(it);
+            return;
+          }
           if (actionInFlight) return;
           var v = e.target && e.target.closest('button[data-verify="1"]');
           var d = e.target && e.target.closest('button[data-decline="1"]');
           if (!v && !d) return;
-          var cid = (v || d).getAttribute('data-cid');
+          var cid2 = (v || d).getAttribute('data-cid');
           actionInFlight = true;
           try {
             if (v) {
               v.disabled = true;
               v.textContent = 'Verifying…';
-              await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid)) + '/verify', { method: 'POST' });
+              await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid2)) + '/verify', { method: 'POST' });
             } else {
               var reason = (prompt('Why are you declining this record? (This will be sent back to the doctor)') || '').trim();
               if (!reason) { actionInFlight = false; return; }
               d.disabled = true;
               d.textContent = 'Declining…';
-              await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid)) + '/decline', {
+              await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid2)) + '/decline', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ reason: reason }),
@@ -345,7 +405,7 @@
           } finally {
             actionInFlight = false;
           }
-        });
+        };
       }
 
       (async function boot() {
@@ -360,6 +420,17 @@
         });
         document.getElementById('btnBack').addEventListener('click', function () {
           window.location.assign('/static/hr/');
+        });
+        var hrCertClose = document.getElementById('hrCertModalClose');
+        if (hrCertClose) hrCertClose.addEventListener('click', closeHrCertModal);
+        var hrCertModal = document.getElementById('hrCertModal');
+        if (hrCertModal) {
+          hrCertModal.addEventListener('click', function (e) {
+            if (e.target === hrCertModal) closeHrCertModal();
+          });
+        }
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') closeHrCertModal();
         });
 
         if (!NHSAuth.user.premium) {
