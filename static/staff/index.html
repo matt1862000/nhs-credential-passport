@@ -96,7 +96,26 @@
       display: block;
       max-width: 28rem;
     }
-    .nhsuk-file-upload .nhsuk-hint { margin-bottom: 0.5rem; }
+    .nhsuk-bulk-export-panel .nhsuk-file-upload {
+      max-width: 100%;
+    }
+    .nhsuk-file-upload .nhsuk-hint {
+      display: block;
+      margin: 0.35rem 0 0.75rem 0;
+      max-width: 100%;
+      line-height: 1.45;
+    }
+    .nhsuk-file-upload__stack {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.75rem;
+      width: 100%;
+      margin-top: 0.35rem;
+    }
+    .nhsuk-file-upload__stack .nhsuk-hint {
+      margin: 0;
+    }
     .nhsuk-file-upload input[type="file"] {
       position: absolute;
       width: 0.1px;
@@ -106,7 +125,9 @@
       z-index: -1;
     }
     .nhsuk-file-upload__trigger {
-      display: inline-block;
+      display: block;
+      width: fit-content;
+      max-width: 100%;
       background: var(--nhsuk-link);
       color: #fff;
       border: none;
@@ -116,7 +137,9 @@
       font-weight: 600;
       cursor: pointer;
       font-family: inherit;
-      margin-top: 0.25rem;
+      margin-top: 0;
+      text-align: center;
+      box-sizing: border-box;
     }
     .nhsuk-file-upload__trigger:hover { background: #004c8f; }
     .nhsuk-file-upload__trigger:focus {
@@ -356,10 +379,12 @@
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_ods_code">Issuing Trust ODS code</label><input class="nhsuk-input" id="issuing_trust_ods_code" type="text" name="issuing_trust_ods_code" placeholder="e.g. RHQ" required maxlength="16" autocomplete="off" spellcheck="false" aria-describedby="issuing_trust_ods_hint"><span class="nhsuk-hint" id="issuing_trust_ods_hint">Filled automatically from the trust name when possible.</span></div>
         <div class="nhsuk-form-group nhsuk-file-upload">
           <label class="nhsuk-label" for="certificate_upload">Upload certificate (optional)</label>
-          <span class="nhsuk-hint" id="certificate_hint">PDF or image (PNG, JPG) — e.g. your course completion certificate.</span>
-          <label for="certificate_upload" class="nhsuk-file-upload__trigger">Choose file</label>
-          <input id="certificate_upload" type="file" name="certificate" accept=".pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf">
-          <span class="nhsuk-file-upload__name" id="certificate_filename" aria-live="polite"></span>
+          <div class="nhsuk-file-upload__stack">
+            <p class="nhsuk-hint" id="certificate_hint" style="margin:0;">PDF or image (PNG, JPG) — e.g. your course completion certificate.</p>
+            <label for="certificate_upload" class="nhsuk-file-upload__trigger">Choose file</label>
+            <input id="certificate_upload" type="file" name="certificate" accept=".pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf" aria-describedby="certificate_hint">
+            <span class="nhsuk-file-upload__name" id="certificate_filename" aria-live="polite"></span>
+          </div>
         </div>
         <button type="submit" class="nhsuk-button">Add training</button>
       </form>
@@ -373,16 +398,20 @@
         
         <div class="nhsuk-form-group nhsuk-file-upload">
           <label class="nhsuk-label" for="csv_upload">CSV file</label>
-          <label for="csv_upload" class="nhsuk-file-upload__trigger">Choose CSV file</label>
-          <input id="csv_upload" type="file" name="csv" accept=".csv,text/csv">
-          <span class="nhsuk-file-upload__name" id="csv_filename" aria-live="polite"></span>
+          <div class="nhsuk-file-upload__stack">
+            <label for="csv_upload" class="nhsuk-file-upload__trigger">Choose CSV file</label>
+            <input id="csv_upload" type="file" name="csv" accept=".csv,text/csv">
+            <span class="nhsuk-file-upload__name" id="csv_filename" aria-live="polite"></span>
+          </div>
         </div>
         <div class="nhsuk-form-group nhsuk-file-upload" style="margin-top:1rem;">
           <label class="nhsuk-label" for="csv_evidence">Evidence of completion</label>
-          <span class="nhsuk-hint" id="csv_evidence_hint">Required for import: a screenshot (PNG or JPEG) or PDF showing your training on ESR (e.g. Compliance tab), so your trust can see what the CSV is based on.</span>
-          <label for="csv_evidence" class="nhsuk-file-upload__trigger">Choose evidence file</label>
-          <input id="csv_evidence" type="file" name="csv_evidence" accept=".pdf,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp,application/pdf" aria-describedby="csv_evidence_hint">
-          <span class="nhsuk-file-upload__name" id="csv_evidence_filename" aria-live="polite"></span>
+          <div class="nhsuk-file-upload__stack">
+            <p class="nhsuk-hint" id="csv_evidence_hint" style="margin:0;">Required for import: a screenshot (PNG or JPEG) or PDF showing your training on ESR (e.g. Compliance tab), so your trust can see what the CSV is based on.</p>
+            <label for="csv_evidence" class="nhsuk-file-upload__trigger">Choose evidence file</label>
+            <input id="csv_evidence" type="file" name="csv_evidence" accept=".pdf,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp,application/pdf" aria-describedby="csv_evidence_hint">
+            <span class="nhsuk-file-upload__name" id="csv_evidence_filename" aria-live="polite"></span>
+          </div>
         </div>
         <div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin-top:1rem;">
           <button type="button" class="nhsuk-button" id="btnCsvUpload" disabled>Upload</button>
