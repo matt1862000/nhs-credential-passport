@@ -29,11 +29,32 @@ from .models import (
     CsvImportResponse,
     CsvImportInvalidRow,
 )
-from .csv_import import parse_completion_csv, csv_template_header, MAX_CSV_BYTES
+from .csv_import import (
+    parse_completion_csv,
+    csv_template_header,
+    MAX_CSV_BYTES,
+    MAX_CSV_EVIDENCE_BYTES,
+)
 from .auth_api import router as auth_router, require_user_id
 
 # Base URL for verification links (default for local dev)
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
+
+
+def _normalize_evidence_content_type(content_type: Optional[str], filename: Optional[str]) -> Optional[str]:
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct in ("image/jpeg", "image/png", "image/webp", "application/pdf"):
+        return ct
+    fn = (filename or "").lower()
+    if fn.endswith(".pdf"):
+        return "application/pdf"
+    if fn.endswith(".png"):
+        return "image/png"
+    if fn.endswith(".jpg") or fn.endswith(".jpeg"):
+        return "image/jpeg"
+    if fn.endswith(".webp"):
+        return "image/webp"
+    return None
 
 
 def _decode_csv_bytes(raw: bytes) -> Optional[str]:
@@ -124,10 +145,16 @@ def api_csv_template(request: Request):
 
 
 @app.post("/api/credentials/import-csv", response_model=CsvImportResponse)
-async def api_import_csv(request: Request, file: UploadFile = File(...), dry_run: bool = Query(False)):
+async def api_import_csv(
+    request: Request,
+    file: UploadFile = File(...),
+    evidence: Optional[UploadFile] = File(None),
+    dry_run: bool = Query(False),
+):
     """
     Upload UTF-8 CSV: validate rows, optionally issue all valid rows (dry_run=false).
-    See GET .../import-csv/template for column names and aliases (e.g. employee_name).
+    When dry_run=false and there is at least one valid row, an evidence file is required
+    (e.g. ESR Compliance screenshot or PDF). See GET .../import-csv/template for column names.
     """
     uid = require_user_id(request)
     raw = await file.read()
@@ -161,6 +188,27 @@ async def api_import_csv(request: Request, file: UploadFile = File(...), dry_run
             invalid=invalid_rows,
         )
 
+    ev_bytes: Optional[bytes] = None
+    ev_name = ""
+    ev_ct = ""
+    if evidence is None or not (evidence.filename or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Evidence file required — upload a screenshot or PDF of your training record (e.g. ESR Compliance).",
+        )
+    ev_raw = await evidence.read()
+    if len(ev_raw) > MAX_CSV_EVIDENCE_BYTES:
+        raise HTTPException(status_code=413, detail="Evidence file too large (max 10 MB)")
+    ev_ct_norm = _normalize_evidence_content_type(evidence.content_type, evidence.filename)
+    if not ev_ct_norm:
+        raise HTTPException(
+            status_code=400,
+            detail="Evidence must be a PDF or image (JPEG, PNG, or WebP).",
+        )
+    ev_bytes = ev_raw
+    ev_name = (evidence.filename or "evidence").strip()
+    ev_ct = ev_ct_norm
+
     # One JSON with dozens of PDFs exceeds typical proxy timeouts; skip PDFs for multi-row CSV.
     include_pdf = len(valid) <= 1
     wallet_raw = db.user_wallet_get(uid)
@@ -187,6 +235,20 @@ async def api_import_csv(request: Request, file: UploadFile = File(...), dry_run
                 expiry_date=rec.expiry_date.isoformat(),
             )
         )
+
+    issued_count = len(credentials_out)
+    if ev_bytes is not None:
+        try:
+            db.csv_import_evidence_save(
+                uid,
+                ev_name,
+                ev_ct,
+                ev_bytes,
+                credentials_issued=issued_count,
+            )
+        except Exception:
+            # Do not fail the import if audit storage fails
+            pass
 
     return CsvImportResponse(
         dry_run=False,

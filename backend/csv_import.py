@@ -12,6 +12,7 @@ from typing import Optional
 from .models import CompletionRecord, CSTF_MODULES
 
 MAX_CSV_BYTES = 2 * 1024 * 1024
+MAX_CSV_EVIDENCE_BYTES = 10 * 1024 * 1024  # screenshot / PDF of ESR (or similar)
 MAX_DATA_ROWS = 2000
 
 CODE_TO_NAME = {code: name for code, name in CSTF_MODULES if code != "non_cstf"}

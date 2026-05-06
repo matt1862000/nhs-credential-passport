@@ -51,8 +51,58 @@ def init_db():
             )
         """)
         _ensure_share_tables(conn)
+        _ensure_csv_import_evidence_table(conn)
         _ensure_seed_privileged_user(conn)
         conn.commit()
+
+
+def _ensure_csv_import_evidence_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS csv_import_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            credentials_issued INTEGER NOT NULL DEFAULT 0,
+            data BLOB NOT NULL
+        )
+        """
+    )
+
+
+def csv_import_evidence_save(
+    user_id: int,
+    filename: str,
+    content_type: str,
+    data: bytes,
+    *,
+    credentials_issued: int,
+) -> int:
+    """Store one evidence file per CSV import attempt (audit). Returns row id."""
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_csv_import_evidence_table(conn)
+        cur = conn.execute(
+            """
+            INSERT INTO csv_import_evidence
+            (user_id, created_at, filename, content_type, size_bytes, credentials_issued, data)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(user_id),
+                now,
+                (filename or "evidence").strip()[:255],
+                (content_type or "application/octet-stream").strip()[:128],
+                len(data),
+                int(credentials_issued),
+                data,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
 
 
 def _ensure_share_tables(conn: sqlite3.Connection) -> None:
