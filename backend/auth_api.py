@@ -340,6 +340,16 @@ def hr_shares_list(request: Request, limit: int = 50):
     return {"sessions": db.share_inbox_list(limit=limit)}
 
 
+@router.get("/hr/doctors/{doctor_user_id}/queue")
+def hr_doctor_queue(request: Request, doctor_user_id: int):
+    """Merged inbox for one clinician (all share sessions combined)."""
+    require_premium_user(request)
+    q = db.share_doctor_queue(int(doctor_user_id))
+    if not q:
+        raise HTTPException(status_code=404, detail="Clinician not found")
+    return q
+
+
 @router.get("/hr/shares/{session_id}")
 def hr_shares_get(request: Request, session_id: int):
     require_premium_user(request)

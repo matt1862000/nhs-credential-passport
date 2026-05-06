@@ -197,6 +197,7 @@ def share_inbox_list(limit: int = 50) -> list[dict]:
             SELECT
               s.id as session_id,
               s.created_at as created_at,
+              s.doctor_user_id as doctor_user_id,
               s.doctor_email as doctor_email,
               u.display_name as doctor_name,
               u.gmc_number as doctor_gmc,
@@ -221,6 +222,7 @@ def share_inbox_list(limit: int = 50) -> list[dict]:
             {
                 "session_id": r["session_id"],
                 "created_at": r["created_at"],
+                "doctor_user_id": int(r["doctor_user_id"]),
                 "doctor_email": r["doctor_email"],
                 "doctor_name": r["doctor_name"],
                 "doctor_gmc": r["doctor_gmc"],
@@ -233,6 +235,64 @@ def share_inbox_list(limit: int = 50) -> list[dict]:
             }
         )
     return out
+
+
+def share_doctor_queue(doctor_user_id: int) -> Optional[dict]:
+    """All share items across every session for one clinician (for merged HR review)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        doc = conn.execute(
+            """
+            SELECT
+              u.id as doctor_user_id, u.email as doctor_email, u.display_name as doctor_name,
+              u.gmc_number as doctor_gmc, u.current_trust as doctor_trust
+            FROM users u
+            WHERE u.id = ?
+            """,
+            (int(doctor_user_id),),
+        ).fetchone()
+        if not doc:
+            return None
+        rows = conn.execute(
+            """
+            SELECT
+              i.session_id,
+              s.created_at as session_created_at,
+              i.credential_id, i.module_name, i.expiry_date, i.status, i.decision_at,
+              i.decline_reason, i.certificate_base64, i.certificate_filename
+            FROM share_sessions s
+            JOIN share_items i ON i.session_id = s.id
+            WHERE s.doctor_user_id = ?
+            ORDER BY s.id DESC, i.credential_id
+            """,
+            (int(doctor_user_id),),
+        ).fetchall()
+    items = [
+        {
+            "session_id": int(r["session_id"]),
+            "session_created_at": r["session_created_at"],
+            "credential_id": r["credential_id"],
+            "module_name": r["module_name"],
+            "expiry_date": r["expiry_date"],
+            "status": r["status"],
+            "decision_at": r["decision_at"],
+            "decline_reason": r["decline_reason"],
+            "certificate_base64": r["certificate_base64"],
+            "certificate_filename": r["certificate_filename"],
+        }
+        for r in rows
+    ]
+    session_ids = sorted({int(r["session_id"]) for r in rows}, reverse=True)
+    return {
+        "doctor_user_id": int(doc["doctor_user_id"]),
+        "doctor_email": doc["doctor_email"],
+        "doctor_name": doc["doctor_name"],
+        "doctor_gmc": doc["doctor_gmc"],
+        "doctor_trust": doc["doctor_trust"],
+        "session_ids": session_ids,
+        "items": items,
+    }
 
 
 def share_session_get(session_id: int) -> Optional[dict]:

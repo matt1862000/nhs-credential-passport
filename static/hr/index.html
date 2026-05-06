@@ -50,6 +50,14 @@
     }
     .hr-module-name-btn:hover { color: #003087; }
     .hr-module-name-btn:focus { outline: 3px solid #ffbf47; outline-offset: 2px; }
+    .hr-session-divider td {
+      background: #f0f4f5;
+      font-size: 0.8125rem;
+      font-weight: 700;
+      color: var(--nhsuk-secondary-text);
+      padding: 0.5rem 0.85rem !important;
+      border-bottom: 1px solid var(--nhsuk-border);
+    }
     .hr-modal { position: fixed; inset: 0; z-index: 200; background: rgba(15, 23, 42, 0.55); display: flex; align-items: center; justify-content: center; padding: 1rem; }
     .hr-modal[hidden] { display: none !important; }
     .hr-modal__panel { background: #fff; border-radius: 8px; max-width: min(900px, 96vw); max-height: 92vh; overflow: auto; padding: 1.25rem 1.5rem; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25); }
@@ -122,7 +130,7 @@
         <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBack">&larr; Back to inbox</button>
         <div id="sessionMetaBlock" style="text-align:right; flex:1; min-width:12rem;"></div>
       </div>
-      <h2 style="margin:1rem 0 0.5rem 0; font-size:1.25rem;">E-learning in this set</h2>
+      <h2 id="sessionViewTitle" style="margin:1rem 0 0.5rem 0; font-size:1.25rem;">E-learning in this set</h2>
       <div class="hr-segment" role="tablist" aria-label="Filter records in this set">
         <button type="button" role="tab" aria-selected="true" class="active" id="tab-items-new" data-tab="new">Awaiting decision</button>
         <button type="button" role="tab" aria-selected="false" id="tab-items-arch" data-tab="archived">Decided</button>
@@ -204,6 +212,49 @@
         return '<div class="hr-count-row">' + parts.join('') + '</div>';
       }
 
+      /** Merge inbox rows that belong to the same clinician (multiple share sessions). */
+      function aggregateDoctorGroups(sessions) {
+        var m = Object.create(null);
+        sessions.forEach(function (s) {
+          var id = s.doctor_user_id;
+          var key = id != null && id !== '' ? 'u:' + String(id) : 'e:' + String((s.doctor_email || '').toLowerCase());
+          if (!m[key]) {
+            m[key] = {
+              doctor_user_id: id,
+              doctor_email: s.doctor_email,
+              doctor_name: s.doctor_name,
+              doctor_gmc: s.doctor_gmc,
+              doctor_trust: s.doctor_trust,
+              sessions: [],
+            };
+          }
+          m[key].sessions.push(s);
+        });
+        return Object.keys(m).map(function (key) {
+          var g = m[key];
+          var sess = g.sessions;
+          var pending = sess.reduce(function (a, x) { return a + (x.pending_count || 0); }, 0);
+          var verified = sess.reduce(function (a, x) { return a + (x.verified_count || 0); }, 0);
+          var declined = sess.reduce(function (a, x) { return a + (x.declined_count || 0); }, 0);
+          var latest = sess.map(function (x) { return x.created_at; }).sort().slice(-1)[0];
+          return {
+            doctor_user_id: g.doctor_user_id,
+            doctor_email: g.doctor_email,
+            doctor_name: g.doctor_name,
+            doctor_gmc: g.doctor_gmc,
+            doctor_trust: g.doctor_trust,
+            pending_count: pending,
+            verified_count: verified,
+            declined_count: declined,
+            created_at: latest,
+            _session_count: sess.length,
+            sessions: sess,
+          };
+        }).sort(function (a, b) {
+          return String(b.created_at || '').localeCompare(String(a.created_at || ''));
+        });
+      }
+
       async function apiJson(url, opts) {
         opts = opts || {};
         opts.credentials = 'include';
@@ -270,44 +321,57 @@
         var summaryEl = document.getElementById('inboxSummary');
         tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
         if (summaryEl) summaryEl.textContent = '';
-        var data = await apiJson('/api/hr/shares?limit=50');
+        var data = await apiJson('/api/hr/shares?limit=200');
         var all = (data.sessions || []);
         var sessions = all.filter(function (s) {
           var hasPending = (s.pending_count || 0) > 0;
           return inboxTab === 'new' ? hasPending : !hasPending;
         });
+        var groups = aggregateDoctorGroups(sessions);
         if (summaryEl) {
           if (inboxTab === 'new') {
-            if (sessions.length === 0) {
+            if (groups.length === 0) {
               summaryEl.innerHTML = 'Nothing waiting — <strong>all caught up</strong> for now.';
-            } else if (sessions.length === 1) {
-              summaryEl.innerHTML = '<strong>1</strong> shared set still has records to verify.';
+            } else if (groups.length === 1) {
+              summaryEl.innerHTML = '<strong>1</strong> clinician still has records to verify.';
             } else {
-              summaryEl.innerHTML = '<strong>' + String(sessions.length) + '</strong> shared sets still have records to verify.';
+              summaryEl.innerHTML = '<strong>' + String(groups.length) + '</strong> clinicians still have records to verify.';
             }
           } else {
-            summaryEl.innerHTML = sessions.length === 0
+            summaryEl.innerHTML = groups.length === 0
               ? 'No completed sets in this list yet.'
-              : '<strong>' + String(sessions.length) + '</strong> set(s) with every record already verified or declined.';
+              : '<strong>' + String(groups.length) + '</strong> clinician(s) with every submission fully verified or declined.';
           }
         }
-        var rows = sessions.map(function (s) {
-          var when = formatSharedAt(s.created_at);
+        var rows = groups.map(function (g) {
+          var when = formatSharedAt(g.created_at);
+          var sub = '';
+          if ((g._session_count || 0) > 1) {
+            sub = '<div class="hr-date-sub">' + String(g._session_count) + ' submissions · latest below</div>';
+          }
+          var reviewHref =
+            g.doctor_user_id != null && g.doctor_user_id !== ''
+              ? '/static/hr/?doctor=' + encodeURIComponent(String(g.doctor_user_id))
+              : '/static/hr/?session=' + encodeURIComponent(String((g.sessions && g.sessions[0] && g.sessions[0].session_id) || ''));
           return (
             '<tr>' +
-              '<td>' + doctorCellHtml(s) + '</td>' +
-              '<td><div class="hr-date-main">' + esc(when) + '</div></td>' +
-              '<td>' + statusPillsHtml(s) + '</td>' +
-              '<td class="hr-open-wrap"><a class="hr-open-btn" href="/static/hr/?session=' + encodeURIComponent(String(s.session_id)) + '">Review</a></td>' +
+              '<td>' + doctorCellHtml(g) + '</td>' +
+              '<td><div class="hr-date-main">' + esc(when) + '</div>' + sub + '</td>' +
+              '<td>' + statusPillsHtml(g) + '</td>' +
+              '<td class="hr-open-wrap"><a class="hr-open-btn" href="' + reviewHref + '">Review</a></td>' +
             '</tr>'
           );
         }).join('');
         tbody.innerHTML = rows || '<tr><td colspan="4" class="hr-muted">' + (inboxTab === 'new' ? 'No sets need action right now.' : 'No completed sets to show.') + '</td></tr>';
       }
 
-      function renderSessionItems(sessionId, payload) {
+      /**
+       * @param fixedSessionId When set, single-session review (/api/hr/shares/:id). When null, merged doctor queue (each item carries session_id).
+       */
+      function renderItemsTable(payload, fixedSessionId) {
         var tbody = document.getElementById('itemsTbody');
         var s = payload;
+        var merged = fixedSessionId == null || fixedSessionId === '';
         var metaBlock = document.getElementById('sessionMetaBlock');
         if (metaBlock) {
           var name = (s.doctor_name || s.doctor_email || '—').trim();
@@ -315,62 +379,115 @@
           if (s.doctor_gmc) sub.push('<span><span>GMC</span> ' + esc(String(s.doctor_gmc)) + '</span>');
           if (s.doctor_trust) sub.push('<span>' + esc(String(s.doctor_trust)) + '</span>');
           if (s.doctor_email && s.doctor_name) sub.push('<span>' + esc(String(s.doctor_email)) + '</span>');
+          var tail = '';
+          if (merged && (s.session_ids || []).length > 1) {
+            tail = '<div class="hr-date-sub" style="text-align:right;">' + String(s.session_ids.length) + ' submissions combined</div>';
+          } else if (!merged && s.created_at) {
+            tail = '<div class="hr-date-sub" style="text-align:right;">Shared ' + esc(formatSharedAt(s.created_at)) + '</div>';
+          }
           metaBlock.innerHTML =
             '<div class="hr-doctor-name" style="text-align:right;">' + esc(name) + '</div>' +
             (sub.length ? '<div class="hr-doctor-meta" style="text-align:right;">' + sub.join(' · ') + '</div>' : '') +
-            '<div class="hr-date-sub" style="text-align:right;">Shared ' + esc(formatSharedAt(s.created_at)) + '</div>';
+            tail;
         }
         var items = (s.items || []).filter(function (it) {
           var st = String(it.status || '').toUpperCase();
           var pending = st !== 'VERIFIED' && st !== 'DECLINED';
           return itemsTab === 'new' ? pending : !pending;
         });
-        tbody.innerHTML = items.map(function (it) {
+        var prevSid = null;
+        var parts = [];
+        items.forEach(function (it) {
+          if (merged && (s.session_ids || []).length > 1 && it.session_id != null && it.session_id !== prevSid) {
+            prevSid = it.session_id;
+            var when = formatSharedAt(it.session_created_at);
+            parts.push(
+              '<tr class="hr-session-divider"><td colspan="4">Submission · ' +
+                esc(when) +
+                ' · #' +
+                esc(String(it.session_id)) +
+                '</td></tr>'
+            );
+          }
           var st = String(it.status || '').toUpperCase();
-          var pill = st === 'VERIFIED'
-            ? '<span class=\"hr-pill hr-pill--verified\">VERIFIED</span>'
-            : (st === 'DECLINED'
-              ? '<span class=\"hr-pill\">DECLINED</span>'
-              : '<span class=\"hr-pill\">PENDING</span>');
-          var isArchived = (st === 'VERIFIED' || st === 'DECLINED');
+          var pill =
+            st === 'VERIFIED'
+              ? '<span class="hr-pill hr-pill--verified">VERIFIED</span>'
+              : st === 'DECLINED'
+                ? '<span class="hr-pill">DECLINED</span>'
+                : '<span class="hr-pill">PENDING</span>';
+          var isArchived = st === 'VERIFIED' || st === 'DECLINED';
+          var sidForApi =
+            merged && it.session_id != null ? String(it.session_id) : fixedSessionId != null ? String(fixedSessionId) : '';
           var btn = isArchived
-            ? '<span class=\"hr-muted\">—</span>'
-            : '<div class=\"hr-actions\">' +
-              '<button type=\"button\" class=\"nhsuk-button hr-btn-small\" data-verify=\"1\" data-cid=\"' + esc(it.credential_id) + '\">Verify</button>' +
-              '<button type=\"button\" class=\"nhsuk-button nhsuk-button--secondary hr-btn-small\" data-decline=\"1\" data-cid=\"' + esc(it.credential_id) + '\">Decline</button>' +
+            ? '<span class="hr-muted">—</span>'
+            : '<div class="hr-actions">' +
+              '<button type="button" class="nhsuk-button hr-btn-small" data-verify="1" data-sid="' +
+              esc(sidForApi) +
+              '" data-cid="' +
+              esc(it.credential_id) +
+              '">Verify</button>' +
+              '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-decline="1" data-sid="' +
+              esc(sidForApi) +
+              '" data-cid="' +
+              esc(it.credential_id) +
+              '">Decline</button>' +
               '</div>';
-          var note = st === 'DECLINED' && it.decline_reason
-            ? ('<div class=\"hr-muted\" style=\"margin-top:0.25rem;\">Reason: ' + esc(it.decline_reason) + '</div>')
-            : '';
+          var note =
+            st === 'DECLINED' && it.decline_reason
+              ? '<div class="hr-muted" style="margin-top:0.25rem;">Reason: ' + esc(it.decline_reason) + '</div>'
+              : '';
           var hasCert = !!(it.certificate_base64 && String(it.certificate_base64).trim());
           var modLabel = esc(it.module_name || it.credential_id || '—');
           var modCell = hasCert
-            ? '<button type="button" class="hr-module-name-btn" data-view-cert="1" data-cid="' + esc(it.credential_id) + '" title="View evidence uploaded with this record">' + modLabel + '</button>'
+            ? '<button type="button" class="hr-module-name-btn" data-view-cert="1" data-cid="' +
+              esc(it.credential_id) +
+              '" title="View evidence uploaded with this record">' +
+              modLabel +
+              '</button>'
             : modLabel;
-          return (
+          parts.push(
             '<tr>' +
-              '<td>' + modCell + note + '</td>' +
-              '<td>' + esc(it.expiry_date || '—') + '</td>' +
-              '<td>' + pill + '</td>' +
-              '<td>' + btn + '</td>' +
-            '</tr>'
+              '<td>' +
+              modCell +
+              note +
+              '</td>' +
+              '<td>' +
+              esc(it.expiry_date || '—') +
+              '</td>' +
+              '<td>' +
+              pill +
+              '</td>' +
+              '<td>' +
+              btn +
+              '</td>' +
+              '</tr>'
           );
-        }).join('') || '<tr><td colspan=\"4\" class=\"hr-muted\">No items.</td></tr>';
+        });
+        tbody.innerHTML = parts.join('') || '<tr><td colspan="4" class="hr-muted">No items.</td></tr>';
       }
 
-      async function loadSession(sessionId) {
+      async function loadDoctorQueue(doctorUserId) {
         var tbody = document.getElementById('itemsTbody');
+        var titleEl = document.getElementById('sessionViewTitle');
+        if (titleEl) titleEl.textContent = 'E-learning from this clinician';
         tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
-        lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
-        renderSessionItems(sessionId, lastSessionPayload);
+        lastSessionPayload = await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorUserId)) + '/queue');
+        renderItemsTable(lastSessionPayload, null);
+        attachItemsRowHandler(null);
+      }
 
+      function attachItemsRowHandler(fixedSessionId) {
+        var tbody = document.getElementById('itemsTbody');
         var actionInFlight = false;
         tbody.onclick = async function (e) {
           var viewCert = e.target && e.target.closest('button[data-view-cert="1"]');
           if (viewCert) {
             e.preventDefault();
             var cid = viewCert.getAttribute('data-cid');
-            var it = (lastSessionPayload.items || []).find(function (x) { return String(x.credential_id) === String(cid); });
+            var it = (lastSessionPayload.items || []).find(function (x) {
+              return String(x.credential_id) === String(cid);
+            });
             if (it && it.certificate_base64) openHrCertModal(it);
             return;
           }
@@ -379,33 +496,79 @@
           var d = e.target && e.target.closest('button[data-decline="1"]');
           if (!v && !d) return;
           var cid2 = (v || d).getAttribute('data-cid');
+          var sidAttr = (v || d).getAttribute('data-sid');
+          var sessionIdForApi = sidAttr || (fixedSessionId != null ? String(fixedSessionId) : '');
+          if (!sessionIdForApi) {
+            alert('Missing session for this action.');
+            return;
+          }
           actionInFlight = true;
           try {
             if (v) {
               v.disabled = true;
               v.textContent = 'Verifying…';
-              await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid2)) + '/verify', { method: 'POST' });
+              await apiJson(
+                '/api/hr/shares/' +
+                  encodeURIComponent(sessionIdForApi) +
+                  '/items/' +
+                  encodeURIComponent(String(cid2)) +
+                  '/verify',
+                { method: 'POST' }
+              );
             } else {
-              var reason = (prompt('Why are you declining this record? (This will be sent back to the doctor)') || '').trim();
-              if (!reason) { actionInFlight = false; return; }
+              var reason = (
+                prompt('Why are you declining this record? (This will be sent back to the doctor)') || ''
+              ).trim();
+              if (!reason) {
+                actionInFlight = false;
+                return;
+              }
               d.disabled = true;
               d.textContent = 'Declining…';
-              await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid2)) + '/decline', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ reason: reason }),
-              });
+              await apiJson(
+                '/api/hr/shares/' +
+                  encodeURIComponent(sessionIdForApi) +
+                  '/items/' +
+                  encodeURIComponent(String(cid2)) +
+                  '/decline',
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ reason: reason }),
+                }
+              );
             }
-            lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
-            renderSessionItems(sessionId, lastSessionPayload);
+            await refreshPayloadAfterAction(fixedSessionId);
           } catch (err) {
             alert(err.message || err);
-            lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
-            renderSessionItems(sessionId, lastSessionPayload);
+            await refreshPayloadAfterAction(fixedSessionId);
           } finally {
             actionInFlight = false;
           }
         };
+      }
+
+      async function refreshPayloadAfterAction(fixedSessionId) {
+        if (fixedSessionId != null && fixedSessionId !== '') {
+          lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(fixedSessionId)));
+          renderItemsTable(lastSessionPayload, fixedSessionId);
+          return;
+        }
+        var uid = lastSessionPayload && lastSessionPayload.doctor_user_id;
+        if (uid != null) {
+          lastSessionPayload = await apiJson('/api/hr/doctors/' + encodeURIComponent(String(uid)) + '/queue');
+          renderItemsTable(lastSessionPayload, null);
+        }
+      }
+
+      async function loadSession(sessionId) {
+        var tbody = document.getElementById('itemsTbody');
+        var titleEl = document.getElementById('sessionViewTitle');
+        if (titleEl) titleEl.textContent = 'E-learning in this set';
+        tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
+        lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
+        renderItemsTable(lastSessionPayload, sessionId);
+        attachItemsRowHandler(sessionId);
       }
 
       (async function boot() {
@@ -440,13 +603,22 @@
           return;
         }
 
+        var doctorId = qs().get('doctor');
         var sessionId = qs().get('session');
-        if (sessionId) {
+        if (doctorId) {
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
           wireTabs('sessionView', function (tab) {
             itemsTab = tab === 'archived' ? 'archived' : 'new';
-            if (lastSessionPayload) renderSessionItems(sessionId, lastSessionPayload);
+            if (lastSessionPayload) renderItemsTable(lastSessionPayload, null);
+          });
+          await loadDoctorQueue(doctorId);
+        } else if (sessionId) {
+          show(document.getElementById('sessionView'), true);
+          show(document.getElementById('inboxView'), false);
+          wireTabs('sessionView', function (tab) {
+            itemsTab = tab === 'archived' ? 'archived' : 'new';
+            if (lastSessionPayload) renderItemsTable(lastSessionPayload, sessionId);
           });
           await loadSession(sessionId);
         } else {
