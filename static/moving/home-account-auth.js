@@ -1,6 +1,6 @@
 /**
  * Home page: same optional account + server wallet sync as /static/staff/,
- * so clinicians can register without opening My e-learning first.
+ * so clinicians can register without opening My training first.
  */
 (function () {
   function getStored() {

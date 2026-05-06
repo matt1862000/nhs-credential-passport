@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>My e-learning — NHS E-Learning Credential Passport</title>
+  <title>My training — NHS Training Passport</title>
   <style>
     :root {
       --nhsuk-text: #212b32;
@@ -223,7 +223,7 @@
           <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" height="40" width="100" focusable="false" role="img" aria-label="NHS">
             <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
           </svg>
-          <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
+          <span class="nhsuk-header__service-name">Training Passport</span>
         </a>
       </div>
       <nav aria-label="Account" style="display:flex;align-items:center;gap:0.85rem;color:#fff;font-size:0.9375rem;">
@@ -235,12 +235,12 @@
     </div>
   </header>
   <main class="nhsuk-main" id="maincontent" role="main">
-    <h2 class="nhsuk-page-heading">My e-learning</h2>
+    <h2 class="nhsuk-page-heading">My training</h2>
     <p class="nhsuk-body-s">Manage your training list. Use the tabs to add, import from ESR, or share records with others.</p>
 
     <div class="nhsuk-tabs" role="tablist">
-      <button type="button" role="tab" aria-selected="true" data-tab="list" class="active" id="tab-list">My e-learning</button>
-      <button type="button" role="tab" aria-selected="false" data-tab="add" id="tab-add">Add e-learning</button>
+      <button type="button" role="tab" aria-selected="true" data-tab="list" class="active" id="tab-list">My training</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="add" id="tab-add">Add training</button>
       <button type="button" role="tab" aria-selected="false" data-tab="import" id="tab-import">Import CSV</button>
       <button type="button" role="tab" aria-selected="false" data-tab="bulk" id="tab-bulk">Bulk export</button>
     </div>
@@ -294,9 +294,9 @@
           <input id="certificate_upload" type="file" name="certificate" accept=".pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf">
           <span class="nhsuk-file-upload__name" id="certificate_filename" aria-live="polite"></span>
         </div>
-        <button type="submit" class="nhsuk-button">Add e-learning</button>
+        <button type="submit" class="nhsuk-button">Add training</button>
       </form>
-      <p class="nhsuk-hint" style="margin-top:1rem;">At MVP this creates an e-learning record from the data you enter. In production, e-learning would be issued from ESR exports.</p>
+      <p class="nhsuk-hint" style="margin-top:1rem;">At MVP this creates a training record from the data you enter. In production, mandatory training would be issued from ESR exports.</p>
     </section>
 
     <section id="import" role="tabpanel" aria-labelledby="tab-import" aria-hidden="true">
@@ -325,11 +325,11 @@
         <div class="nhsuk-bulk-export-panel__actions">
           <span class="nhsuk-bulk-export-panel__count" id="bulkExportCount" aria-live="polite">0 selected</span>
           <div class="nhsuk-bulk-export-panel__buttons">
-            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkSelectAll" title="Select every e-learning below">Select all</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkSelectAll" title="Select every training record below">Select all</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkClearSelection" title="Clear all ticks">Clear selection</button>
             <span class="nhsuk-bulk-export-panel__divider" aria-hidden="true">|</span>
             <button type="button" class="nhsuk-button nhsuk-bulk-export-panel__btn" id="btnExportAll" title="Select all and download as one ZIP">Download all as ZIP</button>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnExportSelected" title="Download selected e-learning as PDFs in a ZIP" disabled>Download selected as ZIP</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnExportSelected" title="Download selected training records as PDFs in a ZIP" disabled>Download selected as ZIP</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnShareSelected" title="One link or QR a verifier can use to check all selected" disabled>Share selected (one link/QR)</button>
           </div>
         </div>
@@ -339,8 +339,8 @@
 
     <div id="qrModal" aria-modal="true" aria-labelledby="qrModalTitle" role="dialog">
       <div class="nhsuk-modal">
-        <h3 id="qrModalTitle">Share e-learning</h3>
-        <p>Scan the QR code or share the link below so a receiving Trust can verify this e-learning.</p>
+        <h3 id="qrModalTitle">Share training</h3>
+        <p>Scan the QR code or share the link below so a receiving Trust can verify this training record.</p>
         <div id="qrTarget" style="display:block; width:200px; height:200px; margin:0.5rem 0;"></div>
         <label class="nhsuk-label" for="shareLink">Verification link</label>
         <input type="text" id="shareLink" readonly onclick="this.select()">
@@ -677,7 +677,7 @@
         return c && c.jwt ? { id: c.credential_id, jwt: c.jwt } : null;
       }).filter(Boolean);
       if (bundle.length === 0) {
-        alert('Selected e-learning do not have verification data. Add them again to get shareable links.');
+        alert('Selected training records do not have verification data. Add them again to get shareable links.');
         return;
       }
       const encoded = base64urlEncode(JSON.stringify(bundle));
@@ -685,8 +685,8 @@
       document.getElementById('shareLink').value = bundleUrl;
       const qrTarget = document.getElementById('qrTarget');
       const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(bundleUrl);
-      qrTarget.innerHTML = '<img src="' + qrImg + '" alt="QR code – scan to verify e-learning" width="200" height="200">';
-      document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share selected e-learning';
+      qrTarget.innerHTML = '<img src="' + qrImg + '" alt="QR code – scan to verify training" width="200" height="200">';
+      document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share selected training';
       document.querySelector('#qrModal .nhsuk-modal p').textContent = 'One link or QR for all ' + bundle.length + ' selected. A verifier can open this to check them all at once.';
       document.getElementById('qrModal').classList.add('show');
     }
@@ -721,7 +721,7 @@
         parts.push('</ul>');
       }
       if (opts.imported) {
-        parts.push('<p class="nhsuk-body-s" style="color:var(--nhsuk-success); font-weight:600;">Issued ' + opts.imported + ' e-learning credential(s). They appear in My e-learning.</p>');
+        parts.push('<p class="nhsuk-body-s" style="color:var(--nhsuk-success); font-weight:600;">Issued ' + opts.imported + ' training record(s). They appear in My training.</p>');
       }
       el.innerHTML = parts.join('');
     }
@@ -889,7 +889,7 @@
       }
 
       const filtered = getFilteredList();
-      const emptyMsg = list.length === 0 ? 'No e-learning yet. Add one from the "Add e-learning" tab.' : 'No e-learning matches the current filter.';
+      const emptyMsg = list.length === 0 ? 'No training yet. Add one from the \"Add training\" tab.' : 'No training matches the current filter.';
       const emptyHtml = '<p class="nhsuk-body-s">' + emptyMsg + '</p>';
 
       function cardHtml(c, withCheckbox) {
@@ -922,7 +922,7 @@
       const bulkListEl = document.getElementById('bulkCredentialList');
       if (bulkListEl) {
         bulkListEl.innerHTML = filtered.length === 0
-          ? '<p class="nhsuk-body-s">No e-learning to export. Add e-learning in the Add e-learning tab, or adjust filters in My e-learning.</p>'
+          ? '<p class="nhsuk-body-s">No training to export. Add training in the Add training tab, or adjust filters in My training.</p>'
           : filtered.map(c => cardHtml(c, true)).join('');
       }
       const panel = document.getElementById('bulkExportPanel');
@@ -931,7 +931,7 @@
     }
 
     function removeCred(credentialId) {
-      if (!confirm('Remove this e-learning from your list? This only removes it from this device; it will still show as revoked if someone verifies it.')) return;
+      if (!confirm('Remove this training record from your list? This only removes it from this device; it will still show as revoked if someone verifies it.')) return;
       const list = getStored().filter(c => c.credential_id !== credentialId);
       setStored(list);
       renderList();
@@ -945,16 +945,16 @@
       const qrTarget = document.getElementById('qrTarget');
       const url = c.verification_url;
       const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(url);
-      qrTarget.innerHTML = '<img src="' + qrImg + '" alt="QR code – scan to verify e-learning" width="200" height="200">';
-      document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share e-learning';
-      document.querySelector('#qrModal .nhsuk-modal p').textContent = 'Scan the QR code or share the link below so a receiving Trust can verify this e-learning.';
+      qrTarget.innerHTML = '<img src="' + qrImg + '" alt="QR code – scan to verify training" width="200" height="200">';
+      document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share training';
+      document.querySelector('#qrModal .nhsuk-modal p').textContent = 'Scan the QR code or share the link below so a receiving Trust can verify this training record.';
       document.getElementById('qrModal').classList.add('show');
     }
 
     function downloadPdf(credentialId) {
       const list = getStored();
       const c = list.find(x => x.credential_id === credentialId);
-      if (!c || !c.pdf_base64) { alert('PDF not available for this e-learning'); return; }
+      if (!c || !c.pdf_base64) { alert('PDF not available for this training record'); return; }
       const a = document.createElement('a');
       a.href = 'data:application/pdf;base64,' + c.pdf_base64;
       a.download = 'credential-' + credentialId.slice(0, 12) + '.pdf';
@@ -968,7 +968,7 @@
       const list = getStored();
       const withPdf = ids.map(id => list.find(c => c.credential_id === id)).filter(c => c && c.pdf_base64);
       if (withPdf.length === 0) {
-        alert('None of the selected e-learning have a PDF to export.');
+        alert('None of the selected training records have a PDF to export.');
         return;
       }
       if (typeof JSZip === 'undefined') {
@@ -1002,7 +1002,7 @@
     function downloadCertificate(credentialId) {
       const list = getStored();
       const c = list.find(x => x.credential_id === credentialId);
-      if (!c || !c.certificate_base64) { alert('No uploaded certificate for this e-learning'); return; }
+      if (!c || !c.certificate_base64) { alert('No uploaded certificate for this training record'); return; }
       const name = c.certificate_filename || 'certificate';
       const ext = (name.split('.').pop() || '').toLowerCase();
       const mime = ext === 'pdf' ? 'application/pdf' : (ext === 'png' ? 'image/png' : 'image/jpeg');

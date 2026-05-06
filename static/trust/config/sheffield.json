@@ -61,7 +61,7 @@
     "rotherham": {
       "issuer_trust_name_hints": ["Rotherham", "rotherham"],
       "issuer_ods_hints": ["RFR"],
-      "summary": "Verifiable e-learning issued while you were at Rotherham may count towards overlapping UK CSTF statutory topics at Sheffield, if the credential verifies as VALID and meets local rules (role, grade, renewal, specialty).",
+      "summary": "Verifiable training issued while you were at Rotherham may count towards overlapping UK CSTF statutory topics at Sheffield, if the credential verifies as VALID and meets local rules (role, grade, renewal, specialty).",
       "often_portable_topics": [
         "Information Governance",
         "Fire Safety",

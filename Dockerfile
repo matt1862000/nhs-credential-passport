@@ -1,4 +1,4 @@
-# NHS E-Learning Credential Passport — production image
+# NHS Training Passport — production image
 FROM python:3.11-slim
 
 WORKDIR /app

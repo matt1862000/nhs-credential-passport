@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Dashboard &mdash; NHS E-Learning Credential Passport</title>
+  <title>Dashboard &mdash; NHS Training Passport</title>
   <link rel="stylesheet" href="/static/shared/app.css">
 </head>
 <body>
@@ -14,7 +14,7 @@
           <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" focusable="false" role="img" aria-label="NHS">
             <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
           </svg>
-          <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
+          <span class="nhsuk-header__service-name">Training Passport</span>
         </a>
       </div>
       <nav class="nhsuk-topnav" aria-label="Account">
@@ -53,10 +53,10 @@
     </section>
 
     <section style="margin-top:2.25rem;" aria-labelledby="actionsTitle">
-      <h2 id="actionsTitle">Your e-learning</h2>
+      <h2 id="actionsTitle">Your training</h2>
       <div class="nhs-action-grid" role="list">
         <a class="nhs-action-card" href="/static/staff/#list" role="listitem">
-          <div class="nhs-action-title">1. View e-learning</div>
+          <div class="nhs-action-title">1. View training</div>
           <p class="nhs-action-desc">Browse everything on your list, filter by status or module, and open each record.</p>
           <span class="nhs-action-cta">View list &rsaquo;</span>
         </a>
@@ -66,7 +66,7 @@
           <span class="nhs-action-cta">Import CSV &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/staff/#add" role="listitem">
-          <div class="nhs-action-title">3. Add e-learning</div>
+          <div class="nhs-action-title">3. Add training</div>
           <p class="nhs-action-desc">Enter one completion by hand (with optional certificate upload) and issue a credential.</p>
           <span class="nhs-action-cta">Add record &rsaquo;</span>
         </a>
@@ -76,7 +76,7 @@
           <span class="nhs-action-cta">Open planner &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/staff/#bulk" role="listitem">
-          <div class="nhs-action-title">5. Export e-learning</div>
+          <div class="nhs-action-title">5. Export training</div>
           <p class="nhs-action-desc">Download selected or all records as a ZIP and share by link or QR.</p>
           <span class="nhs-action-cta">Bulk export &rsaquo;</span>
         </a>
@@ -158,7 +158,7 @@
         var premiumEl = document.getElementById('premiumTrustTools');
         if (premiumEl && NHSAuth.user.premium) premiumEl.hidden = false;
 
-        /* Linked JSON file is applied from My e-learning only; avoid repopulating stats from disk before server merge. */
+        /* Linked JSON file is applied from My training only; avoid repopulating stats from disk before server merge. */
         await NHSAuth.pullWalletMerge();
         renderStats(await fetchServerWallet());
         window.addEventListener('nhs-wallet-updated', renderStats);

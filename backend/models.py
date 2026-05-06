@@ -1,6 +1,6 @@
 """
-NHS E-Learning Credential — data models and W3C-aligned schema.
-Credential fields per plan: staff name, ESR ID/NHS number, module (CSTF), 
+NHS Training Passport — data models and W3C-aligned schema.
+Credential fields per plan: staff name, identifier, module (CSTF),
 completion date, expiry date, issuing Trust ODS + name, credential ID, signature, issued date.
 """
 from datetime import date, datetime
