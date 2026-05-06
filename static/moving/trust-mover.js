@@ -222,9 +222,6 @@
   }
 
   function render(cfg, joinId, leaveId) {
-    document.getElementById('movingDestinationTitle').textContent =
-      'Illustrative requirements — ' + (cfg.display_name || joinId);
-
     var rows = (cfg.mandatory_examples || []).map(function (req) {
       return (
         '<tr><td>' +
