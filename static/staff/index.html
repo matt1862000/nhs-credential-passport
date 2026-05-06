@@ -316,9 +316,6 @@
           <input id="csv_upload" type="file" name="csv" accept=".csv,text/csv">
           <span class="nhsuk-file-upload__name" id="csv_filename" aria-live="polite"></span>
         </div>
-        <div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin-top:1rem;">
-          <button type="button" class="nhsuk-button" id="btnCsvUpload" disabled>Upload</button>
-        </div>
         <div id="csvImportResult" style="margin-top:1.25rem;" aria-live="polite"></div>
       </div>
     </section>
@@ -736,8 +733,6 @@
     document.getElementById('csv_upload').addEventListener('change', function() {
       document.getElementById('csv_filename').textContent = this.files.length ? 'Chosen: ' + this.files[0].name : '';
       document.getElementById('csvImportResult').innerHTML = '';
-      var btn = document.getElementById('btnCsvUpload');
-      if (btn) btn.disabled = !this.files.length;
       if (this.files.length) void runCsvUploadFlow();
     });
 
@@ -793,23 +788,15 @@
 
     async function runCsvUploadFlow() {
       if (csvUploadInFlight) return;
-      var btn = document.getElementById('btnCsvUpload');
-      var labelUpload = 'Upload';
       csvUploadInFlight = true;
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = 'Uploading…';
-      }
       try {
         var checked = await postCsv(true);
         if (!checked) {
-          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
           csvUploadInFlight = false;
           return;
         }
         renderCsvResult(checked, {});
         if (checked.fatal_error || !(checked.valid_row_count > 0)) {
-          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
           csvUploadInFlight = false;
           return;
         }
@@ -821,13 +808,11 @@
         var note = document.getElementById('csvIssuingNote');
         if (note) note.remove();
         if (!data) {
-          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
           csvUploadInFlight = false;
           return;
         }
         if (data.fatal_error) {
           renderCsvResult(data, {});
-          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
           csvUploadInFlight = false;
           return;
         }
@@ -836,7 +821,6 @@
           if (resultEl) {
             resultEl.innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error);">Server returned no records. Try uploading again.</p>';
           }
-          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
           csvUploadInFlight = false;
           return;
         }
@@ -863,17 +847,8 @@
       } catch (e) {
         document.getElementById('csvImportResult').innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error);">' + escapeHtml(e.message) + '</p>';
       }
-      if (btn) {
-        btn.textContent = labelUpload;
-        var input = document.getElementById('csv_upload');
-        btn.disabled = !(input && input.files && input.files.length);
-      }
       csvUploadInFlight = false;
     }
-
-    document.getElementById('btnCsvUpload').addEventListener('click', function () {
-      void runCsvUploadFlow();
-    });
 
     const sel = document.getElementById('moduleSelect');
     MODULES.forEach(m => {
