@@ -7,7 +7,8 @@
   <link rel="stylesheet" href="/static/shared/app.css">
   <style>
     .moving-select-row { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; align-items: flex-end; margin: 1rem 0; }
-    .moving-select-row .nhsuk-form-group { margin: 0; min-width: 14rem; flex: 1 1 200px; }
+    .moving-select-row .nhsuk-form-group { margin: 0; min-width: 20rem; flex: 1 1 340px; }
+    .moving-select-row .nhsuk-form-group--btn { min-width: auto; flex: 0 0 auto; }
     .moving-select-row select {
       width: 100%; max-width: 100%; padding: 0.7rem 2.25rem 0.7rem 0.75rem;
       font-size: 1rem; border: 2px solid var(--nhsuk-border); border-radius: 4px;
@@ -82,7 +83,7 @@
           <label class="nhsuk-label" for="leaveTrust">I am leaving</label>
           <select id="leaveTrust" name="leaveTrust"></select>
         </div>
-        <div class="nhsuk-form-group">
+        <div class="nhsuk-form-group nhsuk-form-group--btn">
           <button type="button" class="nhsuk-button" id="btnRefreshChecklist">Run checklist</button>
         </div>
       </div>
