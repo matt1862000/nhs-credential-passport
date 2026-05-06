@@ -98,26 +98,6 @@
     return String(expiryDate) >= todayIso();
   }
 
-  function recognitionBlock(leaveId, cfg) {
-    var map = cfg.recognition_when_joining || {};
-    var key = leaveId === 'other' ? '_default' : leaveId;
-    var rec = map[key] || map._default;
-    if (!rec) rec = { summary: '', often_portable_topics: [], typically_local_at_destination: [] };
-    var portable = (rec.often_portable_topics || []).map(function (t) {
-      return '<li>' + escapeHtml(t) + '</li>';
-    }).join('');
-    var local = (rec.typically_local_at_destination || []).map(function (t) {
-      return '<li>' + escapeHtml(t) + '</li>';
-    }).join('');
-    return (
-      '<p>' + escapeHtml(rec.summary || '') + '</p>' +
-      '<div class="moving-two-col">' +
-      '<div><h3 class="moving-h3">Often portable (verify + policy)</h3><ul>' + portable + '</ul></div>' +
-      '<div><h3 class="moving-h3">Usually required at your new trust</h3><ul>' + local + '</ul></div>' +
-      '</div>'
-    );
-  }
-
   function walletTable(reqs, recHints) {
     var list = [];
     try {
@@ -258,7 +238,6 @@
       '<table class="moving-table"><thead><tr><th>Topic</th><th>Category</th></tr></thead><tbody>' + rows + '</tbody></table>';
 
     var recHints = getRecognitionHints(cfg, leaveId);
-    document.getElementById('movingRecognitionWrap').innerHTML = recognitionBlock(leaveId, cfg);
     document.getElementById('movingWalletWrap').innerHTML = walletTable(cfg.mandatory_examples || [], recHints);
 
     document.getElementById('movingResults').hidden = false;
