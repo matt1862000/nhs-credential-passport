@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HR inbox &mdash; NHS Training Passport</title>
+  <link rel="stylesheet" href="/static/shared/app.css">
+  <style>
+    .hr-wrap { max-width: 52rem; }
+    .hr-card { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; box-shadow: 0 2px 8px rgba(33, 43, 50, 0.06); padding: 1.25rem 1.5rem; margin-top: 1.25rem; }
+    .hr-table-wrap { overflow-x: auto; }
+    .hr-table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
+    .hr-table th, .hr-table td { text-align: left; padding: 0.65rem 0.75rem; border-bottom: 1px solid var(--nhsuk-border); vertical-align: top; }
+    .hr-table th { background: #f0f4f5; font-weight: 700; }
+    .hr-table tr:last-child td { border-bottom: none; }
+    .hr-muted { color: var(--nhsuk-secondary-text); font-size: 0.9375rem; }
+    .hr-pill { display: inline-block; padding: 0.15rem 0.45rem; border-radius: 999px; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.02em; border: 1px solid var(--nhsuk-border); color: var(--nhsuk-secondary-text); background: #eef0f2; }
+    .hr-pill--verified { background: #dbeafe; color: #1d4ed8; border-color: rgba(29, 78, 216, 0.25); }
+    .hr-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .hr-btn-small { padding: 0.55rem 0.9rem; font-size: 0.9375rem; }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/static/dashboard/" aria-label="Dashboard">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">Training Passport</span>
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <a href="/static/dashboard/">&larr; Dashboard</a>
+        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">HR inbox</h1>
+    <p class="nhsuk-lead">Review training sent for HR verification. Mark each record as verified or declined.</p>
+
+    <div id="notPremium" class="hr-card" hidden>
+      <p style="margin:0; font-weight:700;">This page is only for HR accounts.</p>
+      <p class="hr-muted" style="margin:0.5rem 0 0 0;">Sign in with an HR account to continue.</p>
+    </div>
+
+    <div id="inboxView" class="hr-card" hidden>
+      <h2 style="margin:0 0 0.75rem 0; font-size:1.25rem;">Shared sets</h2>
+      <div class="hr-table-wrap">
+        <table class="hr-table" aria-label="Shared training sets">
+          <thead>
+            <tr>
+              <th>Doctor</th>
+              <th>Shared</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="sessionsTbody"></tbody>
+        </table>
+      </div>
+      <p class="hr-muted" style="margin:0.75rem 0 0 0;">Tip: open a set to verify one record at a time.</p>
+    </div>
+
+    <div id="sessionView" class="hr-card" hidden>
+      <div class="hr-actions" style="justify-content:space-between;">
+        <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBack">&larr; Back</button>
+        <span class="hr-muted" id="sessionMeta">&nbsp;</span>
+      </div>
+      <h2 style="margin:1rem 0 0.75rem 0; font-size:1.25rem;">Records</h2>
+      <div class="hr-table-wrap">
+        <table class="hr-table" aria-label="Shared training records">
+          <thead>
+            <tr>
+              <th>Module</th>
+              <th>Expires</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="itemsTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/shared/auth.js"></script>
+  <script>
+    (function () {
+      function wireHamburgerMenu() {
+        var btn = document.getElementById('btnMenu');
+        var panel = document.getElementById('menuPanel');
+        if (!btn || !panel) return;
+        function close() { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+        function open() { panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); }
+        btn.addEventListener('click', function (e) {
+          e.preventDefault();
+          if (panel.hidden) open(); else close();
+        });
+        document.addEventListener('click', function (e) {
+          if (panel.hidden) return;
+          if (btn.contains(e.target) || panel.contains(e.target)) return;
+          close();
+        }, true);
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+      }
+
+      function qs() { return new URLSearchParams(window.location.search); }
+      function show(el, on) { if (el) el.hidden = !on; }
+      function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+      async function apiJson(url, opts) {
+        opts = opts || {};
+        opts.credentials = 'include';
+        var res = await fetch(url, opts);
+        var text = await res.text();
+        var data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          var d = data && data.detail;
+          throw new Error(typeof d === 'string' ? d : (text || res.statusText));
+        }
+        return data;
+      }
+
+      async function loadInbox() {
+        var tbody = document.getElementById('sessionsTbody');
+        tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
+        var data = await apiJson('/api/hr/shares?limit=50');
+        var rows = (data.sessions || []).map(function (s) {
+          var statusLine = (s.verified_count || 0) + ' verified · ' + (s.pending_count || 0) + ' pending' + ((s.declined_count || 0) ? (' · ' + (s.declined_count || 0) + ' declined') : '');
+          var doctorLine = (s.doctor_name || s.doctor_email || '—') +
+            (s.doctor_gmc ? (' · GMC ' + s.doctor_gmc) : '') +
+            (s.doctor_trust ? (' · ' + s.doctor_trust) : '');
+          return (
+            '<tr>' +
+              '<td>' + esc(doctorLine) + '</td>' +
+              '<td>' + esc((s.created_at || '').slice(0, 16).replace('T', ' ')) + '</td>' +
+              '<td>' + esc(statusLine) + '</td>' +
+              '<td><a href=\"/static/hr/?session=' + encodeURIComponent(String(s.session_id)) + '\">Open</a></td>' +
+            '</tr>'
+          );
+        }).join('');
+        tbody.innerHTML = rows || '<tr><td colspan="4" class="hr-muted">No shares yet.</td></tr>';
+      }
+
+      async function loadSession(sessionId) {
+        var tbody = document.getElementById('itemsTbody');
+        tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
+        var s = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
+        var meta =
+          (s.doctor_name || s.doctor_email || '—') +
+          (s.doctor_gmc ? (' · GMC ' + s.doctor_gmc) : '') +
+          (s.doctor_trust ? (' · ' + s.doctor_trust) : '') +
+          ' · ' + String(s.created_at || '').slice(0, 16).replace('T', ' ');
+        document.getElementById('sessionMeta').textContent = meta;
+        var items = (s.items || []);
+        tbody.innerHTML = items.map(function (it) {
+          var st = String(it.status || '').toUpperCase();
+          var pill = st === 'VERIFIED'
+            ? '<span class=\"hr-pill hr-pill--verified\">VERIFIED</span>'
+            : (st === 'DECLINED'
+              ? '<span class=\"hr-pill\">DECLINED</span>'
+              : '<span class=\"hr-pill\">PENDING</span>');
+          var btn = st === 'VERIFIED'
+            ? '<button type=\"button\" class=\"nhsuk-button nhsuk-button--secondary hr-btn-small\" disabled>Verified</button>'
+            : '<div class=\"hr-actions\">' +
+              '<button type=\"button\" class=\"nhsuk-button hr-btn-small\" data-verify=\"1\" data-cid=\"' + esc(it.credential_id) + '\">Verify</button>' +
+              '<button type=\"button\" class=\"nhsuk-button nhsuk-button--secondary hr-btn-small\" data-decline=\"1\" data-cid=\"' + esc(it.credential_id) + '\">Decline</button>' +
+              '</div>';
+          return (
+            '<tr>' +
+              '<td>' + esc(it.module_name || it.credential_id || '—') + '</td>' +
+              '<td>' + esc(it.expiry_date || '—') + '</td>' +
+              '<td>' + pill + '</td>' +
+              '<td>' + btn + '</td>' +
+            '</tr>'
+          );
+        }).join('') || '<tr><td colspan=\"4\" class=\"hr-muted\">No items in this share.</td></tr>';
+
+        tbody.addEventListener('click', async function (e) {
+          var v = e.target && e.target.closest('button[data-verify=\"1\"]');
+          var d = e.target && e.target.closest('button[data-decline=\"1\"]');
+          if (!v && !d) return;
+          var cid = (v || d).getAttribute('data-cid');
+          try {
+            if (v) {
+              v.disabled = true;
+              v.textContent = 'Verifying…';
+              await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid)) + '/verify', { method: 'POST' });
+            } else {
+              var reason = (prompt('Why are you declining this record? (This will be sent back to the doctor)') || '').trim();
+              if (!reason) return;
+              d.disabled = true;
+              d.textContent = 'Declining…';
+              await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid)) + '/decline', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason: reason }),
+              });
+            }
+            await loadSession(sessionId);
+          } catch (err) {
+            alert(err.message || err);
+            await loadSession(sessionId);
+          }
+        }, { once: true });
+      }
+
+      (async function boot() {
+        await NHSAuth.refresh();
+        if (!NHSAuth.requireAuth()) return;
+        document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
+        wireHamburgerMenu();
+
+        document.getElementById('btnSignOut').addEventListener('click', async function () {
+          await NHSAuth.signOut();
+          window.location.replace('/');
+        });
+        document.getElementById('btnBack').addEventListener('click', function () {
+          window.location.assign('/static/hr/');
+        });
+
+        if (!NHSAuth.user.premium) {
+          show(document.getElementById('notPremium'), true);
+          show(document.getElementById('inboxView'), false);
+          show(document.getElementById('sessionView'), false);
+          return;
+        }
+
+        var sessionId = qs().get('session');
+        if (sessionId) {
+          show(document.getElementById('sessionView'), true);
+          show(document.getElementById('inboxView'), false);
+          await loadSession(sessionId);
+        } else {
+          show(document.getElementById('inboxView'), true);
+          show(document.getElementById('sessionView'), false);
+          await loadInbox();
+        }
+      })();
+    })();
+  </script>
+</body>
+</html>
+

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Verify bundle — NHS E-Learning Credential Passport</title>
+  <title>Verify bundle — NHS Training Passport</title>
   <style>
     :root {
       --nhsuk-text: #212b32;
@@ -93,11 +93,11 @@
   <header class="nhsuk-header" role="banner">
     <div class="nhsuk-header__container">
       <div class="nhsuk-header__service">
-        <a class="nhsuk-header__service-logo" href="/" aria-label="NHS E-Learning Credential Passport homepage">
+        <a class="nhsuk-header__service-logo" href="/" aria-label="NHS Training Passport homepage">
           <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" height="40" width="100" focusable="false" role="img" aria-label="NHS">
             <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
           </svg>
-          <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
+          <span class="nhsuk-header__service-name">Training Passport</span>
         </a>
       </div>
     </div>
@@ -108,7 +108,7 @@
 
     <div class="bundle-upload-panel">
       <h3>If you don’t have a share link</h3>
-      <p class="nhsuk-body-s" style="margin:0 0 0.75rem 0;">Use the <strong>same saved file</strong> from the staff app (<strong>Save or restore your list</strong> → <strong>Save a copy to my device</strong>), or any file your organisation gives you that contains your verifiable training records. If you are helping IT test the system, you can also paste the raw technical export below.</p>
+      <p class="nhsuk-body-s" style="margin:0 0 0.75rem 0;">Use a JSON file your trust or IT gives you, or any file that contains your verifiable training records. If you are helping IT test the system, you can also paste the raw technical export below.</p>
       <div class="bundle-upload-actions">
         <label for="bundleFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Choose saved list file…</label>
         <input type="file" id="bundleFileInput" accept=".json,application/json" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose your saved training list file">
@@ -195,7 +195,7 @@
       for (var i = 0; i < items.length; i++) {
         var item = items[i];
         try {
-          var url = '/api/credentials/verify/' + encodeURIComponent(item.id) + '?jwt=' + encodeURIComponent(item.jwt);
+          var url = '/api/credentials/verify/' + encodeURIComponent(item.id) + (item.jwt ? ('?jwt=' + encodeURIComponent(item.jwt)) : '');
           var res = await fetch(url);
           var data = await res.json();
           var status = (data.status || 'UNVERIFIED').toLowerCase();
@@ -354,7 +354,7 @@
       resultEl.innerHTML =
         '<p class="nhsuk-body-s"><a href="' +
         (window.location.pathname.replace(/\/[^/]*$/, '/') || '/static/verifier/') +
-        '">Verify a single e-learning</a> instead.</p>';
+        '">Verify a single training record</a> instead.</p>';
     }
   </script>
 </body>

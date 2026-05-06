@@ -1,6 +1,6 @@
 """
-NHS E-Learning Credential — data models and W3C-aligned schema.
-Credential fields per plan: staff name, ESR ID/NHS number, module (CSTF), 
+NHS Training Passport — data models and W3C-aligned schema.
+Credential fields per plan: staff name, identifier, module (CSTF),
 completion date, expiry date, issuing Trust ODS + name, credential ID, signature, issued date.
 """
 from datetime import date, datetime
@@ -28,7 +28,7 @@ CSTF_MODULES = [
 class CompletionRecord(BaseModel):
     """Input for issuing a credential (one module completion)."""
     staff_full_name: str
-    staff_identifier: str  # ESR ID or NHS number
+    staff_identifier: str  # GMC number (manual add) or ESR / NHS-style id from CSV
     module_code: str       # e.g. fire_safety
     module_name: str       # plain text
     completion_date: date

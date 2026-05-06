@@ -1,5 +1,5 @@
 """
-NHS E-Learning Credential Passport — Phase 2 MVP API.
+NHS Training Passport — Phase 2 MVP API.
 Issuing service, verification endpoint, revoke, and did:web public key.
 """
 import os
@@ -24,6 +24,7 @@ from .models import (
     CsvImportInvalidRow,
 )
 from .csv_import import parse_completion_csv, csv_template_header, MAX_CSV_BYTES
+from .auth_api import router as auth_router, require_user_id
 
 # Base URL for verification links (default for local dev)
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
@@ -47,18 +48,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="NHS E-Learning Credential Passport",
+    title="NHS Training Passport",
     description="Phase 2 MVP — issue, verify, revoke credentials",
     lifespan=lifespan,
 )
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.include_router(auth_router)
 
 
 # ---------- API ----------
 
 @app.post("/api/credentials/issue", response_model=IssueResponse)
 def api_issue(request: Request, body: IssueRequest):
-    """Issue credentials from completion records. No auth at MVP. Optional certificate upload."""
+    """Issue credentials from completion records. Requires a signed-in account."""
+    require_user_id(request)
     base = str(request.base_url).rstrip("/")
     results = issue_credentials(body.records, base)
     credentials_out = []
@@ -86,16 +89,18 @@ def api_verify(credential_id: str, jwt: str = None):
 
 
 @app.post("/api/credentials/revoke/{credential_id}")
-def api_revoke(credential_id: str):
-    """Revoke a credential. No auth at MVP (in production, holder-only)."""
+def api_revoke(request: Request, credential_id: str):
+    """Revoke a credential. Requires a signed-in account."""
+    require_user_id(request)
     if revoke_credential(credential_id):
         return {"ok": True, "credential_id": credential_id}
     raise HTTPException(status_code=404, detail="Credential not found")
 
 
 @app.get("/api/credentials/import-csv/template")
-def api_csv_template():
-    """Download a one-line CSV header template for bulk import."""
+def api_csv_template(request: Request):
+    """Download a one-line CSV header template for bulk import (signed-in users only)."""
+    require_user_id(request)
     return Response(
         content=csv_template_header(),
         media_type="text/csv; charset=utf-8",
@@ -112,6 +117,7 @@ async def api_import_csv(request: Request, file: UploadFile = File(...), dry_run
     Upload UTF-8 CSV: validate rows, optionally issue all valid rows (dry_run=false).
     See GET .../import-csv/template for column names and aliases (e.g. employee_name).
     """
+    require_user_id(request)
     raw = await file.read()
     if len(raw) > MAX_CSV_BYTES:
         raise HTTPException(status_code=413, detail="CSV file too large")
@@ -204,7 +210,7 @@ def index():
             return HTMLResponse(content=f.read(), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     # Fallback if file missing (e.g. in tests)
     return HTMLResponse(
-        content="<html><body><h1>NHS E-Learning Credential Passport</h1><p><a href='/static/'>Go to app</a></p></body></html>",
+        content="<html><body><h1>NHS Training Passport</h1><p><a href='/static/'>Go to app</a></p></body></html>",
         headers={"Cache-Control": "no-cache"},
     )
 
@@ -217,3 +223,33 @@ def verifier_redirect():
 @app.get("/staff", response_class=RedirectResponse)
 def staff_redirect():
     return RedirectResponse(url="/static/staff/", status_code=302)
+
+
+@app.get("/dashboard", response_class=RedirectResponse)
+def dashboard_redirect():
+    return RedirectResponse(url="/static/dashboard/", status_code=302)
+
+
+@app.get("/profile", response_class=RedirectResponse)
+def profile_redirect():
+    return RedirectResponse(url="/static/profile/", status_code=302)
+
+
+@app.get("/auth", response_class=RedirectResponse)
+def auth_redirect():
+    return RedirectResponse(url="/static/auth/", status_code=302)
+
+
+@app.get("/sign-in", response_class=RedirectResponse)
+def sign_in_redirect():
+    return RedirectResponse(url="/static/auth/?mode=signin", status_code=302)
+
+
+@app.get("/register", response_class=RedirectResponse)
+def register_redirect():
+    return RedirectResponse(url="/static/auth/?mode=register", status_code=302)
+
+
+@app.get("/plan-move", response_class=RedirectResponse)
+def plan_move_redirect():
+    return RedirectResponse(url="/static/plan-move/", status_code=302)

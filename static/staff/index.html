@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>My e-learning — NHS E-Learning Credential Passport</title>
+  <title>My training — NHS Training Passport</title>
   <style>
     :root {
       --nhsuk-text: #212b32;
@@ -76,6 +76,22 @@
       outline-offset: 0;
       border-color: var(--nhsuk-text);
     }
+    .nhs-ac-wrap { position: relative; max-width: 28rem; }
+    .nhs-ac-wrap .nhsuk-input { max-width: none; }
+    .nhs-suggest-list {
+      position: absolute; left: 0; right: 0; top: 100%; margin: 0.15rem 0 0 0;
+      padding: 0; list-style: none; max-height: 14rem; overflow-y: auto;
+      z-index: 40; background: #fff; border: 1px solid var(--nhsuk-border);
+      border-radius: 4px; box-shadow: 0 4px 14px rgba(33, 43, 50, 0.12);
+    }
+    .nhs-suggest-list li {
+      padding: 0.5rem 0.75rem; cursor: pointer; font-size: 1rem; line-height: 1.35;
+      border-bottom: 1px solid var(--nhsuk-border);
+    }
+    .nhs-suggest-list li:last-child { border-bottom: none; }
+    .nhs-suggest-list li:hover,
+    .nhs-suggest-list li[aria-selected="true"] { background: rgba(240, 244, 245, 0.9); }
+    .nhs-suggest-meta { display: block; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
     .nhsuk-file-upload {
       display: block;
       max-width: 28rem;
@@ -130,6 +146,40 @@
     .nhsuk-bulk-export-panel__btn { padding: 0.5rem 1rem; font-size: 0.9375rem; }
     .nhsuk-bulk-export-panel__divider { color: var(--nhsuk-border); font-weight: 700; padding: 0 0.25rem; }
     .nhsuk-hint { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.25rem; }
+    .bulk-actions { position: relative; display: inline-flex; }
+    .bulk-actions summary { list-style: none; }
+    .bulk-actions summary::-webkit-details-marker { display: none; }
+    .bulk-actions__panel {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 0.35rem);
+      min-width: 15.5rem;
+      background: #fff;
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 6px;
+      box-shadow: 0 10px 28px rgba(33, 43, 50, 0.22);
+      padding: 0.35rem;
+      z-index: 60;
+    }
+    .bulk-actions__item {
+      display: flex;
+      width: 100%;
+      justify-content: flex-start;
+      color: var(--nhsuk-link);
+      background: transparent;
+      border: none;
+      padding: 0.6rem 0.7rem;
+      border-radius: 4px;
+      font-size: 0.9375rem;
+      cursor: pointer;
+      text-decoration: none;
+      font-family: inherit;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .bulk-actions__item:hover { background: rgba(0, 94, 184, 0.08); }
+    .bulk-actions__item:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 1px; }
+    .bulk-actions__item[disabled] { opacity: 0.55; cursor: not-allowed; }
     .nhsuk-button {
       background: var(--nhsuk-button);
       color: #fff;
@@ -167,6 +217,8 @@
     .nhsuk-tag--expiring { background: #fff3cd; color: #996a00; }
     .nhsuk-tag--expired { background: #fdecea; color: var(--nhsuk-error); }
     .nhsuk-tag--revoked { background: #fdecea; color: var(--nhsuk-error); }
+    .nhsuk-tag--shared { background: #eef0f2; color: var(--nhsuk-secondary-text); border: 1px solid var(--nhsuk-border); }
+    .nhsuk-tag--verified { background: #dbeafe; color: #1d4ed8; border: 1px solid rgba(29, 78, 216, 0.25); }
     .nhsuk-card__actions { margin-top: 1rem; }
     .nhsuk-card__actions .nhsuk-button { margin-right: 0.5rem; margin-bottom: 0.5rem; }
     .nhsuk-summary-list {
@@ -193,70 +245,56 @@
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
     }
     #qrModal .nhsuk-modal input { width: 100%; padding: 0.6rem; margin-top: 0.5rem; border-radius: 4px; border: 1px solid var(--nhsuk-border); }
-    .wallet-save-banner {
-      margin-top: 1rem;
-      padding: 1rem 1.15rem;
-      background: #fff9e6;
-      border: 2px solid #ffb81c;
-      border-radius: 4px;
-    }
-    .wallet-save-banner p { margin: 0 0 0.75rem 0; font-size: 1rem; color: var(--nhsuk-text); max-width: 40em; }
-    .wallet-save-banner .wallet-save-banner__actions { display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: center; }
+    .auth-panel h4 { margin: 0 0 0.75rem 0; font-size: 1.125rem; font-weight: 600; color: var(--nhsuk-text); }
+    .auth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
+    @media (max-width: 720px) { .auth-grid { grid-template-columns: 1fr; } }
+    #authUserEmail { font-weight: 600; color: var(--nhsuk-link); }
   </style>
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
-    <div class="nhsuk-header__container">
+    <div class="nhsuk-header__container" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;">
       <div class="nhsuk-header__service">
-        <a class="nhsuk-header__service-logo" href="/" aria-label="NHS E-Learning Credential Passport homepage">
+        <a class="nhsuk-header__service-logo" href="/static/dashboard/" aria-label="Dashboard">
           <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" height="40" width="100" focusable="false" role="img" aria-label="NHS">
             <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
           </svg>
-          <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
+          <span class="nhsuk-header__service-name">Training Passport</span>
         </a>
       </div>
+      <nav aria-label="Account" style="display:flex;align-items:center;gap:0.85rem;color:#fff;font-size:0.9375rem;">
+        <a href="/static/dashboard/" style="color:#fff;background:transparent;border:1px solid rgba(255,255,255,0.4);padding:0.4rem 0.8rem;border-radius:4px;text-decoration:none;font-size:0.875rem;">&larr; Dashboard</a>
+        <span id="navEmail" style="font-weight:600;white-space:nowrap;">&nbsp;</span>
+        <div class="nhsuk-menu" style="position:relative;display:inline-flex;align-items:center;">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel" style="color:#fff;background:transparent;border:1px solid rgba(255,255,255,0.4);padding:0.4rem 0.8rem;border-radius:4px;font-family:inherit;font-size:0.875rem;cursor:pointer;">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden style="right:0;top:calc(100% + 0.35rem);">
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
     </div>
   </header>
   <main class="nhsuk-main" id="maincontent" role="main">
-    <h2 class="nhsuk-page-heading">My e-learning</h2>
-    <p class="nhsuk-body-s">Add your e-learning completion records and share them with receiving Trusts.</p>
-    <div class="nhsuk-bulk-export-panel" style="margin-bottom:1.25rem;">
-      <h3 class="nhsuk-bulk-export-panel__title">How this works</h3>
-      <ol style="margin:0;padding-left:1.25rem;line-height:1.65;color:var(--nhsuk-secondary-text);font-size:1.0625rem;">
-        <li style="margin-bottom:0.5rem;"><strong>Add your completions</strong> using the <strong>Add e-learning</strong> or <strong>Import CSV</strong> tabs. They will show under <strong>My e-learning</strong>.</li>
-        <li style="margin-bottom:0.5rem;"><strong>Switching device or browser?</strong> On this page, open <strong>Save or restore your list</strong>: on the device that already has your training, press <strong>Save a copy to my device</strong>; on the other device, press <strong>Bring my saved list</strong> and choose that file.</li>
-        <li><strong>Moving trust or sending evidence</strong> — Open the <a href="/#moving-planner">move planner on the home page</a>, or use <strong>Bulk export</strong> / Share from your list to send records to a verifier.</li>
-      </ol>
+    <h2 class="nhsuk-page-heading">My training</h2>
+    <p class="nhsuk-body-s">Manage your training list. Use the tabs to add, import from ESR, or share records with others.</p>
+    <div class="nhsuk-card" id="profileGateNotice" hidden style="border-left:4px solid var(--nhsuk-warning); padding:0.9rem 1rem; margin:0.75rem 0 1rem 0;">
+      <p style="margin:0; font-weight:700;">Complete your profile to verify with HR.</p>
+      <p class="nhsuk-body-s" style="margin:0.35rem 0 0 0;">
+        Add your <strong>full name</strong>, <strong>GMC number</strong> and <strong>current trust</strong> in
+        <a href="/static/profile/">Profile</a> to enable HR verification.
+      </p>
     </div>
-    <p class="nhsuk-body-s" style="margin-top:-0.5rem;"><a href="/#moving-planner" style="font-weight:600;">Moving trusts?</a> The home page uses the same order: get your list on that device → choose trusts → read the comparison below.</p>
 
     <div class="nhsuk-tabs" role="tablist">
-      <button type="button" role="tab" aria-selected="true" data-tab="list" class="active" id="tab-list">My e-learning</button>
-      <button type="button" role="tab" aria-selected="false" data-tab="add" id="tab-add">Add e-learning</button>
-      <button type="button" role="tab" aria-selected="false" data-tab="import" id="tab-import">Import CSV</button>
-      <button type="button" role="tab" aria-selected="false" data-tab="bulk" id="tab-bulk">Bulk export</button>
+      <button type="button" role="tab" aria-selected="true" data-tab="list" class="active" id="tab-list">My training</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="import" id="tab-import">Import from ESR</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="add" id="tab-add">Add training</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="move" id="tab-move">Moving trust</button>
+      <button type="button" role="tab" aria-selected="false" data-tab="bulk" id="tab-bulk">Export</button>
     </div>
 
     <section id="list" class="visible" role="tabpanel" aria-labelledby="tab-list">
-      <div class="nhsuk-bulk-export-panel" id="walletFilePanel" style="margin-bottom:1.25rem;">
-        <h3 class="nhsuk-bulk-export-panel__title">Save or restore your list</h3>
-        <p class="nhsuk-bulk-export-panel__desc"><strong>The copy that matters is the one you save to a file</strong> (your trust drive, your cloud, or email to yourself). The browser also keeps a working copy so the app is quick and the home page move planner can read it — that browser copy can be lost if you clear site data or change device. <strong>Save a copy after adding or importing.</strong> You can <strong>bring a copy back</strong> on another computer or browser. In <strong>Chrome or Edge</strong> you can <strong>pick one file to keep in sync</strong> so changes are written to that file when the browser allows.</p>
-        <div id="walletSaveBanner" class="wallet-save-banner" role="status" hidden>
-          <p><strong>You have changes not saved to a file on this device yet.</strong> Save a copy so you do not lose them if you clear browser data or switch computers.</p>
-          <div class="wallet-save-banner__actions">
-            <button type="button" class="nhsuk-button" id="btnWalletSaveNow">Save a copy now</button>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletSaveBannerDismiss">Not now</button>
-          </div>
-        </div>
-        <div style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center;">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletDownload">Save a copy to my device</button>
-          <label for="walletFileInput" class="nhsuk-button nhsuk-button--secondary" style="cursor:pointer; margin:0;">Bring my saved list…</label>
-          <input type="file" id="walletFileInput" accept=".json,application/json" tabindex="-1" style="position:absolute;width:0.1px;height:0.1px;opacity:0;overflow:hidden;z-index:-1;" aria-label="Choose the training list file you saved from another device">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletLink">Pick a file to keep in sync</button>
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnWalletUnlink" hidden>Stop syncing to that file</button>
-        </div>
-        <p class="nhsuk-body-s" id="walletFileStatus" style="margin-top:0.75rem;" aria-live="polite"></p>
-      </div>
       <div class="nhsuk-summary-list">
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Valid</span><span class="nhsuk-summary-list__value" id="countValid">0</span></div>
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expiring soon</span><span class="nhsuk-summary-list__value" id="countExpiring">0</span></div>
@@ -284,13 +322,20 @@
 
     <section id="add" role="tabpanel" aria-labelledby="tab-add" aria-hidden="true">
       <form id="addForm">
-        <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_full_name">Your full name</label><input class="nhsuk-input" id="staff_full_name" type="text" name="staff_full_name" required placeholder="Jane Smith"></div>
-        <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_identifier">NHS number or ESR ID</label><input class="nhsuk-input" id="staff_identifier" type="text" name="staff_identifier" required placeholder="1234567890"></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_full_name">Your full name</label><input class="nhsuk-input" id="staff_full_name" type="text" name="staff_full_name" required placeholder="Jane Smith" autocomplete="name"></div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="staff_identifier">GMC number</label><input class="nhsuk-input" id="staff_identifier" type="text" name="staff_identifier" inputmode="numeric" required placeholder="1234567" maxlength="11" autocomplete="off"></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="moduleSelect">Module</label><select class="nhsuk-select" name="module_code" id="moduleSelect"></select></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="completion_date">Completion date</label><input class="nhsuk-input" id="completion_date" type="date" name="completion_date" required></div>
         <div class="nhsuk-form-group"><label class="nhsuk-label" for="expiry_date">Expiry date</label><input class="nhsuk-input" id="expiry_date" type="date" name="expiry_date" required></div>
-        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_ods_code">Issuing Trust ODS code</label><input class="nhsuk-input" id="issuing_trust_ods_code" type="text" name="issuing_trust_ods_code" placeholder="RGT" required></div>
-        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_name">Issuing Trust name</label><input class="nhsuk-input" id="issuing_trust_name" type="text" name="issuing_trust_name" placeholder="Royal General Trust" required></div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="issuing_trust_name">Issuing Trust name</label>
+          <div class="nhs-ac-wrap" id="trustAcWrap">
+            <input class="nhsuk-input" id="issuing_trust_name" type="text" name="issuing_trust_name" placeholder="e.g. Sheffield Teaching Hospitals" required autocomplete="off" aria-describedby="issuing_trust_name_hint" role="combobox" aria-autocomplete="list" aria-controls="trustSuggestList" aria-expanded="false" spellcheck="false">
+            <ul id="trustSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching NHS organisations"></ul>
+          </div>
+          <span class="nhsuk-hint" id="issuing_trust_name_hint">Start typing to see suggestions from the NHS Organisation Directory.</span>
+        </div>
+        <div class="nhsuk-form-group"><label class="nhsuk-label" for="issuing_trust_ods_code">Issuing Trust ODS code</label><input class="nhsuk-input" id="issuing_trust_ods_code" type="text" name="issuing_trust_ods_code" placeholder="e.g. RHQ" required maxlength="16" autocomplete="off" spellcheck="false" aria-describedby="issuing_trust_ods_hint"><span class="nhsuk-hint" id="issuing_trust_ods_hint">Filled automatically from the trust name when possible.</span></div>
         <div class="nhsuk-form-group nhsuk-file-upload">
           <label class="nhsuk-label" for="certificate_upload">Upload certificate (optional)</label>
           <span class="nhsuk-hint" id="certificate_hint">PDF or image (PNG, JPG) — e.g. your course completion certificate.</span>
@@ -298,16 +343,16 @@
           <input id="certificate_upload" type="file" name="certificate" accept=".pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf">
           <span class="nhsuk-file-upload__name" id="certificate_filename" aria-live="polite"></span>
         </div>
-        <button type="submit" class="nhsuk-button">Add e-learning</button>
+        <button type="submit" class="nhsuk-button">Add training</button>
       </form>
-      <p class="nhsuk-hint" style="margin-top:1rem;">At MVP this creates an e-learning record from the data you enter. In production, e-learning would be issued from ESR exports.</p>
+      
     </section>
 
     <section id="import" role="tabpanel" aria-labelledby="tab-import" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel">
-        <h3 class="nhsuk-bulk-export-panel__title">Import from CSV</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Upload a CSV with one row per completion. The template uses UTF-8; <strong>ESR “Compliance and Competency”</strong> exports are often Windows-1252 — the server detects encoding. ESR columns such as <strong>Competency Name</strong>, <strong>Title</strong>, <strong>Date Last Awarded</strong>, <strong>Date Start</strong>, <strong>Expiry Date</strong>, <strong>Last Updated By</strong> (<code>assignment|Name</code>), and <strong>VPD</strong> are mapped automatically. Rows without a person line are skipped. Check the file first, then issue all valid rows. <strong>Bulk import</strong> (more than one row) does not attach PDFs to each item so the request can finish in time — verification links and QR still work; use single-row add if you need a PDF saved next to a record.</p>
-        <p class="nhsuk-body-s" style="margin:0 0 1rem 0;"><a href="/api/credentials/import-csv/template" download="elearning-import-template.csv" style="color:var(--nhsuk-link); font-weight:600;">Download CSV template</a></p>
+        <h3 class="nhsuk-bulk-export-panel__title">Import from ESR</h3>
+        <p class="nhsuk-bulk-export-panel__desc">Upload your ESR CSV export to import your training records.</p>
+        
         <div class="nhsuk-form-group nhsuk-file-upload">
           <label class="nhsuk-label" for="csv_upload">CSV file</label>
           <label for="csv_upload" class="nhsuk-file-upload__trigger">Choose CSV file</label>
@@ -315,8 +360,7 @@
           <span class="nhsuk-file-upload__name" id="csv_filename" aria-live="polite"></span>
         </div>
         <div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin-top:1rem;">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCsvCheck">Check CSV</button>
-          <button type="button" class="nhsuk-button" id="btnCsvImport" disabled>Issue all valid rows</button>
+          <button type="button" class="nhsuk-button" id="btnCsvUpload" disabled>Upload</button>
         </div>
         <div id="csvImportResult" style="margin-top:1.25rem;" aria-live="polite"></div>
       </div>
@@ -325,16 +369,22 @@
     <section id="bulk" role="tabpanel" aria-labelledby="tab-bulk" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel" id="bulkExportPanel">
         <h3 class="nhsuk-bulk-export-panel__title">Download or share</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Tick items below, or use <strong>Select all</strong> then <strong>Share selected</strong> (one link/QR) or <strong>Download selected as ZIP</strong>. <strong>Download all as ZIP</strong> selects everything and downloads in one step.</p>
+        <p class="nhsuk-bulk-export-panel__desc">Tick items below, or use <strong>Select all</strong> then <strong>Verify selected with HR</strong> (one link/QR) or <strong>Download selected as ZIP</strong>. <strong>Download all as ZIP</strong> selects everything and downloads in one step.</p>
         <div class="nhsuk-bulk-export-panel__actions">
           <span class="nhsuk-bulk-export-panel__count" id="bulkExportCount" aria-live="polite">0 selected</span>
           <div class="nhsuk-bulk-export-panel__buttons">
-            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkSelectAll" title="Select every e-learning below">Select all</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkSelectAll" title="Select every training record below">Select all</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkClearSelection" title="Clear all ticks">Clear selection</button>
             <span class="nhsuk-bulk-export-panel__divider" aria-hidden="true">|</span>
-            <button type="button" class="nhsuk-button nhsuk-bulk-export-panel__btn" id="btnExportAll" title="Select all and download as one ZIP">Download all as ZIP</button>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnExportSelected" title="Download selected e-learning as PDFs in a ZIP" disabled>Download selected as ZIP</button>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnShareSelected" title="One link or QR a verifier can use to check all selected" disabled>Share selected (one link/QR)</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnVerifyAllHr" title="Send all training records to HR for verification">Verify all with HR</button>
+            <details class="bulk-actions" id="bulkActionsMenu">
+              <summary class="nhsuk-button nhsuk-bulk-export-panel__btn" aria-haspopup="true">Share or download</summary>
+              <div class="bulk-actions__panel" role="menu" aria-label="Share or download">
+                <button type="button" class="bulk-actions__item" id="btnExportSelected" title="Download selected training records as PDFs in a ZIP" disabled>Download selected PDFs (ZIP)</button>
+                <button type="button" class="bulk-actions__item" id="btnExportAll" title="Select all and download as one ZIP">Download all PDFs (ZIP)</button>
+                <button type="button" class="bulk-actions__item" id="btnShareSelected" title="Send selected items to HR for verification (one link/QR)" disabled>Verify selected with HR (link/QR)</button>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -343,8 +393,8 @@
 
     <div id="qrModal" aria-modal="true" aria-labelledby="qrModalTitle" role="dialog">
       <div class="nhsuk-modal">
-        <h3 id="qrModalTitle">Share e-learning</h3>
-        <p>Scan the QR code or share the link below so a receiving Trust can verify this e-learning.</p>
+        <h3 id="qrModalTitle">Verify with HR</h3>
+        <p>Send this link or QR to HR. They can mark each record as verified or declined.</p>
         <div id="qrTarget" style="display:block; width:200px; height:200px; margin:0.5rem 0;"></div>
         <label class="nhsuk-label" for="shareLink">Verification link</label>
         <input type="text" id="shareLink" readonly onclick="this.select()">
@@ -354,7 +404,10 @@
   </main>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js" crossorigin="anonymous"></script>
   <script src="/static/wallet/wallet-store.js"></script>
+  <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/ods-trust-suggest.js"></script>
   <script>
     const MODULES = [
       { code: 'fire_safety', name: 'Fire Safety' },
@@ -368,114 +421,293 @@
       { code: 'safeguarding_level_3', name: 'Safeguarding Adults and Children Level 3' },
     ];
     function getStored() { return window.NHSWallet ? NHSWallet.getWallet() : JSON.parse(localStorage.getItem('nhs_credentials') || '[]'); }
+
+    async function syncWalletToServer(arr) {
+      if (!window.NHSAuth || !NHSAuth.user) return;
+      try {
+        await NHSAuth.pushWallet(arr);
+      } catch (e) {
+        console.warn('Wallet server sync failed', e);
+      }
+    }
+
     function setStored(arr) {
       if (window.NHSWallet) NHSWallet.saveWallet(arr);
-      else localStorage.setItem('nhs_credentials', JSON.stringify(arr));
-    }
-
-    function updateWalletFileUi() {
-      var st = document.getElementById('walletFileStatus');
-      var linkBtn = document.getElementById('btnWalletLink');
-      var unlinkBtn = document.getElementById('btnWalletUnlink');
-      if (!st || !window.NHSWallet) return;
-      if (linkBtn && NHSWallet.hasFilePicker) linkBtn.hidden = !NHSWallet.hasFilePicker();
-      if (NHSWallet.isLinked && NHSWallet.isLinked()) {
-        if (unlinkBtn) unlinkBtn.hidden = false;
-        st.textContent = 'Saving to file: ' + (NHSWallet.getLinkedFileName() || 'your chosen file') + ' — updates are written there when your browser allows.';
-      } else {
-        if (unlinkBtn) unlinkBtn.hidden = true;
-        st.textContent = '';
+      else {
+        localStorage.setItem('nhs_credentials', JSON.stringify(arr));
+        void syncWalletToServer(arr);
       }
-      updateWalletSaveBanner();
     }
 
-    function updateWalletSaveBanner() {
-      var el = document.getElementById('walletSaveBanner');
-      if (!el || !window.NHSWallet || !NHSWallet.isDirty) return;
-      var show =
-        NHSWallet.isDirty() &&
-        NHSWallet.getWallet().length > 0 &&
-        !(NHSWallet.isSaveBannerDismissed && NHSWallet.isSaveBannerDismissed());
-      el.hidden = !show;
+    async function pullMergeFromServer() {
+      if (window.NHSAuth) await NHSAuth.pullWalletMerge();
     }
 
-    function triggerSaveCopyDownload() {
-      if (!window.NHSWallet) return;
-      NHSWallet.downloadWalletBackup(NHSWallet.getWallet());
-      updateWalletSaveBanner();
-    }
+    var trustNameOdsDebounce = null;
+    var lastAutoOdsSuggested = { name: '', ods: '' };
+    var trustSuggestItems = [];
+    var trustSuggestActive = -1;
+    var verifiedMap = {};
 
-    document.getElementById('btnWalletDownload').addEventListener('click', function () {
-      triggerSaveCopyDownload();
-    });
-    document.getElementById('btnWalletSaveNow').addEventListener('click', function () {
-      triggerSaveCopyDownload();
-    });
-    document.getElementById('btnWalletSaveBannerDismiss').addEventListener('click', function () {
-      if (window.NHSWallet && NHSWallet.dismissSaveBanner) NHSWallet.dismissSaveBanner();
-      updateWalletSaveBanner();
-    });
-
-    window.addEventListener('beforeunload', function (e) {
-      if (window.NHSWallet && NHSWallet.isDirty && NHSWallet.isDirty() && NHSWallet.getWallet().length > 0) {
-        e.preventDefault();
-        e.returnValue = '';
+    async function refreshVerifiedMap() {
+      try {
+        var r = await fetch('/api/me/verified-map', { credentials: 'include' });
+        verifiedMap = r.ok ? await r.json() : {};
+      } catch (e) {
+        verifiedMap = {};
       }
-    });
-    document.getElementById('walletFileInput').addEventListener('change', function () {
-      var input = this;
-      if (!input.files || !input.files[0] || !window.NHSWallet) {
-        input.value = '';
+    }
+
+    function hideTrustSuggest() {
+      var list = document.getElementById('trustSuggestList');
+      var inp = document.getElementById('issuing_trust_name');
+      if (list) {
+        list.hidden = true;
+        list.innerHTML = '';
+      }
+      trustSuggestItems = [];
+      trustSuggestActive = -1;
+      if (inp) {
+        inp.setAttribute('aria-expanded', 'false');
+        inp.removeAttribute('aria-activedescendant');
+      }
+    }
+
+    function applyTrustSuggestIndex(idx) {
+      var inp = document.getElementById('issuing_trust_name');
+      var odsEl = document.getElementById('issuing_trust_ods_code');
+      if (!inp || idx < 0 || idx >= trustSuggestItems.length) return;
+      var it = trustSuggestItems[idx];
+      inp.value = it.name || inp.value;
+      if (odsEl && it.ods) {
+        var curOds = String(odsEl.value || '').trim();
+        var shouldReplace = !curOds || curOds === lastAutoOdsSuggested.ods;
+        if (shouldReplace) odsEl.value = it.ods;
+        lastAutoOdsSuggested = { name: String(inp.value || '').trim(), ods: it.ods };
+      }
+      hideTrustSuggest();
+    }
+
+    function updateTrustSuggestHighlight() {
+      var list = document.getElementById('trustSuggestList');
+      var inp = document.getElementById('issuing_trust_name');
+      if (!list) return;
+      var lis = list.querySelectorAll('li[role="option"]');
+      for (var j = 0; j < lis.length; j++) {
+        lis[j].setAttribute('aria-selected', j === trustSuggestActive ? 'true' : 'false');
+      }
+      if (trustSuggestActive >= 0 && lis[trustSuggestActive] && inp) {
+        inp.setAttribute('aria-activedescendant', lis[trustSuggestActive].id);
+        try { lis[trustSuggestActive].scrollIntoView({ block: 'nearest' }); } catch (e2) {}
+      } else if (inp) {
+        inp.removeAttribute('aria-activedescendant');
+      }
+    }
+
+    function renderTrustSuggest(items) {
+      var list = document.getElementById('trustSuggestList');
+      var inp = document.getElementById('issuing_trust_name');
+      if (!list || !inp) return;
+      trustSuggestItems = items || [];
+      list.innerHTML = '';
+      trustSuggestActive = -1;
+      if (!trustSuggestItems.length) {
+        hideTrustSuggest();
         return;
       }
-      var file = input.files[0];
-      var reader = new FileReader();
-      reader.onload = function () {
-        try {
-          var replace = window.confirm(
-            'Replace everything on this device with this file?\n\nOK = use only what is in the file.\nCancel = merge with what is already here (same training records are updated from the file).'
-          );
-          NHSWallet.loadWalletFromFileText(String(reader.result), replace ? 'replace' : 'merge').then(function () {
-            renderList();
-            updateWalletFileUi();
-            updateWalletSaveBanner();
-            alert('Your training list was updated from "' + file.name + '".');
-          }).catch(function (e) {
-            alert(e.message || String(e));
-          });
-        } finally {
-          input.value = '';
+      for (var i = 0; i < trustSuggestItems.length; i++) {
+        var it = trustSuggestItems[i];
+        var li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.id = 'trust-suggest-opt-' + i;
+        li.dataset.index = String(i);
+        var nameSpan = document.createElement('span');
+        nameSpan.textContent = it.name;
+        li.appendChild(nameSpan);
+        if (it.ods) {
+          var meta = document.createElement('span');
+          meta.className = 'nhs-suggest-meta';
+          meta.textContent = 'ODS ' + it.ods;
+          li.appendChild(meta);
         }
-      };
-      reader.onerror = function () {
-        alert('Could not read file.');
-        input.value = '';
-      };
-      reader.readAsText(file, 'UTF-8');
-    });
-    document.getElementById('btnWalletLink').addEventListener('click', async function () {
-      if (!window.NHSWallet) return;
-      var cur = NHSWallet.getWallet();
-      if (cur.length && !window.confirm('What is in the file you pick will replace the list on this device. (You can save a copy first.) Continue?')) return;
-      try {
-        var r = await NHSWallet.linkWalletFile();
-        renderList();
-        updateWalletFileUi();
-        updateWalletSaveBanner();
-        alert('This device will stay in sync with "' + (r.name || 'your file') + '" (' + r.count + ' training record(s)). Changes will be saved there when your browser allows.');
-      } catch (e) {
-        alert(e.message || String(e));
+        list.appendChild(li);
       }
+      list.hidden = false;
+      inp.setAttribute('aria-expanded', 'true');
+    }
+
+    function scheduleTrustSuggest() {
+      if (trustNameOdsDebounce) clearTimeout(trustNameOdsDebounce);
+      trustNameOdsDebounce = setTimeout(function () {
+        trustNameOdsDebounce = null;
+        void runTrustSuggest();
+      }, 320);
+    }
+
+    async function runTrustSuggest() {
+      if (!window.NHSOdsTrustSuggest) return;
+      var inp = document.getElementById('issuing_trust_name');
+      if (!inp) return;
+      var q = String(inp.value || '').trim();
+      if (q.length < 2) {
+        hideTrustSuggest();
+        return;
+      }
+      try {
+        var items = await NHSOdsTrustSuggest.search(q, { minLength: 2, limit: 8 });
+        renderTrustSuggest(items);
+      } catch (e) {
+        hideTrustSuggest();
+      }
+    }
+
+    function scheduleTrustNameOdsLookup() {
+      if (trustNameOdsDebounce) clearTimeout(trustNameOdsDebounce);
+      trustNameOdsDebounce = setTimeout(function () {
+        trustNameOdsDebounce = null;
+        void runTrustNameOdsLookup();
+      }, 480);
+    }
+
+    async function runTrustNameOdsLookup() {
+      var nameEl = document.getElementById('issuing_trust_name');
+      var odsEl = document.getElementById('issuing_trust_ods_code');
+      if (!nameEl || !odsEl) return;
+      var t = nameEl.value.trim();
+      if (t.length < 3) return;
+      var curOds = odsEl.value.trim();
+      var shouldReplace = !curOds || curOds === lastAutoOdsSuggested.ods;
+      if (!shouldReplace) return;
+      try {
+        if (!window.NHSOdsTrustSuggest) return;
+        var org = await NHSOdsTrustSuggest.pickBestOrg(t, { minLength: 3 });
+        if (!org || !org.OrgId) return;
+        lastAutoOdsSuggested = { name: t, ods: org.OrgId };
+        odsEl.value = org.OrgId;
+      } catch (e) {
+        console.warn('Trust ODS lookup failed', e);
+      }
+    }
+
+    function applyProfileToAddForm() {
+      const u = window.NHSAuth && NHSAuth.user;
+      if (!u) return;
+      const fn = document.getElementById('staff_full_name');
+      const sid = document.getElementById('staff_identifier');
+      const tn = document.getElementById('issuing_trust_name');
+      if (fn && u.display_name && !String(fn.value || '').trim()) fn.value = u.display_name;
+      if (sid && u.gmc_number && !String(sid.value || '').trim()) sid.value = u.gmc_number;
+      if (tn && u.current_trust && !String(tn.value || '').trim()) tn.value = u.current_trust;
+      scheduleTrustNameOdsLookup();
+    }
+
+    (function wireTrustNameOdsLookup() {
+      var nameEl = document.getElementById('issuing_trust_name');
+      var odsEl = document.getElementById('issuing_trust_ods_code');
+      if (nameEl) {
+        nameEl.addEventListener('input', function () {
+          if (!String(nameEl.value || '').trim()) {
+            lastAutoOdsSuggested = { name: '', ods: '' };
+          }
+          scheduleTrustNameOdsLookup();
+          scheduleTrustSuggest();
+        });
+        nameEl.addEventListener('change', function () {
+          void runTrustNameOdsLookup();
+        });
+      }
+      if (odsEl) {
+        odsEl.addEventListener('input', function () {
+          var v = String(odsEl.value || '').trim();
+          if (!v) lastAutoOdsSuggested = { name: '', ods: '' };
+          else if (v !== lastAutoOdsSuggested.ods) lastAutoOdsSuggested = { name: '', ods: '' };
+        });
+      }
+    })();
+
+    (function wireTrustSuggestUi() {
+      var inp = document.getElementById('issuing_trust_name');
+      var wrap = document.getElementById('trustAcWrap');
+      var list = document.getElementById('trustSuggestList');
+      if (list) {
+        list.addEventListener('mousedown', function (ev) {
+          if (ev.target.closest('li[role="option"]')) ev.preventDefault();
+        });
+        list.addEventListener('click', function (ev) {
+          var li = ev.target.closest('li[role="option"]');
+          if (!li) return;
+          applyTrustSuggestIndex(parseInt(li.dataset.index, 10));
+        });
+      }
+      if (!inp) return;
+      inp.addEventListener('keydown', function (e) {
+        if (!list || list.hidden || !trustSuggestItems.length) return;
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          hideTrustSuggest();
+          return;
+        }
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          trustSuggestActive = Math.min(trustSuggestActive + 1, trustSuggestItems.length - 1);
+          if (trustSuggestActive < 0) trustSuggestActive = 0;
+          updateTrustSuggestHighlight();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          trustSuggestActive = Math.max(trustSuggestActive - 1, 0);
+          updateTrustSuggestHighlight();
+        } else if (e.key === 'Enter' && trustSuggestActive >= 0) {
+          e.preventDefault();
+          applyTrustSuggestIndex(trustSuggestActive);
+        }
+      });
+      inp.addEventListener('blur', function () {
+        setTimeout(hideTrustSuggest, 200);
+      });
+      document.addEventListener('click', function (e) {
+        if (wrap && !wrap.contains(e.target)) hideTrustSuggest();
+      });
+    })();
+
+    document.getElementById('btnSignOut').addEventListener('click', async function () {
+      if (window.NHSAuth) await NHSAuth.signOut();
+      window.location.replace('/');
     });
-    document.getElementById('btnWalletUnlink').addEventListener('click', async function () {
-      if (!window.NHSWallet) return;
-      await NHSWallet.unlinkWalletFile();
-      updateWalletFileUi();
-      updateWalletSaveBanner();
-    });
+
+    (function wireHamburgerMenu() {
+      var btn = document.getElementById('btnMenu');
+      var panel = document.getElementById('menuPanel');
+      if (!btn || !panel) return;
+
+      function close() {
+        panel.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+      }
+      function open() {
+        panel.hidden = false;
+        btn.setAttribute('aria-expanded', 'true');
+      }
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (panel.hidden) open();
+        else close();
+      });
+      document.addEventListener('click', function (e) {
+        if (panel.hidden) return;
+        if (btn.contains(e.target) || panel.contains(e.target)) return;
+        close();
+      }, true);
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') close();
+      });
+    })();
 
     document.querySelectorAll('.nhsuk-tabs button').forEach(btn => {
       btn.addEventListener('click', () => {
+        if (btn.dataset.tab === 'move') {
+          window.location.assign('/static/plan-move/');
+          return;
+        }
         document.querySelectorAll('.nhsuk-tabs button').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
         document.querySelectorAll('main section').forEach(s => { s.classList.remove('visible'); s.setAttribute('aria-hidden', 'true'); });
         btn.classList.add('active');
@@ -483,6 +715,12 @@
         const panel = document.getElementById(btn.dataset.tab);
         panel.classList.add('visible');
         panel.setAttribute('aria-hidden', 'false');
+        if (btn.dataset.tab === 'add') {
+          void (async function () {
+            if (window.NHSAuth) await NHSAuth.refresh();
+            applyProfileToAddForm();
+          })();
+        }
       });
     });
 
@@ -490,9 +728,15 @@
     var filterModuleEl = document.getElementById('filterModule');
     if (filterStatusEl) filterStatusEl.addEventListener('change', renderList);
     if (filterModuleEl) filterModuleEl.addEventListener('change', renderList);
+    function closeBulkActionsMenu() {
+      var d = document.getElementById('bulkActionsMenu');
+      if (d && d.open) d.open = false;
+    }
     var btnExport = document.getElementById('btnExportSelected');
-    if (btnExport) btnExport.addEventListener('click', exportSelectedAsZip);
-    document.getElementById('btnShareSelected').addEventListener('click', shareSelectedAsLink);
+    if (btnExport) btnExport.addEventListener('click', function () { closeBulkActionsMenu(); exportSelectedAsZip(); });
+    document.getElementById('btnShareSelected').addEventListener('click', function () { closeBulkActionsMenu(); shareSelectedAsLink(); });
+    var btnVerifyAllHr = document.getElementById('btnVerifyAllHr');
+    if (btnVerifyAllHr) btnVerifyAllHr.addEventListener('click', function () { closeBulkActionsMenu(); verifyAllWithHr(); });
     document.getElementById('btnBulkSelectAll').addEventListener('click', function() {
       document.querySelectorAll('.credential-export-cb').forEach(function(cb) { cb.checked = true; });
       updateBulkExportState();
@@ -502,6 +746,7 @@
       updateBulkExportState();
     });
     document.getElementById('btnExportAll').addEventListener('click', function() {
+      closeBulkActionsMenu();
       document.querySelectorAll('.credential-export-cb').forEach(function(cb) { cb.checked = true; });
       updateBulkExportState();
       exportSelectedAsZip();
@@ -518,7 +763,7 @@
       const btnShare = document.getElementById('btnShareSelected');
       if (countEl) countEl.textContent = n === 0 ? '0 selected' : (n === 1 ? '1 selected' : n + ' selected');
       if (btnExport) btnExport.disabled = n === 0;
-      if (btnShare) btnShare.disabled = n === 0;
+      if (btnShare) btnShare.disabled = n === 0 || !isProfileComplete();
     }
 
     function base64urlEncode(str) {
@@ -526,40 +771,111 @@
       return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     }
 
-    function shareSelectedAsLink() {
+    async function renderQrCode(targetEl, text) {
+      if (!targetEl) return;
+      targetEl.innerHTML = '';
+      try {
+        if (window.QRCode && typeof QRCode.toCanvas === 'function') {
+          var canvas = document.createElement('canvas');
+          await QRCode.toCanvas(canvas, text, { width: 200, margin: 1 });
+          canvas.setAttribute('role', 'img');
+          canvas.setAttribute('aria-label', 'QR code – scan to verify training');
+          targetEl.appendChild(canvas);
+          return;
+        }
+      } catch (e) {}
+      // Fallback to external image service if library fails
+      const img = document.createElement('img');
+      img.width = 200;
+      img.height = 200;
+      img.alt = 'QR code – scan to verify training';
+      img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(text);
+      targetEl.appendChild(img);
+    }
+
+    async function shareSelectedAsLink() {
+      if (!canRequestHrVerification()) return;
       const checked = document.querySelectorAll('.credential-export-cb:checked');
       const ids = Array.from(checked).map(el => el.getAttribute('data-credential-id'));
       if (ids.length === 0) return;
-      const list = getStored();
-      const bundle = ids.map(id => {
-        const c = list.find(x => x.credential_id === id);
-        return c && c.jwt ? { id: c.credential_id, jwt: c.jwt } : null;
-      }).filter(Boolean);
-      if (bundle.length === 0) {
-        alert('Selected e-learning do not have verification data. Add them again to get shareable links.');
+      try {
+        var res = await fetch('/api/me/shares', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credential_ids: ids }),
+        });
+        var parsed = await res.text();
+        var data = null;
+        try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          var d = data && data.detail;
+          throw new Error(typeof d === 'string' ? d : 'Could not create share');
+        }
+        var shareUrl = (data && data.share_url) || '';
+        document.getElementById('shareLink').value = shareUrl;
+        const qrTarget = document.getElementById('qrTarget');
+        await renderQrCode(qrTarget, shareUrl);
+        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Verify with HR';
+        document.querySelector('#qrModal .nhsuk-modal p').textContent =
+          'Send this link or QR to HR. They can mark each record as verified or declined.';
+        document.getElementById('qrModal').classList.add('show');
+        await refreshVerifiedMap();
+        renderList();
+      } catch (e) {
+        alert(e.message || e);
+      }
+    }
+
+    async function verifyAllWithHr() {
+      if (!canRequestHrVerification()) return;
+      const list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
+      const ids = list.map(function (c) { return c.credential_id; });
+      if (!ids.length) {
+        alert('No training records to send to HR.');
         return;
       }
-      const encoded = base64urlEncode(JSON.stringify(bundle));
-      const bundleUrl = window.location.origin + '/static/verifier/bundle.html?b=' + encoded;
-      document.getElementById('shareLink').value = bundleUrl;
-      const qrTarget = document.getElementById('qrTarget');
-      const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(bundleUrl);
-      qrTarget.innerHTML = '<img src="' + qrImg + '" alt="QR code – scan to verify e-learning" width="200" height="200">';
-      document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share selected e-learning';
-      document.querySelector('#qrModal .nhsuk-modal p').textContent = 'One link or QR for all ' + bundle.length + ' selected. A verifier can open this to check them all at once.';
-      document.getElementById('qrModal').classList.add('show');
+      // Reuse the same backend flow; it creates a session and marks items as PENDING.
+      try {
+        var res = await fetch('/api/me/shares', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credential_ids: ids }),
+        });
+        var parsed = await res.text();
+        var data = null;
+        try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          var d = data && data.detail;
+          throw new Error(typeof d === 'string' ? d : 'Could not create verification request');
+        }
+        var shareUrl = (data && data.share_url) || '';
+        document.getElementById('shareLink').value = shareUrl;
+        const qrTarget = document.getElementById('qrTarget');
+        await renderQrCode(qrTarget, shareUrl);
+        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Verify with HR';
+        document.querySelector('#qrModal .nhsuk-modal p').textContent =
+          'Send this link or QR to HR. They can mark each record as verified or declined.';
+        document.getElementById('qrModal').classList.add('show');
+        await refreshVerifiedMap();
+        renderList();
+      } catch (e) {
+        alert(e.message || e);
+      }
     }
     document.getElementById('certificate_upload').addEventListener('change', function() {
       const nameEl = document.getElementById('certificate_filename');
       nameEl.textContent = this.files.length ? 'Chosen: ' + this.files[0].name : '';
     });
 
-    var lastCsvCheckOk = false;
+    var csvUploadInFlight = false;
     document.getElementById('csv_upload').addEventListener('change', function() {
-      lastCsvCheckOk = false;
-      document.getElementById('btnCsvImport').disabled = true;
       document.getElementById('csv_filename').textContent = this.files.length ? 'Chosen: ' + this.files[0].name : '';
       document.getElementById('csvImportResult').innerHTML = '';
+      var btn = document.getElementById('btnCsvUpload');
+      if (btn) btn.disabled = !this.files.length;
+      if (this.files.length) void runCsvUploadFlow();
     });
 
     function renderCsvResult(data, opts) {
@@ -580,7 +896,7 @@
         parts.push('</ul>');
       }
       if (opts.imported) {
-        parts.push('<p class="nhsuk-body-s" style="color:var(--nhsuk-success); font-weight:600;">Issued ' + opts.imported + ' e-learning credential(s). They appear in My e-learning.</p>');
+        parts.push('<p class="nhsuk-body-s" style="color:var(--nhsuk-success); font-weight:600;">Issued ' + opts.imported + ' training record(s). They appear in My training.</p>');
       }
       el.innerHTML = parts.join('');
     }
@@ -600,7 +916,11 @@
       }
       var fd = new FormData();
       fd.append('file', input.files[0], input.files[0].name || 'import.csv');
-      var res = await fetch('/api/credentials/import-csv?dry_run=' + (dryRun ? 'true' : 'false'), { method: 'POST', body: fd });
+      var res = await fetch('/api/credentials/import-csv?dry_run=' + (dryRun ? 'true' : 'false'), {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+      });
       if (!res.ok) {
         var t = await res.text();
         throw new Error(t || res.statusText);
@@ -608,58 +928,63 @@
       return res.json();
     }
 
-    document.getElementById('btnCsvCheck').addEventListener('click', async function() {
-      var btn = this;
-      btn.disabled = true;
-      lastCsvCheckOk = false;
-      document.getElementById('btnCsvImport').disabled = true;
-      try {
-        var data = await postCsv(true);
-        if (!data) { btn.disabled = false; return; }
-        renderCsvResult(data, {});
-        lastCsvCheckOk = !data.fatal_error && data.valid_row_count > 0;
-        document.getElementById('btnCsvImport').disabled = !lastCsvCheckOk;
-      } catch (e) {
-        document.getElementById('csvImportResult').innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error);">' + escapeHtml(e.message) + '</p>';
-      }
-      btn.disabled = false;
-    });
-
-    document.getElementById('btnCsvImport').addEventListener('click', async function() {
-      if (!lastCsvCheckOk) {
-        alert('Run Check CSV first and fix any fatal header or file errors.');
-        return;
-      }
-      var btn = this;
-      var btnCheck = document.getElementById('btnCsvCheck');
-      var labelIssue = 'Issue all valid rows';
-      btn.disabled = true;
-      if (btnCheck) btnCheck.disabled = true;
-      btn.textContent = 'Issuing…';
-      var resultEl = document.getElementById('csvImportResult');
-      if (resultEl) {
-        resultEl.insertAdjacentHTML('beforeend', '<p class="nhsuk-body-s" id="csvIssuingNote">Please wait — large imports can take up to a minute.</p>');
+    async function runCsvUploadFlow() {
+      if (csvUploadInFlight) return;
+      var btn = document.getElementById('btnCsvUpload');
+      var labelUpload = 'Upload';
+      csvUploadInFlight = true;
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Uploading…';
       }
       try {
+        var checked = await postCsv(true);
+        if (!checked) {
+          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
+          csvUploadInFlight = false;
+          return;
+        }
+        renderCsvResult(checked, {});
+        if (checked.fatal_error || !(checked.valid_row_count > 0)) {
+          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
+          csvUploadInFlight = false;
+          return;
+        }
+        // Very large files can hit proxy timeouts on free hosting. For those, show results and require a click.
+        var validCount = Number(checked.valid_row_count || 0);
+        if (validCount > 250) {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Upload ' + validCount + ' rows';
+          }
+          csvUploadInFlight = false;
+          return;
+        }
+        var resultEl = document.getElementById('csvImportResult');
+        if (resultEl) {
+          resultEl.insertAdjacentHTML('beforeend', '<p class="nhsuk-body-s" id="csvIssuingNote">Please wait — large uploads can take up to a minute.</p>');
+        }
         var data = await postCsv(false);
         var note = document.getElementById('csvIssuingNote');
         if (note) note.remove();
-        if (!data) { btn.disabled = false; btn.textContent = labelIssue; if (btnCheck) btnCheck.disabled = false; return; }
+        if (!data) {
+          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
+          csvUploadInFlight = false;
+          return;
+        }
         if (data.fatal_error) {
           renderCsvResult(data, {});
-          btn.disabled = false;
-          btn.textContent = labelIssue;
-          if (btnCheck) btnCheck.disabled = false;
+          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
+          csvUploadInFlight = false;
           return;
         }
         var creds = data.credentials || [];
         if (creds.length === 0) {
           if (resultEl) {
-            resultEl.innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error);">Server returned no credentials. Try Check CSV again, or open the browser network tab for errors.</p>';
+            resultEl.innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error);">Server returned no records. Try uploading again.</p>';
           }
-          btn.disabled = false;
-          btn.textContent = labelIssue;
-          if (btnCheck) btnCheck.disabled = false;
+          if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
+          csvUploadInFlight = false;
           return;
         }
         var list = getStored();
@@ -670,7 +995,7 @@
             verification_url: issued.verification_url,
             jwt: issued.jwt,
             pdf_base64: issued.pdf_base64,
-            module_name: issued.module_name || 'E-learning',
+            module_name: issued.module_name || 'Training',
             expiry_date: issued.expiry_date || '',
             revoked: false,
             certificate_base64: null,
@@ -681,18 +1006,20 @@
         setStored(list);
         renderList();
         renderCsvResult(data, { imported: n });
-        lastCsvCheckOk = false;
-        btn.disabled = true;
-        btn.textContent = labelIssue;
         document.querySelector('.nhsuk-tabs button[data-tab="list"]').click();
       } catch (e) {
-        var note2 = document.getElementById('csvIssuingNote');
-        if (note2) note2.remove();
         document.getElementById('csvImportResult').innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error);">' + escapeHtml(e.message) + '</p>';
-        btn.disabled = false;
-        btn.textContent = labelIssue;
       }
-      if (btnCheck) btnCheck.disabled = false;
+      if (btn) {
+        btn.textContent = labelUpload;
+        var input = document.getElementById('csv_upload');
+        btn.disabled = !(input && input.files && input.files.length);
+      }
+      csvUploadInFlight = false;
+    }
+
+    document.getElementById('btnCsvUpload').addEventListener('click', function () {
+      void runCsvUploadFlow();
     });
 
     const sel = document.getElementById('moduleSelect');
@@ -744,16 +1071,33 @@
       }
 
       const filtered = getFilteredList();
-      const emptyMsg = list.length === 0 ? 'No e-learning yet. Add one from the "Add e-learning" tab.' : 'No e-learning matches the current filter.';
+      const emptyMsg = list.length === 0 ? 'No training yet. Add one from the \"Add training\" tab.' : 'No training matches the current filter.';
       const emptyHtml = '<p class="nhsuk-body-s">' + emptyMsg + '</p>';
 
       function cardHtml(c, withCheckbox) {
         const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
+        const v = (verifiedMap && verifiedMap[c.credential_id]) || null;
+        const st = v && v.status ? String(v.status).toUpperCase() : '';
+        const pendingTag = v && v.shared && st === 'PENDING'
+          ? '<span class="nhsuk-tag nhsuk-tag--shared" style="margin-left:0.5rem;">PENDING</span>'
+          : '';
+        const verifiedTag = v && v.shared && st === 'VERIFIED'
+          ? '<span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>'
+          : '';
+        const declinedTag = v && v.shared && st === 'DECLINED'
+          ? '<span class="nhsuk-tag nhsuk-tag--shared" style="margin-left:0.5rem;">DECLINED</span>'
+          : '';
+        const declinedNote = v && v.shared && st === 'DECLINED' && v.decline_reason
+          ? ('<div class="nhsuk-hint" style="margin:0.35rem 0 0 0;">Declined: ' + esc(v.decline_reason) + '</div>')
+          : '';
         const checkboxBlock = withCheckbox
           ? `<label class="nhsuk-card__select" style="flex-shrink:0; margin:0.25rem 0 0 0;">
                <input type="checkbox" class="credential-export-cb" data-credential-id="${c.credential_id}" aria-label="Select for export">
              </label>`
           : '';
+        var canVerifyWithHr = !!(window.NHSAuth && NHSAuth.user && NHSAuth.user.display_name && NHSAuth.user.gmc_number && NHSAuth.user.current_trust);
+        var verifyBtnAttrs = canVerifyWithHr ? '' : ' disabled title="Complete your profile to verify with HR"';
+        var verifyBtnOnclick = canVerifyWithHr ? `onclick="shareCred('${c.credential_id}')"` : `onclick="return openProfileForVerification();"`;
         return `
           <div class="nhsuk-card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
             <div class="nhsuk-card__row" style="display:flex; align-items:flex-start; gap:0.75rem;">
@@ -761,13 +1105,14 @@
               <div style="flex:1;">
                 <h3 class="nhsuk-card__title">${c.module_name}</h3>
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
-                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>
+                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>${verifiedTag}${pendingTag}${declinedTag}
                 <div class="nhsuk-card__actions">
-                  <button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="shareCred('${c.credential_id}')">Share</button>
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>Verify with HR</button>
                   <button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
                   ${c.certificate_base64 ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">Download certificate</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
                 </div>
+                ${declinedNote}
               </div>
             </div>
           </div>`;
@@ -777,40 +1122,55 @@
       const bulkListEl = document.getElementById('bulkCredentialList');
       if (bulkListEl) {
         bulkListEl.innerHTML = filtered.length === 0
-          ? '<p class="nhsuk-body-s">No e-learning to export. Add e-learning in the Add e-learning tab, or adjust filters in My e-learning.</p>'
+          ? '<p class="nhsuk-body-s">No training to export. Add training in the Add training tab, or adjust filters in My training.</p>'
           : filtered.map(c => cardHtml(c, true)).join('');
       }
       const panel = document.getElementById('bulkExportPanel');
       if (panel) panel.style.display = filtered.length === 0 ? 'none' : 'block';
       updateBulkExportState();
-      updateWalletSaveBanner();
     }
 
     function removeCred(credentialId) {
-      if (!confirm('Remove this e-learning from your list? This only removes it from this device; it will still show as revoked if someone verifies it.')) return;
+      if (!confirm('Remove this training record from your list? This only removes it from this device; it will still show as revoked if someone verifies it.')) return;
       const list = getStored().filter(c => c.credential_id !== credentialId);
       setStored(list);
       renderList();
     }
 
-    function shareCred(credentialId) {
-      const list = getStored();
-      const c = list.find(x => x.credential_id === credentialId);
-      if (!c) return;
-      document.getElementById('shareLink').value = c.verification_url;
-      const qrTarget = document.getElementById('qrTarget');
-      const url = c.verification_url;
-      const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(url);
-      qrTarget.innerHTML = '<img src="' + qrImg + '" alt="QR code – scan to verify e-learning" width="200" height="200">';
-      document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share e-learning';
-      document.querySelector('#qrModal .nhsuk-modal p').textContent = 'Scan the QR code or share the link below so a receiving Trust can verify this e-learning.';
-      document.getElementById('qrModal').classList.add('show');
+    async function shareCred(credentialId) {
+      try {
+        var res = await fetch('/api/me/shares', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credential_ids: [credentialId] }),
+        });
+        var parsed = await res.text();
+        var data = null;
+        try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          var d = data && data.detail;
+          throw new Error(typeof d === 'string' ? d : 'Could not create share');
+        }
+        var shareUrl = (data && data.share_url) || '';
+        document.getElementById('shareLink').value = shareUrl;
+        const qrTarget = document.getElementById('qrTarget');
+        await renderQrCode(qrTarget, shareUrl);
+        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Verify with HR';
+        document.querySelector('#qrModal .nhsuk-modal p').textContent =
+          'Send this link or QR to HR. They can mark each record as verified or declined.';
+        document.getElementById('qrModal').classList.add('show');
+        await refreshVerifiedMap();
+        renderList();
+      } catch (e) {
+        alert(e.message || e);
+      }
     }
 
     function downloadPdf(credentialId) {
       const list = getStored();
       const c = list.find(x => x.credential_id === credentialId);
-      if (!c || !c.pdf_base64) { alert('PDF not available for this e-learning'); return; }
+      if (!c || !c.pdf_base64) { alert('PDF not available for this training record'); return; }
       const a = document.createElement('a');
       a.href = 'data:application/pdf;base64,' + c.pdf_base64;
       a.download = 'credential-' + credentialId.slice(0, 12) + '.pdf';
@@ -824,7 +1184,7 @@
       const list = getStored();
       const withPdf = ids.map(id => list.find(c => c.credential_id === id)).filter(c => c && c.pdf_base64);
       if (withPdf.length === 0) {
-        alert('None of the selected e-learning have a PDF to export.');
+        alert('None of the selected training records have a PDF to export.');
         return;
       }
       if (typeof JSZip === 'undefined') {
@@ -858,7 +1218,7 @@
     function downloadCertificate(credentialId) {
       const list = getStored();
       const c = list.find(x => x.credential_id === credentialId);
-      if (!c || !c.certificate_base64) { alert('No uploaded certificate for this e-learning'); return; }
+      if (!c || !c.certificate_base64) { alert('No uploaded certificate for this training record'); return; }
       const name = c.certificate_filename || 'certificate';
       const ext = (name.split('.').pop() || '').toLowerCase();
       const mime = ext === 'pdf' ? 'application/pdf' : (ext === 'png' ? 'image/png' : 'image/jpeg');
@@ -894,7 +1254,12 @@
         } catch (err) { alert('Could not read certificate file: ' + err.message); return; }
       }
       try {
-        const res = await fetch('/api/credentials/issue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const res = await fetch('/api/credentials/issue', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
         const issued = data.credentials[0];
@@ -913,15 +1278,53 @@
         setStored(list);
         renderList();
         e.target.reset();
+        lastAutoOdsSuggested = { name: '', ods: '' };
+        applyProfileToAddForm();
         document.querySelector('.nhsuk-tabs button[data-tab="list"]').click();
       } catch (err) { alert(err.message); }
     });
 
+    function isProfileComplete(u) {
+      u = u || (window.NHSAuth && NHSAuth.user) || null;
+      return !!(u && (u.display_name || '').trim() && (u.gmc_number || '').trim() && (u.current_trust || '').trim());
+    }
+
+    function applyProfileGateUi() {
+      var ok = isProfileComplete();
+      var n = document.getElementById('profileGateNotice');
+      if (n) n.hidden = ok;
+      var btnAll = document.getElementById('btnVerifyAllHr');
+      if (btnAll) btnAll.disabled = !ok;
+      updateBulkExportState();
+    }
+
+    function openProfileForVerification() {
+      var n = document.getElementById('profileGateNotice');
+      if (n) n.hidden = false;
+      alert('Complete your profile (full name, GMC number, current trust) before requesting HR verification.');
+      window.location.assign('/static/profile/');
+      return false;
+    }
+
+    function canRequestHrVerification() {
+      if (isProfileComplete()) return true;
+      return openProfileForVerification();
+    }
+
     (async function boot() {
-      if (window.NHSWallet && NHSWallet.restoreLinkedHandle) await NHSWallet.restoreLinkedHandle();
-      updateWalletFileUi();
+      await NHSAuth.refresh();
+      if (!NHSAuth.requireAuth()) return;
+      var em = document.getElementById('navEmail');
+      if (em) em.textContent = NHSAuth.user.email || '';
+      await pullMergeFromServer();
+      await refreshVerifiedMap();
+      applyProfileToAddForm();
+      applyProfileGateUi();
       renderList();
-      updateWalletSaveBanner();
+      if (/^#(list|add|import|bulk)$/.test(window.location.hash)) {
+        var tab = document.querySelector('.nhsuk-tabs button[data-tab="' + window.location.hash.slice(1) + '"]');
+        if (tab) tab.click();
+      }
     })();
   </script>
 </body>

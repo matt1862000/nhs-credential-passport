@@ -1,4 +1,4 @@
-# NHS E-Learning Credential Passport — Phase 2 MVP
+# NHS Training Passport — Phase 2 MVP
 
 From-idea-to-pilot build: **issue**, **verify**, and **revoke** e-learning credentials with no ESR integration. Uses W3C-style Verifiable Credentials (signed JWT) and did:web for the public key.
 

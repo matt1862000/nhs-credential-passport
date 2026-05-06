@@ -1,8 +1,11 @@
-# Render Blueprint — deploy as Web Service
-# 1. Push this repo (or nhs-credential-passport folder) to GitHub
-# 2. Go to https://dashboard.render.com → New → Blueprint
-# 3. Connect repo and select this file (or set root to nhs-credential-passport)
-# 4. Add env var BASE_URL = https://your-service-name.onrender.com (after first deploy)
+# Render Blueprint — Web Service (Dockerfile in this folder)
+#
+# 1. Push the repo; in Render: New → Blueprint → pick this file (repo root = nhs-credential-passport if you deploy only this app).
+# 2. After the first deploy, open the service → Environment:
+#    - BASE_URL = https://<your-service-name>.onrender.com  (no trailing slash; must match the public URL)
+#    - SESSION_SECRET = long random string, 32+ characters (e.g. run: openssl rand -hex 32)
+#      Required for staff “Account (optional)” sign-in cookies to stay valid across deploys.
+# 3. Save and trigger a manual redeploy if the service was already running without these.
 services:
   - type: web
     name: nhs-credential-passport
@@ -14,3 +17,9 @@ services:
       - key: BASE_URL
         sync: false
         # In Render dashboard, set to https://<your-service>.onrender.com after first deploy
+      - key: SESSION_SECRET
+        sync: false
+        # Long random string (32+ chars) for staff login session cookies (HS256). Generate once and set in the dashboard.
+      - key: PREMIUM_EMAILS
+        sync: false
+        # Optional comma-separated emails that get premium trust tools on the dashboard (verifier, did.json, /docs).

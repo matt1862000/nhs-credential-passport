@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your profile &mdash; NHS Training Passport</title>
+  <link rel="stylesheet" href="/static/shared/app.css">
+  <style>
+    .profile-hint { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.35rem; display: block; }
+    .profile-welcome {
+      margin: 0 0 1.25rem 0;
+      padding: 1rem 1.15rem;
+      border-left: 4px solid var(--nhsuk-link);
+      background: var(--nhsuk-panel);
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 4px;
+      font-size: 0.9375rem;
+      color: var(--nhsuk-secondary-text);
+    }
+    #profileStatus { margin-top: 1rem; min-height: 1.25rem; }
+    #profileStatus.ok { color: var(--nhsuk-success); font-weight: 600; }
+    #profileStatus.err { color: var(--nhsuk-error); font-weight: 600; }
+    .profile-ac-wrap { position: relative; }
+    .profile-suggest-list {
+      position: absolute; left: 0; right: 0; top: 100%; margin: 0.15rem 0 0 0;
+      padding: 0; list-style: none; max-height: 14rem; overflow-y: auto;
+      z-index: 40; background: #fff; border: 1px solid var(--nhsuk-border);
+      border-radius: 4px; box-shadow: 0 4px 14px rgba(33, 43, 50, 0.12);
+    }
+    .profile-suggest-list li {
+      padding: 0.5rem 0.75rem; cursor: pointer; font-size: 1rem; line-height: 1.35;
+      border-bottom: 1px solid var(--nhsuk-border);
+    }
+    .profile-suggest-list li:last-child { border-bottom: none; }
+    .profile-suggest-list li:hover,
+    .profile-suggest-list li[aria-selected="true"] { background: var(--nhsuk-panel); }
+    .profile-suggest-meta { display: block; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/static/dashboard/" aria-label="Dashboard">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">Training Passport</span>
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <a href="/static/dashboard/">&larr; Dashboard</a>
+        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">Your profile</h1>
+    <p class="nhsuk-lead">Optional details to help pre-fill forms and speed things up. You can change them any time.</p>
+
+    <section class="nhsuk-card" style="max-width: 32rem;">
+      <form id="profileForm" novalidate>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="displayName">Full name</label>
+          <input class="nhsuk-input" type="text" id="displayName" name="display_name" autocomplete="name" maxlength="200" placeholder="e.g. Jane Smith">
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="gmcNumber">GMC number</label>
+          <input class="nhsuk-input" type="text" id="gmcNumber" name="gmc_number" inputmode="numeric" autocomplete="off" maxlength="11" placeholder="e.g. 1234567">
+          <span class="profile-hint">Seven digits if you add one (optional).</span>
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="currentTrust">Current trust</label>
+          <div class="profile-ac-wrap" id="trustAcWrap">
+            <input class="nhsuk-input" type="text" id="currentTrust" name="current_trust" autocomplete="off" maxlength="200" placeholder="e.g. Sheffield Teaching Hospitals" role="combobox" aria-autocomplete="list" aria-controls="trustSuggestList" aria-expanded="false" spellcheck="false">
+            <ul id="trustSuggestList" class="profile-suggest-list" role="listbox" hidden aria-label="Matching NHS organisations"></ul>
+          </div>
+          <span class="profile-hint">Start typing a few letters (even with typos). Suggestions use the NHS Organisation Directory; pick one or keep your own text.</span>
+        </div>
+        <button type="submit" class="nhsuk-button">Save profile</button>
+      </form>
+      <p id="profileStatus" role="status" aria-live="polite"></p>
+      <p style="margin-top: 1.5rem;">
+        <a class="nhsuk-button nhsuk-button--secondary" href="/static/dashboard/">Go to dashboard</a>
+        <a class="nhsuk-button nhsuk-button--secondary" href="/static/staff/#list" style="margin-left: 0.5rem;">My training</a>
+      </p>
+    </section>
+  </main>
+
+  <script src="/static/wallet/wallet-store.js"></script>
+  <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/ods-trust-suggest.js"></script>
+  <script>
+    (function () {
+      function setStatus(msg, kind) {
+        var el = document.getElementById('profileStatus');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.className = kind ? kind : '';
+      }
+
+      var trustSuggestDebounce = null;
+      var trustSuggestItems = [];
+      var trustSuggestActive = -1;
+      var redirectTimer = null;
+      var redirectArmed = false;
+
+      function cancelAutoRedirect() {
+        redirectArmed = false;
+        if (redirectTimer) {
+          clearTimeout(redirectTimer);
+          redirectTimer = null;
+        }
+      }
+
+      function armAutoRedirectToDashboard() {
+        cancelAutoRedirect();
+        redirectArmed = true;
+        redirectTimer = setTimeout(function () {
+          if (!redirectArmed) return;
+          window.location.assign('/static/dashboard/');
+        }, 1100);
+      }
+
+      function hideTrustSuggest() {
+        var list = document.getElementById('trustSuggestList');
+        var inp = document.getElementById('currentTrust');
+        if (list) {
+          list.hidden = true;
+          list.innerHTML = '';
+        }
+        trustSuggestItems = [];
+        trustSuggestActive = -1;
+        if (inp) {
+          inp.setAttribute('aria-expanded', 'false');
+          inp.removeAttribute('aria-activedescendant');
+        }
+      }
+
+      function applyTrustSuggestIndex(idx) {
+        var inp = document.getElementById('currentTrust');
+        if (!inp || idx < 0 || idx >= trustSuggestItems.length) return;
+        inp.value = trustSuggestItems[idx].name;
+        hideTrustSuggest();
+      }
+
+      function updateTrustSuggestHighlight() {
+        var list = document.getElementById('trustSuggestList');
+        var inp = document.getElementById('currentTrust');
+        if (!list) return;
+        var lis = list.querySelectorAll('li[role="option"]');
+        for (var j = 0; j < lis.length; j++) {
+          lis[j].setAttribute('aria-selected', j === trustSuggestActive ? 'true' : 'false');
+        }
+        if (trustSuggestActive >= 0 && lis[trustSuggestActive] && inp) {
+          inp.setAttribute('aria-activedescendant', lis[trustSuggestActive].id);
+          try {
+            lis[trustSuggestActive].scrollIntoView({ block: 'nearest' });
+          } catch (e2) {}
+        } else if (inp) {
+          inp.removeAttribute('aria-activedescendant');
+        }
+      }
+
+      function renderTrustSuggest(items) {
+        var list = document.getElementById('trustSuggestList');
+        var inp = document.getElementById('currentTrust');
+        if (!list || !inp) return;
+        trustSuggestItems = items || [];
+        list.innerHTML = '';
+        trustSuggestActive = -1;
+        if (!trustSuggestItems.length) {
+          hideTrustSuggest();
+          return;
+        }
+        for (var i = 0; i < trustSuggestItems.length; i++) {
+          var it = trustSuggestItems[i];
+          var li = document.createElement('li');
+          li.setAttribute('role', 'option');
+          li.id = 'trust-suggest-opt-' + i;
+          li.dataset.index = String(i);
+          var nameSpan = document.createElement('span');
+          nameSpan.textContent = it.name;
+          li.appendChild(nameSpan);
+          if (it.ods) {
+            var meta = document.createElement('span');
+            meta.className = 'profile-suggest-meta';
+            meta.textContent = 'ODS ' + it.ods;
+            li.appendChild(meta);
+          }
+          list.appendChild(li);
+        }
+        list.hidden = false;
+        inp.setAttribute('aria-expanded', 'true');
+      }
+
+      function scheduleTrustSuggest() {
+        if (trustSuggestDebounce) clearTimeout(trustSuggestDebounce);
+        trustSuggestDebounce = setTimeout(function () {
+          trustSuggestDebounce = null;
+          void runTrustSuggest();
+        }, 320);
+      }
+
+      async function runTrustSuggest() {
+        if (!window.NHSOdsTrustSuggest) return;
+        var inp = document.getElementById('currentTrust');
+        if (!inp) return;
+        var q = String(inp.value || '').trim();
+        if (q.length < 2) {
+          hideTrustSuggest();
+          return;
+        }
+        try {
+          var items = await NHSOdsTrustSuggest.search(q, { minLength: 2, limit: 8 });
+          renderTrustSuggest(items);
+        } catch (e) {
+          hideTrustSuggest();
+        }
+      }
+
+      function fillFromUser(u) {
+        if (!u) return;
+        document.getElementById('displayName').value = u.display_name || '';
+        document.getElementById('gmcNumber').value = u.gmc_number || '';
+        document.getElementById('currentTrust').value = u.current_trust || '';
+        hideTrustSuggest();
+      }
+
+      (async function boot() {
+        await NHSAuth.refresh();
+        if (!NHSAuth.requireAuth()) return;
+        document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
+        fillFromUser(NHSAuth.user);
+      })();
+
+      document.getElementById('btnSignOut').addEventListener('click', async function () {
+        await NHSAuth.signOut();
+        window.location.replace('/');
+      });
+
+      (function wireTrustAutocomplete() {
+        var inp = document.getElementById('currentTrust');
+        var wrap = document.getElementById('trustAcWrap');
+        var list = document.getElementById('trustSuggestList');
+        if (!inp) return;
+        if (list) {
+          list.addEventListener('mousedown', function (ev) {
+            if (ev.target.closest('li[role="option"]')) ev.preventDefault();
+          });
+          list.addEventListener('click', function (ev) {
+            var li = ev.target.closest('li[role="option"]');
+            if (!li) return;
+            applyTrustSuggestIndex(parseInt(li.dataset.index, 10));
+          });
+        }
+        inp.addEventListener('input', scheduleTrustSuggest);
+        inp.addEventListener('keydown', function (e) {
+          var list = document.getElementById('trustSuggestList');
+          if (!list || list.hidden || !trustSuggestItems.length) return;
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            hideTrustSuggest();
+            return;
+          }
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            trustSuggestActive = Math.min(trustSuggestActive + 1, trustSuggestItems.length - 1);
+            if (trustSuggestActive < 0) trustSuggestActive = 0;
+            updateTrustSuggestHighlight();
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            trustSuggestActive = Math.max(trustSuggestActive - 1, 0);
+            updateTrustSuggestHighlight();
+          } else if (e.key === 'Enter' && trustSuggestActive >= 0) {
+            e.preventDefault();
+            applyTrustSuggestIndex(trustSuggestActive);
+          }
+        });
+        inp.addEventListener('blur', function () {
+          setTimeout(hideTrustSuggest, 200);
+        });
+        document.addEventListener('click', function (e) {
+          if (wrap && !wrap.contains(e.target)) hideTrustSuggest();
+        });
+      })();
+
+      (function wireAutoRedirectCancellation() {
+        /* If the user does anything after save, do not steal focus with a redirect. */
+        ['click', 'keydown', 'focusin', 'pointerdown', 'touchstart', 'wheel'].forEach(function (evt) {
+          document.addEventListener(evt, cancelAutoRedirect, { capture: true, passive: true });
+        });
+      })();
+
+      document.getElementById('profileForm').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        setStatus('');
+        cancelAutoRedirect();
+        var fd = new FormData(e.target);
+        var payload = {
+          display_name: (fd.get('display_name') || '').trim(),
+          gmc_number: (fd.get('gmc_number') || '').trim(),
+          current_trust: (fd.get('current_trust') || '').trim(),
+        };
+        try {
+          await NHSAuth.updateProfile(payload);
+          fillFromUser(NHSAuth.user);
+          setStatus('Profile saved.', 'ok');
+          armAutoRedirectToDashboard();
+        } catch (err) {
+          setStatus(err.message || 'Could not save profile', 'err');
+        }
+      });
+
+      (function wireHamburgerMenu() {
+        var btn = document.getElementById('btnMenu');
+        var panel = document.getElementById('menuPanel');
+        if (!btn || !panel) return;
+
+        function close() {
+          panel.hidden = true;
+          btn.setAttribute('aria-expanded', 'false');
+        }
+        function open() {
+          panel.hidden = false;
+          btn.setAttribute('aria-expanded', 'true');
+        }
+        btn.addEventListener('click', function (e) {
+          e.preventDefault();
+          if (panel.hidden) open();
+          else close();
+        });
+        document.addEventListener('click', function (e) {
+          if (panel.hidden) return;
+          if (btn.contains(e.target) || panel.contains(e.target)) return;
+          close();
+        }, true);
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') close();
+        });
+      })();
+    })();
+  </script>
+</body>
+</html>

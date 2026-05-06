@@ -98,26 +98,6 @@
     return String(expiryDate) >= todayIso();
   }
 
-  function recognitionBlock(leaveId, cfg) {
-    var map = cfg.recognition_when_joining || {};
-    var key = leaveId === 'other' ? '_default' : leaveId;
-    var rec = map[key] || map._default;
-    if (!rec) rec = { summary: '', often_portable_topics: [], typically_local_at_destination: [] };
-    var portable = (rec.often_portable_topics || []).map(function (t) {
-      return '<li>' + escapeHtml(t) + '</li>';
-    }).join('');
-    var local = (rec.typically_local_at_destination || []).map(function (t) {
-      return '<li>' + escapeHtml(t) + '</li>';
-    }).join('');
-    return (
-      '<p>' + escapeHtml(rec.summary || '') + '</p>' +
-      '<div class="moving-two-col">' +
-      '<div><h3 class="moving-h3">Often portable (verify + policy)</h3><ul>' + portable + '</ul></div>' +
-      '<div><h3 class="moving-h3">Usually required at your new trust</h3><ul>' + local + '</ul></div>' +
-      '</div>'
-    );
-  }
-
   function walletTable(reqs, recHints) {
     var list = [];
     try {
@@ -132,7 +112,7 @@
     });
 
     if (payloads.length === 0) {
-      return '<p class="moving-muted">No training records in this browser yet. Open the <a href="/static/staff/">staff app</a> to add or import, or use <strong>Bring your saved training list</strong> above if your list lives on another device, then refresh the checklist.</p>';
+      return '<p class="moving-muted"><a href="/static/staff/#list">Add or import your previously completed training</a>.</p>';
     }
 
     var nMet = 0;
@@ -242,10 +222,6 @@
   }
 
   function render(cfg, joinId, leaveId) {
-    document.getElementById('movingDisclaimer').textContent = cfg.disclaimer || '';
-    document.getElementById('movingDestinationTitle').textContent =
-      'Illustrative requirements — ' + (cfg.display_name || joinId);
-
     var rows = (cfg.mandatory_examples || []).map(function (req) {
       return (
         '<tr><td>' +
@@ -259,7 +235,6 @@
       '<table class="moving-table"><thead><tr><th>Topic</th><th>Category</th></tr></thead><tbody>' + rows + '</tbody></table>';
 
     var recHints = getRecognitionHints(cfg, leaveId);
-    document.getElementById('movingRecognitionWrap').innerHTML = recognitionBlock(leaveId, cfg);
     document.getElementById('movingWalletWrap').innerHTML = walletTable(cfg.mandatory_examples || [], recHints);
 
     document.getElementById('movingResults').hidden = false;
@@ -279,7 +254,24 @@
       });
   }
 
+  function isSignedInForPlanner() {
+    return !!window.__nhsAuthUser;
+  }
+
+  function hideResults() {
+    var results = document.getElementById('movingResults');
+    if (results) {
+      results.hidden = true;
+      results.setAttribute('aria-hidden', 'true');
+    }
+  }
+
   function run() {
+    if (!isSignedInForPlanner()) {
+      document.getElementById('movingError').textContent = '';
+      hideResults();
+      return;
+    }
     var joinId = joinSel.value;
     var leaveId = leaveSel.value;
     document.getElementById('movingError').textContent = '';
@@ -299,8 +291,9 @@
     var l = p.get('leave');
     if (j && /^[a-z0-9-]+$/i.test(j) && joinSel.querySelector('option[value="' + j + '"]')) joinSel.value = j;
     if (l && /^[a-z0-9-]+$/i.test(l) && leaveSel.querySelector('option[value="' + l + '"]')) leaveSel.value = l;
-    if (window.location.hash === '#moving-planner') {
-      document.getElementById('moving-planner').scrollIntoView({ behavior: 'smooth' });
+    var planner = document.getElementById('moving-planner');
+    if (planner && window.location.hash === '#moving-planner') {
+      planner.scrollIntoView({ behavior: 'smooth' });
     }
   }
 
@@ -312,6 +305,7 @@
   leaveSel.addEventListener('change', run);
   if (btnRefresh) btnRefresh.addEventListener('click', run);
   window.addEventListener('nhs-wallet-updated', run);
+  window.addEventListener('nhs-auth-changed', run);
 
   run();
 })();

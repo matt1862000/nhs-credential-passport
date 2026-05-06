@@ -1,5 +1,6 @@
 /**
  * Wallet: localStorage cache (same key as before) + optional JSON file for portability.
+ * When signed in, saveWallet (and linking a sync file) also PUTs to /api/me/wallet.
  * File format: { "version": 1, "credentials": [...] } or a raw JSON array.
  */
 (function () {
@@ -59,6 +60,26 @@
       null,
       2
     );
+  }
+
+  /** Push current wallet to server when a session exists (shared auth or legacy home flag). */
+  function pushWalletIfAuthed(arr) {
+    try {
+      if (window.NHSAuth && NHSAuth.user && typeof NHSAuth.pushWallet === 'function') {
+        void NHSAuth.pushWallet(arr);
+        return;
+      }
+    } catch (e) {}
+    try {
+      if (window.__nhsAuthUser) {
+        void fetch('/api/me/wallet', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(arr),
+        }).catch(function () {});
+      }
+    } catch (e2) {}
   }
 
   function mergeByCredentialId(existing, incoming) {
@@ -166,6 +187,7 @@
   function saveWallet(arr, skipDirty) {
     setWalletLocal(arr);
     if (!skipDirty) markDirty();
+    pushWalletIfAuthed(arr);
     void (async function () {
       if (await writeToLinked(arr)) clearDirty();
     })();
@@ -207,6 +229,7 @@
     var file = await handle.getFile();
     var arr = parseWalletJson(await file.text());
     setWalletLocal(arr);
+    pushWalletIfAuthed(arr);
     await writeToLinked(arr);
     clearDirty();
     return { count: arr.length, name: file.name };
@@ -252,6 +275,23 @@
     return linkedHandle && linkedHandle.name ? linkedHandle.name : '';
   }
 
+  /**
+   * Clear this browser's wallet cache and linked JSON file handle (no server PUT).
+   * Used after sign-out and before the first merge for a newly registered account so
+   * another user's or an old anonymous list in localStorage is not merged into the new account.
+   */
+  async function resetDeviceWalletCache() {
+    clearDirty();
+    try {
+      sessionStorage.removeItem(BANNER_DISMISS_KEY);
+    } catch (e) {}
+    linkedHandle = null;
+    try {
+      await idbDeleteHandle();
+    } catch (e) {}
+    setWalletLocal([]);
+  }
+
   window.NHSWallet = {
     STORAGE_KEY: STORAGE_KEY,
     getWallet: getWallet,
@@ -272,5 +312,6 @@
     markDirty: markDirty,
     dismissSaveBanner: dismissSaveBanner,
     isSaveBannerDismissed: isSaveBannerDismissed,
+    resetDeviceWalletCache: resetDeviceWalletCache,
   };
 })();

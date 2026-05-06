@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Verify e-learning — NHS E-Learning Credential Passport</title>
+  <title>Verify training — NHS Training Passport</title>
   <style>
     /* NHS design system: https://service-manual.nhs.uk/design-system/styles/colour */
     :root {
@@ -94,31 +94,31 @@
   <header class="nhsuk-header" role="banner">
     <div class="nhsuk-header__container">
       <div class="nhsuk-header__service">
-        <a class="nhsuk-header__service-logo" href="/" aria-label="NHS E-Learning Credential Passport homepage">
+        <a class="nhsuk-header__service-logo" href="/" aria-label="NHS Training Passport homepage">
           <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" height="40" width="100" focusable="false" role="img" aria-label="NHS">
             <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
           </svg>
-          <span class="nhsuk-header__service-name">E-Learning Credential Passport</span>
+          <span class="nhsuk-header__service-name">Training Passport</span>
         </a>
       </div>
     </div>
   </header>
   <main class="nhsuk-main" id="maincontent" role="main">
-    <h2 class="nhsuk-page-heading">Verify e-learning</h2>
-    <p class="nhsuk-body-s">Check that a staff member’s e-learning is valid. Paste the e-learning ID or the full verification link they shared with you.</p>
+    <h2 class="nhsuk-page-heading">Verify training</h2>
+    <p class="nhsuk-body-s">Check that a staff member’s training record is valid. Paste the training ID or the full verification link they shared with you.</p>
 
     <form id="verifyForm">
       <div class="nhsuk-form-group">
         <label class="nhsuk-label" for="input">E-learning ID or verification URL</label>
-        <textarea class="nhsuk-textarea" id="input" name="input" placeholder="Paste e-learning ID (e.g. nhs-el-abc123...) or the full verification URL from a shared link" aria-describedby="input-hint"></textarea>
+        <textarea class="nhsuk-textarea" id="input" name="input" placeholder="Paste training ID (e.g. nhs-el-abc123...) or the full verification URL from a shared link" aria-describedby="input-hint"></textarea>
         <span class="nhsuk-hint" id="input-hint">If the staff member shared a link, paste the entire URL here.</span>
       </div>
       <button type="submit" class="nhsuk-button" id="btn">Verify</button>
     </form>
 
     <div class="nhsuk-form-group" style="margin-top:2rem; padding-top:1.5rem; border-top:1px solid #aeb7bd;">
-      <h3 class="nhsuk-page-heading" style="font-size:1.25rem; margin:0 0 0.5rem 0;">Import (multiple e-learning)</h3>
-      <p class="nhsuk-body-s" style="margin-bottom:0.75rem;">If the staff member shared one link or QR for several e-learning (e.g. Fire Safety and Information Governance), paste that bundle URL here to verify them all at once.</p>
+      <h3 class="nhsuk-page-heading" style="font-size:1.25rem; margin:0 0 0.5rem 0;">Import (multiple training records)</h3>
+      <p class="nhsuk-body-s" style="margin-bottom:0.75rem;">If the staff member shared one link or QR for several training records (e.g. Fire Safety and Information Governance), paste that bundle URL here to verify them all at once.</p>
       <label class="nhsuk-label" for="bundleUrl">Bundle URL from staff member</label>
       <input class="nhsuk-input" id="bundleUrl" type="url" placeholder="https://.../static/verifier/bundle.html?b=..." style="max-width:100%;">
       <button type="button" class="nhsuk-button" id="btnImportBundle" style="margin-top:0.5rem;">Open bundle</button>

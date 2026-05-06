@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard &mdash; NHS Training Passport</title>
+  <link rel="stylesheet" href="/static/shared/app.css">
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/static/dashboard/" aria-label="Dashboard">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">Training Passport</span>
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <a href="/static/dashboard/">&larr; Dashboard</a>
+        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading" id="welcomeTitle">Your dashboard</h1>
+    <p class="nhsuk-lead">Choose one of the areas below. Use <strong>Dashboard</strong> at the top to return here any time.</p>
+
+    <section aria-labelledby="statsTitle">
+      <h2 id="statsTitle" class="visually-hidden">Your training summary</h2>
+      <div class="nhs-stat-grid">
+        <div class="nhs-stat nhs-stat--ok">
+          <div class="nhs-stat__num" id="statValid">&mdash;</div>
+          <div class="nhs-stat__label">Valid records</div>
+        </div>
+        <div class="nhs-stat nhs-stat--warn">
+          <div class="nhs-stat__num" id="statExpiring">&mdash;</div>
+          <div class="nhs-stat__label">Expiring within 90 days</div>
+        </div>
+        <div class="nhs-stat nhs-stat--bad">
+          <div class="nhs-stat__num" id="statExpired">&mdash;</div>
+          <div class="nhs-stat__label">Expired</div>
+        </div>
+        <div class="nhs-stat">
+          <div class="nhs-stat__num" id="statTotal">&mdash;</div>
+          <div class="nhs-stat__label">Total records</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="doctorActions" style="margin-top:2.25rem;" aria-labelledby="actionsTitle">
+      <h2 id="actionsTitle">Your training</h2>
+      <div class="nhs-action-grid" role="list">
+        <a class="nhs-action-card" href="/static/staff/#list" role="listitem">
+          <div class="nhs-action-title">View my training</div>
+          <p class="nhs-action-desc">See your saved completions, what’s in date, and what’s due to expire.</p>
+          <span class="nhs-action-cta">Open list &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/staff/#import" role="listitem">
+          <div class="nhs-action-title">Import from ESR</div>
+          <p class="nhs-action-desc">Upload your ESR export to add many completions in one go.</p>
+          <span class="nhs-action-cta">Import &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/staff/#add" role="listitem">
+          <div class="nhs-action-title">Add a record</div>
+          <p class="nhs-action-desc">Add a single completion manually (optional certificate upload).</p>
+          <span class="nhs-action-cta">Add &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/plan-move/" role="listitem">
+          <div class="nhs-action-title">Moving trust</div>
+          <p class="nhs-action-desc">Compare your training against your new trust’s mandatory checklist.</p>
+          <span class="nhs-action-cta">Compare &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/staff/#bulk" role="listitem">
+          <div class="nhs-action-title">Download or share</div>
+          <p class="nhs-action-desc">Download PDFs or share a verification link/QR.</p>
+          <span class="nhs-action-cta">Export &rsaquo;</span>
+        </a>
+      </div>
+    </section>
+
+    <section id="premiumTrustTools" style="margin-top:2.25rem;" hidden aria-labelledby="premiumToolsTitle">
+      <h2 id="premiumToolsTitle" class="nhsuk-page-heading" style="font-size:1.5rem;">Trust tools (premium)</h2>
+      <p class="nhsuk-lead" style="font-size:1.0625rem;">Verifier, issuer key, and API docs are only shown for premium trust accounts.</p>
+      <div class="nhs-action-grid" role="list">
+        <a class="nhs-action-card" href="/static/hr/" role="listitem">
+          <div class="nhs-action-title">HR inbox</div>
+          <p class="nhs-action-desc">See training shared by clinicians and mark records as verified.</p>
+          <span class="nhs-action-cta">Open inbox &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/verifier/" role="listitem">
+          <div class="nhs-action-title">Verifier</div>
+          <p class="nhs-action-desc">Paste a verification URL or credential ID to check someone else&rsquo;s record.</p>
+          <span class="nhs-action-cta">Open verifier &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/.well-known/did.json" role="listitem">
+          <div class="nhs-action-title">Issuer public key</div>
+          <p class="nhs-action-desc">JSON web key (did:web) for technical integration with verifiers and HR systems.</p>
+          <span class="nhs-action-cta">View key &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/docs" role="listitem">
+          <div class="nhs-action-title">API documentation</div>
+          <p class="nhs-action-desc">OpenAPI / Swagger reference for the issuance and verification endpoints.</p>
+          <span class="nhs-action-cta">View API &rsaquo;</span>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/wallet/wallet-store.js"></script>
+  <script src="/static/shared/auth.js"></script>
+  <script>
+    (function () {
+      function statusOf(c) {
+        if (c.revoked) return 'revoked';
+        if (!c.expiry_date) return 'valid';
+        var now = new Date();
+        var exp = new Date(c.expiry_date + 'T23:59:59');
+        if (isNaN(exp.getTime())) return 'valid';
+        var diffDays = Math.floor((exp - now) / (1000 * 60 * 60 * 24));
+        if (diffDays < 0) return 'expired';
+        if (diffDays <= 90) return 'expiring';
+        return 'valid';
+      }
+
+      function renderStats(list) {
+        list = Array.isArray(list) ? list : (window.NHSWallet ? NHSWallet.getWallet() : []);
+        var valid = 0, expiring = 0, expired = 0;
+        list.forEach(function (c) {
+          var s = statusOf(c);
+          if (s === 'valid') valid++;
+          else if (s === 'expiring') expiring++;
+          else if (s === 'expired') expired++;
+        });
+        document.getElementById('statValid').textContent = valid;
+        document.getElementById('statExpiring').textContent = expiring;
+        document.getElementById('statExpired').textContent = expired;
+        document.getElementById('statTotal').textContent = list.length;
+      }
+
+      async function fetchServerWallet() {
+        try {
+          var r = await fetch('/api/me/wallet', { credentials: 'include' });
+          if (!r.ok) return [];
+          var arr = await r.json();
+          return Array.isArray(arr) ? arr : [];
+        } catch (e) {
+          return [];
+        }
+      }
+
+      (async function boot() {
+        await NHSAuth.refresh();
+        if (!NHSAuth.requireAuth()) return;
+        document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
+        var first = (NHSAuth.user.email || '').split('@')[0];
+        if (first) document.getElementById('welcomeTitle').textContent = 'Hello, ' + first;
+
+        var premiumEl = document.getElementById('premiumTrustTools');
+        if (premiumEl && NHSAuth.user.premium) premiumEl.hidden = false;
+        var doctorActions = document.getElementById('doctorActions');
+        if (doctorActions && NHSAuth.user.premium) doctorActions.hidden = true;
+
+        /* Linked JSON file is applied from My training only; avoid repopulating stats from disk before server merge. */
+        await NHSAuth.pullWalletMerge();
+        renderStats(await fetchServerWallet());
+        window.addEventListener('nhs-wallet-updated', renderStats);
+      })();
+
+      document.getElementById('btnSignOut').addEventListener('click', async function () {
+        await NHSAuth.signOut();
+        window.location.replace('/');
+      });
+
+      (function wireHamburgerMenu() {
+        var btn = document.getElementById('btnMenu');
+        var panel = document.getElementById('menuPanel');
+        if (!btn || !panel) return;
+
+        function close() {
+          panel.hidden = true;
+          btn.setAttribute('aria-expanded', 'false');
+        }
+        function open() {
+          panel.hidden = false;
+          btn.setAttribute('aria-expanded', 'true');
+        }
+        btn.addEventListener('click', function (e) {
+          e.preventDefault();
+          if (panel.hidden) open();
+          else close();
+        });
+        document.addEventListener('click', function (e) {
+          if (panel.hidden) return;
+          if (btn.contains(e.target) || panel.contains(e.target)) return;
+          close();
+        }, true);
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape') close();
+        });
+      })();
+    })();
+  </script>
+</body>
+</html>

@@ -28,6 +28,8 @@ def issue_credentials(
     issuer_did = crypto.get_issuer_did(base_url)
     verify_base = get_verification_url_base(base_url)
     results = []
+    # Ensure DB schema once (avoid per-record DDL/locks during bulk import).
+    db.init_db()
 
     for rec in records:
         credential_id = f"nhs-el-{uuid.uuid4().hex[:24]}"
@@ -50,7 +52,6 @@ def issue_credentials(
         jwt_str = crypto.sign_credential(payload, credential_id)
         verification_url = f"{verify_base}/{credential_id}?jwt={jwt_str}"
 
-        db.init_db()
         db.register_credential(credential_id, rec.expiry_date.isoformat())
 
         pdf_b64 = None
