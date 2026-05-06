@@ -108,6 +108,25 @@
       var trustSuggestDebounce = null;
       var trustSuggestItems = [];
       var trustSuggestActive = -1;
+      var redirectTimer = null;
+      var redirectArmed = false;
+
+      function cancelAutoRedirect() {
+        redirectArmed = false;
+        if (redirectTimer) {
+          clearTimeout(redirectTimer);
+          redirectTimer = null;
+        }
+      }
+
+      function armAutoRedirectToDashboard() {
+        cancelAutoRedirect();
+        redirectArmed = true;
+        redirectTimer = setTimeout(function () {
+          if (!redirectArmed) return;
+          window.location.assign('/static/dashboard/');
+        }, 1100);
+      }
 
       function hideTrustSuggest() {
         var list = document.getElementById('trustSuggestList');
@@ -275,9 +294,17 @@
         });
       })();
 
+      (function wireAutoRedirectCancellation() {
+        /* If the user does anything after save, do not steal focus with a redirect. */
+        ['click', 'keydown', 'focusin', 'pointerdown', 'touchstart', 'wheel'].forEach(function (evt) {
+          document.addEventListener(evt, cancelAutoRedirect, { capture: true, passive: true });
+        });
+      })();
+
       document.getElementById('profileForm').addEventListener('submit', async function (e) {
         e.preventDefault();
         setStatus('');
+        cancelAutoRedirect();
         var fd = new FormData(e.target);
         var payload = {
           display_name: (fd.get('display_name') || '').trim(),
@@ -288,6 +315,7 @@
           await NHSAuth.updateProfile(payload);
           fillFromUser(NHSAuth.user);
           setStatus('Profile saved.', 'ok');
+          armAutoRedirectToDashboard();
         } catch (err) {
           setStatus(err.message || 'Could not save profile', 'err');
         }
