@@ -271,14 +271,6 @@
     .staff-verify-all-banner__title { margin: 0 0 0.35rem 0; font-size: 1.0625rem; font-weight: 700; color: var(--nhsuk-text); }
     .staff-verify-all-banner__desc { margin: 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); line-height: 1.45; }
     .staff-verify-all-banner .nhsuk-button { flex-shrink: 0; white-space: nowrap; }
-    #qrModal { display: none; position: fixed; inset: 0; background: rgba(33, 43, 50, 0.35); align-items: center; justify-content: center; z-index: 10; }
-    #qrModal.show { display: flex; }
-    #qrModal .nhsuk-modal {
-      background: #fff; padding: 1.75rem; max-width: 24rem;
-      border-radius: 4px; border: 1px solid var(--nhsuk-border);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
-    }
-    #qrModal .nhsuk-modal input { width: 100%; padding: 0.6rem; margin-top: 0.5rem; border-radius: 4px; border: 1px solid var(--nhsuk-border); }
     .auth-panel h4 { margin: 0 0 0.75rem 0; font-size: 1.125rem; font-weight: 600; color: var(--nhsuk-text); }
     .auth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
     @media (max-width: 720px) { .auth-grid { grid-template-columns: 1fr; } }
@@ -422,7 +414,7 @@
 
     <section id="bulk" role="tabpanel" aria-labelledby="tab-bulk" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel" id="bulkExportPanel">
-        <h3 class="nhsuk-bulk-export-panel__title">Download or share</h3>
+        <h3 class="nhsuk-bulk-export-panel__title">Download</h3>
         <p class="nhsuk-bulk-export-panel__desc">Only training marked <strong>VERIFIED</strong> by HR appears here. Tick items below, or use <strong>Select all</strong> then <strong>Download selected PDFs (ZIP)</strong>. <strong>Download all PDFs (ZIP)</strong> selects every verified record below.</p>
         <div class="nhsuk-bulk-export-panel__actions">
           <span class="nhsuk-bulk-export-panel__count" id="bulkExportCount" aria-live="polite">0 selected</span>
@@ -430,11 +422,10 @@
             <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkSelectAll" title="Select every verified training record below">Select all</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkClearSelection" title="Clear all ticks">Clear selection</button>
             <details class="bulk-actions" id="bulkActionsMenu">
-              <summary class="nhsuk-button nhsuk-bulk-export-panel__btn" aria-haspopup="true">Share or download</summary>
-              <div class="bulk-actions__panel" role="menu" aria-label="Share or download">
+              <summary class="nhsuk-button nhsuk-bulk-export-panel__btn" aria-haspopup="true">Download</summary>
+              <div class="bulk-actions__panel" role="menu" aria-label="Download options">
                 <button type="button" class="bulk-actions__item" id="btnExportSelected" title="Download selected training records as PDFs in a ZIP" disabled>Download selected PDFs (ZIP)</button>
                 <button type="button" class="bulk-actions__item" id="btnExportAll" title="Select all and download as one ZIP">Download all PDFs (ZIP)</button>
-                <button type="button" class="bulk-actions__item" id="btnShareSelected" title="Send selected items to HR for verification (one link/QR)" disabled>Verify selected with HR (link/QR)</button>
               </div>
             </details>
           </div>
@@ -442,22 +433,9 @@
       </div>
       <div id="bulkCredentialList"></div>
     </section>
-
-    <div id="qrModal" aria-modal="true" aria-labelledby="qrModalTitle" role="dialog">
-      <div class="nhsuk-modal">
-        <h3 id="qrModalTitle">Verify with HR</h3>
-        <p>Send this link or QR to HR. They open it in the browser while signed in as HR and mark each record as verified or declined.</p>
-        <div id="qrTarget" style="display:block; width:200px; height:200px; margin:0.5rem 0;"></div>
-        <label class="nhsuk-label" for="shareLink">HR inbox link</label>
-        <input type="text" id="shareLink" readonly onclick="this.select()" aria-describedby="shareLinkHint">
-        <p id="shareLinkHint" class="nhsuk-hint" style="margin-top:0.35rem;">Not for the &ldquo;Verify training&rdquo; tool — that page checks cryptographic credential IDs. This link only opens HR review.</p>
-        <button type="button" class="nhsuk-button" style="margin-top:1rem;" onclick="document.getElementById('qrModal').classList.remove('show')">Close</button>
-      </div>
-    </div>
   </main>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js" crossorigin="anonymous"></script>
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/ods-trust-suggest.js"></script>
@@ -881,7 +859,6 @@
     }
     var btnExport = document.getElementById('btnExportSelected');
     if (btnExport) btnExport.addEventListener('click', function () { closeBulkActionsMenu(); exportSelectedAsZip(); });
-    document.getElementById('btnShareSelected').addEventListener('click', function () { closeBulkActionsMenu(); shareSelectedAsLink(); });
     var btnVerifyAllHrList = document.getElementById('btnVerifyAllHrList');
     if (btnVerifyAllHrList) btnVerifyAllHrList.addEventListener('click', function () { verifyAllWithHr(); });
     document.getElementById('btnBulkSelectAll').addEventListener('click', function() {
@@ -907,71 +884,8 @@
       const n = checked.length;
       const countEl = document.getElementById('bulkExportCount');
       const btnExport = document.getElementById('btnExportSelected');
-      const btnShare = document.getElementById('btnShareSelected');
       if (countEl) countEl.textContent = n === 0 ? '0 selected' : (n === 1 ? '1 selected' : n + ' selected');
       if (btnExport) btnExport.disabled = n === 0;
-      if (btnShare) btnShare.disabled = n === 0 || !isProfileComplete();
-    }
-
-    function base64urlEncode(str) {
-      const base64 = btoa(unescape(encodeURIComponent(str)));
-      return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    }
-
-    async function renderQrCode(targetEl, text) {
-      if (!targetEl) return;
-      targetEl.innerHTML = '';
-      try {
-        if (window.QRCode && typeof QRCode.toCanvas === 'function') {
-          var canvas = document.createElement('canvas');
-          await QRCode.toCanvas(canvas, text, { width: 200, margin: 1 });
-          canvas.setAttribute('role', 'img');
-          canvas.setAttribute('aria-label', 'QR code – scan to verify training');
-          targetEl.appendChild(canvas);
-          return;
-        }
-      } catch (e) {}
-      // Fallback to external image service if library fails
-      const img = document.createElement('img');
-      img.width = 200;
-      img.height = 200;
-      img.alt = 'QR code – scan to verify training';
-      img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(text);
-      targetEl.appendChild(img);
-    }
-
-    async function shareSelectedAsLink() {
-      if (!canRequestHrVerification()) return;
-      const checked = document.querySelectorAll('.credential-export-cb:checked');
-      const ids = Array.from(checked).map(el => el.getAttribute('data-credential-id'));
-      if (ids.length === 0) return;
-      try {
-        var res = await fetch('/api/me/shares', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credential_ids: ids }),
-        });
-        var parsed = await res.text();
-        var data = null;
-        try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
-        if (!res.ok) {
-          var d = data && data.detail;
-          throw new Error(typeof d === 'string' ? d : 'Could not create share');
-        }
-        var shareUrl = (data && data.share_url) || '';
-        document.getElementById('shareLink').value = shareUrl;
-        const qrTarget = document.getElementById('qrTarget');
-        await renderQrCode(qrTarget, shareUrl);
-        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Verify with HR';
-        document.querySelector('#qrModal .nhsuk-modal p').textContent =
-          'Send this link or QR to HR. They can mark each record as verified or declined.';
-        document.getElementById('qrModal').classList.add('show');
-        await refreshVerifiedMap();
-        renderList();
-      } catch (e) {
-        alert(e.message || e);
-      }
     }
 
     async function verifyAllWithHr() {
