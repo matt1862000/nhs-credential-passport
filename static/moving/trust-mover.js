@@ -112,7 +112,7 @@
     });
 
     if (payloads.length === 0) {
-      return '<p class="moving-muted">No training records in this browser yet. Open the <a href="/static/staff/">staff app</a> to add or import, or use <strong>Bring your saved training list</strong> above if your list lives on another device, then refresh the checklist.</p>';
+      return '<p class="moving-muted">No training records yet.</p>';
     }
 
     var nMet = 0;
