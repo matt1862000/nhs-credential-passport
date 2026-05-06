@@ -289,16 +289,28 @@ async def me_shares_post(request: Request):
         if isinstance(c, dict) and c.get("credential_id"):
             wallet_by_id[str(c.get("credential_id"))] = c
 
+    # One wallet row may hold batch evidence (e.g. CSV import); copy to every share item for HR.
+    fallback_b64 = None
+    fallback_fn = None
+    for cid in ids:
+        w = wallet_by_id.get(cid) or {}
+        if w.get("certificate_base64"):
+            fallback_b64 = w.get("certificate_base64")
+            fallback_fn = w.get("certificate_filename")
+            break
+
     items = []
     for cid in ids:
         w = wallet_by_id.get(cid) or {}
+        b64 = w.get("certificate_base64") or fallback_b64
+        fn = w.get("certificate_filename") or fallback_fn
         items.append(
             {
                 "credential_id": cid,
                 "module_name": w.get("module_name"),
                 "expiry_date": w.get("expiry_date"),
-                "certificate_base64": w.get("certificate_base64"),
-                "certificate_filename": w.get("certificate_filename"),
+                "certificate_base64": b64,
+                "certificate_filename": fn,
             }
         )
 
