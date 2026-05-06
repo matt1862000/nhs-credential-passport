@@ -242,7 +242,6 @@
   }
 
   function render(cfg, joinId, leaveId) {
-    document.getElementById('movingDisclaimer').textContent = cfg.disclaimer || '';
     document.getElementById('movingDestinationTitle').textContent =
       'Illustrative requirements — ' + (cfg.display_name || joinId);
 
