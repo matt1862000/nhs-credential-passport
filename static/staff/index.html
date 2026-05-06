@@ -446,10 +446,11 @@
     <div id="qrModal" aria-modal="true" aria-labelledby="qrModalTitle" role="dialog">
       <div class="nhsuk-modal">
         <h3 id="qrModalTitle">Verify with HR</h3>
-        <p>Send this link or QR to HR. They can mark each record as verified or declined.</p>
+        <p>Send this link or QR to HR. They open it in the browser while signed in as HR and mark each record as verified or declined.</p>
         <div id="qrTarget" style="display:block; width:200px; height:200px; margin:0.5rem 0;"></div>
-        <label class="nhsuk-label" for="shareLink">Verification link</label>
-        <input type="text" id="shareLink" readonly onclick="this.select()">
+        <label class="nhsuk-label" for="shareLink">HR inbox link</label>
+        <input type="text" id="shareLink" readonly onclick="this.select()" aria-describedby="shareLinkHint">
+        <p id="shareLinkHint" class="nhsuk-hint" style="margin-top:0.35rem;">Not for the &ldquo;Verify training&rdquo; tool — that page checks cryptographic credential IDs. This link only opens HR review.</p>
         <button type="button" class="nhsuk-button" style="margin-top:1rem;" onclick="document.getElementById('qrModal').classList.remove('show')">Close</button>
       </div>
     </div>

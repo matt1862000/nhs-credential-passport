@@ -105,7 +105,8 @@
   </header>
   <main class="nhsuk-main" id="maincontent" role="main">
     <h2 class="nhsuk-page-heading">Verify training</h2>
-    <p class="nhsuk-body-s">Check that a staff member’s training record is valid. Paste the training ID or the full verification link they shared with you.</p>
+    <p class="nhsuk-body-s">Check that a staff member’s training record is valid. Paste the <strong>training credential ID</strong> or the verification URL that contains a <strong>jwt=</strong> parameter (from their credential link).</p>
+    <p class="nhsuk-body-s" style="margin-top:0.5rem;">Do <strong>not</strong> paste links to <code>/static/hr/?session=…</code> here — those are for HR to open the <a href="/static/hr/">HR inbox</a> while signed in, not for this checker.</p>
 
     <form id="verifyForm">
       <div class="nhsuk-form-group">
@@ -140,6 +141,15 @@
 
       btn.disabled = true;
       resultEl.innerHTML = '<p>Checking…</p>';
+
+      if (raw.includes('/static/hr/')) {
+        btn.disabled = false;
+        resultEl.className = 'nhsuk-panel nhsuk-panel--unverified';
+        resultEl.innerHTML =
+          '<h3 class="nhsuk-panel__title">This is an HR inbox link</h3>' +
+          '<p>Open it in your browser while signed in as an HR user (Dashboard → HR inbox). This page only accepts a training credential ID or a verification URL that includes <code>jwt=</code>.</p>';
+        return;
+      }
 
       let credentialId = null;
       let jwtParam = null;
