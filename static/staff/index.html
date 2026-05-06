@@ -1152,14 +1152,7 @@
           var d = data && data.detail;
           throw new Error(typeof d === 'string' ? d : 'Could not create share');
         }
-        var shareUrl = (data && data.share_url) || '';
-        document.getElementById('shareLink').value = shareUrl;
-        const qrTarget = document.getElementById('qrTarget');
-        await renderQrCode(qrTarget, shareUrl);
-        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Verify with HR';
-        document.querySelector('#qrModal .nhsuk-modal p').textContent =
-          'Send this link or QR to HR. They can mark each record as verified or declined.';
-        document.getElementById('qrModal').classList.add('show');
+        // For single-item verification, silently send to HR inbox (no QR modal).
         await refreshVerifiedMap();
         renderList();
       } catch (e) {
