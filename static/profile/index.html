@@ -20,6 +20,13 @@
     #profileStatus { margin-top: 1rem; min-height: 1.25rem; }
     #profileStatus.ok { color: var(--nhsuk-success); font-weight: 600; }
     #profileStatus.err { color: var(--nhsuk-error); font-weight: 600; }
+    .profile-nav-actions { margin-top: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+    .profile-nav-actions .nhsuk-button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    #profileNavHint { margin: 0.35rem 0 0 0; font-size: 0.875rem; color: var(--nhsuk-secondary-text); max-width: 32rem; display: none; }
     .profile-ac-wrap { position: relative; }
     .profile-suggest-list {
       position: absolute; left: 0; right: 0; top: 100%; margin: 0.15rem 0 0 0;
@@ -89,10 +96,11 @@
         <button type="submit" class="nhsuk-button">Save profile</button>
       </form>
       <p id="profileStatus" role="status" aria-live="polite"></p>
-      <p style="margin-top: 1.5rem;">
-        <a class="nhsuk-button nhsuk-button--secondary" href="/static/dashboard/">Go to dashboard</a>
-        <a class="nhsuk-button nhsuk-button--secondary" href="/static/staff/#list" style="margin-left: 0.5rem;">My training</a>
-      </p>
+      <div class="profile-nav-actions">
+        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnGoDashboard" disabled aria-disabled="true">Go to dashboard</button>
+        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnGoTraining" disabled aria-disabled="true">My training</button>
+      </div>
+      <p id="profileNavHint" role="note">Save your profile with all three fields filled in before you can open the dashboard or My training.</p>
     </section>
   </main>
 
@@ -236,11 +244,28 @@
         hideTrustSuggest();
       }
 
+      function updateProfileNavButtons() {
+        var dash = document.getElementById('btnGoDashboard');
+        var train = document.getElementById('btnGoTraining');
+        var hint = document.getElementById('profileNavHint');
+        if (!dash || !train) return;
+        var premium = !!(NHSAuth.user && NHSAuth.user.premium);
+        var ok = premium || (typeof NHSAuth.isProfileComplete === 'function' && NHSAuth.isProfileComplete());
+        dash.disabled = !ok;
+        train.disabled = !ok;
+        dash.setAttribute('aria-disabled', ok ? 'false' : 'true');
+        train.setAttribute('aria-disabled', ok ? 'false' : 'true');
+        if (hint) {
+          hint.style.display = !premium && !ok ? 'block' : 'none';
+        }
+      }
+
       (async function boot() {
         await NHSAuth.refresh();
         if (!NHSAuth.requireAuth()) return;
         document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
         fillFromUser(NHSAuth.user);
+        updateProfileNavButtons();
         var req = new URLSearchParams(window.location.search).get('required');
         var banner = document.getElementById('profileRequiredBanner');
         var lead = document.getElementById('profileLead');
@@ -249,6 +274,15 @@
           lead.textContent = 'Optional details for your HR profile. You can change them any time.';
         }
       })();
+
+      document.getElementById('btnGoDashboard').addEventListener('click', function () {
+        if (this.disabled) return;
+        window.location.assign('/static/dashboard/');
+      });
+      document.getElementById('btnGoTraining').addEventListener('click', function () {
+        if (this.disabled) return;
+        window.location.assign('/static/staff/#list');
+      });
 
       document.getElementById('btnSignOut').addEventListener('click', async function () {
         await NHSAuth.signOut();
@@ -333,6 +367,7 @@
         try {
           await NHSAuth.updateProfile(payload);
           fillFromUser(NHSAuth.user);
+          updateProfileNavButtons();
           setStatus('Profile saved.', 'ok');
           armAutoRedirectToDashboard();
         } catch (err) {
