@@ -8,7 +8,14 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+try:
+    import bcrypt  # type: ignore
+except Exception:  # pragma: no cover
+    bcrypt = None
+
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "credentials.db"
+DEV_SEED_EMAIL = "sheffieldhr@nhs.net"
+DEV_SEED_PASSWORD = "password"
 
 
 def init_db():
@@ -42,7 +49,36 @@ def init_db():
                 updated_at TEXT NOT NULL
             )
         """)
+        _ensure_seed_privileged_user(conn)
         conn.commit()
+
+
+def _ensure_seed_privileged_user(conn: sqlite3.Connection) -> None:
+    """
+    Dev/demo seed account so Render deployments have a privileged login.
+    WARNING: This is insecure and should be removed before real use.
+    """
+    if bcrypt is None:
+        return
+    email = DEV_SEED_EMAIL.strip().lower()
+    pw = DEV_SEED_PASSWORD
+    if not email or not pw:
+        return
+    _ensure_users_premium_column(conn)
+    _ensure_users_gmc_number_column(conn)
+    _ensure_users_profile_extra_columns(conn)
+    h = bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
+    existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+    if existing and existing[0]:
+        conn.execute(
+            "UPDATE users SET password_hash = ?, premium = 1 WHERE email = ?",
+            (h, email),
+        )
+        return
+    conn.execute(
+        "INSERT INTO users (email, password_hash, created_at, premium, gmc_number, display_name, current_trust) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (email, h, datetime.utcnow().isoformat(), 1, None, None, None),
+    )
 
 
 def _ensure_users_premium_column(conn: sqlite3.Connection) -> None:

@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 GMC_RE = re.compile(r"^\d{7}$")
 MAX_WALLET_BYTES = 4 * 1024 * 1024
+DEV_SEED_EMAIL = "sheffieldhr@nhs.net"
 
 
 def _normalize_email(email: str) -> str:
@@ -64,6 +65,8 @@ def _session_response(data: dict, user_id: int, email: str, request: Request) ->
 def auth_register(request: Request, body: dict):
     email = _normalize_email(body.get("email") or "")
     password = body.get("password") or ""
+    if email == DEV_SEED_EMAIL:
+        raise HTTPException(status_code=403, detail="This email is reserved. Use sign in.")
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Invalid email")
     if len(str(password)) < 8:
