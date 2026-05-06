@@ -60,10 +60,6 @@
     <h1 class="nhsuk-page-heading">Your profile</h1>
     <p class="nhsuk-lead">Optional details to help pre-fill forms and speed things up. You can change them any time.</p>
 
-    <p id="welcomeNote" class="profile-welcome" hidden>
-      Welcome. Optionally add your name, GMC number, and current trust below, then continue to your dashboard when you are ready.
-    </p>
-
     <section class="nhsuk-card" style="max-width: 32rem;">
       <form id="profileForm" novalidate>
         <div class="nhsuk-form-group">
@@ -238,9 +234,6 @@
         if (!NHSAuth.requireAuth()) return;
         document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
         fillFromUser(NHSAuth.user);
-        if (new URLSearchParams(window.location.search).get('welcome') === '1') {
-          document.getElementById('welcomeNote').hidden = false;
-        }
       })();
 
       document.getElementById('btnSignOut').addEventListener('click', async function () {
