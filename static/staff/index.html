@@ -1078,9 +1078,6 @@
         const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
         const v = (verifiedMap && verifiedMap[c.credential_id]) || null;
         const st = v && v.status ? String(v.status).toUpperCase() : '';
-        const pendingTag = v && v.shared && st === 'PENDING'
-          ? '<span class="nhsuk-tag nhsuk-tag--shared" style="margin-left:0.5rem;">PENDING</span>'
-          : '';
         const verifiedTag = v && v.shared && st === 'VERIFIED'
           ? '<span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>'
           : '';
@@ -1111,7 +1108,7 @@
               <div style="flex:1;">
                 <h3 class="nhsuk-card__title">${c.module_name}</h3>
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
-                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>${verifiedTag}${pendingTag}${declinedTag}
+                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>${verifiedTag}${declinedTag}
                 <div class="nhsuk-card__actions">
                   <button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>${verifyBtnText}</button>
                   <button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
