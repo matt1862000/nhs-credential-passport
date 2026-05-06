@@ -56,6 +56,10 @@
 
     <div id="inboxView" class="hr-card" hidden>
       <h2 style="margin:0 0 0.75rem 0; font-size:1.25rem;">Shared sets</h2>
+      <div class="nhsuk-tabs" role="tablist" style="margin:0.5rem 0 0.75rem 0;">
+        <button type="button" role="tab" aria-selected="true" class="active" id="tab-inbox-new" data-tab="new">New</button>
+        <button type="button" role="tab" aria-selected="false" id="tab-inbox-arch" data-tab="archived">Archived</button>
+      </div>
       <div class="hr-table-wrap">
         <table class="hr-table" aria-label="Shared training sets">
           <thead>
@@ -78,6 +82,10 @@
         <span class="hr-muted" id="sessionMeta">&nbsp;</span>
       </div>
       <h2 style="margin:1rem 0 0.75rem 0; font-size:1.25rem;">Records</h2>
+      <div class="nhsuk-tabs" role="tablist" style="margin:0.25rem 0 0.75rem 0;">
+        <button type="button" role="tab" aria-selected="true" class="active" id="tab-items-new" data-tab="new">New</button>
+        <button type="button" role="tab" aria-selected="false" id="tab-items-arch" data-tab="archived">Archived</button>
+      </div>
       <div class="hr-table-wrap">
         <table class="hr-table" aria-label="Shared training records">
           <thead>
@@ -133,11 +141,37 @@
         return data;
       }
 
+      var inboxTab = 'new';
+      var itemsTab = 'new';
+      var lastSessionPayload = null;
+
+      function wireTabs(containerId, onPick) {
+        var root = document.getElementById(containerId);
+        if (!root) return;
+        root.addEventListener('click', function (e) {
+          var b = e.target && e.target.closest('button[data-tab]');
+          if (!b) return;
+          e.preventDefault();
+          var wanted = b.getAttribute('data-tab');
+          Array.from(root.querySelectorAll('button[data-tab]')).forEach(function (x) {
+            var active = x === b;
+            x.classList.toggle('active', active);
+            x.setAttribute('aria-selected', active ? 'true' : 'false');
+          });
+          onPick(wanted);
+        });
+      }
+
       async function loadInbox() {
         var tbody = document.getElementById('sessionsTbody');
         tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
         var data = await apiJson('/api/hr/shares?limit=50');
-        var rows = (data.sessions || []).map(function (s) {
+        var all = (data.sessions || []);
+        var sessions = all.filter(function (s) {
+          var hasPending = (s.pending_count || 0) > 0;
+          return inboxTab === 'new' ? hasPending : !hasPending;
+        });
+        var rows = sessions.map(function (s) {
           var statusLine = (s.verified_count || 0) + ' verified · ' + (s.pending_count || 0) + ' pending' + ((s.declined_count || 0) ? (' · ' + (s.declined_count || 0) + ' declined') : '');
           var doctorLine = (s.doctor_name || s.doctor_email || '—') +
             (s.doctor_gmc ? (' · GMC ' + s.doctor_gmc) : '') +
@@ -151,20 +185,23 @@
             '</tr>'
           );
         }).join('');
-        tbody.innerHTML = rows || '<tr><td colspan="4" class="hr-muted">No shares yet.</td></tr>';
+        tbody.innerHTML = rows || '<tr><td colspan="4" class="hr-muted">No items.</td></tr>';
       }
 
-      async function loadSession(sessionId) {
+      function renderSessionItems(sessionId, payload) {
         var tbody = document.getElementById('itemsTbody');
-        tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
-        var s = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
+        var s = payload;
         var meta =
           (s.doctor_name || s.doctor_email || '—') +
           (s.doctor_gmc ? (' · GMC ' + s.doctor_gmc) : '') +
           (s.doctor_trust ? (' · ' + s.doctor_trust) : '') +
           ' · ' + String(s.created_at || '').slice(0, 16).replace('T', ' ');
         document.getElementById('sessionMeta').textContent = meta;
-        var items = (s.items || []);
+        var items = (s.items || []).filter(function (it) {
+          var st = String(it.status || '').toUpperCase();
+          var pending = st !== 'VERIFIED' && st !== 'DECLINED';
+          return itemsTab === 'new' ? pending : !pending;
+        });
         tbody.innerHTML = items.map(function (it) {
           var st = String(it.status || '').toUpperCase();
           var pill = st === 'VERIFIED'
@@ -172,21 +209,32 @@
             : (st === 'DECLINED'
               ? '<span class=\"hr-pill\">DECLINED</span>'
               : '<span class=\"hr-pill\">PENDING</span>');
-          var btn = st === 'VERIFIED'
-            ? '<button type=\"button\" class=\"nhsuk-button nhsuk-button--secondary hr-btn-small\" disabled>Verified</button>'
+          var isArchived = (st === 'VERIFIED' || st === 'DECLINED');
+          var btn = isArchived
+            ? '<span class=\"hr-muted\">—</span>'
             : '<div class=\"hr-actions\">' +
               '<button type=\"button\" class=\"nhsuk-button hr-btn-small\" data-verify=\"1\" data-cid=\"' + esc(it.credential_id) + '\">Verify</button>' +
               '<button type=\"button\" class=\"nhsuk-button nhsuk-button--secondary hr-btn-small\" data-decline=\"1\" data-cid=\"' + esc(it.credential_id) + '\">Decline</button>' +
               '</div>';
+          var note = st === 'DECLINED' && it.decline_reason
+            ? ('<div class=\"hr-muted\" style=\"margin-top:0.25rem;\">Reason: ' + esc(it.decline_reason) + '</div>')
+            : '';
           return (
             '<tr>' +
-              '<td>' + esc(it.module_name || it.credential_id || '—') + '</td>' +
+              '<td>' + esc(it.module_name || it.credential_id || '—') + note + '</td>' +
               '<td>' + esc(it.expiry_date || '—') + '</td>' +
               '<td>' + pill + '</td>' +
               '<td>' + btn + '</td>' +
             '</tr>'
           );
-        }).join('') || '<tr><td colspan=\"4\" class=\"hr-muted\">No items in this share.</td></tr>';
+        }).join('') || '<tr><td colspan=\"4\" class=\"hr-muted\">No items.</td></tr>';
+      }
+
+      async function loadSession(sessionId) {
+        var tbody = document.getElementById('itemsTbody');
+        tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
+        lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
+        renderSessionItems(sessionId, lastSessionPayload);
 
         tbody.addEventListener('click', async function (e) {
           var v = e.target && e.target.closest('button[data-verify=\"1\"]');
@@ -209,10 +257,12 @@
                 body: JSON.stringify({ reason: reason }),
               });
             }
-            await loadSession(sessionId);
+            lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
+            renderSessionItems(sessionId, lastSessionPayload);
           } catch (err) {
             alert(err.message || err);
-            await loadSession(sessionId);
+            lastSessionPayload = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
+            renderSessionItems(sessionId, lastSessionPayload);
           }
         }, { once: true });
       }
@@ -242,10 +292,18 @@
         if (sessionId) {
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
+          wireTabs('sessionView', function (tab) {
+            itemsTab = tab === 'archived' ? 'archived' : 'new';
+            if (lastSessionPayload) renderSessionItems(sessionId, lastSessionPayload);
+          });
           await loadSession(sessionId);
         } else {
           show(document.getElementById('inboxView'), true);
           show(document.getElementById('sessionView'), false);
+          wireTabs('inboxView', async function (tab) {
+            inboxTab = tab === 'archived' ? 'archived' : 'new';
+            await loadInbox();
+          });
           await loadInbox();
         }
       })();
