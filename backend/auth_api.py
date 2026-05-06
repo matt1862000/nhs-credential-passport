@@ -3,6 +3,7 @@ Optional staff accounts: email + password, HttpOnly session cookie, server-store
 PII in wallet entries is the same as localStorage today (JWT payloads); registry table still has no PII.
 """
 import json
+import os
 import re
 import sqlite3
 from typing import Optional
@@ -15,6 +16,15 @@ from . import db, session_auth
 
 router = APIRouter(prefix="/api")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _public_app_base(request: Request) -> str:
+    """Public https URL for QR/share links. Prefer env so reverse proxies do not yield internal hosts."""
+    for key in ("BASE_URL", "RENDER_EXTERNAL_URL", "PUBLIC_URL"):
+        raw = (os.environ.get(key) or "").strip().rstrip("/")
+        if raw:
+            return raw
+    return str(request.base_url).rstrip("/")
 GMC_RE = re.compile(r"^\d{7}$")
 MAX_WALLET_BYTES = 4 * 1024 * 1024
 DEV_SEED_EMAIL = "sheffieldhr@nhs.net"
@@ -319,7 +329,7 @@ async def me_shares_post(request: Request):
         doctor_email=u.get("email") or "",
         items=items,
     )
-    base = str(request.base_url).rstrip("/")
+    base = _public_app_base(request)
     share_url = f"{base}/static/hr/?session={created['session_id']}"
     return {
         "ok": True,

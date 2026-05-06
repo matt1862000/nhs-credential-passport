@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, HTTPException, File, UploadFile, Query
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from . import crypto
 from . import db
@@ -79,6 +80,8 @@ app = FastAPI(
     description="Phase 2 MVP — issue, verify, revoke credentials",
     lifespan=lifespan,
 )
+# Trust X-Forwarded-* from Render/nginx so request.url uses public https host (fixes share / verify links).
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(auth_router)
 
