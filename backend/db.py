@@ -72,12 +72,23 @@ def _ensure_share_tables(conn: sqlite3.Connection) -> None:
             credential_id TEXT NOT NULL,
             module_name TEXT,
             expiry_date TEXT,
-            verified INTEGER NOT NULL DEFAULT 0,
-            verified_at TEXT,
-            verified_by_user_id INTEGER REFERENCES users(id),
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            decision_at TEXT,
+            decision_by_user_id INTEGER REFERENCES users(id),
+            decline_reason TEXT,
             PRIMARY KEY (session_id, credential_id)
         )
     """)
+    # Migrate older schema (verified/verified_at/verified_by_user_id) if present.
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(share_items)").fetchall()]
+    if "status" not in cols:
+        conn.execute("ALTER TABLE share_items ADD COLUMN status TEXT NOT NULL DEFAULT 'PENDING'")
+    if "decision_at" not in cols:
+        conn.execute("ALTER TABLE share_items ADD COLUMN decision_at TEXT")
+    if "decision_by_user_id" not in cols:
+        conn.execute("ALTER TABLE share_items ADD COLUMN decision_by_user_id INTEGER REFERENCES users(id)")
+    if "decline_reason" not in cols:
+        conn.execute("ALTER TABLE share_items ADD COLUMN decline_reason TEXT")
 
 
 def share_session_create(
@@ -104,7 +115,7 @@ def share_session_create(
             if not cid:
                 continue
             conn.execute(
-                "INSERT OR IGNORE INTO share_items (session_id, credential_id, module_name, expiry_date) VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO share_items (session_id, credential_id, module_name, expiry_date, status) VALUES (?, ?, ?, ?, 'PENDING')",
                 (session_id, cid, it.get("module_name"), it.get("expiry_date")),
             )
         conn.commit()
@@ -121,10 +132,16 @@ def share_inbox_list(limit: int = 50) -> list[dict]:
               s.id as session_id,
               s.created_at as created_at,
               s.doctor_email as doctor_email,
+              u.display_name as doctor_name,
+              u.gmc_number as doctor_gmc,
+              u.current_trust as doctor_trust,
               s.status as status,
               COUNT(i.credential_id) as total_count,
-              SUM(CASE WHEN i.verified = 1 THEN 1 ELSE 0 END) as verified_count
+              SUM(CASE WHEN i.status = 'VERIFIED' THEN 1 ELSE 0 END) as verified_count,
+              SUM(CASE WHEN i.status = 'DECLINED' THEN 1 ELSE 0 END) as declined_count,
+              SUM(CASE WHEN i.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count
             FROM share_sessions s
+            JOIN users u ON u.id = s.doctor_user_id
             LEFT JOIN share_items i ON i.session_id = s.id
             GROUP BY s.id
             ORDER BY s.id DESC
@@ -139,9 +156,14 @@ def share_inbox_list(limit: int = 50) -> list[dict]:
                 "session_id": r["session_id"],
                 "created_at": r["created_at"],
                 "doctor_email": r["doctor_email"],
+                "doctor_name": r["doctor_name"],
+                "doctor_gmc": r["doctor_gmc"],
+                "doctor_trust": r["doctor_trust"],
                 "status": r["status"],
                 "total_count": int(r["total_count"] or 0),
                 "verified_count": int(r["verified_count"] or 0),
+                "declined_count": int(r["declined_count"] or 0),
+                "pending_count": int(r["pending_count"] or 0),
             }
         )
     return out
@@ -152,14 +174,21 @@ def share_session_get(session_id: int) -> Optional[dict]:
         _ensure_share_tables(conn)
         conn.row_factory = sqlite3.Row
         s = conn.execute(
-            "SELECT id as session_id, created_at, doctor_user_id, doctor_email, share_token, status FROM share_sessions WHERE id = ?",
+            """
+            SELECT
+              s.id as session_id, s.created_at, s.doctor_user_id, s.doctor_email, s.share_token, s.status,
+              u.display_name as doctor_name, u.gmc_number as doctor_gmc, u.current_trust as doctor_trust
+            FROM share_sessions s
+            JOIN users u ON u.id = s.doctor_user_id
+            WHERE s.id = ?
+            """,
             (int(session_id),),
         ).fetchone()
         if not s:
             return None
         items = conn.execute(
             """
-            SELECT credential_id, module_name, expiry_date, verified, verified_at, verified_by_user_id
+            SELECT credential_id, module_name, expiry_date, status, decision_at, decision_by_user_id, decline_reason
             FROM share_items
             WHERE session_id = ?
             ORDER BY credential_id
@@ -171,6 +200,9 @@ def share_session_get(session_id: int) -> Optional[dict]:
         "created_at": s["created_at"],
         "doctor_user_id": s["doctor_user_id"],
         "doctor_email": s["doctor_email"],
+        "doctor_name": s["doctor_name"],
+        "doctor_gmc": s["doctor_gmc"],
+        "doctor_trust": s["doctor_trust"],
         "share_token": s["share_token"],
         "status": s["status"],
         "items": [
@@ -178,28 +210,39 @@ def share_session_get(session_id: int) -> Optional[dict]:
                 "credential_id": r["credential_id"],
                 "module_name": r["module_name"],
                 "expiry_date": r["expiry_date"],
-                "verified": bool(r["verified"]),
-                "verified_at": r["verified_at"],
-                "verified_by_user_id": r["verified_by_user_id"],
+                "status": r["status"],
+                "decision_at": r["decision_at"],
+                "decision_by_user_id": r["decision_by_user_id"],
+                "decline_reason": r["decline_reason"],
             }
             for r in items
         ],
     }
 
-
-def share_item_set_verified(session_id: int, credential_id: str, hr_user_id: int, verified: bool = True) -> None:
+def share_item_set_decision(
+    session_id: int,
+    credential_id: str,
+    hr_user_id: int,
+    *,
+    status: str,
+    decline_reason: Optional[str] = None,
+) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_share_tables(conn)
+        st = (status or "").upper().strip()
+        if st not in ("PENDING", "VERIFIED", "DECLINED"):
+            st = "PENDING"
         conn.execute(
             """
             UPDATE share_items
-            SET verified = ?, verified_at = ?, verified_by_user_id = ?
+            SET status = ?, decision_at = ?, decision_by_user_id = ?, decline_reason = ?
             WHERE session_id = ? AND credential_id = ?
             """,
             (
-                1 if verified else 0,
-                datetime.utcnow().isoformat() if verified else None,
-                int(hr_user_id) if verified else None,
+                st,
+                datetime.utcnow().isoformat(),
+                int(hr_user_id),
+                (decline_reason or "").strip() if st == "DECLINED" else None,
                 int(session_id),
                 str(credential_id),
             ),
@@ -208,14 +251,14 @@ def share_item_set_verified(session_id: int, credential_id: str, hr_user_id: int
 
 
 def doctor_verified_map(doctor_user_id: int) -> dict:
-    """Return { credential_id: { shared, verified, verified_at } } for a doctor."""
+    """Return { credential_id: { shared, status, decision_at, decline_reason } } for a doctor."""
     out: dict = {}
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_share_tables(conn)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT i.credential_id, i.verified, i.verified_at
+            SELECT i.credential_id, i.status, i.decision_at, i.decline_reason
             FROM share_sessions s
             JOIN share_items i ON i.session_id = s.id
             WHERE s.doctor_user_id = ?
@@ -224,11 +267,16 @@ def doctor_verified_map(doctor_user_id: int) -> dict:
         ).fetchall()
     for r in rows:
         cid = r["credential_id"]
-        prev = out.get(cid) or {"shared": True, "verified": False, "verified_at": None}
+        prev = out.get(cid) or {"shared": True, "status": "PENDING", "decision_at": None, "decline_reason": None}
         prev["shared"] = True
-        if bool(r["verified"]):
-            prev["verified"] = True
-            prev["verified_at"] = r["verified_at"]
+        # Prefer terminal statuses over pending, and carry decline reason
+        st = (r["status"] or "").upper()
+        if st in ("VERIFIED", "DECLINED"):
+            prev["status"] = st
+            prev["decision_at"] = r["decision_at"]
+            prev["decline_reason"] = r["decline_reason"]
+        elif prev.get("status") not in ("VERIFIED", "DECLINED"):
+            prev["status"] = "PENDING"
         out[cid] = prev
     return out
 

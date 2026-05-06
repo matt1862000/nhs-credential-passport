@@ -278,6 +278,13 @@
   <main class="nhsuk-main" id="maincontent" role="main">
     <h2 class="nhsuk-page-heading">My training</h2>
     <p class="nhsuk-body-s">Manage your training list. Use the tabs to add, import from ESR, or share records with others.</p>
+    <div class="nhsuk-card" id="profileGateNotice" hidden style="border-left:4px solid var(--nhsuk-warning); padding:0.9rem 1rem; margin:0.75rem 0 1rem 0;">
+      <p style="margin:0; font-weight:700;">Complete your profile to verify with HR.</p>
+      <p class="nhsuk-body-s" style="margin:0.35rem 0 0 0;">
+        Add your <strong>full name</strong>, <strong>GMC number</strong> and <strong>current trust</strong> in
+        <a href="/static/profile/">Profile</a> to enable HR verification.
+      </p>
+    </div>
 
     <div class="nhsuk-tabs" role="tablist">
       <button type="button" role="tab" aria-selected="true" data-tab="list" class="active" id="tab-list">My training</button>
@@ -362,19 +369,20 @@
     <section id="bulk" role="tabpanel" aria-labelledby="tab-bulk" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel" id="bulkExportPanel">
         <h3 class="nhsuk-bulk-export-panel__title">Download or share</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Tick items below, or use <strong>Select all</strong> then <strong>Share selected</strong> (one link/QR) or <strong>Download selected as ZIP</strong>. <strong>Download all as ZIP</strong> selects everything and downloads in one step.</p>
+        <p class="nhsuk-bulk-export-panel__desc">Tick items below, or use <strong>Select all</strong> then <strong>Verify selected with HR</strong> (one link/QR) or <strong>Download selected as ZIP</strong>. <strong>Download all as ZIP</strong> selects everything and downloads in one step.</p>
         <div class="nhsuk-bulk-export-panel__actions">
           <span class="nhsuk-bulk-export-panel__count" id="bulkExportCount" aria-live="polite">0 selected</span>
           <div class="nhsuk-bulk-export-panel__buttons">
             <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkSelectAll" title="Select every training record below">Select all</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkClearSelection" title="Clear all ticks">Clear selection</button>
             <span class="nhsuk-bulk-export-panel__divider" aria-hidden="true">|</span>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnVerifyAllHr" title="Send all training records to HR for verification">Verify all with HR</button>
             <details class="bulk-actions" id="bulkActionsMenu">
               <summary class="nhsuk-button nhsuk-bulk-export-panel__btn" aria-haspopup="true">Share or download</summary>
               <div class="bulk-actions__panel" role="menu" aria-label="Share or download">
                 <button type="button" class="bulk-actions__item" id="btnExportSelected" title="Download selected training records as PDFs in a ZIP" disabled>Download selected PDFs (ZIP)</button>
                 <button type="button" class="bulk-actions__item" id="btnExportAll" title="Select all and download as one ZIP">Download all PDFs (ZIP)</button>
-                <button type="button" class="bulk-actions__item" id="btnShareSelected" title="One link or QR a verifier can use to check all selected" disabled>Share selected (link/QR)</button>
+                <button type="button" class="bulk-actions__item" id="btnShareSelected" title="Send selected items to HR for verification (one link/QR)" disabled>Verify selected with HR (link/QR)</button>
               </div>
             </details>
           </div>
@@ -385,8 +393,8 @@
 
     <div id="qrModal" aria-modal="true" aria-labelledby="qrModalTitle" role="dialog">
       <div class="nhsuk-modal">
-        <h3 id="qrModalTitle">Share with HR</h3>
-        <p>Send this link or QR to HR. They can review and mark records as verified.</p>
+        <h3 id="qrModalTitle">Verify with HR</h3>
+        <p>Send this link or QR to HR. They can mark each record as verified or declined.</p>
         <div id="qrTarget" style="display:block; width:200px; height:200px; margin:0.5rem 0;"></div>
         <label class="nhsuk-label" for="shareLink">Verification link</label>
         <input type="text" id="shareLink" readonly onclick="this.select()">
@@ -727,6 +735,8 @@
     var btnExport = document.getElementById('btnExportSelected');
     if (btnExport) btnExport.addEventListener('click', function () { closeBulkActionsMenu(); exportSelectedAsZip(); });
     document.getElementById('btnShareSelected').addEventListener('click', function () { closeBulkActionsMenu(); shareSelectedAsLink(); });
+    var btnVerifyAllHr = document.getElementById('btnVerifyAllHr');
+    if (btnVerifyAllHr) btnVerifyAllHr.addEventListener('click', function () { closeBulkActionsMenu(); verifyAllWithHr(); });
     document.getElementById('btnBulkSelectAll').addEventListener('click', function() {
       document.querySelectorAll('.credential-export-cb').forEach(function(cb) { cb.checked = true; });
       updateBulkExportState();
@@ -753,7 +763,7 @@
       const btnShare = document.getElementById('btnShareSelected');
       if (countEl) countEl.textContent = n === 0 ? '0 selected' : (n === 1 ? '1 selected' : n + ' selected');
       if (btnExport) btnExport.disabled = n === 0;
-      if (btnShare) btnShare.disabled = n === 0;
+      if (btnShare) btnShare.disabled = n === 0 || !isProfileComplete();
     }
 
     function base64urlEncode(str) {
@@ -784,6 +794,7 @@
     }
 
     async function shareSelectedAsLink() {
+      if (!canRequestHrVerification()) return;
       const checked = document.querySelectorAll('.credential-export-cb:checked');
       const ids = Array.from(checked).map(el => el.getAttribute('data-credential-id'));
       if (ids.length === 0) return;
@@ -805,9 +816,47 @@
         document.getElementById('shareLink').value = shareUrl;
         const qrTarget = document.getElementById('qrTarget');
         await renderQrCode(qrTarget, shareUrl);
-        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share with HR';
+        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Verify with HR';
         document.querySelector('#qrModal .nhsuk-modal p').textContent =
-          'Send this link or QR to HR. They can review and mark each record as verified.';
+          'Send this link or QR to HR. They can mark each record as verified or declined.';
+        document.getElementById('qrModal').classList.add('show');
+        await refreshVerifiedMap();
+        renderList();
+      } catch (e) {
+        alert(e.message || e);
+      }
+    }
+
+    async function verifyAllWithHr() {
+      if (!canRequestHrVerification()) return;
+      const list = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
+      const ids = list.map(function (c) { return c.credential_id; });
+      if (!ids.length) {
+        alert('No training records to send to HR.');
+        return;
+      }
+      // Reuse the same backend flow; it creates a session and marks items as PENDING.
+      try {
+        var res = await fetch('/api/me/shares', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credential_ids: ids }),
+        });
+        var parsed = await res.text();
+        var data = null;
+        try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          var d = data && data.detail;
+          throw new Error(typeof d === 'string' ? d : 'Could not create verification request');
+        }
+        var shareUrl = (data && data.share_url) || '';
+        document.getElementById('shareLink').value = shareUrl;
+        const qrTarget = document.getElementById('qrTarget');
+        await renderQrCode(qrTarget, shareUrl);
+        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Verify with HR';
+        document.querySelector('#qrModal .nhsuk-modal p').textContent =
+          'Send this link or QR to HR. They can mark each record as verified or declined.';
         document.getElementById('qrModal').classList.add('show');
         await refreshVerifiedMap();
         renderList();
@@ -1028,13 +1077,27 @@
       function cardHtml(c, withCheckbox) {
         const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
         const v = (verifiedMap && verifiedMap[c.credential_id]) || null;
-        const shareTag = v && v.shared && !v.verified ? '<span class="nhsuk-tag nhsuk-tag--shared" style="margin-left:0.5rem;">SHARED</span>' : '';
-        const verifiedTag = v && v.verified ? '<span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>' : '';
+        const st = v && v.status ? String(v.status).toUpperCase() : '';
+        const pendingTag = v && v.shared && st === 'PENDING'
+          ? '<span class="nhsuk-tag nhsuk-tag--shared" style="margin-left:0.5rem;">PENDING</span>'
+          : '';
+        const verifiedTag = v && v.shared && st === 'VERIFIED'
+          ? '<span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>'
+          : '';
+        const declinedTag = v && v.shared && st === 'DECLINED'
+          ? '<span class="nhsuk-tag nhsuk-tag--shared" style="margin-left:0.5rem;">DECLINED</span>'
+          : '';
+        const declinedNote = v && v.shared && st === 'DECLINED' && v.decline_reason
+          ? ('<div class="nhsuk-hint" style="margin:0.35rem 0 0 0;">Declined: ' + esc(v.decline_reason) + '</div>')
+          : '';
         const checkboxBlock = withCheckbox
           ? `<label class="nhsuk-card__select" style="flex-shrink:0; margin:0.25rem 0 0 0;">
                <input type="checkbox" class="credential-export-cb" data-credential-id="${c.credential_id}" aria-label="Select for export">
              </label>`
           : '';
+        var canVerifyWithHr = !!(window.NHSAuth && NHSAuth.user && NHSAuth.user.display_name && NHSAuth.user.gmc_number && NHSAuth.user.current_trust);
+        var verifyBtnAttrs = canVerifyWithHr ? '' : ' disabled title="Complete your profile to verify with HR"';
+        var verifyBtnOnclick = canVerifyWithHr ? `onclick="shareCred('${c.credential_id}')"` : `onclick="return openProfileForVerification();"`;
         return `
           <div class="nhsuk-card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
             <div class="nhsuk-card__row" style="display:flex; align-items:flex-start; gap:0.75rem;">
@@ -1042,13 +1105,14 @@
               <div style="flex:1;">
                 <h3 class="nhsuk-card__title">${c.module_name}</h3>
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
-                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>${verifiedTag}${shareTag}
+                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>${verifiedTag}${pendingTag}${declinedTag}
                 <div class="nhsuk-card__actions">
-                  <button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="shareCred('${c.credential_id}')">Share with HR</button>
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>Verify with HR</button>
                   <button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
                   ${c.certificate_base64 ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">Download certificate</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
                 </div>
+                ${declinedNote}
               </div>
             </div>
           </div>`;
@@ -1092,9 +1156,9 @@
         document.getElementById('shareLink').value = shareUrl;
         const qrTarget = document.getElementById('qrTarget');
         await renderQrCode(qrTarget, shareUrl);
-        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Share with HR';
+        document.querySelector('#qrModal .nhsuk-modal h3').textContent = 'Verify with HR';
         document.querySelector('#qrModal .nhsuk-modal p').textContent =
-          'Send this link or QR to HR. They can review and mark records as verified.';
+          'Send this link or QR to HR. They can mark each record as verified or declined.';
         document.getElementById('qrModal').classList.add('show');
         await refreshVerifiedMap();
         renderList();
@@ -1220,6 +1284,33 @@
       } catch (err) { alert(err.message); }
     });
 
+    function isProfileComplete(u) {
+      u = u || (window.NHSAuth && NHSAuth.user) || null;
+      return !!(u && (u.display_name || '').trim() && (u.gmc_number || '').trim() && (u.current_trust || '').trim());
+    }
+
+    function applyProfileGateUi() {
+      var ok = isProfileComplete();
+      var n = document.getElementById('profileGateNotice');
+      if (n) n.hidden = ok;
+      var btnAll = document.getElementById('btnVerifyAllHr');
+      if (btnAll) btnAll.disabled = !ok;
+      updateBulkExportState();
+    }
+
+    function openProfileForVerification() {
+      var n = document.getElementById('profileGateNotice');
+      if (n) n.hidden = false;
+      alert('Complete your profile (full name, GMC number, current trust) before requesting HR verification.');
+      window.location.assign('/static/profile/');
+      return false;
+    }
+
+    function canRequestHrVerification() {
+      if (isProfileComplete()) return true;
+      return openProfileForVerification();
+    }
+
     (async function boot() {
       await NHSAuth.refresh();
       if (!NHSAuth.requireAuth()) return;
@@ -1228,6 +1319,7 @@
       await pullMergeFromServer();
       await refreshVerifiedMap();
       applyProfileToAddForm();
+      applyProfileGateUi();
       renderList();
       if (/^#(list|add|import|bulk)$/.test(window.location.hash)) {
         var tab = document.querySelector('.nhsuk-tabs button[data-tab="' + window.location.hash.slice(1) + '"]');

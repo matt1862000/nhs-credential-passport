@@ -55,6 +55,28 @@ def require_premium_user(request: Request) -> dict:
     return u
 
 
+def _profile_missing_fields(u: dict) -> list[str]:
+    missing: list[str] = []
+    if not (u.get("display_name") or "").strip():
+        missing.append("full name")
+    if not (u.get("gmc_number") or "").strip():
+        missing.append("GMC number")
+    if not (u.get("current_trust") or "").strip():
+        missing.append("current trust")
+    return missing
+
+
+def require_profile_complete(u: dict) -> None:
+    missing = _profile_missing_fields(u)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail="Complete your profile before requesting HR verification (missing: "
+            + ", ".join(missing)
+            + ").",
+        )
+
+
 def _session_response(data: dict, user_id: int, email: str, request: Request) -> JSONResponse:
     token = session_auth.create_session_token(user_id, email)
     resp = JSONResponse(data)
@@ -234,6 +256,7 @@ async def me_shares_post(request: Request):
     u = db.user_get_by_id(uid)
     if not u:
         raise HTTPException(status_code=401, detail="Not signed in")
+    require_profile_complete(u)
 
     # Enrich share items from the current wallet (best-effort)
     wallet_raw = db.user_wallet_get(uid)
@@ -303,5 +326,26 @@ def hr_share_item_verify(request: Request, session_id: int, credential_id: str):
     # Ensure item exists in session
     if not any(it.get("credential_id") == credential_id for it in (s.get("items") or [])):
         raise HTTPException(status_code=404, detail="Item not found in share")
-    db.share_item_set_verified(int(session_id), str(credential_id), int(hr["id"]), True)
+    db.share_item_set_decision(int(session_id), str(credential_id), int(hr["id"]), status="VERIFIED")
+    return {"ok": True}
+
+
+@router.post("/hr/shares/{session_id}/items/{credential_id}/decline")
+async def hr_share_item_decline(request: Request, session_id: int, credential_id: str):
+    hr = require_premium_user(request)
+    s = db.share_session_get(int(session_id))
+    if not s:
+        raise HTTPException(status_code=404, detail="Share not found")
+    if not any(it.get("credential_id") == credential_id for it in (s.get("items") or [])):
+        raise HTTPException(status_code=404, detail="Item not found in share")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    reason = ""
+    if isinstance(body, dict):
+        reason = str(body.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Decline reason required")
+    db.share_item_set_decision(int(session_id), str(credential_id), int(hr["id"]), status="DECLINED", decline_reason=reason)
     return {"ok": True}

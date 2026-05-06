@@ -47,7 +47,7 @@
 
   <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
     <h1 class="nhsuk-page-heading">HR inbox</h1>
-    <p class="nhsuk-lead">Review training shared by clinicians and mark individual records as verified.</p>
+    <p class="nhsuk-lead">Review training sent for HR verification. Mark each record as verified or declined.</p>
 
     <div id="notPremium" class="hr-card" hidden>
       <p style="margin:0; font-weight:700;">This page is only for HR accounts.</p>
@@ -60,9 +60,9 @@
         <table class="hr-table" aria-label="Shared training sets">
           <thead>
             <tr>
-              <th>From</th>
+              <th>Doctor</th>
               <th>Shared</th>
-              <th>Verified</th>
+              <th>Status</th>
               <th></th>
             </tr>
           </thead>
@@ -138,12 +138,15 @@
         tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
         var data = await apiJson('/api/hr/shares?limit=50');
         var rows = (data.sessions || []).map(function (s) {
-          var verified = (s.verified_count || 0) + ' / ' + (s.total_count || 0);
+          var statusLine = (s.verified_count || 0) + ' verified · ' + (s.pending_count || 0) + ' pending' + ((s.declined_count || 0) ? (' · ' + (s.declined_count || 0) + ' declined') : '');
+          var doctorLine = (s.doctor_name || s.doctor_email || '—') +
+            (s.doctor_gmc ? (' · GMC ' + s.doctor_gmc) : '') +
+            (s.doctor_trust ? (' · ' + s.doctor_trust) : '');
           return (
             '<tr>' +
-              '<td>' + esc(s.doctor_email || '—') + '</td>' +
+              '<td>' + esc(doctorLine) + '</td>' +
               '<td>' + esc((s.created_at || '').slice(0, 16).replace('T', ' ')) + '</td>' +
-              '<td>' + esc(verified) + '</td>' +
+              '<td>' + esc(statusLine) + '</td>' +
               '<td><a href=\"/static/hr/?session=' + encodeURIComponent(String(s.session_id)) + '\">Open</a></td>' +
             '</tr>'
           );
@@ -155,14 +158,26 @@
         var tbody = document.getElementById('itemsTbody');
         tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
         var s = await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)));
-        document.getElementById('sessionMeta').textContent = (s.doctor_email || '—') + ' · ' + String(s.created_at || '').slice(0, 16).replace('T', ' ');
+        var meta =
+          (s.doctor_name || s.doctor_email || '—') +
+          (s.doctor_gmc ? (' · GMC ' + s.doctor_gmc) : '') +
+          (s.doctor_trust ? (' · ' + s.doctor_trust) : '') +
+          ' · ' + String(s.created_at || '').slice(0, 16).replace('T', ' ');
+        document.getElementById('sessionMeta').textContent = meta;
         var items = (s.items || []);
         tbody.innerHTML = items.map(function (it) {
-          var verified = !!it.verified;
-          var pill = verified ? '<span class=\"hr-pill hr-pill--verified\">VERIFIED</span>' : '<span class=\"hr-pill\">NOT VERIFIED</span>';
-          var btn = verified
+          var st = String(it.status || '').toUpperCase();
+          var pill = st === 'VERIFIED'
+            ? '<span class=\"hr-pill hr-pill--verified\">VERIFIED</span>'
+            : (st === 'DECLINED'
+              ? '<span class=\"hr-pill\">DECLINED</span>'
+              : '<span class=\"hr-pill\">PENDING</span>');
+          var btn = st === 'VERIFIED'
             ? '<button type=\"button\" class=\"nhsuk-button nhsuk-button--secondary hr-btn-small\" disabled>Verified</button>'
-            : '<button type=\"button\" class=\"nhsuk-button hr-btn-small\" data-verify=\"1\" data-cid=\"' + esc(it.credential_id) + '\">Mark verified</button>';
+            : '<div class=\"hr-actions\">' +
+              '<button type=\"button\" class=\"nhsuk-button hr-btn-small\" data-verify=\"1\" data-cid=\"' + esc(it.credential_id) + '\">Verify</button>' +
+              '<button type=\"button\" class=\"nhsuk-button nhsuk-button--secondary hr-btn-small\" data-decline=\"1\" data-cid=\"' + esc(it.credential_id) + '\">Decline</button>' +
+              '</div>';
           return (
             '<tr>' +
               '<td>' + esc(it.module_name || it.credential_id || '—') + '</td>' +
@@ -174,13 +189,26 @@
         }).join('') || '<tr><td colspan=\"4\" class=\"hr-muted\">No items in this share.</td></tr>';
 
         tbody.addEventListener('click', async function (e) {
-          var b = e.target && e.target.closest('button[data-verify=\"1\"]');
-          if (!b) return;
-          var cid = b.getAttribute('data-cid');
-          b.disabled = true;
-          b.textContent = 'Verifying…';
+          var v = e.target && e.target.closest('button[data-verify=\"1\"]');
+          var d = e.target && e.target.closest('button[data-decline=\"1\"]');
+          if (!v && !d) return;
+          var cid = (v || d).getAttribute('data-cid');
           try {
-            await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid)) + '/verify', { method: 'POST' });
+            if (v) {
+              v.disabled = true;
+              v.textContent = 'Verifying…';
+              await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid)) + '/verify', { method: 'POST' });
+            } else {
+              var reason = (prompt('Why are you declining this record? (This will be sent back to the doctor)') || '').trim();
+              if (!reason) return;
+              d.disabled = true;
+              d.textContent = 'Declining…';
+              await apiJson('/api/hr/shares/' + encodeURIComponent(String(sessionId)) + '/items/' + encodeURIComponent(String(cid)) + '/decline', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason: reason }),
+              });
+            }
             await loadSession(sessionId);
           } catch (err) {
             alert(err.message || err);
