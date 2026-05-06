@@ -166,6 +166,34 @@
       }
     },
 
+    /**
+     * GET server wallet, merge with local (server wins on same credential_id), PUT back.
+     * Call before issuing credentials so duplicate detection sees every JWT (including
+     * rows that were only in browser storage if prior sync failed).
+     * @returns {Promise<boolean>} true if merge+push succeeded
+     */
+    async mergeAndPushWallet() {
+      if (!this.user) return false;
+      try {
+        var r = await fetch('/api/me/wallet', { credentials: 'include' });
+        if (!r.ok) return false;
+        var server = await r.json();
+        if (!Array.isArray(server)) server = [];
+        var local = getLocalWallet();
+        var merged = mergeByCredentialId(local, server);
+        var put = await fetch('/api/me/wallet', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(merged),
+        });
+        return put.ok;
+      } catch (e) {
+        console.warn('mergeAndPushWallet failed', e);
+        return false;
+      }
+    },
+
     async updateProfile(payload) {
       if (!this.user) return;
       var r = await fetch('/api/me/profile', {

@@ -35,7 +35,7 @@
     <h1 class="nhsuk-page-heading" id="welcomeTitle">Your dashboard</h1>
     <p class="nhsuk-lead">Choose one of the areas below. Use <strong>Dashboard</strong> at the top to return here any time.</p>
 
-    <section aria-labelledby="statsTitle">
+    <section id="dashboardTrainingStats" aria-labelledby="statsTitle">
       <h2 id="statsTitle" class="visually-hidden">Your training summary</h2>
       <div class="nhs-stat-grid">
         <div class="nhs-stat nhs-stat--ok">
@@ -92,9 +92,12 @@
       <h2 id="premiumToolsTitle" class="nhsuk-page-heading" style="font-size:1.5rem;">Trust tools (premium)</h2>
       <p class="nhsuk-lead" style="font-size:1.0625rem;">Verifier, issuer key, and API docs are only shown for premium trust accounts.</p>
       <div class="nhs-action-grid" role="list">
-        <a class="nhs-action-card" href="/static/hr/" role="listitem">
-          <div class="nhs-action-title">HR inbox</div>
-          <p class="nhs-action-desc">See training shared by clinicians and mark records as verified.</p>
+        <a class="nhs-action-card" href="/static/hr/" role="listitem" id="hrInboxCard">
+          <div class="nhs-action-title nhs-action-title--inline">
+            <span>HR inbox</span>
+            <span id="hrInboxPendingBadge" class="nhs-inbox-pending-badge" hidden aria-live="polite">&mdash;</span>
+          </div>
+          <p class="nhs-action-desc" id="hrInboxCardDesc">See training shared by clinicians and mark records as verified.</p>
           <span class="nhs-action-cta">Open inbox &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/verifier/" role="listitem">
@@ -130,6 +133,46 @@
         if (diffDays < 0) return 'expired';
         if (diffDays <= 90) return 'expiring';
         return 'valid';
+      }
+
+      async function loadHrInboxPendingBadge() {
+        var badge = document.getElementById('hrInboxPendingBadge');
+        var desc = document.getElementById('hrInboxCardDesc');
+        if (!badge) return;
+        try {
+          var r = await fetch('/api/hr/shares?limit=200', { credentials: 'include' });
+          if (!r.ok) {
+            badge.hidden = true;
+            return;
+          }
+          var data = await r.json();
+          var sessions = data.sessions || [];
+          var total = 0;
+          sessions.forEach(function (s) {
+            total += Number(s.pending_count || 0);
+          });
+          badge.textContent = String(total);
+          badge.hidden = false;
+          badge.setAttribute('data-empty', total === 0 ? '1' : '0');
+          badge.setAttribute(
+            'aria-label',
+            total === 0
+              ? 'No e-learning records awaiting verification'
+              : total === 1
+                ? '1 e-learning record awaiting verification'
+                : total + ' e-learning records awaiting verification'
+          );
+          if (desc) {
+            desc.textContent =
+              total === 0
+                ? 'No records awaiting verification right now. Shared training will appear here when clinicians send them for review.'
+                : total === 1
+                  ? '1 record shared by a clinician is awaiting verification in your inbox.'
+                  : total + ' records shared by clinicians are awaiting verification in your inbox.';
+          }
+        } catch (e) {
+          badge.hidden = true;
+        }
       }
 
       function renderStats(list) {
@@ -171,10 +214,17 @@
         var doctorActions = document.getElementById('doctorActions');
         if (doctorActions && NHSAuth.user.premium) doctorActions.hidden = true;
 
-        /* Linked JSON file is applied from My training only; avoid repopulating stats from disk before server merge. */
-        await NHSAuth.pullWalletMerge();
-        renderStats(await fetchServerWallet());
-        window.addEventListener('nhs-wallet-updated', renderStats);
+        if (NHSAuth.user.premium) void loadHrInboxPendingBadge();
+
+        var dashboardTrainingStats = document.getElementById('dashboardTrainingStats');
+        if (dashboardTrainingStats) dashboardTrainingStats.hidden = !!NHSAuth.user.premium;
+
+        /* Clinician wallet stats — not shown for premium (trust/HR) accounts. */
+        if (!NHSAuth.user.premium) {
+          await NHSAuth.pullWalletMerge();
+          renderStats(await fetchServerWallet());
+          window.addEventListener('nhs-wallet-updated', renderStats);
+        }
       })();
 
       document.getElementById('btnSignOut').addEventListener('click', async function () {

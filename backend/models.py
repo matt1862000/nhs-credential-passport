@@ -63,6 +63,7 @@ class IssueRequest(BaseModel):
 class IssueResponse(BaseModel):
     """Response after issuing credentials."""
     credentials: list["IssuedCredentialInfo"]
+    skipped_duplicate_count: int = 0
 
 
 class IssuedCredentialInfo(BaseModel):
@@ -97,6 +98,7 @@ class CsvImportResponse(BaseModel):
     valid_row_count: int = 0
     invalid: list[CsvImportInvalidRow] = []
     credentials: list[IssuedCredentialInfo] = []
+    skipped_duplicate_count: int = 0
 
 
 IssueResponse.model_rebuild()

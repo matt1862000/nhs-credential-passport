@@ -329,6 +329,26 @@ a:hover {
   font-weight: 600;
   color: var(--nhsuk-link);
 }
+.nhs-action-title.nhs-action-title--inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.nhs-inbox-pending-badge {
+  display: inline-block;
+  min-width: 1.35rem;
+  padding: 0.12rem 0.45rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #fff;
+  background: var(--nhsuk-link);
+  border-radius: 999px;
+}
+.nhs-inbox-pending-badge[data-empty="1"] {
+  background: #768692;
+}
 
 /* Stat cards */
 .nhs-stat-grid {

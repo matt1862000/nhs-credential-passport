@@ -13,7 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import crypto
 from . import db
-from .credential_service import issue_credentials, verify_credential, revoke_credential, get_verification_url_base
+from .credential_service import (
+    issue_credentials,
+    verify_credential,
+    revoke_credential,
+    get_verification_url_base,
+    wallet_dedupe_keys,
+)
 from .models import (
     CompletionRecord,
     IssueRequest,
@@ -61,11 +67,16 @@ app.include_router(auth_router)
 @app.post("/api/credentials/issue", response_model=IssueResponse)
 def api_issue(request: Request, body: IssueRequest):
     """Issue credentials from completion records. Requires a signed-in account."""
-    require_user_id(request)
+    uid = require_user_id(request)
     base = str(request.base_url).rstrip("/")
-    results = issue_credentials(body.records, base)
+    wallet_raw = db.user_wallet_get(uid)
+    existing_keys = wallet_dedupe_keys(wallet_raw)
+    results, skipped = issue_credentials(body.records, base, skip_duplicate_keys=existing_keys)
     credentials_out = []
+    cert_used = False
     for i, r in enumerate(results):
+        if r is None:
+            continue
         rec = body.records[i] if i < len(body.records) else None
         info = IssuedCredentialInfo(
             credential_id=r["credential_id"],
@@ -75,11 +86,12 @@ def api_issue(request: Request, body: IssueRequest):
             module_name=rec.module_name if rec else None,
             expiry_date=rec.expiry_date.isoformat() if rec else None,
         )
-        if i == 0 and body.certificate_base64:
+        if not cert_used and body.certificate_base64:
             info.certificate_base64 = body.certificate_base64
             info.certificate_filename = body.certificate_filename or "certificate"
+            cert_used = True
         credentials_out.append(info)
-    return IssueResponse(credentials=credentials_out)
+    return IssueResponse(credentials=credentials_out, skipped_duplicate_count=skipped)
 
 
 @app.get("/api/credentials/verify/{credential_id}", response_model=VerifyResponse)
@@ -117,7 +129,7 @@ async def api_import_csv(request: Request, file: UploadFile = File(...), dry_run
     Upload UTF-8 CSV: validate rows, optionally issue all valid rows (dry_run=false).
     See GET .../import-csv/template for column names and aliases (e.g. employee_name).
     """
-    require_user_id(request)
+    uid = require_user_id(request)
     raw = await file.read()
     if len(raw) > MAX_CSV_BYTES:
         raise HTTPException(status_code=413, detail="CSV file too large")
@@ -151,9 +163,18 @@ async def api_import_csv(request: Request, file: UploadFile = File(...), dry_run
 
     # One JSON with dozens of PDFs exceeds typical proxy timeouts; skip PDFs for multi-row CSV.
     include_pdf = len(valid) <= 1
-    results = issue_credentials([p.record for p in valid], base, include_pdf=include_pdf)
+    wallet_raw = db.user_wallet_get(uid)
+    existing_keys = wallet_dedupe_keys(wallet_raw)
+    results, skipped_dups = issue_credentials(
+        [p.record for p in valid],
+        base,
+        include_pdf=include_pdf,
+        skip_duplicate_keys=existing_keys,
+    )
     credentials_out: list[IssuedCredentialInfo] = []
     for p, r in zip(valid, results):
+        if r is None:
+            continue
         rec = p.record
         assert rec is not None
         credentials_out.append(
@@ -173,6 +194,7 @@ async def api_import_csv(request: Request, file: UploadFile = File(...), dry_run
         valid_row_count=len(valid),
         invalid=invalid_rows,
         credentials=credentials_out,
+        skipped_duplicate_count=skipped_dups,
     )
 
 

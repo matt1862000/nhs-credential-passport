@@ -306,7 +306,7 @@
     </div>
 
     <section id="list" class="visible" role="tabpanel" aria-labelledby="tab-list">
-      <div class="nhsuk-summary-list">
+      <div class="nhsuk-summary-list" id="staffTrainingSummaryStrip">
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Valid</span><span class="nhsuk-summary-list__value" id="countValid">0</span></div>
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expiring soon</span><span class="nhsuk-summary-list__value" id="countExpiring">0</span></div>
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expired</span><span class="nhsuk-summary-list__value" id="countExpired">0</span></div>
@@ -387,14 +387,12 @@
     <section id="bulk" role="tabpanel" aria-labelledby="tab-bulk" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel" id="bulkExportPanel">
         <h3 class="nhsuk-bulk-export-panel__title">Download or share</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Tick items below, or use <strong>Select all</strong> then <strong>Verify selected with HR</strong> (one link/QR) or <strong>Download selected as ZIP</strong>. <strong>Download all as ZIP</strong> selects everything and downloads in one step.</p>
+        <p class="nhsuk-bulk-export-panel__desc">Only training marked <strong>VERIFIED</strong> by HR appears here. Tick items below, or use <strong>Select all</strong> then <strong>Download selected PDFs (ZIP)</strong>. <strong>Download all PDFs (ZIP)</strong> selects every verified record below.</p>
         <div class="nhsuk-bulk-export-panel__actions">
           <span class="nhsuk-bulk-export-panel__count" id="bulkExportCount" aria-live="polite">0 selected</span>
           <div class="nhsuk-bulk-export-panel__buttons">
-            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkSelectAll" title="Select every training record below">Select all</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkSelectAll" title="Select every verified training record below">Select all</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnBulkClearSelection" title="Clear all ticks">Clear selection</button>
-            <span class="nhsuk-bulk-export-panel__divider" aria-hidden="true">|</span>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-bulk-export-panel__btn" id="btnVerifyAllHr" title="Send all training records to HR for verification">Verify all with HR</button>
             <details class="bulk-actions" id="bulkActionsMenu">
               <summary class="nhsuk-button nhsuk-bulk-export-panel__btn" aria-haspopup="true">Share or download</summary>
               <div class="bulk-actions__panel" role="menu" aria-label="Share or download">
@@ -440,6 +438,54 @@
     ];
     function getStored() { return window.NHSWallet ? NHSWallet.getWallet() : JSON.parse(localStorage.getItem('nhs_credentials') || '[]'); }
 
+    /** Mirrors backend credential_service completion_dedupe_key / JWT claims (offline duplicate hint). */
+    function normalizeStaffIdForDedupe(raw) {
+      var s = String(raw || '').trim();
+      var digits = s.replace(/\D/g, '');
+      if (digits.length >= 7) return digits.slice(-7);
+      return s.replace(/\s+/g, '').toLowerCase();
+    }
+    function parseJwtPayloadNoVerify(jwtStr) {
+      try {
+        var parts = String(jwtStr || '').split('.');
+        if (parts.length < 2) return null;
+        var payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        while (payload.length % 4) payload += '=';
+        return JSON.parse(atob(payload));
+      } catch (err) {
+        return null;
+      }
+    }
+    function dedupeKeyFromJwtClaims(payload) {
+      if (!payload) return null;
+      var sid = normalizeStaffIdForDedupe(payload.sub || payload.esr_id || '');
+      var mc = String(payload.module_code || '').trim().toLowerCase();
+      var cd = String(payload.completion_date || '').slice(0, 10);
+      var ed = String(payload.expiry_date || '').slice(0, 10);
+      var ods = String(payload.issuing_trust_ods || '').trim().toUpperCase();
+      if (!sid || !mc || !cd || !ed || !ods) return null;
+      return sid + '|' + mc + '|' + cd + '|' + ed + '|' + ods;
+    }
+    function localCompletionDedupeKeys() {
+      var map = {};
+      var list = getStored();
+      for (var i = 0; i < list.length; i++) {
+        var it = list[i];
+        if (!it || !it.jwt) continue;
+        var k = dedupeKeyFromJwtClaims(parseJwtPayloadNoVerify(it.jwt));
+        if (k) map[k] = true;
+      }
+      return map;
+    }
+    function completionDedupeKeyFromAddForm(fd, module_code) {
+      var sid = normalizeStaffIdForDedupe(fd.get('staff_identifier'));
+      var mc = String(module_code || '').trim().toLowerCase();
+      var cd = String(fd.get('completion_date') || '').slice(0, 10);
+      var ed = String(fd.get('expiry_date') || '').slice(0, 10);
+      var ods = String(fd.get('issuing_trust_ods_code') || '').trim().toUpperCase();
+      return sid + '|' + mc + '|' + cd + '|' + ed + '|' + ods;
+    }
+
     async function syncWalletToServer(arr) {
       if (!window.NHSAuth || !NHSAuth.user) return;
       try {
@@ -467,10 +513,24 @@
     var trustSuggestActive = -1;
     var verifiedMap = {};
 
+    function isHrVerified(credentialId) {
+      var cid = String(credentialId || '').trim();
+      if (!cid) return false;
+      var v = (verifiedMap && verifiedMap[cid]) || null;
+      var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
+      return !!(v && v.shared === true && st === 'VERIFIED');
+    }
+
     async function refreshVerifiedMap() {
       try {
         var r = await fetch('/api/me/verified-map', { credentials: 'include' });
-        verifiedMap = r.ok ? await r.json() : {};
+        var raw = r.ok ? await r.json() : {};
+        verifiedMap = {};
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+          Object.keys(raw).forEach(function (k) {
+            verifiedMap[String(k).trim()] = raw[k];
+          });
+        }
       } catch (e) {
         verifiedMap = {};
       }
@@ -739,6 +799,12 @@
             applyProfileToAddForm();
           })();
         }
+        if (btn.dataset.tab === 'bulk') {
+          void (async function () {
+            await refreshVerifiedMap();
+            renderList();
+          })();
+        }
       });
     });
 
@@ -753,8 +819,6 @@
     var btnExport = document.getElementById('btnExportSelected');
     if (btnExport) btnExport.addEventListener('click', function () { closeBulkActionsMenu(); exportSelectedAsZip(); });
     document.getElementById('btnShareSelected').addEventListener('click', function () { closeBulkActionsMenu(); shareSelectedAsLink(); });
-    var btnVerifyAllHr = document.getElementById('btnVerifyAllHr');
-    if (btnVerifyAllHr) btnVerifyAllHr.addEventListener('click', function () { closeBulkActionsMenu(); verifyAllWithHr(); });
     var btnVerifyAllHrList = document.getElementById('btnVerifyAllHrList');
     if (btnVerifyAllHrList) btnVerifyAllHrList.addEventListener('click', function () { verifyAllWithHr(); });
     document.getElementById('btnBulkSelectAll').addEventListener('click', function() {
@@ -856,10 +920,8 @@
         return;
       }
       var btnList = document.getElementById('btnVerifyAllHrList');
-      var btnBulk = document.getElementById('btnVerifyAllHr');
       function setBusy(busy) {
         if (btnList) { btnList.disabled = busy || !isProfileComplete() || ids.length === 0; btnList.textContent = busy ? 'Sending…' : 'Verify all with HR'; }
-        if (btnBulk) { btnBulk.disabled = busy || !isProfileComplete(); btnBulk.textContent = busy ? 'Sending…' : 'Verify all with HR'; }
       }
       try {
         setBusy(true);
@@ -883,7 +945,6 @@
         renderList();
       } finally {
         if (btnList) btnList.textContent = 'Verify all with HR';
-        if (btnBulk) btnBulk.textContent = 'Verify all with HR';
         updateVerifyAllHrControls();
       }
     }
@@ -920,6 +981,13 @@
       }
       if (opts.imported) {
         parts.push('<p class="nhsuk-body-s" style="color:var(--nhsuk-success); font-weight:600;">Issued ' + opts.imported + ' training record(s). They appear in My training.</p>');
+      }
+      var skippedDup = Number(data.skipped_duplicate_count || 0);
+      if (skippedDup > 0) {
+        parts.push('<p class="nhsuk-body-s">Skipped <strong>' + skippedDup + '</strong> duplicate row(s) — already in your list or repeated in this file.</p>');
+      }
+      if (opts.allDuplicates) {
+        parts.push('<p class="nhsuk-body-s" style="color:var(--nhsuk-success); font-weight:600;">No new records were added; everything matched training you already have.</p>');
       }
       el.innerHTML = parts.join('');
     }
@@ -987,6 +1055,9 @@
         if (resultEl) {
           resultEl.insertAdjacentHTML('beforeend', '<p class="nhsuk-body-s" id="csvIssuingNote">Please wait — large uploads can take up to a minute.</p>');
         }
+        if (window.NHSAuth && typeof NHSAuth.mergeAndPushWallet === 'function') {
+          await NHSAuth.mergeAndPushWallet();
+        }
         var data = await postCsv(false);
         var note = document.getElementById('csvIssuingNote');
         if (note) note.remove();
@@ -1003,7 +1074,9 @@
         }
         var creds = data.credentials || [];
         if (creds.length === 0) {
-          if (resultEl) {
+          if (Number(data.skipped_duplicate_count || 0) > 0) {
+            renderCsvResult(data, { allDuplicates: true });
+          } else if (resultEl) {
             resultEl.innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error);">Server returned no records. Try uploading again.</p>';
           }
           if (btn) { btn.disabled = false; btn.textContent = labelUpload; }
@@ -1099,7 +1172,8 @@
 
       function cardHtml(c, withCheckbox) {
         const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
-        const v = (verifiedMap && verifiedMap[c.credential_id]) || null;
+        const cidLookup = String(c.credential_id || '').trim();
+        const v = (verifiedMap && verifiedMap[cidLookup]) || null;
         const st = v && v.status ? String(v.status).toUpperCase() : '';
         const verifiedTag = v && v.shared && st === 'VERIFIED'
           ? '<span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>'
@@ -1108,7 +1182,7 @@
           ? '<span class="nhsuk-tag nhsuk-tag--shared" style="margin-left:0.5rem;">DECLINED</span>'
           : '';
         const declinedNote = v && v.shared && st === 'DECLINED' && v.decline_reason
-          ? ('<div class="nhsuk-hint" style="margin:0.35rem 0 0 0;">Declined: ' + esc(v.decline_reason) + '</div>')
+          ? ('<div class="nhsuk-hint" style="margin:0.35rem 0 0 0;">Declined: ' + escapeHtml(v.decline_reason) + '</div>')
           : '';
         const checkboxBlock = withCheckbox
           ? `<label class="nhsuk-card__select" style="flex-shrink:0; margin:0.25rem 0 0 0;">
@@ -1144,15 +1218,49 @@
           </div>`;
       }
 
+      /** Export tab only: HR-verified rows only — no Verify/Pending controls (must stay in sync with isHrVerified). */
+      function verifiedExportCardHtml(c) {
+        const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
+        const checkboxBlock = `<label class="nhsuk-card__select" style="flex-shrink:0; margin:0.25rem 0 0 0;">
+               <input type="checkbox" class="credential-export-cb" data-credential-id="${c.credential_id}" aria-label="Select for export">
+             </label>`;
+        return `
+          <div class="nhsuk-card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
+            <div class="nhsuk-card__row" style="display:flex; align-items:flex-start; gap:0.75rem;">
+              ${checkboxBlock}
+              <div style="flex:1;">
+                <h3 class="nhsuk-card__title">${c.module_name}</h3>
+                <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
+                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>
+                <span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>
+                <div class="nhsuk-card__actions">
+                  <button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download PDF</button>
+                  ${c.certificate_base64 ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">Download certificate</button>` : ''}
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
+                </div>
+              </div>
+            </div>
+          </div>`;
+      }
+
       document.getElementById('credentialList').innerHTML = filtered.length === 0 ? emptyHtml : filtered.map(c => cardHtml(c, false)).join('');
+      const bulkFiltered = filtered.filter(function (c) {
+        return Boolean(c && c.credential_id && isHrVerified(c.credential_id));
+      });
       const bulkListEl = document.getElementById('bulkCredentialList');
       if (bulkListEl) {
-        bulkListEl.innerHTML = filtered.length === 0
-          ? '<p class="nhsuk-body-s">No training to export. Add training in the Add training tab, or adjust filters in My training.</p>'
-          : filtered.map(c => cardHtml(c, true)).join('');
+        if (filtered.length === 0) {
+          bulkListEl.innerHTML = '<p class="nhsuk-body-s">No training to export. Add training in the Add training tab, or adjust filters in My training.</p>';
+        } else if (bulkFiltered.length === 0) {
+          bulkListEl.innerHTML = '<p class="nhsuk-body-s">No HR-verified training matches your filters. After HR marks records as <strong>VERIFIED</strong> on My training, they will appear here for download.</p>';
+        } else {
+          bulkListEl.innerHTML = bulkFiltered.map(c => verifiedExportCardHtml(c)).join('');
+        }
       }
       const panel = document.getElementById('bulkExportPanel');
       if (panel) panel.style.display = filtered.length === 0 ? 'none' : 'block';
+      const bulkActions = document.querySelector('#bulkExportPanel .nhsuk-bulk-export-panel__actions');
+      if (bulkActions) bulkActions.style.display = (filtered.length > 0 && bulkFiltered.length === 0) ? 'none' : '';
       updateBulkExportState();
       updateVerifyAllHrControls();
     }
@@ -1199,12 +1307,12 @@
 
     async function exportSelectedAsZip() {
       const checked = document.querySelectorAll('.credential-export-cb:checked');
-      const ids = Array.from(checked).map(el => el.getAttribute('data-credential-id'));
+      const ids = Array.from(checked).map(el => el.getAttribute('data-credential-id')).filter(function (id) { return id && isHrVerified(id); });
       if (ids.length === 0) return;
       const list = getStored();
       const withPdf = ids.map(id => list.find(c => c.credential_id === id)).filter(c => c && c.pdf_base64);
       if (withPdf.length === 0) {
-        alert('None of the selected training records have a PDF to export.');
+        alert('None of the selected records have a PDF to export. HR-verified records need a stored credential PDF.');
         return;
       }
       if (typeof JSZip === 'undefined') {
@@ -1231,7 +1339,7 @@
         alert('Export failed: ' + (e.message || e));
       }
       const n = document.querySelectorAll('.credential-export-cb:checked').length;
-      if (btnSelected) { btnSelected.disabled = n === 0; btnSelected.textContent = 'Download selected as ZIP'; }
+      if (btnSelected) { btnSelected.disabled = n === 0; btnSelected.textContent = 'Download selected PDFs (ZIP)'; }
       if (btnAll) btnAll.disabled = false;
     }
 
@@ -1273,7 +1381,15 @@
           body.certificate_filename = certInput.files[0].name || 'certificate';
         } catch (err) { alert('Could not read certificate file: ' + err.message); return; }
       }
+      var dedupeKey = completionDedupeKeyFromAddForm(fd, module_code);
+      if (localCompletionDedupeKeys()[dedupeKey]) {
+        alert('This training is already in your list (same module, completion/expiry dates, and trust).');
+        return;
+      }
       try {
+        if (window.NHSAuth && typeof NHSAuth.mergeAndPushWallet === 'function') {
+          await NHSAuth.mergeAndPushWallet();
+        }
         const res = await fetch('/api/credentials/issue', {
           method: 'POST',
           credentials: 'include',
@@ -1282,7 +1398,17 @@
         });
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
-        const issued = data.credentials[0];
+        const credsOut = data.credentials || [];
+        const skippedDup = Number(data.skipped_duplicate_count || 0);
+        if (credsOut.length === 0) {
+          if (skippedDup > 0) {
+            alert('This training is already in your list (same module, completion/expiry dates, and trust).');
+          } else {
+            alert('Could not add training — no credential was issued.');
+          }
+          return;
+        }
+        const issued = credsOut[0];
         const list = getStored();
         list.push({
           credential_id: issued.credential_id,
@@ -1314,17 +1440,12 @@
       var count = list.length;
       var ok = isProfileComplete();
       var btnList = document.getElementById('btnVerifyAllHrList');
-      var btnBulk = document.getElementById('btnVerifyAllHr');
       var banner = document.getElementById('verifyAllHrBanner');
       if (banner) banner.hidden = count === 0;
       var disable = !ok || count === 0;
       if (btnList) {
         btnList.disabled = disable;
         btnList.title = !ok ? 'Complete your profile first' : (count === 0 ? 'Add training first' : 'Send all records to HR for verification');
-      }
-      if (btnBulk) {
-        btnBulk.disabled = disable;
-        btnBulk.title = btnList ? btnList.title : '';
       }
     }
 
@@ -1357,6 +1478,8 @@
       if (em) em.textContent = NHSAuth.user.email || '';
       await pullMergeFromServer();
       await refreshVerifiedMap();
+      var summaryStrip = document.getElementById('staffTrainingSummaryStrip');
+      if (summaryStrip) summaryStrip.hidden = !!(NHSAuth.user && NHSAuth.user.premium);
       applyProfileToAddForm();
       applyProfileGateUi();
       renderList();
