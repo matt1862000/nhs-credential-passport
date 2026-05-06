@@ -5,6 +5,7 @@ PII in wallet entries is the same as localStorage today (JWT payloads); registry
 import json
 import os
 import re
+from datetime import datetime
 import sqlite3
 from typing import Optional
 
@@ -309,25 +310,41 @@ async def me_shares_post(request: Request):
             fallback_fn = w.get("certificate_filename")
             break
 
+    portfolio = bool(body.get("portfolio"))
+    if portfolio:
+        vmap = db.doctor_verified_map(uid)
+        for cid in ids:
+            vm = vmap.get(cid) or {}
+            st = str(vm.get("status") or "").upper().strip()
+            if not vm.get("shared") or st != "VERIFIED":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Reference pack only: every credential must already be VERIFIED by HR. "
+                    "Remove any that are still awaiting verification, or use normal Verify with HR first.",
+                )
+
     items = []
     for cid in ids:
         w = wallet_by_id.get(cid) or {}
         b64 = w.get("certificate_base64") or fallback_b64
         fn = w.get("certificate_filename") or fallback_fn
-        items.append(
-            {
-                "credential_id": cid,
-                "module_name": w.get("module_name"),
-                "expiry_date": w.get("expiry_date"),
-                "certificate_base64": b64,
-                "certificate_filename": fn,
-            }
-        )
+        entry = {
+            "credential_id": cid,
+            "module_name": w.get("module_name"),
+            "expiry_date": w.get("expiry_date"),
+            "certificate_base64": b64,
+            "certificate_filename": fn,
+        }
+        if portfolio:
+            prior = db.share_portfolio_prior_decision_at(uid, cid)
+            entry["portfolio_verified_at"] = prior or datetime.utcnow().isoformat()
+        items.append(entry)
 
     created = db.share_session_create(
         doctor_user_id=uid,
         doctor_email=u.get("email") or "",
         items=items,
+        share_kind="portfolio" if portfolio else "review",
     )
     base = _public_app_base(request)
     share_url = f"{base}/static/hr/?session={created['session_id']}"
@@ -335,6 +352,7 @@ async def me_shares_post(request: Request):
         "ok": True,
         "session_id": created["session_id"],
         "share_url": share_url,
+        "share_kind": "portfolio" if portfolio else "review",
     }
 
 
@@ -375,6 +393,11 @@ def hr_share_item_verify(request: Request, session_id: int, credential_id: str):
     s = db.share_session_get(int(session_id))
     if not s:
         raise HTTPException(status_code=404, detail="Share not found")
+    if str(s.get("share_kind") or "review").lower() == "portfolio":
+        raise HTTPException(
+            status_code=400,
+            detail="This is a reference-only pack (already verified elsewhere). No further verification is required.",
+        )
     # Ensure item exists in session
     if not any(it.get("credential_id") == credential_id for it in (s.get("items") or [])):
         raise HTTPException(status_code=404, detail="Item not found in share")
@@ -388,6 +411,11 @@ async def hr_share_item_decline(request: Request, session_id: int, credential_id
     s = db.share_session_get(int(session_id))
     if not s:
         raise HTTPException(status_code=404, detail="Share not found")
+    if str(s.get("share_kind") or "review").lower() == "portfolio":
+        raise HTTPException(
+            status_code=400,
+            detail="This is a reference-only pack (already verified elsewhere). It cannot be declined here.",
+        )
     if not any(it.get("credential_id") == credential_id for it in (s.get("items") or [])):
         raise HTTPException(status_code=404, detail="Item not found in share")
     try:

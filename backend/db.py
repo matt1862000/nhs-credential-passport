@@ -143,6 +143,33 @@ def _ensure_share_tables(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE share_items ADD COLUMN certificate_base64 TEXT")
     if "certificate_filename" not in cols:
         conn.execute("ALTER TABLE share_items ADD COLUMN certificate_filename TEXT")
+    cols_s = [row[1] for row in conn.execute("PRAGMA table_info(share_sessions)").fetchall()]
+    if "share_kind" not in cols_s:
+        conn.execute(
+            "ALTER TABLE share_sessions ADD COLUMN share_kind TEXT NOT NULL DEFAULT 'review'"
+        )
+
+
+def share_portfolio_prior_decision_at(doctor_user_id: int, credential_id: str) -> Optional[str]:
+    """Latest HR decision_at from a normal (review) share session, for portfolio snapshot dating."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        r = conn.execute(
+            """
+            SELECT MAX(i.decision_at) AS d
+            FROM share_items i
+            INNER JOIN share_sessions s ON s.id = i.session_id
+            WHERE s.doctor_user_id = ?
+              AND i.credential_id = ?
+              AND i.status = 'VERIFIED'
+              AND IFNULL(s.share_kind, 'review') = 'review'
+            """,
+            (int(doctor_user_id), str(credential_id)),
+        ).fetchone()
+    if not r or r["d"] is None:
+        return None
+    return str(r["d"])
 
 
 def share_session_create(
@@ -150,40 +177,66 @@ def share_session_create(
     doctor_user_id: int,
     doctor_email: str,
     items: list[dict],
+    share_kind: str = "review",
 ) -> dict:
     """
     Create a share session containing credential ids.
-    items: [{ credential_id, module_name?, expiry_date?, certificate_base64?, certificate_filename? }, ...]
+    items: [{ credential_id, module_name?, expiry_date?, certificate_base64?, certificate_filename?,
+             portfolio_verified_at? (iso, portfolio kind only) }, ...]
+    share_kind: 'review' (HR must verify) or 'portfolio' (already HR-verified elsewhere; snapshot only).
     """
     token = secrets.token_urlsafe(24)
     now = datetime.utcnow().isoformat()
+    sk = (share_kind or "review").strip().lower()
+    if sk not in ("review", "portfolio"):
+        sk = "review"
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_share_tables(conn)
         cur = conn.execute(
-            "INSERT INTO share_sessions (created_at, doctor_user_id, doctor_email, share_token, status) VALUES (?, ?, ?, ?, 'OPEN')",
-            (now, doctor_user_id, (doctor_email or "").strip().lower(), token),
+            "INSERT INTO share_sessions (created_at, doctor_user_id, doctor_email, share_token, status, share_kind) VALUES (?, ?, ?, ?, 'OPEN', ?)",
+            (now, doctor_user_id, (doctor_email or "").strip().lower(), token, sk),
         )
         session_id = int(cur.lastrowid)
         for it in items or []:
             cid = (it.get("credential_id") or "").strip()
             if not cid:
                 continue
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO share_items (
-                    session_id, credential_id, module_name, expiry_date, status,
-                    certificate_base64, certificate_filename
-                ) VALUES (?, ?, ?, ?, 'PENDING', ?, ?)
-                """,
-                (
-                    session_id,
-                    cid,
-                    it.get("module_name"),
-                    it.get("expiry_date"),
-                    it.get("certificate_base64"),
-                    it.get("certificate_filename"),
-                ),
-            )
+            if sk == "portfolio":
+                dec_at = (it.get("portfolio_verified_at") or "").strip() or now
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO share_items (
+                        session_id, credential_id, module_name, expiry_date, status,
+                        certificate_base64, certificate_filename, decision_at, decision_by_user_id, decline_reason
+                    ) VALUES (?, ?, ?, ?, 'VERIFIED', ?, ?, ?, NULL, NULL)
+                    """,
+                    (
+                        session_id,
+                        cid,
+                        it.get("module_name"),
+                        it.get("expiry_date"),
+                        it.get("certificate_base64"),
+                        it.get("certificate_filename"),
+                        dec_at,
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO share_items (
+                        session_id, credential_id, module_name, expiry_date, status,
+                        certificate_base64, certificate_filename
+                    ) VALUES (?, ?, ?, ?, 'PENDING', ?, ?)
+                    """,
+                    (
+                        session_id,
+                        cid,
+                        it.get("module_name"),
+                        it.get("expiry_date"),
+                        it.get("certificate_base64"),
+                        it.get("certificate_filename"),
+                    ),
+                )
         conn.commit()
     return {"session_id": session_id, "share_token": token, "created_at": now}
 
@@ -203,6 +256,7 @@ def share_inbox_list(limit: int = 50) -> list[dict]:
               u.gmc_number as doctor_gmc,
               u.current_trust as doctor_trust,
               s.status as status,
+              IFNULL(s.share_kind, 'review') as share_kind,
               COUNT(i.credential_id) as total_count,
               SUM(CASE WHEN i.status = 'VERIFIED' THEN 1 ELSE 0 END) as verified_count,
               SUM(CASE WHEN i.status = 'DECLINED' THEN 1 ELSE 0 END) as declined_count,
@@ -228,6 +282,7 @@ def share_inbox_list(limit: int = 50) -> list[dict]:
                 "doctor_gmc": r["doctor_gmc"],
                 "doctor_trust": r["doctor_trust"],
                 "status": r["status"],
+                "share_kind": str(r["share_kind"] or "review"),
                 "total_count": int(r["total_count"] or 0),
                 "verified_count": int(r["verified_count"] or 0),
                 "declined_count": int(r["declined_count"] or 0),
@@ -259,6 +314,7 @@ def share_doctor_queue(doctor_user_id: int) -> Optional[dict]:
             SELECT
               i.session_id,
               s.created_at as session_created_at,
+              IFNULL(s.share_kind, 'review') as session_share_kind,
               i.credential_id, i.module_name, i.expiry_date, i.status, i.decision_at,
               i.decline_reason, i.certificate_base64, i.certificate_filename
             FROM share_sessions s
@@ -272,6 +328,7 @@ def share_doctor_queue(doctor_user_id: int) -> Optional[dict]:
         {
             "session_id": int(r["session_id"]),
             "session_created_at": r["session_created_at"],
+            "session_share_kind": str(r["session_share_kind"] or "review"),
             "credential_id": r["credential_id"],
             "module_name": r["module_name"],
             "expiry_date": r["expiry_date"],
@@ -303,6 +360,7 @@ def share_session_get(session_id: int) -> Optional[dict]:
             """
             SELECT
               s.id as session_id, s.created_at, s.doctor_user_id, s.doctor_email, s.share_token, s.status,
+              IFNULL(s.share_kind, 'review') as share_kind,
               u.display_name as doctor_name, u.gmc_number as doctor_gmc, u.current_trust as doctor_trust
             FROM share_sessions s
             JOIN users u ON u.id = s.doctor_user_id
@@ -332,6 +390,7 @@ def share_session_get(session_id: int) -> Optional[dict]:
         "doctor_trust": s["doctor_trust"],
         "share_token": s["share_token"],
         "status": s["status"],
+        "share_kind": str(s["share_kind"] or "review"),
         "items": [
             {
                 "credential_id": r["credential_id"],
