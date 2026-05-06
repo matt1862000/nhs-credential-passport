@@ -57,7 +57,7 @@
       </div>
     </section>
 
-    <section style="margin-top:2.25rem;" aria-labelledby="actionsTitle">
+    <section id="doctorActions" style="margin-top:2.25rem;" aria-labelledby="actionsTitle">
       <h2 id="actionsTitle">Your training</h2>
       <div class="nhs-action-grid" role="list">
         <a class="nhs-action-card" href="/static/staff/#list" role="listitem">
@@ -167,6 +167,8 @@
 
         var premiumEl = document.getElementById('premiumTrustTools');
         if (premiumEl && NHSAuth.user.premium) premiumEl.hidden = false;
+        var doctorActions = document.getElementById('doctorActions');
+        if (doctorActions && NHSAuth.user.premium) doctorActions.hidden = true;
 
         /* Linked JSON file is applied from My training only; avoid repopulating stats from disk before server merge. */
         await NHSAuth.pullWalletMerge();
