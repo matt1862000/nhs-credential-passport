@@ -330,7 +330,7 @@
 
     <section id="list" class="visible" role="tabpanel" aria-labelledby="tab-list">
       <div class="nhsuk-summary-list" id="staffTrainingSummaryStrip">
-        <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Valid</span><span class="nhsuk-summary-list__value" id="countValid">0</span></div>
+        <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">In date</span><span class="nhsuk-summary-list__value" id="countValid">0</span></div>
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expiring soon</span><span class="nhsuk-summary-list__value" id="countExpiring">0</span></div>
         <div class="nhsuk-summary-list__row"><span class="nhsuk-summary-list__key">Expired</span><span class="nhsuk-summary-list__value" id="countExpired">0</span></div>
       </div>
@@ -339,7 +339,7 @@
           <label class="nhsuk-label" for="filterStatus">Filter by status</label>
           <select class="nhsuk-select" id="filterStatus" aria-label="Filter by status">
             <option value="">All</option>
-            <option value="valid">Valid</option>
+            <option value="valid">In date</option>
             <option value="expiring">Expiring soon</option>
             <option value="expired">Expired</option>
           </select>
@@ -1248,6 +1248,12 @@
       return 'valid';
     }
 
+    function expiryStatusLabel(status) {
+      if (status === 'valid') return 'In Date';
+      if (status === 'revoked') return 'Revoked';
+      return (status || '').toUpperCase();
+    }
+
     function getFilteredList() {
       const list = getStored();
       const statusFilter = (document.getElementById('filterStatus') || {}).value || '';
@@ -1318,7 +1324,7 @@
               <div style="flex:1;">
                 <h3 class="nhsuk-card__title">${c.module_name}</h3>
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
-                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>${verifiedTag}${declinedTag}
+                <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>${verifiedTag}${declinedTag}
                 <div class="nhsuk-card__actions">
                   ${showVerifyHrButton ? `<button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>${verifyBtnText}</button>` : ''}
                   ${!c.import_evidence_batch ? `<button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download evidence</button>` : ''}
@@ -1344,7 +1350,7 @@
               <div style="flex:1;">
                 <h3 class="nhsuk-card__title">${c.module_name}</h3>
                 <div class="nhsuk-card__meta">Expires ${c.expiry_date}${c.revoked ? ' · Revoked' : ''}</div>
-                <span class="nhsuk-tag nhsuk-tag--${status}">${status.toUpperCase()}</span>
+                <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>
                 <span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>
                 <div class="nhsuk-card__actions">
                   ${!c.import_evidence_batch ? `<button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download evidence</button>` : ''}
