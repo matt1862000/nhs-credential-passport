@@ -64,6 +64,15 @@
     .hr-modal__title { margin: 0 0 0.75rem 0; font-size: 1.125rem; }
     .hr-cert-img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
     .hr-cert-iframe { width: 100%; min-height: 70vh; border: 1px solid #d8dde0; border-radius: 4px; }
+    /* Search for doctor */
+    .hr-search-box-wrap { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-start; margin-bottom: 0.75rem; }
+    .hr-search-box-wrap input { flex: 1; min-width: 18rem; }
+    .hr-search-results { margin-top: 0.5rem; }
+    .hr-search-result-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--nhsuk-border); }
+    .hr-search-result-row:last-child { border-bottom: none; }
+    .hr-search-result-name { font-weight: 700; color: var(--nhsuk-text); }
+    .hr-search-result-meta { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
+    .hr-search-empty { color: var(--nhsuk-secondary-text); font-size: 0.9375rem; padding: 0.5rem 0; }
   </style>
 </head>
 <body>
@@ -92,7 +101,10 @@
   </header>
 
   <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
-    <h1 class="nhsuk-page-heading">HR inbox</h1>
+    <div style="display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:0.5rem 1rem;">
+      <h1 class="nhsuk-page-heading" style="margin-bottom:0;">HR inbox</h1>
+      <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnGoSearch" style="margin:0;">Search for a doctor</button>
+    </div>
     <p class="nhsuk-lead">Review training sent for HR verification, or open <strong>Reference packs</strong> (already verified elsewhere — view only, no second verification).</p>
 
     <div id="notPremium" class="hr-card" hidden>
@@ -147,6 +159,42 @@
             </tr>
           </thead>
           <tbody id="itemsTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Search for doctor view (read-only access to any doctor's verified training) -->
+    <div id="searchView" class="hr-card" hidden>
+      <div class="hr-inbox-head">
+        <h2>Search for a doctor</h2>
+      </div>
+      <p class="hr-muted" style="margin:0 0 0.85rem 0;">Search by name, email address, or GMC number to view a clinician's verified e-learning records (read only). Only clinicians who have permitted your trust appear here.</p>
+      <div class="hr-search-box-wrap">
+        <input class="nhsuk-input" type="search" id="doctorSearchInput" placeholder="Name, email or GMC number…" autocomplete="off" aria-label="Search doctors">
+        <button type="button" class="nhsuk-button hr-btn-small" id="btnDoctorSearch">Search</button>
+      </div>
+      <p id="searchStatus" class="hr-muted" aria-live="polite" style="min-height:1.25rem;"></p>
+      <div id="searchResultsList" class="hr-search-results"></div>
+    </div>
+
+    <!-- Read-only doctor view from search -->
+    <div id="searchDoctorView" class="hr-card" hidden>
+      <div class="hr-actions" style="justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.75rem;">
+        <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackToSearch">&larr; Back to search</button>
+        <div id="searchDoctorMetaBlock" style="text-align:right; flex:1; min-width:12rem;"></div>
+      </div>
+      <h2 id="searchDoctorTitle" style="margin:1rem 0 0.5rem 0; font-size:1.25rem;">Verified training</h2>
+      <p class="hr-muted" style="margin:0 0 0.75rem 0; font-size:0.875rem;"><em>Read only — no verify/decline actions available in this view.</em></p>
+      <div class="hr-table-wrap">
+        <table class="hr-table" aria-label="Doctor verified training">
+          <thead>
+            <tr>
+              <th>Module</th>
+              <th>Expires</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="searchDoctorItemsTbody"></tbody>
         </table>
       </div>
     </div>
@@ -664,12 +712,141 @@
           show(document.getElementById('notPremium'), true);
           show(document.getElementById('inboxView'), false);
           show(document.getElementById('sessionView'), false);
+          show(document.getElementById('searchView'), false);
+          show(document.getElementById('searchDoctorView'), false);
           return;
         }
 
+        // ── Search for doctor wiring ──────────────────────────────────────────
+        function showSearchView() {
+          show(document.getElementById('inboxView'), false);
+          show(document.getElementById('sessionView'), false);
+          show(document.getElementById('searchView'), true);
+          show(document.getElementById('searchDoctorView'), false);
+        }
+
+        function showInboxView() {
+          show(document.getElementById('searchView'), false);
+          show(document.getElementById('searchDoctorView'), false);
+          show(document.getElementById('inboxView'), true);
+          show(document.getElementById('sessionView'), false);
+        }
+
+        var btnGoSearch = document.getElementById('btnGoSearch');
+        if (btnGoSearch) {
+          btnGoSearch.addEventListener('click', function () {
+            window.history.pushState({}, '', '/static/hr/?search=1');
+            showSearchView();
+          });
+        }
+
+        var btnBackToSearch = document.getElementById('btnBackToSearch');
+        if (btnBackToSearch) {
+          btnBackToSearch.addEventListener('click', function () {
+            show(document.getElementById('searchDoctorView'), false);
+            show(document.getElementById('searchView'), true);
+          });
+        }
+
+        async function runDoctorSearch() {
+          var inp = document.getElementById('doctorSearchInput');
+          var statusEl = document.getElementById('searchStatus');
+          var resultsEl = document.getElementById('searchResultsList');
+          var q = (inp ? inp.value : '').trim();
+          if (!q) { if (statusEl) statusEl.textContent = 'Enter a name, email, or GMC number.'; return; }
+          if (statusEl) statusEl.textContent = 'Searching…';
+          if (resultsEl) resultsEl.innerHTML = '';
+          try {
+            var data = await apiJson('/api/hr/doctors/search?q=' + encodeURIComponent(q) + '&limit=30');
+            var results = data.results || [];
+            if (statusEl) statusEl.textContent = results.length ? '' : 'No matching clinicians found.';
+            if (!results.length) { if (resultsEl) resultsEl.innerHTML = ''; return; }
+            if (resultsEl) {
+              resultsEl.innerHTML = results.map(function (doc) {
+                var name = esc(doc.display_name || doc.email || '—');
+                var meta = [];
+                if (doc.gmc_number) meta.push('GMC ' + esc(doc.gmc_number));
+                if (doc.email) meta.push(esc(doc.email));
+                if (doc.current_trust) meta.push(esc(doc.current_trust));
+                return (
+                  '<div class="hr-search-result-row">' +
+                  '<div><div class="hr-search-result-name">' + name + '</div>' +
+                  (meta.length ? '<div class="hr-search-result-meta">' + meta.join(' &middot; ') + '</div>' : '') +
+                  '</div>' +
+                  '<button type="button" class="nhsuk-button hr-btn-small" data-search-doctor-id="' + esc(String(doc.id)) + '" data-search-doctor-name="' + esc(doc.display_name || doc.email || '') + '">View training</button>' +
+                  '</div>'
+                );
+              }).join('');
+
+              resultsEl.addEventListener('click', async function (e) {
+                var btn = e.target && e.target.closest('button[data-search-doctor-id]');
+                if (!btn) return;
+                var did = btn.getAttribute('data-search-doctor-id');
+                var dname = btn.getAttribute('data-search-doctor-name') || 'Doctor';
+                await openSearchDoctorView(did, dname);
+              });
+            }
+          } catch (err) {
+            if (statusEl) statusEl.textContent = err.message || 'Search failed.';
+          }
+        }
+
+        async function openSearchDoctorView(doctorId, doctorName) {
+          show(document.getElementById('searchView'), false);
+          show(document.getElementById('searchDoctorView'), true);
+          var titleEl = document.getElementById('searchDoctorTitle');
+          if (titleEl) titleEl.textContent = 'Verified training — ' + (doctorName || 'Doctor');
+          var metaBlock = document.getElementById('searchDoctorMetaBlock');
+          if (metaBlock) metaBlock.innerHTML = '';
+          var tbody = document.getElementById('searchDoctorItemsTbody');
+          if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">Loading…</td></tr>';
+          try {
+            var payload = await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorId)) + '/queue');
+            var items = (payload.items || []).filter(function (it) {
+              return (it.hr_decision || '').toLowerCase() === 'verified';
+            });
+            if (!items.length) {
+              if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">No verified records for this clinician yet.</td></tr>';
+              return;
+            }
+            if (tbody) {
+              tbody.innerHTML = items.map(function (it) {
+                var name = esc(it.module_name || it.credential_id || '—');
+                var expiry = it.expiry_date ? esc(String(it.expiry_date).slice(0, 10)) : '—';
+                var issuer = it.issuing_trust_name ? '<div style="font-size:0.8125rem;color:var(--nhsuk-secondary-text);">Issuing: ' + esc(it.issuing_trust_name) + '</div>' : '';
+                var verifiedAt = it.verified_by_trust_name ? '<div style="font-size:0.8125rem;color:var(--nhsuk-secondary-text);">HR verified at: ' + esc(it.verified_by_trust_name) + '</div>' : '';
+                return (
+                  '<tr>' +
+                  '<td>' + name + issuer + '</td>' +
+                  '<td>' + expiry + '</td>' +
+                  '<td><span class="hr-pill hr-pill--verified">Verified</span>' + verifiedAt + '</td>' +
+                  '</tr>'
+                );
+              }).join('');
+            }
+          } catch (err) {
+            if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">' + esc(err.message || 'Could not load.') + '</td></tr>';
+          }
+        }
+
+        var btnDoctorSearch = document.getElementById('btnDoctorSearch');
+        if (btnDoctorSearch) {
+          btnDoctorSearch.addEventListener('click', runDoctorSearch);
+        }
+        var doctorSearchInput = document.getElementById('doctorSearchInput');
+        if (doctorSearchInput) {
+          doctorSearchInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); runDoctorSearch(); }
+          });
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         var doctorId = qs().get('doctor');
         var sessionId = qs().get('session');
-        if (doctorId) {
+        var isSearch = qs().get('search');
+        if (isSearch) {
+          showSearchView();
+        } else if (doctorId) {
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
           wireTabs('sessionView', function (tab) {

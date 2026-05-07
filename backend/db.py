@@ -55,9 +55,135 @@ def init_db():
         """)
         _ensure_share_tables(conn)
         _ensure_csv_import_evidence_table(conn)
+        _ensure_visibility_tables(conn)
         _ensure_seed_privileged_user(conn)
         _ensure_seed_rotherham_user(conn)
         conn.commit()
+
+
+def _ensure_visibility_tables(conn: sqlite3.Connection) -> None:
+    """Doctor training visibility: who can see their verified training via HR search."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS doctor_visibility (
+            doctor_user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            mode TEXT NOT NULL DEFAULT 'all'
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS doctor_visibility_allowlist (
+            doctor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            trust_name TEXT NOT NULL,
+            trust_ods TEXT,
+            PRIMARY KEY (doctor_user_id, trust_name)
+        )
+    """)
+
+
+# ── Visibility helpers ────────────────────────────────────────────────────────
+
+def visibility_get(doctor_user_id: int) -> dict:
+    """Return { mode, allowlist: [{trust_name, trust_ods}] } for a doctor."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_visibility_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT mode FROM doctor_visibility WHERE doctor_user_id = ?",
+            (int(doctor_user_id),),
+        ).fetchone()
+        mode = str(row["mode"]) if row else "all"
+        al_rows = conn.execute(
+            "SELECT trust_name, trust_ods FROM doctor_visibility_allowlist WHERE doctor_user_id = ? ORDER BY trust_name",
+            (int(doctor_user_id),),
+        ).fetchall()
+    return {
+        "mode": mode,
+        "allowlist": [{"trust_name": r["trust_name"], "trust_ods": r["trust_ods"]} for r in al_rows],
+    }
+
+
+def visibility_set(doctor_user_id: int, mode: str, allowlist: list[dict]) -> None:
+    """Upsert visibility mode and replace allowlist."""
+    valid_modes = {"all", "current", "allowlist"}
+    mode = mode if mode in valid_modes else "all"
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_visibility_tables(conn)
+        conn.execute(
+            "INSERT INTO doctor_visibility (doctor_user_id, mode) VALUES (?, ?) ON CONFLICT(doctor_user_id) DO UPDATE SET mode = excluded.mode",
+            (int(doctor_user_id), mode),
+        )
+        conn.execute("DELETE FROM doctor_visibility_allowlist WHERE doctor_user_id = ?", (int(doctor_user_id),))
+        for entry in allowlist or []:
+            tn = (entry.get("trust_name") or "").strip()
+            ods = (entry.get("trust_ods") or "").strip() or None
+            if tn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO doctor_visibility_allowlist (doctor_user_id, trust_name, trust_ods) VALUES (?, ?, ?)",
+                    (int(doctor_user_id), tn, ods),
+                )
+        conn.commit()
+
+
+def _doctor_visible_to_trust(doctor_user_id: int, hr_trust: str, conn: sqlite3.Connection) -> bool:
+    """Check if a doctor has permitted this HR trust to view their training."""
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT mode FROM doctor_visibility WHERE doctor_user_id = ?",
+        (int(doctor_user_id),),
+    ).fetchone()
+    mode = str(row["mode"]) if row else "all"
+    if mode == "all":
+        return True
+    if mode == "current":
+        doc = conn.execute("SELECT current_trust FROM users WHERE id = ?", (int(doctor_user_id),)).fetchone()
+        doc_trust = (doc["current_trust"] or "").strip().lower() if doc else ""
+        return doc_trust == hr_trust.strip().lower()
+    if mode == "allowlist":
+        match = conn.execute(
+            "SELECT 1 FROM doctor_visibility_allowlist WHERE doctor_user_id = ? AND LOWER(TRIM(trust_name)) = ?",
+            (int(doctor_user_id), hr_trust.strip().lower()),
+        ).fetchone()
+        return match is not None
+    return False
+
+
+def hr_doctor_search(q: str, hr_trust: str, limit: int = 30) -> list[dict]:
+    """
+    Search doctors by name / email / GMC.
+    Only returns doctors whose visibility settings allow hr_trust to see them.
+    """
+    q = (q or "").strip()
+    if not q:
+        return []
+    pat = "%" + q.lower() + "%"
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_visibility_tables(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT DISTINCT u.id, u.email, u.display_name, u.gmc_number, u.current_trust
+            FROM users u
+            WHERE u.premium = 0
+              AND (
+                LOWER(COALESCE(u.display_name,'')) LIKE ?
+                OR LOWER(u.email) LIKE ?
+                OR LOWER(COALESCE(u.gmc_number,'')) LIKE ?
+              )
+            ORDER BY u.display_name, u.email
+            LIMIT ?
+            """,
+            (pat, pat, pat, max(1, min(int(limit), 100))),
+        ).fetchall()
+    out = []
+    for r in rows:
+        if _doctor_visible_to_trust(int(r["id"]), hr_trust, conn):
+            out.append({
+                "id": int(r["id"]),
+                "email": r["email"],
+                "display_name": r["display_name"],
+                "gmc_number": r["gmc_number"],
+                "current_trust": r["current_trust"],
+            })
+    return out
 
 
 def _ensure_csv_import_evidence_table(conn: sqlite3.Connection) -> None:

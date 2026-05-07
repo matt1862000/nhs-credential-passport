@@ -386,6 +386,29 @@ def me_verified_map(request: Request):
     return db.doctor_verified_map(uid)
 
 
+@router.get("/me/visibility")
+def me_visibility_get(request: Request):
+    uid = require_user_id(request)
+    return db.visibility_get(uid)
+
+
+@router.put("/me/visibility")
+async def me_visibility_put(request: Request):
+    uid = require_user_id(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+    mode = str(body.get("mode") or "all").strip()
+    raw_al = body.get("allowlist")
+    allowlist = raw_al if isinstance(raw_al, list) else []
+    allowlist = [e for e in allowlist if isinstance(e, dict) and (e.get("trust_name") or "").strip()]
+    db.visibility_set(uid, mode, allowlist)
+    return {"ok": True}
+
+
 def _hr_trust(hr_user: dict) -> Optional[str]:
     """Normalised current_trust of an HR user, used for trust-scoping inbox queries."""
     t = (hr_user.get("current_trust") or "").strip().lower()
@@ -406,6 +429,17 @@ def _assert_same_trust(hr_user: dict, session: dict) -> None:
 def hr_shares_list(request: Request, limit: int = 50):
     hr = require_premium_user(request)
     return {"sessions": db.share_inbox_list(limit=limit, hr_trust=_hr_trust(hr))}
+
+
+@router.get("/hr/doctors/search")
+def hr_doctors_search(request: Request, q: str = "", limit: int = 30):
+    """Search clinicians by name / email / GMC. Respects doctor visibility settings."""
+    hr = require_premium_user(request)
+    trust = (hr.get("current_trust") or "").strip()
+    if not trust:
+        raise HTTPException(status_code=400, detail="Your HR account must have a current trust set to search for doctors.")
+    results = db.hr_doctor_search(q=q, hr_trust=trust, limit=limit)
+    return {"results": results}
 
 
 @router.get("/hr/doctors/{doctor_user_id}/queue")

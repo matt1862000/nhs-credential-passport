@@ -20,6 +20,32 @@
     #profileStatus { margin-top: 1rem; min-height: 1.25rem; }
     #profileStatus.ok { color: var(--nhsuk-success); font-weight: 600; }
     #profileStatus.err { color: var(--nhsuk-error); font-weight: 600; }
+    #visibilityStatus { min-height: 1.1rem; font-size: 0.875rem; margin-top: 0.5rem; }
+    #visibilityStatus.ok { color: var(--nhsuk-success); font-weight: 600; }
+    #visibilityStatus.err { color: var(--nhsuk-error); font-weight: 600; }
+    .vis-radio-group { display: flex; flex-direction: column; gap: 0.6rem; margin: 0.75rem 0; }
+    .vis-radio-group label { display: flex; align-items: flex-start; gap: 0.6rem; cursor: pointer; font-size: 0.9375rem; }
+    .vis-radio-group input[type="radio"] { margin-top: 0.2rem; flex-shrink: 0; }
+    .vis-radio-desc { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); display: block; margin-top: 0.15rem; }
+    #allowlistSection { margin-top: 0.75rem; }
+    #allowlistSection h4 { font-size: 0.9375rem; font-weight: 600; margin: 0 0 0.4rem 0; }
+    .allowlist-tag { display: inline-flex; align-items: center; gap: 0.35rem; background: var(--nhsuk-panel); border: 1px solid var(--nhsuk-border); border-radius: 3px; padding: 0.2rem 0.55rem; font-size: 0.8125rem; margin: 0.2rem 0.25rem 0.2rem 0; }
+    .allowlist-tag button { background: none; border: none; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0 0 0.2rem; color: var(--nhsuk-secondary-text); }
+    .allowlist-tag button:hover { color: var(--nhsuk-error); }
+    #allowlistTags { margin-bottom: 0.5rem; min-height: 1.5rem; }
+    .vis-add-trust { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-start; }
+    .vis-add-trust input { flex: 1; min-width: 14rem; }
+    .vis-suggest-wrap { position: relative; flex: 1; min-width: 14rem; }
+    .vis-suggest-list {
+      position: absolute; left: 0; right: 0; top: 100%; margin: 0.15rem 0 0 0;
+      padding: 0; list-style: none; max-height: 12rem; overflow-y: auto;
+      z-index: 50; background: #fff; border: 1px solid var(--nhsuk-border);
+      border-radius: 4px; box-shadow: 0 4px 14px rgba(33,43,50,0.12);
+    }
+    .vis-suggest-list li { padding: 0.45rem 0.7rem; cursor: pointer; font-size: 0.9375rem; border-bottom: 1px solid var(--nhsuk-border); }
+    .vis-suggest-list li:last-child { border-bottom: none; }
+    .vis-suggest-list li:hover { background: var(--nhsuk-panel); }
+    .vis-suggest-meta { display: block; font-size: 0.8rem; color: var(--nhsuk-secondary-text); }
     .profile-nav-actions { margin-top: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
     .profile-nav-actions .nhsuk-button:disabled {
       opacity: 0.45;
@@ -102,6 +128,50 @@
       </div>
       <p id="profileNavHint" role="note">Save your profile with all three fields filled in before you can open the dashboard or My training.</p>
     </section>
+
+    <section class="nhsuk-card" id="visibilitySection" style="max-width:32rem; margin-top:1.5rem; display:none;">
+      <h2 style="font-size:1.125rem; font-weight:700; margin:0 0 0.35rem 0;">Who can see my verified training?</h2>
+      <p class="nhsuk-body-s" style="color:var(--nhsuk-secondary-text); margin:0 0 0.75rem 0;">HR staff at NHS trusts can search for your name or GMC number to view your verified e-learning records. Choose who is allowed.</p>
+
+      <div class="vis-radio-group" id="visRadioGroup">
+        <label>
+          <input type="radio" name="vis_mode" value="all" checked>
+          <span>
+            <strong>All HR users</strong>
+            <span class="vis-radio-desc">Any premium HR account on this system can find and view your verified training.</span>
+          </span>
+        </label>
+        <label>
+          <input type="radio" name="vis_mode" value="current">
+          <span>
+            <strong>My current trust only</strong>
+            <span class="vis-radio-desc">Only HR at the trust listed in your profile can view your records.</span>
+          </span>
+        </label>
+        <label>
+          <input type="radio" name="vis_mode" value="allowlist">
+          <span>
+            <strong>Specific trusts I choose</strong>
+            <span class="vis-radio-desc">Only HR at trusts you add below can view your records.</span>
+          </span>
+        </label>
+      </div>
+
+      <div id="allowlistSection" hidden>
+        <h4>Allowed trusts</h4>
+        <div id="allowlistTags"></div>
+        <div class="vis-add-trust">
+          <div class="vis-suggest-wrap">
+            <input class="nhsuk-input" type="text" id="allowlistInput" placeholder="Search and add a trust…" autocomplete="off" spellcheck="false">
+            <ul class="vis-suggest-list" id="visAllowlistSuggestList" hidden role="listbox"></ul>
+          </div>
+          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnAddTrust">Add</button>
+        </div>
+      </div>
+
+      <button type="button" class="nhsuk-button" id="btnSaveVisibility" style="margin-top:1rem;">Save visibility</button>
+      <p id="visibilityStatus" role="status" aria-live="polite"></p>
+    </section>
   </main>
 
   <script src="/static/wallet/wallet-store.js"></script>
@@ -109,6 +179,10 @@
   <script src="/static/shared/ods-trust-suggest.js"></script>
   <script>
     (function () {
+      function escapeHtml(s) {
+        return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      }
+
       function setStatus(msg, kind) {
         var el = document.getElementById('profileStatus');
         if (!el) return;
@@ -266,6 +340,8 @@
         document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
         fillFromUser(NHSAuth.user);
         updateProfileNavButtons();
+        wireVisibilityPanel();
+        await loadVisibility();
         var req = new URLSearchParams(window.location.search).get('required');
         var banner = document.getElementById('profileRequiredBanner');
         var lead = document.getElementById('profileLead');
@@ -374,6 +450,163 @@
           setStatus(err.message || 'Could not save profile', 'err');
         }
       });
+
+      // ── Visibility panel ──────────────────────────────────────────────────────
+      var _visAllowlist = []; // [{trust_name, trust_ods}]
+      var _visSuggestItems = [];
+      var _visSuggestDebounce = null;
+
+      function setVisStatus(msg, kind) {
+        var el = document.getElementById('visibilityStatus');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.className = kind || '';
+      }
+
+      function renderAllowlistTags() {
+        var container = document.getElementById('allowlistTags');
+        if (!container) return;
+        container.innerHTML = _visAllowlist.map(function (e, i) {
+          return '<span class="allowlist-tag">' + escapeHtml(e.trust_name) +
+            (e.trust_ods ? ' <span style="color:var(--nhsuk-secondary-text);font-size:0.75rem;">' + escapeHtml(e.trust_ods) + '</span>' : '') +
+            '<button type="button" data-remove="' + i + '" aria-label="Remove ' + escapeHtml(e.trust_name) + '">&times;</button></span>';
+        }).join('');
+      }
+
+      function getVisMode() {
+        var radios = document.querySelectorAll('input[name="vis_mode"]');
+        for (var i = 0; i < radios.length; i++) { if (radios[i].checked) return radios[i].value; }
+        return 'all';
+      }
+
+      function setVisMode(mode) {
+        var radios = document.querySelectorAll('input[name="vis_mode"]');
+        for (var i = 0; i < radios.length; i++) { radios[i].checked = (radios[i].value === mode); }
+        var al = document.getElementById('allowlistSection');
+        if (al) al.hidden = (mode !== 'allowlist');
+      }
+
+      function hideVisSuggest() {
+        var list = document.getElementById('visAllowlistSuggestList');
+        if (list) { list.hidden = true; list.innerHTML = ''; }
+        _visSuggestItems = [];
+      }
+
+      function renderVisSuggest(items) {
+        var list = document.getElementById('visAllowlistSuggestList');
+        if (!list) return;
+        _visSuggestItems = items || [];
+        list.innerHTML = '';
+        if (!_visSuggestItems.length) { list.hidden = true; return; }
+        _visSuggestItems.forEach(function (it, idx) {
+          var li = document.createElement('li');
+          li.setAttribute('role', 'option');
+          li.dataset.index = String(idx);
+          li.innerHTML = escapeHtml(it.name) + (it.ods ? '<span class="vis-suggest-meta">ODS ' + escapeHtml(it.ods) + '</span>' : '');
+          list.appendChild(li);
+        });
+        list.hidden = false;
+      }
+
+      async function runVisSuggest() {
+        if (!window.NHSOdsTrustSuggest) return;
+        var inp = document.getElementById('allowlistInput');
+        var q = String(inp ? inp.value : '').trim();
+        if (q.length < 2) { hideVisSuggest(); return; }
+        try {
+          var items = await NHSOdsTrustSuggest.search(q, { minLength: 2, limit: 8 });
+          renderVisSuggest(items);
+        } catch (e) { hideVisSuggest(); }
+      }
+
+      function addTrustToAllowlist(name, ods) {
+        name = (name || '').trim();
+        if (!name) return;
+        var already = _visAllowlist.some(function (e) { return e.trust_name.toLowerCase() === name.toLowerCase(); });
+        if (!already) { _visAllowlist.push({ trust_name: name, trust_ods: ods || null }); }
+        renderAllowlistTags();
+        var inp = document.getElementById('allowlistInput');
+        if (inp) inp.value = '';
+        hideVisSuggest();
+      }
+
+      async function loadVisibility() {
+        try {
+          var r = await fetch('/api/me/visibility', { credentials: 'include' });
+          if (!r.ok) return;
+          var data = await r.json();
+          setVisMode(data.mode || 'all');
+          _visAllowlist = Array.isArray(data.allowlist) ? data.allowlist : [];
+          renderAllowlistTags();
+        } catch (e) { /* ignore */ }
+      }
+
+      function wireVisibilityPanel() {
+        var sec = document.getElementById('visibilitySection');
+        if (!NHSAuth.user || NHSAuth.user.premium) return; // only for doctors
+        if (sec) sec.style.display = '';
+
+        document.querySelectorAll('input[name="vis_mode"]').forEach(function (radio) {
+          radio.addEventListener('change', function () {
+            var al = document.getElementById('allowlistSection');
+            if (al) al.hidden = (this.value !== 'allowlist');
+          });
+        });
+
+        var inp = document.getElementById('allowlistInput');
+        var suggestList = document.getElementById('visAllowlistSuggestList');
+        if (inp) {
+          inp.addEventListener('input', function () {
+            clearTimeout(_visSuggestDebounce);
+            _visSuggestDebounce = setTimeout(runVisSuggest, 320);
+          });
+          inp.addEventListener('blur', function () { setTimeout(hideVisSuggest, 200); });
+        }
+        if (suggestList) {
+          suggestList.addEventListener('mousedown', function (e) { if (e.target.closest('li')) e.preventDefault(); });
+          suggestList.addEventListener('click', function (e) {
+            var li = e.target.closest('li[role="option"]');
+            if (!li) return;
+            var idx = parseInt(li.dataset.index, 10);
+            var it = _visSuggestItems[idx];
+            if (it) addTrustToAllowlist(it.name, it.ods);
+          });
+        }
+
+        var btnAdd = document.getElementById('btnAddTrust');
+        if (btnAdd) {
+          btnAdd.addEventListener('click', function () {
+            var inp2 = document.getElementById('allowlistInput');
+            addTrustToAllowlist(inp2 ? inp2.value : '');
+          });
+        }
+
+        var tagsEl = document.getElementById('allowlistTags');
+        if (tagsEl) {
+          tagsEl.addEventListener('click', function (e) {
+            var btn = e.target.closest('button[data-remove]');
+            if (!btn) return;
+            var idx = parseInt(btn.getAttribute('data-remove'), 10);
+            _visAllowlist.splice(idx, 1);
+            renderAllowlistTags();
+          });
+        }
+
+        document.getElementById('btnSaveVisibility').addEventListener('click', async function () {
+          setVisStatus('Saving…');
+          try {
+            var r = await fetch('/api/me/visibility', {
+              method: 'PUT',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ mode: getVisMode(), allowlist: _visAllowlist }),
+            });
+            if (!r.ok) { var d = await r.json(); throw new Error(d.detail || 'Error'); }
+            setVisStatus('Saved.', 'ok');
+          } catch (err) { setVisStatus(err.message || 'Could not save', 'err'); }
+        });
+      }
+      // ─────────────────────────────────────────────────────────────────────────
 
       (function wireHamburgerMenu() {
         var btn = document.getElementById('btnMenu');
