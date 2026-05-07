@@ -658,16 +658,40 @@ def me_messages_thread(request: Request, conv_id: int):
     return {"messages": msgs}
 
 
+@router.get("/me/messaging-trusts")
+def me_messaging_trusts_search(request: Request, q: str = ""):
+    """Search trusts that have at least one premium (HR) inbox on this service."""
+    require_user_id(request)
+    return {"trusts": db.hr_messageable_trusts_search(q, limit=40)}
+
+
 @router.post("/me/messages/start")
 async def me_messages_start(request: Request):
-    """Start (or retrieve) a conversation with the doctor's current trust HR."""
+    """Start (or retrieve) a conversation with HR for your profile trust, or another trust if hr_trust is set."""
     uid = require_user_id(request)
     user = db.user_get_by_id(uid)
     if not user:
         raise HTTPException(status_code=401, detail="Not signed in")
-    trust = (user.get("current_trust") or "").strip()
-    if not trust:
-        raise HTTPException(status_code=400, detail="Set your current trust in your profile before messaging HR.")
+    body: dict = {}
+    try:
+        raw = await request.json()
+        if isinstance(raw, dict):
+            body = raw
+    except Exception:
+        body = {}
+    explicit = str(body.get("hr_trust") or "").strip()
+    if explicit:
+        canonical = db.hr_messageable_trust_canonical(explicit)
+        if not canonical:
+            raise HTTPException(
+                status_code=400,
+                detail="No HR messaging inbox found for that trust. Use search to pick a trust on this demo.",
+            )
+        trust = canonical
+    else:
+        trust = (user.get("current_trust") or "").strip()
+        if not trust:
+            raise HTTPException(status_code=400, detail="Set your current trust in your profile before messaging HR.")
     conv = db.conversation_get_or_create(uid, trust)
     return conv
 

@@ -355,6 +355,72 @@ def _msg_row(r) -> dict:
     }
 
 
+def hr_messageable_trusts_search(query: str, limit: int = 40) -> list[dict]:
+    """Distinct current_trust values for premium (HR) users — searchable inbox targets."""
+    q = (query or "").strip()
+    lim = max(1, min(int(limit), 80))
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_premium_column(conn)
+        conn.row_factory = sqlite3.Row
+        if q:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT TRIM(current_trust) AS trust_name
+                FROM users
+                WHERE premium = 1 AND TRIM(COALESCE(current_trust, '')) != ''
+                  AND LOWER(TRIM(current_trust)) LIKE '%' || LOWER(?) || '%'
+                ORDER BY trust_name COLLATE NOCASE
+                LIMIT ?
+                """,
+                (q, lim),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT TRIM(current_trust) AS trust_name
+                FROM users
+                WHERE premium = 1 AND TRIM(COALESCE(current_trust, '')) != ''
+                ORDER BY trust_name COLLATE NOCASE
+                LIMIT ?
+                """,
+                (lim,),
+            ).fetchall()
+    out = []
+    seen = set()
+    for r in rows:
+        tn = (r["trust_name"] or "").strip()
+        if not tn:
+            continue
+        key = tn.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"trust_name": tn})
+    return out
+
+
+def hr_messageable_trust_canonical(trust_input: str) -> Optional[str]:
+    """Return stored trust string for matching premium HR inbox, or None."""
+    raw = (trust_input or "").strip()
+    if not raw:
+        return None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_premium_column(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT TRIM(current_trust) AS trust_name FROM users
+            WHERE premium = 1 AND TRIM(COALESCE(current_trust, '')) != ''
+              AND LOWER(TRIM(current_trust)) = LOWER(TRIM(?))
+            LIMIT 1
+            """,
+            (raw,),
+        ).fetchone()
+    if not row:
+        return None
+    return (row["trust_name"] or "").strip() or None
+
+
 def conversation_get_or_create(doctor_user_id: int, hr_trust: str) -> dict:
     hr_trust = (hr_trust or "").strip()
     with sqlite3.connect(DB_PATH) as conn:

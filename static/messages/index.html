@@ -24,6 +24,34 @@
     .msg-conv-preview { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .msg-unread-dot { display: inline-block; width: 0.55rem; height: 0.55rem; background: var(--nhsuk-link); border-radius: 50%; margin-left: 0.4rem; vertical-align: middle; }
     .msg-new-btn { display: block; width: 100%; text-align: left; padding: 0.75rem 1rem; background: #005eb8; color: #fff; border: none; cursor: pointer; font-size: 0.9375rem; font-weight: 600; border-radius: 6px 6px 0 0; touch-action: manipulation; user-select: none; transition: background-color 0.15s ease, transform 0.08s ease, box-shadow 0.08s ease; }
+    .msg-other-btn {
+      display: block; width: 100%; text-align: left; padding: 0.65rem 1rem; margin-top: 0;
+      background: #fff; color: #005eb8; border: none; border-top: 1px solid var(--nhsuk-border);
+      cursor: pointer; font-size: 0.875rem;
+      font-weight: 600; border-radius: 0; font-family: inherit;
+    }
+    .msg-other-btn:hover { background: #e8f4fb; }
+    .msg-search-panel {
+      padding: 0.75rem 1rem 1rem 1rem;
+      border-top: 1px solid var(--nhsuk-border);
+      background: #f8fafb;
+    }
+    .msg-search-panel[hidden] { display: none !important; }
+    .msg-search-panel .nhsuk-label { font-size: 0.875rem; margin-bottom: 0.35rem; display: block; }
+    .msg-search-panel .nhsuk-input { width: 100%; max-width: none; box-sizing: border-box; font-size: 0.9375rem; }
+    .msg-trust-results {
+      list-style: none; margin: 0.35rem 0 0 0; padding: 0;
+      border: 1px solid var(--nhsuk-border); border-radius: 4px; background: #fff;
+      max-height: 11rem; overflow-y: auto;
+    }
+    .msg-trust-results[hidden] { display: none !important; }
+    .msg-trust-results li {
+      padding: 0.55rem 0.75rem; cursor: pointer; font-size: 0.875rem; border-bottom: 1px solid var(--nhsuk-border);
+    }
+    .msg-trust-results li:last-child { border-bottom: none; }
+    .msg-trust-results li:hover, .msg-trust-results li[aria-selected="true"] { background: #e8f0fe; }
+    .msg-search-hint { margin: 0.5rem 0 0 0; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); }
+    .msg-search-status { min-height: 1.1rem; font-size: 0.8125rem; margin-top: 0.35rem; color: var(--nhsuk-secondary-text); }
     .msg-new-btn:hover { background: #003d78; }
     .msg-new-btn:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2); }
     .msg-new-btn:disabled { opacity: 0.75; cursor: not-allowed; }
@@ -99,6 +127,14 @@
         <div class="msg-sidebar">
           <div class="msg-conv-list" id="convList">
             <button type="button" class="msg-new-btn" id="btnNewConv">+ Message my trust HR</button>
+            <button type="button" class="msg-other-btn" id="btnToggleTrustSearch" aria-expanded="false" aria-controls="msgTrustSearchPanel">Message another trust&rsquo;s HR&hellip;</button>
+            <div class="msg-search-panel" id="msgTrustSearchPanel" hidden>
+              <label class="nhsuk-label" for="msgTrustSearchInput">Search by trust name</label>
+              <input type="text" class="nhsuk-input" id="msgTrustSearchInput" placeholder="e.g. Rotherham, Sheffield" autocomplete="off" aria-autocomplete="list" aria-controls="msgTrustSearchResults">
+              <p id="msgSearchStatus" class="msg-search-status" role="status" aria-live="polite"></p>
+              <ul id="msgTrustSearchResults" class="msg-trust-results" role="listbox" hidden aria-label="Matching trusts"></ul>
+              <p class="msg-search-hint">Demo: Sheffield and Rotherham HR accounts can receive messages. Results only show trusts with HR on this service.</p>
+            </div>
             <div id="convItems"><p class="msg-no-conv">No conversations yet.</p></div>
           </div>
         </div>
@@ -275,6 +311,105 @@
           b.classList.remove('is-loading');
           b.removeAttribute('aria-busy');
           b.textContent = '+ Message my trust HR';
+        }
+      });
+
+      var _trustSearchTimer = null;
+      var _trustSearchOpen = false;
+      var _lastTrustSearchTrusts = [];
+
+      function filterOtherTrusts(trusts) {
+        var mine = (window.NHSAuth && NHSAuth.user && NHSAuth.user.current_trust || '').trim().toLowerCase();
+        if (!mine) return trusts || [];
+        return (trusts || []).filter(function (t) {
+          return String(t.trust_name || '').trim().toLowerCase() !== mine;
+        });
+      }
+
+      function setTrustSearchStatus(msg) {
+        var el = document.getElementById('msgSearchStatus');
+        if (el) el.textContent = msg || '';
+      }
+
+      async function runTrustSearch() {
+        var inp = document.getElementById('msgTrustSearchInput');
+        var listEl = document.getElementById('msgTrustSearchResults');
+        var q = inp ? inp.value.trim() : '';
+        if (!listEl) return;
+        setTrustSearchStatus(q.length ? 'Searching…' : 'Loading…');
+        try {
+          var data = await apiJson('/api/me/messaging-trusts?q=' + encodeURIComponent(q));
+          var trusts = filterOtherTrusts(data.trusts || []);
+          _lastTrustSearchTrusts = trusts;
+          if (!trusts.length) {
+            listEl.hidden = true;
+            listEl.innerHTML = '';
+            setTrustSearchStatus(q.length ? 'No other trusts match. Try another word.' : 'No other trusts on this demo.');
+            return;
+          }
+          listEl.innerHTML = trusts.map(function (t, i) {
+            return '<li role="option" tabindex="0" data-trust-idx="' + i + '">' + esc(t.trust_name) + '</li>';
+          }).join('');
+          listEl.hidden = false;
+          setTrustSearchStatus(trusts.length + ' result' + (trusts.length === 1 ? '' : 's') + ' — click to open chat.');
+        } catch (e) {
+          listEl.hidden = true;
+          setTrustSearchStatus('');
+          alert(e.message || 'Could not search trusts');
+        }
+      }
+
+      document.getElementById('btnToggleTrustSearch').addEventListener('click', function () {
+        var panel = document.getElementById('msgTrustSearchPanel');
+        var btn = this;
+        _trustSearchOpen = !_trustSearchOpen;
+        if (panel) panel.hidden = !_trustSearchOpen;
+        btn.setAttribute('aria-expanded', _trustSearchOpen ? 'true' : 'false');
+        if (_trustSearchOpen) {
+          var inp = document.getElementById('msgTrustSearchInput');
+          if (inp) inp.focus();
+          runTrustSearch();
+        } else {
+          setTrustSearchStatus('');
+          var lr = document.getElementById('msgTrustSearchResults');
+          if (lr) { lr.hidden = true; lr.innerHTML = ''; }
+        }
+      });
+
+      document.getElementById('msgTrustSearchInput').addEventListener('input', function () {
+        clearTimeout(_trustSearchTimer);
+        _trustSearchTimer = setTimeout(runTrustSearch, 280);
+      });
+
+      document.getElementById('msgTrustSearchResults').addEventListener('click', async function (e) {
+        var li = e.target.closest('[data-trust-idx]');
+        if (!li) return;
+        var idx = parseInt(li.getAttribute('data-trust-idx'), 10);
+        var row = _lastTrustSearchTrusts[idx];
+        if (!row || !row.trust_name) return;
+        try {
+          setTrustSearchStatus('Opening conversation…');
+          var conv = await apiJson('/api/me/messages/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hr_trust: row.trust_name }),
+          });
+          if (!_convs.find(function (c) { return c.id === conv.id; })) {
+            _convs.unshift(conv);
+          }
+          renderConvList();
+          await loadThread(conv.id);
+          var panel = document.getElementById('msgTrustSearchPanel');
+          var btn = document.getElementById('btnToggleTrustSearch');
+          _trustSearchOpen = false;
+          if (panel) panel.hidden = true;
+          if (btn) btn.setAttribute('aria-expanded', 'false');
+          setTrustSearchStatus('');
+          var lr = document.getElementById('msgTrustSearchResults');
+          if (lr) { lr.hidden = true; lr.innerHTML = ''; }
+        } catch (err) {
+          alert(err.message || 'Could not start conversation');
+          setTrustSearchStatus('');
         }
       });
 
