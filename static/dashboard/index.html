@@ -403,9 +403,9 @@
       var _gsVerifiedChecked = false;
       var _gsAnyVerified = false;
 
-      var GS_DISMISS_KEY = 'nhs_gs_dismissed';
+      var GS_DISMISS_KEY = 'nhs_gs_dismissed'; /* overwritten with user-scoped key after boot */
 
-      var GS_REQS_VISITED_KEY = 'nhs_gs_reqs_visited';
+      var GS_REQS_VISITED_KEY = 'nhs_gs_reqs_visited'; /* overwritten with user-scoped key after boot */
 
       var GS_STEPS_DEF = [
         { id: 'gs1', label: 'Create your account' },
@@ -420,7 +420,7 @@
         if (!card) return;
         if (localStorage.getItem(GS_DISMISS_KEY)) { card.hidden = true; return; }
 
-        var reqsVisited = !!localStorage.getItem(GS_REQS_VISITED_KEY) || walletLen > 0;
+        var reqsVisited = !!localStorage.getItem(GS_REQS_VISITED_KEY);
         var done = [true, true, reqsVisited, walletLen > 0, anyVerified];
         var doneCount = done.filter(Boolean).length;
         var allDone = doneCount === 5;
@@ -504,6 +504,10 @@
         await NHSAuth.refresh();
         if (!NHSAuth.requireAuth()) return;
         if (!NHSAuth.requireProfileComplete()) return;
+        /* Scope onboarding keys to this user so other accounts on same browser don't bleed through */
+        var _uid = NHSAuth.user.id || NHSAuth.user.email || 'anon';
+        GS_DISMISS_KEY = 'nhs_gs_dismissed_' + _uid;
+        GS_REQS_VISITED_KEY = 'nhs_gs_reqs_visited_' + _uid;
         document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
         var first = (NHSAuth.user.email || '').split('@')[0];
         if (first) document.getElementById('welcomeTitle').textContent = 'Hello, ' + first;

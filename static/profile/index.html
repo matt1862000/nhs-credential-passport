@@ -303,7 +303,11 @@
 
         /* Onboarding nudge — step 2: show only until they've visited requirements */
         var _reqsVisited = false;
-        try { _reqsVisited = !!localStorage.getItem('nhs_gs_reqs_visited'); } catch (e) {}
+        try {
+          var _uid2 = NHSAuth.user && (NHSAuth.user.id || NHSAuth.user.email);
+          var _reqsKey2 = _uid2 ? 'nhs_gs_reqs_visited_' + _uid2 : 'nhs_gs_reqs_visited';
+          _reqsVisited = !!localStorage.getItem(_reqsKey2);
+        } catch (e) {}
         if (!NHSAuth.user.premium && !_reqsVisited && window.NHSOnboardingNudge) {
           NHSOnboardingNudge.show({
             insertAfterId: 'profilePageHeading',

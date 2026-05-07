@@ -291,8 +291,12 @@
         var trustLabel = document.getElementById('trustLabel');
         if (trustLabel) trustLabel.textContent = trust;
 
-        // Mark as visited so the onboarding checklist progresses past this step
-        try { localStorage.setItem('nhs_gs_reqs_visited', '1'); } catch (e) {}
+        // Mark as visited so the onboarding checklist progresses past this step (user-scoped key)
+        try {
+          var _uid = NHSAuth.user && (NHSAuth.user.id || NHSAuth.user.email);
+          var _reqsKey = _uid ? 'nhs_gs_reqs_visited_' + _uid : 'nhs_gs_reqs_visited';
+          localStorage.setItem(_reqsKey, '1');
+        } catch (e) {}
 
         var _walletForNudge = 0;
         try { _walletForNudge = (JSON.parse(localStorage.getItem('nhs_credentials') || '[]') || []).length; } catch (e) {}

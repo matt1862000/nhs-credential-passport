@@ -18,12 +18,20 @@
  * nudge only hides it for the current session (sessionStorage).
  */
 (function () {
-  var GS_DISMISS_KEY = 'nhs_gs_dismissed';
   var SESSION_HIDE_KEY = 'nhs_onb_nudge_hide';
+
+  function dismissKey() {
+    try {
+      var uid = window.NHSAuth && NHSAuth.user && (NHSAuth.user.id || NHSAuth.user.email);
+      return uid ? 'nhs_gs_dismissed_' + uid : 'nhs_gs_dismissed';
+    } catch (e) {
+      return 'nhs_gs_dismissed';
+    }
+  }
 
   function shouldShow() {
     try {
-      if (localStorage.getItem(GS_DISMISS_KEY)) return false;
+      if (localStorage.getItem(dismissKey())) return false;
       if (sessionStorage.getItem(SESSION_HIDE_KEY)) return false;
     } catch (e) {}
     return true;
