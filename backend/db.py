@@ -18,6 +18,8 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "credentials.db"
 DEV_SEED_EMAIL = "sheffieldhr@nhs.net"
 DEV_SEED_EMAIL_ROTHERHAM = "rotherhamhr@nhs.net"
 DEV_SEED_PASSWORD = "password"
+DEV_SEED_TRUST_SHEFFIELD = "SHEFFIELD HEALTH PARTNERSHIP UNIVERSITY NHS FOUNDATION TRUST"
+DEV_SEED_TRUST_ROTHERHAM = "ROTHERHAM DONCASTER AND SOUTH HUMBER NHS FOUNDATION TRUST"
 
 
 def init_db():
@@ -570,6 +572,7 @@ def _ensure_seed_privileged_user(conn: sqlite3.Connection) -> None:
         return
     email = DEV_SEED_EMAIL.strip().lower()
     pw = DEV_SEED_PASSWORD
+    trust = DEV_SEED_TRUST_SHEFFIELD
     if not email or not pw:
         return
     _ensure_users_premium_column(conn)
@@ -579,22 +582,23 @@ def _ensure_seed_privileged_user(conn: sqlite3.Connection) -> None:
     existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
     if existing and existing[0]:
         conn.execute(
-            "UPDATE users SET password_hash = ?, premium = 1 WHERE email = ?",
-            (h, email),
+            "UPDATE users SET password_hash = ?, premium = 1, current_trust = ? WHERE email = ?",
+            (h, trust, email),
         )
         return
     conn.execute(
         "INSERT INTO users (email, password_hash, created_at, premium, gmc_number, display_name, current_trust) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (email, h, datetime.utcnow().isoformat(), 1, None, None, None),
+        (email, h, datetime.utcnow().isoformat(), 1, None, None, trust),
     )
 
 
 def _ensure_seed_rotherham_user(conn: sqlite3.Connection) -> None:
-    """Demo premium HR login for Rotherham (same password as dev seed)."""
+    """Demo premium HR login for Rotherham."""
     if bcrypt is None:
         return
     email = DEV_SEED_EMAIL_ROTHERHAM.strip().lower()
     pw = DEV_SEED_PASSWORD
+    trust = DEV_SEED_TRUST_ROTHERHAM
     if not email or not pw:
         return
     _ensure_users_premium_column(conn)
@@ -604,13 +608,13 @@ def _ensure_seed_rotherham_user(conn: sqlite3.Connection) -> None:
     existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
     if existing and existing[0]:
         conn.execute(
-            "UPDATE users SET password_hash = ?, premium = 1 WHERE email = ?",
-            (h, email),
+            "UPDATE users SET password_hash = ?, premium = 1, current_trust = ? WHERE email = ?",
+            (h, trust, email),
         )
         return
     conn.execute(
         "INSERT INTO users (email, password_hash, created_at, premium, gmc_number, display_name, current_trust) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (email, h, datetime.utcnow().isoformat(), 1, None, None, None),
+        (email, h, datetime.utcnow().isoformat(), 1, None, None, trust),
     )
 
 
