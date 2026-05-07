@@ -6,15 +6,30 @@
   <title>Plan a trust move &mdash; NHS Training Passport</title>
   <link rel="stylesheet" href="/static/shared/app.css">
   <style>
-    .moving-select-row { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; align-items: flex-end; margin: 1rem 0; }
-    .moving-select-row .nhsuk-form-group { margin: 0; min-width: 20rem; flex: 1 1 340px; }
-    .moving-select-row .nhsuk-form-group--btn { min-width: auto; flex: 0 0 auto; }
-    .moving-select-row select {
-      width: 100%; max-width: 100%; padding: 0.7rem 2.25rem 0.7rem 0.75rem;
+    .moving-trust-row { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; align-items: flex-end; margin: 1rem 0; }
+    .moving-trust-row .nhsuk-form-group { margin: 0; min-width: 18rem; flex: 1 1 300px; }
+    .moving-trust-row .nhsuk-form-group--btn { min-width: auto; flex: 0 0 auto; }
+    .moving-trust-readonly {
+      width: 100%; padding: 0.7rem 0.85rem;
       font-size: 1rem; border: 2px solid var(--nhsuk-border); border-radius: 4px;
-      font-family: inherit; background: #fff;
+      font-family: inherit; background: #f0f4f5; color: var(--nhsuk-secondary-text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .moving-select-row select:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 0; border-color: var(--nhsuk-text); }
+    .moving-trust-hint { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.3rem; }
+    /* ODS autocomplete */
+    .moving-ac-wrap { position: relative; }
+    .moving-suggest-list {
+      position: absolute; left: 0; right: 0; top: 100%; z-index: 50;
+      background: #fff; border: 1px solid var(--nhsuk-border); border-top: none;
+      border-radius: 0 0 4px 4px; list-style: none; margin: 0; padding: 0.25rem 0;
+      box-shadow: 0 6px 16px rgba(33,43,50,0.14); max-height: 14rem; overflow-y: auto;
+    }
+    .moving-suggest-list li {
+      padding: 0.55rem 0.85rem; cursor: pointer; font-size: 0.9375rem;
+    }
+    .moving-suggest-list li:hover,
+    .moving-suggest-list li[aria-selected="true"] { background: #e8f0fe; }
+    .moving-suggest-meta { display: block; font-size: 0.75rem; color: var(--nhsuk-secondary-text); margin-top: 0.1rem; }
     #movingError { color: var(--nhsuk-error); font-weight: 600; margin-top: 0.75rem; }
     #movingResults section { margin-top: 1.75rem; padding-top: 1.5rem; border-top: 1px solid var(--nhsuk-border); }
     #movingResults h2 { font-size: 1.35rem; margin: 0 0 0.5rem; }
@@ -64,7 +79,7 @@
 
   <main class="nhsuk-main" id="maincontent" role="main">
     <h1 class="nhsuk-page-heading">Plan a trust move</h1>
-    <p class="nhsuk-lead">Pick where you are <strong>joining</strong> and <strong>leaving</strong>. We compare your training list to the destination&rsquo;s mandatory topics so you can prepare evidence before you start. <strong>Final recognition is decided by your new trust&rsquo;s HR and Medical Staffing.</strong></p>
+    <p class="nhsuk-lead">Your current trust is filled in from your profile. Search for the trust you are joining — we&rsquo;ll compare your training list against their mandatory topics so you can prepare before you start.</p>
 
     <div class="empty-list-prompt" id="emptyListPrompt" hidden>
       <p style="margin:0 0 0.5rem 0;"><strong>Your training list is empty.</strong></p>
@@ -74,14 +89,23 @@
 
     <section class="nhsuk-card nhsuk-card--accent" aria-labelledby="trustSelTitle">
       <h2 id="trustSelTitle">Choose trusts</h2>
-      <div class="moving-select-row" role="group" aria-labelledby="trustSelTitle">
+      <div class="moving-trust-row" role="group" aria-labelledby="trustSelTitle">
         <div class="nhsuk-form-group">
-          <label class="nhsuk-label" for="joinTrust">I am joining</label>
-          <select id="joinTrust" name="joinTrust"></select>
+          <label class="nhsuk-label" for="leaveTrustDisplay">I am leaving (current trust)</label>
+          <div class="moving-trust-readonly" id="leaveTrustDisplay" aria-readonly="true">—</div>
+          <p class="moving-trust-hint">From your profile &mdash; <a href="/static/profile/">update in profile</a></p>
         </div>
         <div class="nhsuk-form-group">
-          <label class="nhsuk-label" for="leaveTrust">I am leaving</label>
-          <select id="leaveTrust" name="leaveTrust"></select>
+          <label class="nhsuk-label" for="joinTrustInput">I am joining</label>
+          <div class="moving-ac-wrap" id="joinTrustWrap">
+            <input class="nhsuk-input" type="text" id="joinTrustInput" name="joinTrustInput"
+              autocomplete="off" spellcheck="false" placeholder="Search for NHS trust&hellip;"
+              role="combobox" aria-autocomplete="list" aria-controls="joinTrustSuggestList"
+              aria-expanded="false" style="max-width:100%;">
+            <input type="hidden" id="joinTrustOds" value="">
+            <ul id="joinTrustSuggestList" class="moving-suggest-list" role="listbox" hidden
+              aria-label="Matching NHS trusts"></ul>
+          </div>
         </div>
         <div class="nhsuk-form-group nhsuk-form-group--btn">
           <button type="button" class="nhsuk-button" id="btnRefreshChecklist">Run checklist</button>
@@ -104,6 +128,7 @@
 
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/ods-trust-suggest.js"></script>
   <script src="/static/moving/trust-mover.js"></script>
   <script>
     (async function () {
@@ -111,10 +136,110 @@
       if (!NHSAuth.requireAuth()) return;
       if (!NHSAuth.requireProfileComplete()) return;
       document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
+      /* populate leaving trust from profile */
+      var currentTrust = (NHSAuth.user && NHSAuth.user.current_trust) || '';
+      var leaveDisplay = document.getElementById('leaveTrustDisplay');
+      if (leaveDisplay) leaveDisplay.textContent = currentTrust || 'Not set — update in profile';
       await NHSAuth.pullWalletMerge();
       var list = window.NHSWallet ? NHSWallet.getWallet() : [];
       document.getElementById('emptyListPrompt').hidden = list.length > 0;
       window.dispatchEvent(new CustomEvent('nhs-wallet-updated'));
+    })();
+
+    /* ── Join trust ODS autocomplete ─────────────────────────────────────── */
+    (function wireJoinAc() {
+      var inp = document.getElementById('joinTrustInput');
+      var odsHid = document.getElementById('joinTrustOds');
+      var list = document.getElementById('joinTrustSuggestList');
+      var wrap = document.getElementById('joinTrustWrap');
+      if (!inp || !list) return;
+
+      var items = [];
+      var active = -1;
+      var debounce = null;
+
+      function hideList() {
+        list.hidden = true;
+        inp.setAttribute('aria-expanded', 'false');
+        active = -1;
+      }
+      function renderItems(results) {
+        items = results || [];
+        active = -1;
+        if (!items.length) { hideList(); return; }
+        list.innerHTML = items.map(function (it, i) {
+          return '<li role="option" aria-selected="false" data-index="' + i + '">'
+            + escapeHtml(it.name)
+            + (it.ods ? '<span class="moving-suggest-meta">ODS ' + escapeHtml(it.ods) + '</span>' : '')
+            + '</li>';
+        }).join('');
+        list.hidden = false;
+        inp.setAttribute('aria-expanded', 'true');
+      }
+      function highlight() {
+        Array.from(list.querySelectorAll('li')).forEach(function (li, i) {
+          li.setAttribute('aria-selected', i === active ? 'true' : 'false');
+        });
+      }
+      function applyItem(idx) {
+        var it = items[idx];
+        if (!it) return;
+        inp.value = it.name;
+        odsHid.value = it.ods || '';
+        hideList();
+        /* auto-run if ODS code is known */
+        if (it.ods) window.dispatchEvent(new CustomEvent('nhs-join-trust-selected'));
+      }
+      function escapeHtml(s) {
+        var d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+      }
+      function scheduleSearch() {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(async function () {
+          debounce = null;
+          odsHid.value = '';
+          var q = inp.value.trim();
+          if (q.length < 2) { hideList(); return; }
+          if (!window.NHSOdsTrustSuggest) return;
+          try {
+            var res = await NHSOdsTrustSuggest.search(q, { minLength: 2, limit: 8 });
+            renderItems(res);
+          } catch (e) { hideList(); }
+        }, 280);
+      }
+
+      inp.addEventListener('input', scheduleSearch);
+      inp.addEventListener('keydown', function (e) {
+        if (list.hidden || !items.length) return;
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          active = Math.min(active + 1, items.length - 1);
+          if (active < 0) active = 0;
+          highlight();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          active = Math.max(active - 1, 0);
+          highlight();
+        } else if (e.key === 'Enter' && active >= 0) {
+          e.preventDefault();
+          applyItem(active);
+        } else if (e.key === 'Escape') {
+          hideList();
+        }
+      });
+      inp.addEventListener('blur', function () {
+        setTimeout(hideList, 180);
+      });
+      list.addEventListener('mousedown', function (e) {
+        if (e.target.closest('li[role="option"]')) e.preventDefault();
+      });
+      list.addEventListener('click', function (e) {
+        var li = e.target.closest('li[role="option"]');
+        if (li) applyItem(parseInt(li.dataset.index, 10));
+      });
+      document.addEventListener('click', function (e) {
+        if (wrap && !wrap.contains(e.target)) hideList();
+      });
     })();
 
     document.getElementById('btnSignOut').addEventListener('click', async function () {

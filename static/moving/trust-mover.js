@@ -1,23 +1,32 @@
 /**
- * Trust move planner: loads /static/trust/config/{join}.json and renders
- * mandatory list, recognition (by leaving trust), and wallet match (localStorage).
+ * Trust move planner: loads /static/trust/config/{configId}.json and renders
+ * mandatory list and wallet gap analysis.
+ *
+ * "I am leaving" = NHSAuth.user.current_trust (set by page boot).
+ * "I am joining" = ODS autocomplete; ODS code mapped to config ID below.
  */
 (function () {
   var STORAGE_KEY = 'nhs_credentials';
-  var JOIN_OPTIONS = [
-    { id: 'sheffield', label: 'Sheffield Teaching Hospitals NHS FT (pilot example)' },
-    { id: 'example-north', label: 'Example Northern trust (placeholder)' },
-  ];
-  var LEAVE_OPTIONS = [
-    { id: 'rotherham', label: 'The Rotherham NHS Foundation Trust (example)' },
-    { id: 'other', label: 'Another trust (generic guidance)' },
+
+  /**
+   * Map ODS code → config file ID (filename without .json).
+   * Add a row here whenever a new trust config is added to /static/trust/config/.
+   */
+  var ODS_TO_CONFIG_ID = {
+    'RHQ': 'sheffield',
+  };
+
+  /**
+   * Fallback: if no ODS code is known, try matching the typed name against
+   * these substrings (lower-case).
+   */
+  var NAME_TO_CONFIG_ID = [
+    { substr: 'sheffield teaching', id: 'sheffield' },
   ];
 
-    var joinSel = document.getElementById('joinTrust');
-    var leaveSel = document.getElementById('leaveTrust');
-    var btnRefresh = document.getElementById('btnRefreshChecklist');
-    var cache = {};
-    var checklistReqSeq = 0;
+  var btnRefresh = document.getElementById('btnRefreshChecklist');
+  var cache = {};
+  var checklistReqSeq = 0;
 
   function escapeHtml(s) {
     if (s == null) return '';
@@ -26,10 +35,15 @@
     return d.innerHTML;
   }
 
-  function fillSelect(sel, options) {
-    sel.innerHTML = options.map(function (o) {
-      return '<option value="' + escapeHtml(o.id) + '">' + escapeHtml(o.label) + '</option>';
-    }).join('');
+  function getJoinConfigId() {
+    var ods = (document.getElementById('joinTrustOds') || {}).value || '';
+    if (ods && ODS_TO_CONFIG_ID[ods.toUpperCase()]) return ODS_TO_CONFIG_ID[ods.toUpperCase()];
+    /* fall back to name substring match */
+    var name = ((document.getElementById('joinTrustInput') || {}).value || '').trim().toLowerCase();
+    for (var i = 0; i < NAME_TO_CONFIG_ID.length; i++) {
+      if (name.indexOf(NAME_TO_CONFIG_ID[i].substr) !== -1) return NAME_TO_CONFIG_ID[i].id;
+    }
+    return null;
   }
 
   function parseJwtPayload(jwt) {
@@ -140,7 +154,7 @@
             tagClass = 'tag-miss';
             nGap++;
           } else {
-            status = fromLeave ? 'Met (issuer matches “leaving” trust hints)' : 'Met';
+            status = fromLeave ? 'Met (issuer matches "leaving" trust hints)' : 'Met';
             tagClass = 'tag-met';
             nMet++;
           }
@@ -217,12 +231,12 @@
     );
   }
 
-  function getRecognitionHints(cfg, leaveId) {
+  function getRecognitionHints(cfg) {
     var map = cfg.recognition_when_joining || {};
-    return map[leaveId === 'other' ? '_default' : leaveId] || map._default || {};
+    return map._default || {};
   }
 
-  function render(cfg, joinId, leaveId) {
+  function render(cfg) {
     var rows = (cfg.mandatory_examples || []).map(function (req) {
       return (
         '<tr><td>' +
@@ -235,22 +249,22 @@
     document.getElementById('movingMandatoryWrap').innerHTML =
       '<table class="moving-table"><thead><tr><th>Topic</th><th>Category</th></tr></thead><tbody>' + rows + '</tbody></table>';
 
-    var recHints = getRecognitionHints(cfg, leaveId);
+    var recHints = getRecognitionHints(cfg);
     document.getElementById('movingWalletWrap').innerHTML = walletTable(cfg.mandatory_examples || [], recHints);
 
     document.getElementById('movingResults').hidden = false;
     document.getElementById('movingResults').setAttribute('aria-hidden', 'false');
   }
 
-  function loadConfig(joinId) {
-    if (cache[joinId]) return Promise.resolve(cache[joinId]);
-    return fetch('/static/trust/config/' + encodeURIComponent(joinId) + '.json')
+  function loadConfig(configId) {
+    if (cache[configId]) return Promise.resolve(cache[configId]);
+    return fetch('/static/trust/config/' + encodeURIComponent(configId) + '.json')
       .then(function (r) {
-        if (!r.ok) throw new Error('No checklist pack for this trust yet (' + r.status + ').');
+        if (!r.ok) throw new Error('No checklist pack for this trust yet.');
         return r.json();
       })
       .then(function (j) {
-        cache[joinId] = j;
+        cache[configId] = j;
         return j;
       });
   }
@@ -267,30 +281,47 @@
     }
   }
 
+  function setError(msg) {
+    var el = document.getElementById('movingError');
+    if (el) el.textContent = msg || '';
+  }
+
   function run() {
     if (!isSignedInForPlanner()) {
-      document.getElementById('movingError').textContent = '';
+      setError('');
       hideResults();
       return;
     }
-    var joinId = joinSel.value;
-    var leaveId = leaveSel.value;
-    document.getElementById('movingError').textContent = '';
+    var joinInput = document.getElementById('joinTrustInput');
+    var joinText = joinInput ? joinInput.value.trim() : '';
+    if (!joinText) {
+      setError('');
+      hideResults();
+      return;
+    }
+    var configId = getJoinConfigId();
+    if (!configId) {
+      setError('No checklist pack is available for this trust yet. Only pilot trusts are supported at the moment.');
+      hideResults();
+      return;
+    }
+
+    setError('');
     var seq = ++checklistReqSeq;
     if (btnRefresh) {
       btnRefresh.disabled = true;
       btnRefresh.classList.add('is-loading');
       btnRefresh.setAttribute('aria-busy', 'true');
     }
-    loadConfig(joinId)
+    loadConfig(configId)
       .then(function (cfg) {
         if (seq !== checklistReqSeq) return;
-        render(cfg, joinId, leaveId);
+        render(cfg);
       })
       .catch(function (err) {
         if (seq !== checklistReqSeq) return;
-        document.getElementById('movingError').textContent = err.message || String(err);
-        document.getElementById('movingResults').hidden = true;
+        setError(err.message || String(err));
+        hideResults();
       })
       .finally(function () {
         if (seq !== checklistReqSeq) return;
@@ -302,27 +333,8 @@
       });
   }
 
-  function applyQueryParams() {
-    var p = new URLSearchParams(window.location.search);
-    var j = p.get('join');
-    var l = p.get('leave');
-    if (j && /^[a-z0-9-]+$/i.test(j) && joinSel.querySelector('option[value="' + j + '"]')) joinSel.value = j;
-    if (l && /^[a-z0-9-]+$/i.test(l) && leaveSel.querySelector('option[value="' + l + '"]')) leaveSel.value = l;
-    var planner = document.getElementById('moving-planner');
-    if (planner && window.location.hash === '#moving-planner') {
-      planner.scrollIntoView({ behavior: 'smooth' });
-    }
-  }
-
-  fillSelect(joinSel, JOIN_OPTIONS);
-  fillSelect(leaveSel, LEAVE_OPTIONS);
-  applyQueryParams();
-
-  joinSel.addEventListener('change', run);
-  leaveSel.addEventListener('change', run);
   if (btnRefresh) btnRefresh.addEventListener('click', run);
   window.addEventListener('nhs-wallet-updated', run);
   window.addEventListener('nhs-auth-changed', run);
-
-  run();
+  window.addEventListener('nhs-join-trust-selected', run);
 })();
