@@ -6,14 +6,64 @@
   <title>Plan a trust move &mdash; NHS Training Passport</title>
   <link rel="stylesheet" href="/static/shared/app.css">
   <style>
-    .moving-trust-row { display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; align-items: flex-start; margin: 1rem 0; }
-    .moving-trust-row .nhsuk-form-group { margin: 0; min-width: 18rem; flex: 1 1 300px; }
-    .moving-trust-row .nhsuk-form-group--btn { min-width: auto; flex: 0 0 auto; padding-top: 1.6rem; }
+    .moving-trust-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+      grid-template-rows: auto auto auto;
+      grid-template-areas:
+        'lbl-leave lbl-join .'
+        'fld-leave fld-join btn'
+        'hint . .';
+      column-gap: 1.25rem;
+      row-gap: 0.35rem;
+      align-items: stretch;
+      margin: 1rem 0;
+    }
+    @media (max-width: 720px) {
+      .moving-trust-row {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+        grid-template-areas:
+          'lbl-leave'
+          'fld-leave'
+          'hint'
+          'lbl-join'
+          'fld-join'
+          'btn';
+      }
+    }
+    .moving-trust-row .nhsuk-label { margin: 0; }
+    .moving-trust-row__label-leave { grid-area: lbl-leave; }
+    .moving-trust-row__label-join { grid-area: lbl-join; }
+    .moving-trust-row #leaveTrustDisplay { grid-area: fld-leave; }
+    .moving-trust-row #joinTrustWrap { grid-area: fld-join; min-width: 0; width: 100%; }
+    .moving-trust-row__btn-cell {
+      grid-area: btn;
+      display: flex;
+      align-items: center;
+    }
+    .moving-trust-row__btn-cell .nhsuk-button { margin: 0; white-space: nowrap; }
+    .moving-trust-row .moving-trust-hint {
+      grid-area: hint;
+      margin: 0.15rem 0 0 0;
+    }
+    .moving-trust-row .moving-trust-input {
+      width: 100%;
+      max-width: none;
+      box-sizing: border-box;
+      line-height: 1.25;
+      min-height: calc(1.25rem + 1.4rem + 4px);
+    }
     .moving-trust-readonly {
       width: 100%; padding: 0.7rem 0.85rem;
       font-size: 1rem; border: 2px solid var(--nhsuk-border); border-radius: 4px;
       font-family: inherit; background: #f0f4f5; color: var(--nhsuk-secondary-text);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      box-sizing: border-box;
+      line-height: 1.25;
+      min-height: calc(1.25rem + 1.4rem + 4px);
+      display: flex;
+      align-items: center;
     }
     .moving-trust-hint { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.3rem; }
     /* ODS autocomplete */
@@ -90,26 +140,24 @@
     <section class="nhsuk-card nhsuk-card--accent" aria-labelledby="trustSelTitle">
       <h2 id="trustSelTitle">Choose trusts</h2>
       <div class="moving-trust-row" role="group" aria-labelledby="trustSelTitle">
-        <div class="nhsuk-form-group">
-          <label class="nhsuk-label" for="leaveTrustDisplay">I am leaving (current trust)</label>
-          <div class="moving-trust-readonly" id="leaveTrustDisplay" aria-readonly="true">—</div>
-          <p class="moving-trust-hint">From your profile &mdash; <a href="/static/profile/">update in profile</a></p>
+        <label class="nhsuk-label moving-trust-row__label-leave" for="leaveTrustDisplay">I am leaving (current trust)</label>
+        <label class="nhsuk-label moving-trust-row__label-join" for="joinTrustInput">I am joining</label>
+
+        <div class="moving-trust-readonly" id="leaveTrustDisplay" aria-readonly="true">—</div>
+        <div class="moving-ac-wrap" id="joinTrustWrap">
+          <input class="nhsuk-input moving-trust-input" type="text" id="joinTrustInput" name="joinTrustInput"
+            autocomplete="off" spellcheck="false" placeholder="Search for NHS trust&hellip;"
+            role="combobox" aria-autocomplete="list" aria-controls="joinTrustSuggestList"
+            aria-expanded="false">
+          <input type="hidden" id="joinTrustOds" value="">
+          <ul id="joinTrustSuggestList" class="moving-suggest-list" role="listbox" hidden
+            aria-label="Matching NHS trusts"></ul>
         </div>
-        <div class="nhsuk-form-group">
-          <label class="nhsuk-label" for="joinTrustInput">I am joining</label>
-          <div class="moving-ac-wrap" id="joinTrustWrap">
-            <input class="nhsuk-input" type="text" id="joinTrustInput" name="joinTrustInput"
-              autocomplete="off" spellcheck="false" placeholder="Search for NHS trust&hellip;"
-              role="combobox" aria-autocomplete="list" aria-controls="joinTrustSuggestList"
-              aria-expanded="false" style="max-width:100%;">
-            <input type="hidden" id="joinTrustOds" value="">
-            <ul id="joinTrustSuggestList" class="moving-suggest-list" role="listbox" hidden
-              aria-label="Matching NHS trusts"></ul>
-          </div>
-        </div>
-        <div class="nhsuk-form-group nhsuk-form-group--btn">
+        <div class="moving-trust-row__btn-cell">
           <button type="button" class="nhsuk-button" id="btnRefreshChecklist">Run checklist</button>
         </div>
+
+        <p class="moving-trust-hint">From your profile &mdash; <a href="/static/profile/">update in profile</a></p>
       </div>
       <p id="movingError" role="alert"></p>
     </section>
