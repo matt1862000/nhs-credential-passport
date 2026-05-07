@@ -1,24 +1,45 @@
 /**
  * NHS Organisation Directory (ORD) trust name search — shared by staff + profile.
  * https://directory.spineservices.nhs.uk/ORD/2-0-0/organisations
+ *
+ * Suggestions are restricted to employer-scale NHS trusts / health boards only (not local
+ * authorities, GP hubs, legacy PCTs, trust sites, etc.).
  */
 (function (w) {
   var ORD_URL = 'https://directory.spineservices.nhs.uk/ORD/2-0-0/organisations';
 
+  /** Primary roles: NHS Trust (England incl. foundation), Care Trust, Welsh LHB, NI trust, Scottish board. */
+  var TRUST_PICKLIST_PRIMARY_ROLE_IDS = {
+    RO197: true,
+    RO107: true,
+    RO142: true,
+    RO154: true,
+    RO190: true,
+  };
+
+  /** Roles queried separately so short Name searches still return trusts/boards (plain Name alone is dominated by non-trust orgs). */
+  var TRUST_ROLE_IDS_FOR_QUERY = ['RO197', 'RO107', 'RO142', 'RO154', 'RO190'];
+
   function normQuery(raw) {
     return (raw || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  function isTrustPicklistPrimaryRole(org) {
+    var rid = org && org.PrimaryRoleId ? String(org.PrimaryRoleId) : '';
+    return !!TRUST_PICKLIST_PRIMARY_ROLE_IDS[rid];
   }
 
   function scoreOrdOrg(org, q) {
     var nm = org.Name || '';
     var name = nm.toLowerCase().replace(/\s+/g, ' ').trim();
     if ((org.Status || '').toUpperCase() !== 'ACTIVE') return -Infinity;
+    if (!isTrustPicklistPrimaryRole(org)) return -Infinity;
     var s = 0;
     if (/trial|covid|octave|comcov|research database|nhs app/i.test(nm)) s -= 55;
     var rid = org.PrimaryRoleId || '';
     if (rid === 'RO197') s += 100;
-    else if (rid === 'RO198') s += 38;
-    else if (rid === 'RO76') s += 18;
+    else if (rid === 'RO154' || rid === 'RO142' || rid === 'RO190') s += 96;
+    else if (rid === 'RO107') s += 92;
     var rc = org.OrgRecordClass || '';
     if (rc === 'RC1') s += 48;
     else if (rc === 'RC2') s += 12;
@@ -55,11 +76,43 @@
     var t = (nameQuery || '').trim();
     var min = typeof minLen === 'number' ? minLen : 2;
     if (t.length < min) return [];
-    var url = ORD_URL + '?Name=' + encodeURIComponent(t) + '&Limit=35';
-    var res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!res.ok) return [];
-    var data = await res.json();
-    return data.Organisations || [];
+    var perLimit = 40;
+    var fetches = TRUST_ROLE_IDS_FOR_QUERY.map(function (roleId) {
+      var url =
+        ORD_URL +
+        '?Name=' +
+        encodeURIComponent(t) +
+        '&PrimaryRoleId=' +
+        encodeURIComponent(roleId) +
+        '&Limit=' +
+        perLimit;
+      return fetch(url, { headers: { Accept: 'application/json' } })
+        .then(function (res) {
+          if (!res.ok) return [];
+          return res.json().then(function (data) {
+            return data.Organisations || [];
+          });
+        })
+        .catch(function () {
+          return [];
+        });
+    });
+    var batches = await Promise.all(fetches);
+    var byId = {};
+    for (var bi = 0; bi < batches.length; bi++) {
+      var batch = batches[bi];
+      for (var i = 0; i < batch.length; i++) {
+        var o = batch[i];
+        var id = o.OrgId || '';
+        if (!id || byId[id]) continue;
+        byId[id] = o;
+      }
+    }
+    var merged = [];
+    for (var k in byId) {
+      if (Object.prototype.hasOwnProperty.call(byId, k)) merged.push(byId[k]);
+    }
+    return merged;
   }
 
   w.NHSOdsTrustSuggest = {
