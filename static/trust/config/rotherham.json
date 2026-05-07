@@ -1,0 +1,96 @@
+{
+  "trust_id": "rotherham",
+  "display_name": "Rotherham Doncaster and South Humber NHS Foundation Trust",
+  "ods": "RXE",
+  "disclaimer": "Pilot demonstration content only — not an official trust policy. Confirm with Medical Staffing, HR, and your specialty team.",
+  "mandatory_examples": [
+    {
+      "id": "ig",
+      "label": "Information Governance",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": ["information_governance"],
+      "match_name_substrings": ["information governance", "ig level"]
+    },
+    {
+      "id": "fire",
+      "label": "Fire Safety",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": ["fire_safety"],
+      "match_name_substrings": ["fire safety"]
+    },
+    {
+      "id": "ipc",
+      "label": "Infection Prevention and Control",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": ["infection_control"],
+      "match_name_substrings": ["infection prevention", "infection control", "ipc"]
+    },
+    {
+      "id": "sg_l3",
+      "label": "Safeguarding (adults & children) Level 3",
+      "category": "UK CSTF / trust policy",
+      "match_module_codes": ["safeguarding_level_3"],
+      "match_name_substrings": ["safeguarding level 3", "adult safeguarding level 3", "sg3"],
+      "partial_module_codes": ["safeguarding_level_1", "safeguarding_level_2"],
+      "partial_name_substrings": ["safeguarding level 1", "safeguarding level 2", "level 1 safeguarding", "level 2 safeguarding"],
+      "partial_hint": "You may have a lower safeguarding level in your wallet; many clinical roles at this trust require Level 3. Confirm with Medical Staffing / HR."
+    },
+    {
+      "id": "hs",
+      "label": "Health, Safety and Welfare",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": [],
+      "match_name_substrings": ["health, safety and welfare", "health safety welfare"]
+    },
+    {
+      "id": "ed",
+      "label": "Equality, Diversity and Human Rights",
+      "category": "UK CSTF / statutory",
+      "match_module_codes": [],
+      "match_name_substrings": ["equality", "diversity and human rights", "edhr"]
+    },
+    {
+      "id": "local_induction",
+      "label": "Trust / local induction (destination-specific)",
+      "category": "Local — usually not portable",
+      "match_module_codes": [],
+      "match_name_substrings": ["corporate induction", "local induction", "rdash induction", "rotherham induction"]
+    }
+  ],
+  "recognition_when_joining": {
+    "sheffield": {
+      "issuer_trust_name_hints": ["Sheffield", "sheffield teaching"],
+      "issuer_ods_hints": ["RHQ"],
+      "summary": "Verifiable training issued while you were at Sheffield Teaching Hospitals may count towards overlapping UK CSTF statutory topics at RDaSH, if the credential verifies as VALID and meets local rules (role, grade, renewal, specialty).",
+      "often_portable_topics": [
+        "Information Governance",
+        "Fire Safety",
+        "Infection Prevention and Control",
+        "Equality, Diversity and Human Rights",
+        "Health, Safety and Welfare",
+        "Conflict resolution (where applicable)",
+        "Resuscitation (level-appropriate)"
+      ],
+      "typically_local_at_destination": [
+        "Corporate / trust induction and orientation",
+        "IT access and local systems",
+        "Safeguarding pathways not covered by generic CSTF titles",
+        "Specialty-specific mandatory courses"
+      ]
+    },
+    "_default": {
+      "issuer_trust_name_hints": [],
+      "issuer_ods_hints": [],
+      "summary": "When moving from another employer, only cryptographically verifiable training with clear CSTF-aligned titles is likely to be considered; everything else is decided by your new trust’s HR and Medical Staffing.",
+      "often_portable_topics": [
+        "UK CSTF statutory topics where titles clearly match",
+        "Resuscitation at the correct level for your role"
+      ],
+      "typically_local_at_destination": [
+        "Trust induction",
+        "Local safeguarding and security",
+        "Specialty-specific courses"
+      ]
+    }
+  }
+}

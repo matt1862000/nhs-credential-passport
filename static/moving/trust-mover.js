@@ -13,7 +13,8 @@
    * Add a row here whenever a new trust config is added to /static/trust/config/.
    */
   var ODS_TO_CONFIG_ID = {
-    'RHQ': 'sheffield',
+    RHQ: 'sheffield',
+    RXE: 'rotherham',
   };
 
   /**
@@ -22,6 +23,8 @@
    */
   var NAME_TO_CONFIG_ID = [
     { substr: 'sheffield teaching', id: 'sheffield' },
+    { substr: 'rotherham doncaster', id: 'rotherham' },
+    { substr: 'south humber nhs foundation', id: 'rotherham' },
   ];
 
   var btnRefresh = document.getElementById('btnRefreshChecklist');
@@ -301,7 +304,7 @@
     }
     var configId = getJoinConfigId();
     if (!configId) {
-      setError('No checklist pack is available for this trust yet. Only pilot trusts are supported at the moment.');
+      setError('No checklist pack is available for this trust yet.');
       hideResults();
       return;
     }
