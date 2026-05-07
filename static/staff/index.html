@@ -1711,11 +1711,16 @@
       await pullMergeFromServer();
       await refreshVerifiedMap();
 
-      /* Onboarding nudge — step 4 (add first record) or step 5 (share for verification) */
+      var summaryStrip = document.getElementById('staffTrainingSummaryStrip');
+      if (summaryStrip) summaryStrip.hidden = !!(NHSAuth.user && NHSAuth.user.premium);
+      applyProfileToAddForm();
+      applyProfileGateUi();
+      renderList();
+
+      /* Onboarding nudge — checked AFTER renderList so wallet state is settled */
       if (!NHSAuth.user.premium && window.NHSOnboardingNudge && NHSOnboardingNudge.shouldShow()) {
-        var _walletLen = 0;
-        try { _walletLen = (JSON.parse(localStorage.getItem('nhs_credentials') || '[]') || []).length; } catch (e) {}
-        if (_walletLen === 0) {
+        var _activeRecords = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
+        if (_activeRecords.length === 0) {
           NHSOnboardingNudge.show({
             insertAfterId: 'staffPageHeading',
             step: 4,
@@ -1725,18 +1730,13 @@
           NHSOnboardingNudge.show({
             insertAfterId: 'staffPageHeading',
             step: 5,
-            message: 'Select a record and click <strong>Share for verification</strong> to send it to your trust HR team.',
+            message: 'Select a record and click <strong>Verify with HR</strong> to send it to your trust\u2019s HR team.',
             ctaLabel: 'Back to dashboard',
             ctaHref: '/static/dashboard/',
           });
         }
       }
 
-      var summaryStrip = document.getElementById('staffTrainingSummaryStrip');
-      if (summaryStrip) summaryStrip.hidden = !!(NHSAuth.user && NHSAuth.user.premium);
-      applyProfileToAddForm();
-      applyProfileGateUi();
-      renderList();
       if (/^#(list|add|import|bulk)$/.test(window.location.hash)) {
         var tab = document.querySelector('.nhsuk-tabs button[data-tab="' + window.location.hash.slice(1) + '"]');
         if (tab) tab.click();
