@@ -526,11 +526,25 @@
               esc(String(it.verified_by_trust_name)) +
               '</div>'
             : '';
-          var hasCert = !!(it.certificate_base64 && String(it.certificate_base64).trim());
+          var rowCert = (it.certificate_base64 && String(it.certificate_base64).trim()) ? String(it.certificate_base64).trim() : '';
+          var fallbackSameSubmissionCert = '';
+          if (!rowCert && it.session_id != null) {
+            var fallbackItem = (s.items || []).find(function (x) {
+              return String(x.session_id) === String(it.session_id) &&
+                x.certificate_base64 &&
+                String(x.certificate_base64).trim();
+            });
+            if (fallbackItem && fallbackItem.certificate_base64) {
+              fallbackSameSubmissionCert = String(fallbackItem.certificate_base64).trim();
+            }
+          }
+          var hasCert = !!(rowCert || fallbackSameSubmissionCert);
           var modLabel = esc(it.module_name || it.credential_id || '—');
           var modCell = hasCert
             ? '<button type="button" class="hr-module-name-btn" data-view-cert="1" data-cid="' +
               esc(it.credential_id) +
+              '" data-sid="' +
+              esc(sidForApi) +
               '" title="View evidence uploaded with this record">' +
               modLabel +
               '</button>'
@@ -577,9 +591,18 @@
           if (viewCert) {
             e.preventDefault();
             var cid = viewCert.getAttribute('data-cid');
+            var sid = viewCert.getAttribute('data-sid');
             var it = (lastSessionPayload.items || []).find(function (x) {
               return String(x.credential_id) === String(cid);
             });
+            if ((!it || !it.certificate_base64) && sid) {
+              var fallback = (lastSessionPayload.items || []).find(function (x) {
+                return String(x.session_id) === String(sid) &&
+                  x.certificate_base64 &&
+                  String(x.certificate_base64).trim();
+              });
+              if (fallback) it = fallback;
+            }
             if (it && it.certificate_base64) openHrCertModal(it);
             return;
           }
