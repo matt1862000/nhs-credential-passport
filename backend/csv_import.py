@@ -338,10 +338,8 @@ def _row_to_record(
             or g("certification_date")
         )
         expiry_s = g("expiry_date")
-        ods = g("issuing_trust_ods_code") or g("esr_vpd") or "ESR"
-        trust_name = g("issuing_trust_name") or (
-            f"Employer ref {ods} (from ESR export)" if ods else "ESR import"
-        )
+        ods = g("issuing_trust_ods_code") or g("esr_vpd") or ""
+        trust_name = g("issuing_trust_name") or ""
 
         miss = []
         if not completion_s:

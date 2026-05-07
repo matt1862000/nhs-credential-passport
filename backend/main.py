@@ -212,6 +212,14 @@ async def api_import_csv(
     ev_name = (evidence.filename or "evidence").strip()
     ev_ct = ev_ct_norm
 
+    # Fill in the doctor's current trust as issuing_trust_name for ESR records
+    # that don't carry an explicit trust name in the CSV.
+    doctor = db.user_get_by_id(uid)
+    doctor_trust = ((doctor.get("current_trust") or "") if doctor else "").strip()
+    for p in valid:
+        if p.record and not (p.record.issuing_trust_name or "").strip() and doctor_trust:
+            p.record.issuing_trust_name = doctor_trust
+
     # One JSON with dozens of PDFs exceeds typical proxy timeouts; skip PDFs for multi-row CSV.
     include_pdf = len(valid) <= 1
     wallet_raw = db.user_wallet_get(uid)
