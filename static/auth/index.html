@@ -97,7 +97,7 @@
         cardReg.hidden = !isReg;
         title.textContent = isReg ? 'Create account' : 'Sign in';
         lead.textContent = isReg
-          ? 'Enter your email and choose a password. You can add other profile details on the next screen — all optional.'
+          ? 'Enter your email and choose a password. Next you’ll add your full name, GMC number and current trust — all required before you can use your passport.'
           : 'Use the same account on any device to keep your training list in sync.';
         var url = new URL(window.location.href);
         url.searchParams.set('mode', isReg ? 'register' : 'signin');
