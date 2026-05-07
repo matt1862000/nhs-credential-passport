@@ -125,6 +125,11 @@ a:hover {
   white-space: nowrap;
 }
 
+/* Ensure [hidden] is always respected even when child rules set display */
+[hidden] {
+  display: none !important;
+}
+
 /* Header hamburger menu */
 .nhsuk-menu {
   position: relative;
