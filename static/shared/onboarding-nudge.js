@@ -45,12 +45,22 @@
     var total = config.total || 5;
     var nudge = document.createElement('div');
     nudge.className = 'onb-nudge';
+    nudge.setAttribute('data-onb-step', String(config.step));
     nudge.setAttribute('role', 'note');
     nudge.setAttribute('aria-label', 'Getting started — step ' + config.step + ' of ' + total);
 
-    var ctaHtml = config.ctaHref
-      ? ' <a class="onb-nudge__cta" href="' + config.ctaHref + '">Next: ' + config.ctaLabel + ' &rsaquo;</a>'
-      : '';
+    var ctaHtml =
+      config.ctaHref && config.ctaLabel
+        ? ' <a class="onb-nudge__cta" href="' + config.ctaHref + '">Next: ' + config.ctaLabel + ' &rsaquo;</a>'
+        : '';
+
+    /* Replace any prior nudge for this anchor (e.g. step 4 → 5 after adding a record). */
+    var sib = anchor.nextElementSibling;
+    while (sib && sib.classList && sib.classList.contains('onb-nudge')) {
+      var rm = sib;
+      sib = sib.nextElementSibling;
+      rm.remove();
+    }
 
     nudge.innerHTML =
       '<div class="onb-nudge__body">' +

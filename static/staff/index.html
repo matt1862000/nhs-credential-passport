@@ -321,6 +321,55 @@
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
     }
     #portfolioShareUrl { width: 100%; padding: 0.6rem; margin-top: 0.5rem; border-radius: 4px; border: 1px solid var(--nhsuk-border); font-size: 0.8125rem; }
+
+    /* Onboarding nudge — mirrored from shared/app.css so this page always styles the bar */
+    .onb-nudge {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem 0.75rem;
+      background: #ccecf8;
+      border: 1px solid #41b6e6;
+      border-left: 4px solid #005eb8;
+      border-radius: 6px;
+      padding: 0.75rem 0.85rem;
+      margin-bottom: 1.25rem;
+      font-size: 0.9375rem;
+      box-shadow: 0 2px 6px rgba(0, 94, 184, 0.08);
+    }
+    .onb-nudge__body { flex: 1; min-width: 0; }
+    .onb-nudge__step {
+      font-weight: 700;
+      color: #005eb8;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.35rem;
+    }
+    .onb-nudge__msg { color: var(--nhsuk-text); line-height: 1.45; }
+    .onb-nudge__cta {
+      display: inline-block;
+      margin-left: 0.75rem;
+      white-space: nowrap;
+      font-weight: 600;
+      color: #005eb8;
+    }
+    .onb-nudge__dismiss {
+      flex-shrink: 0;
+      align-self: flex-start;
+      margin-top: -0.15rem;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: var(--nhsuk-secondary-text);
+      font-size: 1.35rem;
+      line-height: 1;
+      padding: 0.15rem 0.35rem;
+      border-radius: 4px;
+    }
+    .onb-nudge__dismiss:hover {
+      color: var(--nhsuk-text);
+      background: rgba(255, 255, 255, 0.65);
+    }
   </style>
 </head>
 <body>
@@ -644,6 +693,54 @@
       } catch (e) {
         verifiedMap = {};
       }
+    }
+
+    function staffHasAnyTrainingRecord() {
+      return getStored().some(function (c) {
+        return !!(c && !c.revoked);
+      });
+    }
+
+    function removeStaffPageOnboardingNudges() {
+      var head = document.getElementById('staffPageHeading');
+      if (!head || !head.parentNode) return;
+      var sib = head.nextElementSibling;
+      while (sib && sib.classList && sib.classList.contains('onb-nudge')) {
+        var rm = sib;
+        sib = sib.nextElementSibling;
+        rm.remove();
+      }
+    }
+
+    function syncStaffOnboardingNudge() {
+      var head = document.getElementById('staffPageHeading');
+      if (!head || !window.NHSAuth || !NHSAuth.user || NHSAuth.user.premium) {
+        removeStaffPageOnboardingNudges();
+        return;
+      }
+      if (!window.NHSOnboardingNudge || !NHSOnboardingNudge.shouldShow()) {
+        removeStaffPageOnboardingNudges();
+        return;
+      }
+      var step = staffHasAnyTrainingRecord() ? 5 : 4;
+      var existing = head.nextElementSibling;
+      if (existing && existing.classList.contains('onb-nudge') && existing.getAttribute('data-onb-step') === String(step)) {
+        return;
+      }
+      var cfg = {
+        insertAfterId: 'staffPageHeading',
+        step: step,
+        total: 5,
+        message:
+          step === 4
+            ? 'Add your first training record using the <strong>Add training</strong> tab below.'
+            : 'Select a record and click <strong>Verify with HR</strong> to send it to your trust\u2019s HR team.',
+      };
+      if (step === 5) {
+        cfg.ctaLabel = 'Back to dashboard';
+        cfg.ctaHref = '/static/dashboard/';
+      }
+      NHSOnboardingNudge.show(cfg);
     }
 
     function hideTrustSuggest() {
@@ -1387,6 +1484,7 @@
       if (bulkActions) bulkActions.style.display = (filtered.length > 0 && bulkFiltered.length === 0) ? 'none' : '';
       updateBulkExportState();
       updateVerifyAllHrControls();
+      syncStaffOnboardingNudge();
     }
 
     function removeCred(credentialId) {
@@ -1717,26 +1815,6 @@
       applyProfileToAddForm();
       applyProfileGateUi();
       renderList();
-
-      /* Onboarding nudge — checked AFTER renderList so wallet state is settled */
-      if (!NHSAuth.user.premium && window.NHSOnboardingNudge && NHSOnboardingNudge.shouldShow()) {
-        var _activeRecords = getStored().filter(function (c) { return c && c.credential_id && !c.revoked; });
-        if (_activeRecords.length === 0) {
-          NHSOnboardingNudge.show({
-            insertAfterId: 'staffPageHeading',
-            step: 4,
-            message: 'Add your first training record using the <strong>Add training</strong> tab below.',
-          });
-        } else {
-          NHSOnboardingNudge.show({
-            insertAfterId: 'staffPageHeading',
-            step: 5,
-            message: 'Select a record and click <strong>Verify with HR</strong> to send it to your trust\u2019s HR team.',
-            ctaLabel: 'Back to dashboard',
-            ctaHref: '/static/dashboard/',
-          });
-        }
-      }
 
       if (/^#(list|add|import|bulk)$/.test(window.location.hash)) {
         var tab = document.querySelector('.nhsuk-tabs button[data-tab="' + window.location.hash.slice(1) + '"]');
