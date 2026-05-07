@@ -222,6 +222,28 @@
     .nhsuk-button--remove:hover { background: #3d4f5c; }
     .nhsuk-button--warning { background: var(--nhsuk-error); }
     .nhsuk-button--warning:hover { background: #a01e12; }
+    .nhsuk-button.is-loading {
+      position: relative;
+      opacity: 0.9;
+      pointer-events: none;
+      padding-left: 2.5rem;
+    }
+    .nhsuk-button.is-loading::before {
+      content: '';
+      position: absolute;
+      left: 0.9rem;
+      top: 50%;
+      width: 0.95rem;
+      height: 0.95rem;
+      margin-top: -0.48rem;
+      border: 2px solid rgba(255, 255, 255, 0.55);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: nhs-spin 0.7s linear infinite;
+    }
+    @keyframes nhs-spin {
+      to { transform: rotate(360deg); }
+    }
     .nhsuk-card {
       background: var(--nhsuk-panel-bg);
       border: 1px solid var(--nhsuk-border);
@@ -1519,6 +1541,16 @@
 
     document.getElementById('addForm').addEventListener('submit', async (e) => {
       e.preventDefault();
+      var submitBtn = e.target.querySelector('button[type="submit"]');
+      if (submitBtn && submitBtn.dataset.busy === '1') return;
+      function setAddBusy(busy) {
+        if (!submitBtn) return;
+        submitBtn.dataset.busy = busy ? '1' : '0';
+        submitBtn.disabled = !!busy;
+        submitBtn.classList.toggle('is-loading', !!busy);
+        submitBtn.textContent = busy ? 'Adding…' : 'Add training';
+      }
+      setAddBusy(true);
       const fd = new FormData(e.target);
       const module_code = fd.get('module_code');
       const module_name = MODULES.find(m => m.code === module_code)?.name || module_code;
@@ -1528,11 +1560,16 @@
         try {
           body.certificate_base64 = await fileToBase64(certInput.files[0]);
           body.certificate_filename = certInput.files[0].name || 'certificate';
-        } catch (err) { alert('Could not read certificate file: ' + err.message); return; }
+        } catch (err) {
+          alert('Could not read certificate file: ' + err.message);
+          setAddBusy(false);
+          return;
+        }
       }
       var dedupeKey = completionDedupeKeyFromAddForm(fd, module_code);
       if (localCompletionDedupeKeys()[dedupeKey]) {
         alert('This training is already in your list (same module, completion/expiry dates, and trust).');
+        setAddBusy(false);
         return;
       }
       try {
@@ -1576,7 +1613,11 @@
         lastAutoOdsSuggested = { name: '', ods: '' };
         applyProfileToAddForm();
         document.querySelector('.nhsuk-tabs button[data-tab="list"]').click();
-      } catch (err) { alert(err.message); }
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        setAddBusy(false);
+      }
     });
 
     function isProfileComplete(u) {
