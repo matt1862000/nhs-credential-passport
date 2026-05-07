@@ -215,7 +215,7 @@
         </div>
         <button type="button" class="nhs-gs__dismiss" id="gsDismissBtn" aria-label="Dismiss guide">&times;</button>
       </div>
-      <div class="nhs-gs__bar-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="4" id="gsBarWrap">
+      <div class="nhs-gs__bar-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="5" id="gsBarWrap">
         <div class="nhs-gs__bar-fill" id="gsBarFill" style="width:0%"></div>
       </div>
       <ol class="nhs-gs__steps" id="gsStepList"></ol>
@@ -405,11 +405,14 @@
 
       var GS_DISMISS_KEY = 'nhs_gs_dismissed';
 
+      var GS_REQS_VISITED_KEY = 'nhs_gs_reqs_visited';
+
       var GS_STEPS_DEF = [
         { id: 'gs1', label: 'Create your account' },
         { id: 'gs2', label: 'Complete your profile' },
-        { id: 'gs3', label: '<a href="/static/staff/#add">Add your first training record</a>' },
-        { id: 'gs4', label: '<a href="/static/staff/#list">Share a record with HR for verification</a>' },
+        { id: 'gs3', label: '<a href="/static/requirements/">Check your trust\u2019s requirements</a>' },
+        { id: 'gs4', label: '<a href="/static/staff/#add">Add your first training record</a>' },
+        { id: 'gs5', label: '<a href="/static/staff/#list">Share a record with HR for verification</a>' },
       ];
 
       function renderGettingStarted(walletLen, anyVerified) {
@@ -417,20 +420,21 @@
         if (!card) return;
         if (localStorage.getItem(GS_DISMISS_KEY)) { card.hidden = true; return; }
 
-        var done = [true, true, walletLen > 0, anyVerified];
+        var reqsVisited = !!localStorage.getItem(GS_REQS_VISITED_KEY) || walletLen > 0;
+        var done = [true, true, reqsVisited, walletLen > 0, anyVerified];
         var doneCount = done.filter(Boolean).length;
-        var allDone = doneCount === 4;
+        var allDone = doneCount === 5;
 
         card.hidden = false;
 
         /* progress bar */
-        var pct = Math.round((doneCount / 4) * 100);
+        var pct = Math.round((doneCount / 5) * 100);
         var fill = document.getElementById('gsBarFill');
         var barWrap = document.getElementById('gsBarWrap');
         var progText = document.getElementById('gsProgressText');
         if (fill) fill.style.width = pct + '%';
-        if (barWrap) barWrap.setAttribute('aria-valuenow', doneCount);
-        if (progText) progText.textContent = doneCount + ' / 4';
+        if (barWrap) { barWrap.setAttribute('aria-valuemax', '5'); barWrap.setAttribute('aria-valuenow', doneCount); }
+        if (progText) progText.textContent = doneCount + ' / 5';
 
         /* steps */
         var list = document.getElementById('gsStepList');
