@@ -482,6 +482,16 @@
                 esc(formatSharedAt(it.decision_at)) +
                 '</div>'
               : '';
+          var issuingLine = it.issuing_trust_name
+            ? '<div class="hr-muted" style="margin-top:0.25rem;">Issuing organisation: ' +
+              esc(String(it.issuing_trust_name)) +
+              '</div>'
+            : '';
+          var verifierTrustLine = it.verified_by_trust_name
+            ? '<div class="hr-muted" style="margin-top:0.25rem;">HR verified at: ' +
+              esc(String(it.verified_by_trust_name)) +
+              '</div>'
+            : '';
           var hasCert = !!(it.certificate_base64 && String(it.certificate_base64).trim());
           var modLabel = esc(it.module_name || it.credential_id || '—');
           var modCell = hasCert
@@ -496,6 +506,8 @@
               '<td>' +
               modCell +
               priorNote +
+              issuingLine +
+              verifierTrustLine +
               note +
               '</td>' +
               '<td>' +

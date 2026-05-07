@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover
 
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "credentials.db"
 DEV_SEED_EMAIL = "sheffieldhr@nhs.net"
+DEV_SEED_EMAIL_ROTHERHAM = "rotherhamhr@nhs.net"
 DEV_SEED_PASSWORD = "password"
 
 
@@ -53,6 +54,7 @@ def init_db():
         _ensure_share_tables(conn)
         _ensure_csv_import_evidence_table(conn)
         _ensure_seed_privileged_user(conn)
+        _ensure_seed_rotherham_user(conn)
         conn.commit()
 
 
@@ -148,6 +150,11 @@ def _ensure_share_tables(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE share_sessions ADD COLUMN share_kind TEXT NOT NULL DEFAULT 'review'"
         )
+    cols_i = [row[1] for row in conn.execute("PRAGMA table_info(share_items)").fetchall()]
+    if "issuing_trust_name" not in cols_i:
+        conn.execute("ALTER TABLE share_items ADD COLUMN issuing_trust_name TEXT")
+    if "verified_by_trust_name" not in cols_i:
+        conn.execute("ALTER TABLE share_items ADD COLUMN verified_by_trust_name TEXT")
 
 
 def share_portfolio_prior_decision_at(doctor_user_id: int, credential_id: str) -> Optional[str]:
@@ -172,6 +179,33 @@ def share_portfolio_prior_decision_at(doctor_user_id: int, credential_id: str) -
     return str(r["d"])
 
 
+def share_portfolio_prior_verifier_trust(doctor_user_id: int, credential_id: str) -> Optional[str]:
+    """Trust name from HR user profile at time of prior review share (Sheffield-style verifying employer)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        r = conn.execute(
+            """
+            SELECT u.current_trust
+            FROM share_items i
+            INNER JOIN share_sessions s ON s.id = i.session_id
+            LEFT JOIN users u ON u.id = i.decision_by_user_id
+            WHERE s.doctor_user_id = ?
+              AND i.credential_id = ?
+              AND i.status = 'VERIFIED'
+              AND IFNULL(s.share_kind, 'review') = 'review'
+              AND i.decision_by_user_id IS NOT NULL
+            ORDER BY datetime(COALESCE(i.decision_at, '')) DESC
+            LIMIT 1
+            """,
+            (int(doctor_user_id), str(credential_id)),
+        ).fetchone()
+    if not r or not r["current_trust"]:
+        return None
+    t = str(r["current_trust"]).strip()
+    return t or None
+
+
 def share_session_create(
     *,
     doctor_user_id: int,
@@ -182,7 +216,7 @@ def share_session_create(
     """
     Create a share session containing credential ids.
     items: [{ credential_id, module_name?, expiry_date?, certificate_base64?, certificate_filename?,
-             portfolio_verified_at? (iso, portfolio kind only) }, ...]
+             portfolio_verified_at?, issuing_trust_name?, verified_by_trust_name? }, ...]
     share_kind: 'review' (HR must verify) or 'portfolio' (already HR-verified elsewhere; snapshot only).
     """
     token = secrets.token_urlsafe(24)
@@ -207,8 +241,9 @@ def share_session_create(
                     """
                     INSERT OR IGNORE INTO share_items (
                         session_id, credential_id, module_name, expiry_date, status,
-                        certificate_base64, certificate_filename, decision_at, decision_by_user_id, decline_reason
-                    ) VALUES (?, ?, ?, ?, 'VERIFIED', ?, ?, ?, NULL, NULL)
+                        certificate_base64, certificate_filename, decision_at, decision_by_user_id, decline_reason,
+                        issuing_trust_name, verified_by_trust_name
+                    ) VALUES (?, ?, ?, ?, 'VERIFIED', ?, ?, ?, NULL, NULL, ?, ?)
                     """,
                     (
                         session_id,
@@ -218,6 +253,8 @@ def share_session_create(
                         it.get("certificate_base64"),
                         it.get("certificate_filename"),
                         dec_at,
+                        (it.get("issuing_trust_name") or "").strip() or None,
+                        (it.get("verified_by_trust_name") or "").strip() or None,
                     ),
                 )
             else:
@@ -225,8 +262,9 @@ def share_session_create(
                     """
                     INSERT OR IGNORE INTO share_items (
                         session_id, credential_id, module_name, expiry_date, status,
-                        certificate_base64, certificate_filename
-                    ) VALUES (?, ?, ?, ?, 'PENDING', ?, ?)
+                        certificate_base64, certificate_filename,
+                        issuing_trust_name
+                    ) VALUES (?, ?, ?, ?, 'PENDING', ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -235,6 +273,7 @@ def share_session_create(
                         it.get("expiry_date"),
                         it.get("certificate_base64"),
                         it.get("certificate_filename"),
+                        (it.get("issuing_trust_name") or "").strip() or None,
                     ),
                 )
         conn.commit()
@@ -316,7 +355,8 @@ def share_doctor_queue(doctor_user_id: int) -> Optional[dict]:
               s.created_at as session_created_at,
               IFNULL(s.share_kind, 'review') as session_share_kind,
               i.credential_id, i.module_name, i.expiry_date, i.status, i.decision_at,
-              i.decline_reason, i.certificate_base64, i.certificate_filename
+              i.decline_reason, i.certificate_base64, i.certificate_filename,
+              i.issuing_trust_name, i.verified_by_trust_name
             FROM share_sessions s
             JOIN share_items i ON i.session_id = s.id
             WHERE s.doctor_user_id = ?
@@ -337,6 +377,8 @@ def share_doctor_queue(doctor_user_id: int) -> Optional[dict]:
             "decline_reason": r["decline_reason"],
             "certificate_base64": r["certificate_base64"],
             "certificate_filename": r["certificate_filename"],
+            "issuing_trust_name": r["issuing_trust_name"],
+            "verified_by_trust_name": r["verified_by_trust_name"],
         }
         for r in rows
     ]
@@ -373,7 +415,8 @@ def share_session_get(session_id: int) -> Optional[dict]:
         items = conn.execute(
             """
             SELECT credential_id, module_name, expiry_date, status, decision_at, decision_by_user_id, decline_reason,
-                   certificate_base64, certificate_filename
+                   certificate_base64, certificate_filename,
+                   issuing_trust_name, verified_by_trust_name
             FROM share_items
             WHERE session_id = ?
             ORDER BY credential_id
@@ -402,6 +445,8 @@ def share_session_get(session_id: int) -> Optional[dict]:
                 "decline_reason": r["decline_reason"],
                 "certificate_base64": r["certificate_base64"],
                 "certificate_filename": r["certificate_filename"],
+                "issuing_trust_name": r["issuing_trust_name"],
+                "verified_by_trust_name": r["verified_by_trust_name"],
             }
             for r in items
         ],
@@ -435,6 +480,20 @@ def share_item_set_decision(
                 str(credential_id),
             ),
         )
+        if st == "VERIFIED":
+            ut = conn.execute(
+                "SELECT current_trust FROM users WHERE id = ?", (int(hr_user_id),)
+            ).fetchone()
+            trust_name = (ut[0] if ut else None) or None
+            if trust_name:
+                conn.execute(
+                    """
+                    UPDATE share_items
+                    SET verified_by_trust_name = ?
+                    WHERE session_id = ? AND credential_id = ?
+                    """,
+                    (str(trust_name).strip(), int(session_id), str(credential_id)),
+                )
         conn.commit()
 
 
@@ -476,6 +535,31 @@ def _ensure_seed_privileged_user(conn: sqlite3.Connection) -> None:
     if bcrypt is None:
         return
     email = DEV_SEED_EMAIL.strip().lower()
+    pw = DEV_SEED_PASSWORD
+    if not email or not pw:
+        return
+    _ensure_users_premium_column(conn)
+    _ensure_users_gmc_number_column(conn)
+    _ensure_users_profile_extra_columns(conn)
+    h = bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
+    existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+    if existing and existing[0]:
+        conn.execute(
+            "UPDATE users SET password_hash = ?, premium = 1 WHERE email = ?",
+            (h, email),
+        )
+        return
+    conn.execute(
+        "INSERT INTO users (email, password_hash, created_at, premium, gmc_number, display_name, current_trust) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (email, h, datetime.utcnow().isoformat(), 1, None, None, None),
+    )
+
+
+def _ensure_seed_rotherham_user(conn: sqlite3.Connection) -> None:
+    """Demo premium HR login for Rotherham (same password as dev seed)."""
+    if bcrypt is None:
+        return
+    email = DEV_SEED_EMAIL_ROTHERHAM.strip().lower()
     pw = DEV_SEED_PASSWORD
     if not email or not pw:
         return

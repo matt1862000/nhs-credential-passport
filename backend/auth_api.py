@@ -13,7 +13,7 @@ import bcrypt
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from . import db, session_auth
+from . import crypto, db, session_auth
 
 router = APIRouter(prefix="/api")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -88,6 +88,23 @@ def require_profile_complete(u: dict) -> None:
         )
 
 
+def _issuing_trust_from_wallet_entry(w: dict) -> Optional[str]:
+    """Prefer plain wallet field; otherwise decode signed JWT for issuing_trust_name."""
+    if not isinstance(w, dict):
+        return None
+    raw = (w.get("issuing_trust_name") or "").strip()
+    if raw:
+        return raw
+    jwt_str = w.get("jwt")
+    if not jwt_str or not isinstance(jwt_str, str):
+        return None
+    payload, _err = crypto.verify_jwt(jwt_str)
+    if not isinstance(payload, dict):
+        return None
+    name = (payload.get("issuing_trust_name") or "").strip()
+    return name or None
+
+
 def _session_response(data: dict, user_id: int, email: str, request: Request) -> JSONResponse:
     token = session_auth.create_session_token(user_id, email)
     resp = JSONResponse(data)
@@ -108,7 +125,11 @@ def _session_response(data: dict, user_id: int, email: str, request: Request) ->
 def auth_register(request: Request, body: dict):
     email = _normalize_email(body.get("email") or "")
     password = body.get("password") or ""
-    if email == DEV_SEED_EMAIL:
+    _reserved = {
+        db.DEV_SEED_EMAIL.strip().lower(),
+        db.DEV_SEED_EMAIL_ROTHERHAM.strip().lower(),
+    }
+    if email in _reserved:
         raise HTTPException(status_code=403, detail="This email is reserved. Use sign in.")
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Invalid email")
@@ -328,16 +349,19 @@ async def me_shares_post(request: Request):
         w = wallet_by_id.get(cid) or {}
         b64 = w.get("certificate_base64") or fallback_b64
         fn = w.get("certificate_filename") or fallback_fn
+        issuing = _issuing_trust_from_wallet_entry(w)
         entry = {
             "credential_id": cid,
             "module_name": w.get("module_name"),
             "expiry_date": w.get("expiry_date"),
             "certificate_base64": b64,
             "certificate_filename": fn,
+            "issuing_trust_name": issuing,
         }
         if portfolio:
             prior = db.share_portfolio_prior_decision_at(uid, cid)
             entry["portfolio_verified_at"] = prior or datetime.utcnow().isoformat()
+            entry["verified_by_trust_name"] = db.share_portfolio_prior_verifier_trust(uid, cid)
         items.append(entry)
 
     created = db.share_session_create(

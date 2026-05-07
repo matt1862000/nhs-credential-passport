@@ -1257,7 +1257,7 @@
         var alreadyPending = !!(v && v.shared && st === 'PENDING');
         var alreadyDecided = !!(v && v.shared && (st === 'VERIFIED' || st === 'DECLINED'));
         var canVerifyWithHr = profileOk && !alreadyPending && !alreadyDecided;
-        var verifyBtnText = alreadyPending ? 'Pending Validation' : (st === 'VERIFIED' ? 'Verified' : (st === 'DECLINED' ? 'Declined' : 'Verify with HR'));
+        var verifyBtnText = alreadyPending ? 'Pending verification' : (st === 'VERIFIED' ? 'Verified' : (st === 'DECLINED' ? 'Declined' : 'Verify with HR'));
         var verifyBtnAttrs = canVerifyWithHr ? '' : ' disabled';
         var verifyBtnTitle = !profileOk ? 'Complete your profile to verify with HR' : (alreadyPending ? 'Already sent to HR' : (alreadyDecided ? 'Decision already recorded' : ''));
         if (verifyBtnTitle) verifyBtnAttrs += ' title="' + verifyBtnTitle.replace(/"/g, '&quot;') + '"';
@@ -1601,7 +1601,7 @@
       var ok = isProfileComplete();
       var btnList = document.getElementById('btnVerifyAllHrList');
       var banner = document.getElementById('verifyAllHrBanner');
-      if (banner) banner.hidden = count <= 1;
+      if (banner) banner.hidden = list.length === 0 || count <= 1;
       var disable = !ok || count <= 1;
       if (btnList) {
         btnList.disabled = disable;
