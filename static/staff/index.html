@@ -313,14 +313,6 @@
     .auth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
     @media (max-width: 720px) { .auth-grid { grid-template-columns: 1fr; } }
     #authUserEmail { font-weight: 600; color: var(--nhsuk-link); }
-    #portfolioShareModal { display: none; position: fixed; inset: 0; background: rgba(33, 43, 50, 0.35); align-items: center; justify-content: center; z-index: 10; }
-    #portfolioShareModal.show { display: flex; }
-    #portfolioShareModal .nhsuk-modal {
-      background: #fff; padding: 1.75rem; max-width: 28rem;
-      border-radius: 4px; border: 1px solid var(--nhsuk-border);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
-    }
-    #portfolioShareUrl { width: 100%; padding: 0.6rem; margin-top: 0.5rem; border-radius: 4px; border: 1px solid var(--nhsuk-border); font-size: 0.8125rem; }
 
     /* Onboarding nudge — mirrored from shared/app.css so this page always styles the bar */
     .onb-nudge {
@@ -518,7 +510,7 @@
     <section id="bulk" role="tabpanel" aria-labelledby="tab-bulk" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel" id="bulkExportPanel">
         <h3 class="nhsuk-bulk-export-panel__title">Download</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Only training marked <strong>VERIFIED</strong> by HR appears here. Tick items below, or use <strong>Select all</strong> then <strong>Download selected PDFs (ZIP)</strong>, or <strong>Share reference pack (link)</strong> for a new employer (read-only — no second HR verification). <strong>Download all PDFs (ZIP)</strong> selects every verified record below.</p>
+        <p class="nhsuk-bulk-export-panel__desc">Only training marked <strong>VERIFIED</strong> by HR appears here. Tick items below, or use <strong>Select all</strong> then <strong>Download selected PDFs (ZIP)</strong>. <strong>Download all PDFs (ZIP)</strong> selects every verified record below.</p>
         <div class="nhsuk-bulk-export-panel__actions">
           <span class="nhsuk-bulk-export-panel__count" id="bulkExportCount" aria-live="polite">0 selected</span>
           <div class="nhsuk-bulk-export-panel__buttons">
@@ -529,7 +521,6 @@
               <div class="bulk-actions__panel" role="menu" aria-label="Download options">
                 <button type="button" class="bulk-actions__item" id="btnExportSelected" title="Download selected training records as PDFs in a ZIP" disabled>Download selected PDFs (ZIP)</button>
                 <button type="button" class="bulk-actions__item" id="btnExportAll" title="Select all and download as one ZIP">Download all PDFs (ZIP)</button>
-                <button type="button" class="bulk-actions__item" id="btnSharePortfolioSelected" title="Create a read-only link for HR at a new employer" disabled>Share reference pack (link)</button>
               </div>
             </details>
           </div>
@@ -537,19 +528,6 @@
       </div>
       <div id="bulkCredentialList"></div>
     </section>
-
-    <div id="portfolioShareModal" aria-modal="true" aria-labelledby="portfolioShareModalTitle" role="dialog">
-      <div class="nhsuk-modal">
-        <h3 id="portfolioShareModalTitle">Reference pack link</h3>
-        <p class="nhsuk-body-s">Send this link to HR at your new employer. They can view modules, expiry dates, and evidence. Training is <strong>already verified</strong> by your current employer&rsquo;s HR — they do not verify again here.</p>
-        <label class="nhsuk-label" for="portfolioShareUrl">Link</label>
-        <input type="text" id="portfolioShareUrl" readonly onclick="this.select()">
-        <div style="display:flex; flex-wrap:wrap; gap:0.75rem; margin-top:1rem;">
-          <button type="button" class="nhsuk-button" id="btnPortfolioShareCopy">Copy link</button>
-          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnPortfolioShareClose">Close</button>
-        </div>
-      </div>
-    </div>
   </main>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
@@ -1041,13 +1019,6 @@
       updateBulkExportState();
       exportSelectedAsZip();
     });
-    var btnSharePortfolioSelected = document.getElementById('btnSharePortfolioSelected');
-    if (btnSharePortfolioSelected) {
-      btnSharePortfolioSelected.addEventListener('click', function () {
-        closeBulkActionsMenu();
-        sharePortfolioSelectedFromExport();
-      });
-    }
     document.getElementById('bulkCredentialList').addEventListener('change', function(e) {
       if (e.target && e.target.classList.contains('credential-export-cb')) updateBulkExportState();
     });
@@ -1057,10 +1028,8 @@
       const n = checked.length;
       const countEl = document.getElementById('bulkExportCount');
       const btnExport = document.getElementById('btnExportSelected');
-      const btnPortfolio = document.getElementById('btnSharePortfolioSelected');
       if (countEl) countEl.textContent = n === 0 ? '0 selected' : (n === 1 ? '1 selected' : n + ' selected');
       if (btnExport) btnExport.disabled = n === 0;
-      if (btnPortfolio) btnPortfolio.disabled = n === 0 || !isProfileComplete();
     }
 
     async function verifyAllWithHr() {
@@ -1454,7 +1423,6 @@
                 <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>
                 <span class="nhsuk-tag nhsuk-tag--verified" style="margin-left:0.5rem;">VERIFIED</span>
                 <div class="nhsuk-card__actions">
-                  <button type="button" class="nhsuk-button nhsuk-button--secondary"${isProfileComplete() ? '' : ' disabled title="Complete your profile (name, GMC, trust) to create a reference link"'} onclick="sharePortfolioCred('${c.credential_id}')">Share reference (new employer)</button>
                   ${!c.import_evidence_batch ? `<button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download evidence</button>` : ''}
                   ${credHasEsrEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
@@ -1516,88 +1484,6 @@
         alert(e.message || e);
       }
     }
-
-    function openPortfolioShareModal(url) {
-      var inp = document.getElementById('portfolioShareUrl');
-      var modal = document.getElementById('portfolioShareModal');
-      if (inp) inp.value = url || '';
-      if (modal) modal.classList.add('show');
-    }
-
-    function closePortfolioShareModal() {
-      var modal = document.getElementById('portfolioShareModal');
-      if (modal) modal.classList.remove('show');
-    }
-
-    async function sharePortfolioIds(credentialIds) {
-      if (!credentialIds || !credentialIds.length) return;
-      if (!canRequestHrVerification()) return;
-      try {
-        if (window.NHSAuth && typeof NHSAuth.mergeAndPushWallet === 'function') {
-          await NHSAuth.mergeAndPushWallet();
-        }
-        var res = await fetch('/api/me/shares', {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ credential_ids: credentialIds, portfolio: true }),
-        });
-        var parsed = await res.text();
-        var data = null;
-        try { data = parsed ? JSON.parse(parsed) : null; } catch (e2) { data = null; }
-        if (!res.ok) {
-          var d = data && data.detail;
-          throw new Error(typeof d === 'string' ? d : 'Could not create reference pack');
-        }
-        var shareUrl = (data && data.share_url) || '';
-        openPortfolioShareModal(shareUrl);
-        await refreshVerifiedMap();
-        renderList();
-      } catch (e) {
-        alert(e.message || e);
-      }
-    }
-
-    async function sharePortfolioCred(credentialId) {
-      await sharePortfolioIds([credentialId]);
-    }
-
-    async function sharePortfolioSelectedFromExport() {
-      var checked = document.querySelectorAll('.credential-export-cb:checked');
-      var ids = Array.from(checked)
-        .map(function (el) { return el.getAttribute('data-credential-id'); })
-        .filter(function (id) { return id && isHrVerified(id); });
-      if (!ids.length) return;
-      await sharePortfolioIds(ids);
-    }
-
-    (function wirePortfolioShareModal() {
-      var closeBtn = document.getElementById('btnPortfolioShareClose');
-      var copyBtn = document.getElementById('btnPortfolioShareCopy');
-      var modal = document.getElementById('portfolioShareModal');
-      if (closeBtn) closeBtn.addEventListener('click', closePortfolioShareModal);
-      if (copyBtn) {
-        copyBtn.addEventListener('click', async function () {
-          var inp = document.getElementById('portfolioShareUrl');
-          if (!inp || !inp.value) return;
-          try {
-            await navigator.clipboard.writeText(inp.value);
-            alert('Link copied to clipboard.');
-          } catch (e) {
-            inp.select();
-            alert('Select the link and copy manually (Cmd+C / Ctrl+C).');
-          }
-        });
-      }
-      if (modal) {
-        modal.addEventListener('click', function (e) {
-          if (e.target === modal) closePortfolioShareModal();
-        });
-      }
-      document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && modal && modal.classList.contains('show')) closePortfolioShareModal();
-      });
-    })();
 
     function downloadPdf(credentialId) {
       const list = getStored();

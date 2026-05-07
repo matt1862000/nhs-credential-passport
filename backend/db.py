@@ -356,31 +356,40 @@ def _msg_row(r) -> dict:
 
 
 def hr_messageable_trusts_search(query: str, limit: int = 40) -> list[dict]:
-    """Distinct current_trust values for premium (HR) users — searchable inbox targets."""
+    """Premium (HR) users as messaging targets: match trust name or HR contact display_name."""
     q = (query or "").strip()
     lim = max(1, min(int(limit), 80))
+    ql = q.lower()
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_premium_column(conn)
         conn.row_factory = sqlite3.Row
         if q:
             rows = conn.execute(
                 """
-                SELECT DISTINCT TRIM(current_trust) AS trust_name
+                SELECT TRIM(current_trust) AS trust_name,
+                       TRIM(COALESCE(display_name, '')) AS contact_name
                 FROM users
                 WHERE premium = 1 AND TRIM(COALESCE(current_trust, '')) != ''
-                  AND LOWER(TRIM(current_trust)) LIKE '%' || LOWER(?) || '%'
-                ORDER BY trust_name COLLATE NOCASE
+                  AND (
+                    LOWER(TRIM(current_trust)) LIKE '%' || ? || '%'
+                    OR LOWER(TRIM(COALESCE(display_name, ''))) LIKE '%' || ? || '%'
+                  )
+                ORDER BY (TRIM(COALESCE(display_name, '')) != '') DESC,
+                         contact_name COLLATE NOCASE,
+                         trust_name COLLATE NOCASE
                 LIMIT ?
                 """,
-                (q, lim),
+                (ql, ql, lim),
             ).fetchall()
         else:
             rows = conn.execute(
                 """
-                SELECT DISTINCT TRIM(current_trust) AS trust_name
+                SELECT TRIM(current_trust) AS trust_name,
+                       TRIM(COALESCE(display_name, '')) AS contact_name
                 FROM users
                 WHERE premium = 1 AND TRIM(COALESCE(current_trust, '')) != ''
-                ORDER BY trust_name COLLATE NOCASE
+                ORDER BY trust_name COLLATE NOCASE,
+                         contact_name COLLATE NOCASE
                 LIMIT ?
                 """,
                 (lim,),
@@ -391,11 +400,16 @@ def hr_messageable_trusts_search(query: str, limit: int = 40) -> list[dict]:
         tn = (r["trust_name"] or "").strip()
         if not tn:
             continue
-        key = tn.lower()
+        cn = (r["contact_name"] or "").strip()
+        key = (tn.lower(), cn.lower())
         if key in seen:
             continue
         seen.add(key)
-        out.append({"trust_name": tn})
+        label = f"{cn} — {tn}" if cn else tn
+        row = {"trust_name": tn, "label": label}
+        if cn:
+            row["contact_name"] = cn
+        out.append(row)
     return out
 
 
@@ -416,6 +430,16 @@ def hr_messageable_trust_canonical(trust_input: str) -> Optional[str]:
             """,
             (raw,),
         ).fetchone()
+        if not row:
+            row = conn.execute(
+                """
+                SELECT TRIM(current_trust) AS trust_name FROM users
+                WHERE premium = 1 AND TRIM(COALESCE(current_trust, '')) != ''
+                  AND LOWER(TRIM(COALESCE(display_name, ''))) = LOWER(TRIM(?))
+                LIMIT 1
+                """,
+                (raw,),
+            ).fetchone()
     if not row:
         return None
     return (row["trust_name"] or "").strip() or None

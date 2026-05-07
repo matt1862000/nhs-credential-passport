@@ -50,7 +50,8 @@
     }
     .msg-trust-results li:last-child { border-bottom: none; }
     .msg-trust-results li:hover, .msg-trust-results li[aria-selected="true"] { background: #e8f0fe; }
-    .msg-search-hint { margin: 0.5rem 0 0 0; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); }
+    .msg-trust-results-primary { display: block; font-weight: 600; line-height: 1.3; }
+    .msg-trust-results-meta { display: block; font-size: 0.78rem; color: var(--nhsuk-secondary-text); margin-top: 0.15rem; font-weight: 400; line-height: 1.25; }
     .msg-search-status { min-height: 1.1rem; font-size: 0.8125rem; margin-top: 0.35rem; color: var(--nhsuk-secondary-text); }
     .msg-new-btn:hover { background: #003d78; }
     .msg-new-btn:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2); }
@@ -129,11 +130,10 @@
             <button type="button" class="msg-new-btn" id="btnNewConv">+ Message my trust HR</button>
             <button type="button" class="msg-other-btn" id="btnToggleTrustSearch" aria-expanded="false" aria-controls="msgTrustSearchPanel">Message another trust&rsquo;s HR&hellip;</button>
             <div class="msg-search-panel" id="msgTrustSearchPanel" hidden>
-              <label class="nhsuk-label" for="msgTrustSearchInput">Search by trust name</label>
-              <input type="text" class="nhsuk-input" id="msgTrustSearchInput" placeholder="e.g. Rotherham, Sheffield" autocomplete="off" aria-autocomplete="list" aria-controls="msgTrustSearchResults">
+              <label class="nhsuk-label" for="msgTrustSearchInput">Search by trust or HR contact name</label>
+              <input type="text" class="nhsuk-input" id="msgTrustSearchInput" placeholder="e.g. Rotherham HR, Sheffield" autocomplete="off" aria-autocomplete="list" aria-controls="msgTrustSearchResults">
               <p id="msgSearchStatus" class="msg-search-status" role="status" aria-live="polite"></p>
               <ul id="msgTrustSearchResults" class="msg-trust-results" role="listbox" hidden aria-label="Matching trusts"></ul>
-              <p class="msg-search-hint">Demo: Sheffield and Rotherham HR accounts can receive messages. Results only show trusts with HR on this service.</p>
             </div>
             <div id="convItems"><p class="msg-no-conv">No conversations yet.</p></div>
           </div>
@@ -336,7 +336,14 @@
         var listEl = document.getElementById('msgTrustSearchResults');
         var q = inp ? inp.value.trim() : '';
         if (!listEl) return;
-        setTrustSearchStatus(q.length ? 'Searching…' : 'Loading…');
+        if (!q.length) {
+          listEl.hidden = true;
+          listEl.innerHTML = '';
+          _lastTrustSearchTrusts = [];
+          setTrustSearchStatus('Type at least one letter to see suggestions.');
+          return;
+        }
+        setTrustSearchStatus('Searching…');
         try {
           var data = await apiJson('/api/me/messaging-trusts?q=' + encodeURIComponent(q));
           var trusts = filterOtherTrusts(data.trusts || []);
@@ -344,11 +351,12 @@
           if (!trusts.length) {
             listEl.hidden = true;
             listEl.innerHTML = '';
-            setTrustSearchStatus(q.length ? 'No other trusts match. Try another word.' : 'No other trusts on this demo.');
+            setTrustSearchStatus(q.length ? 'No other HR contacts match. Try another word.' : 'No other trusts on this demo.');
             return;
           }
           listEl.innerHTML = trusts.map(function (t, i) {
-            return '<li role="option" tabindex="0" data-trust-idx="' + i + '">' + esc(t.trust_name) + '</li>';
+            var line = esc((t.label || t.trust_name || '').trim());
+            return '<li role="option" tabindex="0" data-trust-idx="' + i + '"><span class="msg-trust-results-primary">' + line + '</span></li>';
           }).join('');
           listEl.hidden = false;
           setTrustSearchStatus(trusts.length + ' result' + (trusts.length === 1 ? '' : 's') + ' — click to open chat.');

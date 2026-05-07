@@ -98,7 +98,7 @@
           <label class="nhsuk-label" for="displayName">Full name</label>
           <input class="nhsuk-input" type="text" id="displayName" name="display_name" autocomplete="name" maxlength="200" placeholder="e.g. Jane Smith" required aria-required="true">
         </div>
-        <div class="nhsuk-form-group">
+        <div class="nhsuk-form-group" id="gmcFormGroup">
           <label class="nhsuk-label" for="gmcNumber">GMC number</label>
           <input class="nhsuk-input" type="text" id="gmcNumber" name="gmc_number" inputmode="numeric" autocomplete="off" maxlength="11" placeholder="e.g. 1234567" required aria-required="true" pattern="[0-9]{7}" title="Enter your 7-digit GMC number">
           <span class="profile-hint">Seven digits.</span>
@@ -289,11 +289,30 @@
         hideTrustSuggest();
       }
 
+      function applyPremiumProfileUi() {
+        var gmcGrp = document.getElementById('gmcFormGroup');
+        var gmcInp = document.getElementById('gmcNumber');
+        var prem = NHSAuth.user && NHSAuth.user.premium;
+        if (gmcGrp) gmcGrp.style.display = prem ? 'none' : '';
+        if (!gmcInp) return;
+        if (prem) {
+          gmcInp.removeAttribute('required');
+          gmcInp.removeAttribute('aria-required');
+          gmcInp.removeAttribute('pattern');
+          gmcInp.value = '';
+        } else {
+          gmcInp.setAttribute('required', 'required');
+          gmcInp.setAttribute('aria-required', 'true');
+          gmcInp.setAttribute('pattern', '[0-9]{7}');
+        }
+      }
+
       (async function boot() {
         await NHSAuth.refresh();
         if (!NHSAuth.requireAuth()) return;
         document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
         fillFromUser(NHSAuth.user);
+        applyPremiumProfileUi();
         wireVisibilityPanel();
         await loadVisibility();
         var lead = document.getElementById('profileLead');
@@ -410,6 +429,15 @@
             return;
           }
           payload.gmc_number = gmcDigits;
+        } else {
+          if (!payload.display_name || !payload.current_trust) {
+            setSaveStatus('Please fill in full name and current trust.', 'err');
+            btn.disabled = false;
+            btn.classList.remove('is-loading');
+            btn.removeAttribute('aria-busy');
+            return;
+          }
+          payload.gmc_number = '';
         }
         try {
           await NHSAuth.updateProfile(payload);

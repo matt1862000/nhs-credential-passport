@@ -78,6 +78,8 @@ def _profile_missing_fields(u: dict) -> list[str]:
 
 
 def require_profile_complete(u: dict) -> None:
+    if db.user_is_premium(u):
+        return
     missing = _profile_missing_fields(u)
     if missing:
         raise HTTPException(
