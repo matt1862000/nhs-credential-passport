@@ -57,6 +57,20 @@
       </div>
     </section>
 
+    <div id="gettingStartedBanner" hidden aria-live="polite" style="
+      background:#fff; border:2px solid #005eb8; border-left:5px solid #005eb8;
+      border-radius:4px; padding:1.25rem 1.5rem; margin-top:1.5rem; max-width:44rem;
+    ">
+      <p style="font-weight:700; font-size:1.0625rem; margin:0 0 0.35rem 0;">Your training list is empty — let&rsquo;s add your first record.</p>
+      <p style="font-size:0.9375rem; color:#4c6272; margin:0 0 1rem 0;">
+        Add completions individually, or import a bulk export straight from ESR.
+      </p>
+      <div style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center;">
+        <a class="nhsuk-button" href="/static/staff/#add" style="margin:0;">Add a record &rsaquo;</a>
+        <a class="nhsuk-button nhsuk-button--ghost" href="/static/staff/#import" style="margin:0;">Import from ESR &rsaquo;</a>
+      </div>
+    </div>
+
     <section id="doctorActions" style="margin-top:2.25rem;" aria-labelledby="actionsTitle">
       <h2 id="actionsTitle">Your training</h2>
       <div class="nhs-action-grid" role="list">
@@ -218,6 +232,9 @@
         document.getElementById('statExpiring').textContent = expiring;
         document.getElementById('statExpired').textContent = expired;
         document.getElementById('statTotal').textContent = list.length;
+
+        var banner = document.getElementById('gettingStartedBanner');
+        if (banner) banner.hidden = list.length > 0;
       }
 
       async function fetchServerWallet() {
