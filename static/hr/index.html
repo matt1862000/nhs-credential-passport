@@ -102,7 +102,7 @@
 
   <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
     <h1 class="nhsuk-page-heading">HR inbox</h1>
-    <p class="nhsuk-lead">Review training sent for HR verification, or open <strong>Reference packs</strong> (already verified elsewhere — view only, no second verification).</p>
+    <p class="nhsuk-lead">Review training sent by clinicians and mark records as verified or declined.</p>
 
     <div id="notPremium" class="hr-card" hidden>
       <p style="margin:0; font-weight:700;">This page is only for HR accounts.</p>
@@ -116,7 +116,6 @@
       </div>
       <div class="hr-segment" role="tablist" aria-label="Filter shared sets">
         <button type="button" role="tab" aria-selected="true" class="active" id="tab-inbox-new" data-tab="new">Needs action</button>
-        <button type="button" role="tab" aria-selected="false" id="tab-inbox-ref" data-tab="reference">Reference packs</button>
         <button type="button" role="tab" aria-selected="false" id="tab-inbox-arch" data-tab="archived">Completed</button>
       </div>
       <div class="hr-table-wrap">
@@ -374,7 +373,6 @@
           var isPortfolio = sk === 'portfolio';
           var hasPending = (s.pending_count || 0) > 0;
           if (inboxTab === 'new') return !isPortfolio && hasPending;
-          if (inboxTab === 'reference') return isPortfolio;
           return !isPortfolio && !hasPending;
         });
         var groups = aggregateDoctorGroups(sessions);
@@ -387,11 +385,6 @@
             } else {
               summaryEl.innerHTML = '<strong>' + String(groups.length) + '</strong> clinicians still have records to verify.';
             }
-          } else if (inboxTab === 'reference') {
-            summaryEl.innerHTML =
-              groups.length === 0
-                ? 'No <strong>reference packs</strong> yet — clinicians send these when training was already verified elsewhere.'
-                : '<strong>' + String(groups.length) + '</strong> reference pack(s): already verified by another employer&rsquo;s HR — <strong>no action required</strong> (view only).';
           } else {
             summaryEl.innerHTML = groups.length === 0
               ? 'No completed sets in this list yet.'
@@ -420,11 +413,7 @@
         tbody.innerHTML =
           rows ||
           '<tr><td colspan="4" class="hr-muted">' +
-            (inboxTab === 'new'
-              ? 'No sets need action right now.'
-              : inboxTab === 'reference'
-                ? 'No reference packs to show.'
-                : 'No completed sets to show.') +
+            (inboxTab === 'new' ? 'No sets need action right now.' : 'No completed sets to show.') +
             '</td></tr>';
       }
 
@@ -863,7 +852,7 @@
           show(document.getElementById('inboxView'), true);
           show(document.getElementById('sessionView'), false);
           wireTabs('inboxView', async function (tab) {
-            inboxTab = tab === 'archived' ? 'archived' : tab === 'reference' ? 'reference' : 'new';
+            inboxTab = tab === 'archived' ? 'archived' : 'new';
             await loadInbox();
           });
           await loadInbox();
