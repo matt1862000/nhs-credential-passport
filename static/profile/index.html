@@ -46,13 +46,6 @@
     .vis-suggest-list li:last-child { border-bottom: none; }
     .vis-suggest-list li:hover { background: var(--nhsuk-panel); }
     .vis-suggest-meta { display: block; font-size: 0.8rem; color: var(--nhsuk-secondary-text); }
-    .profile-nav-actions { margin-top: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
-    .profile-nav-actions .nhsuk-button:disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-      pointer-events: none;
-    }
-    #profileNavHint { margin: 0.35rem 0 0 0; font-size: 0.875rem; color: var(--nhsuk-secondary-text); max-width: 32rem; display: none; }
     .profile-ac-wrap { position: relative; }
     .profile-suggest-list {
       position: absolute; left: 0; right: 0; top: 100%; margin: 0.15rem 0 0 0;
@@ -119,14 +112,8 @@
           </div>
           <span class="profile-hint">Start typing a few letters (even with typos). Suggestions use the NHS Organisation Directory; pick one or keep your own text.</span>
         </div>
-        <button type="submit" class="nhsuk-button">Save profile</button>
       </form>
       <p id="profileStatus" role="status" aria-live="polite"></p>
-      <div class="profile-nav-actions">
-        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnGoDashboard" disabled aria-disabled="true">Go to dashboard</button>
-        <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnGoTraining" disabled aria-disabled="true">My training</button>
-      </div>
-      <p id="profileNavHint" role="note">Save your profile with all three fields filled in before you can open the dashboard or My training.</p>
 
       <div id="visibilitySection" style="display:none;">
         <hr style="border:none; border-top:1px solid var(--nhsuk-border); margin:1.25rem 0;">
@@ -169,9 +156,11 @@
         </div>
       </div>
 
-      <button type="button" class="nhsuk-button" id="btnSaveVisibility" style="margin-top:1rem;">Save visibility</button>
       <p id="visibilityStatus" role="status" aria-live="polite"></p>
       </div><!-- /visibilitySection -->
+
+      <button type="button" class="nhsuk-button" id="btnSaveAll" style="margin-top:1.25rem;">Save and go to dashboard</button>
+      <p id="saveAllStatus" role="status" aria-live="polite" style="min-height:1.1rem; font-size:0.875rem;"></p>
     </section>
   </main>
 
@@ -194,25 +183,6 @@
       var trustSuggestDebounce = null;
       var trustSuggestItems = [];
       var trustSuggestActive = -1;
-      var redirectTimer = null;
-      var redirectArmed = false;
-
-      function cancelAutoRedirect() {
-        redirectArmed = false;
-        if (redirectTimer) {
-          clearTimeout(redirectTimer);
-          redirectTimer = null;
-        }
-      }
-
-      function armAutoRedirectToDashboard() {
-        cancelAutoRedirect();
-        redirectArmed = true;
-        redirectTimer = setTimeout(function () {
-          if (!redirectArmed) return;
-          window.location.assign('/static/dashboard/');
-        }, 1100);
-      }
 
       function hideTrustSuggest() {
         var list = document.getElementById('trustSuggestList');
@@ -319,28 +289,11 @@
         hideTrustSuggest();
       }
 
-      function updateProfileNavButtons() {
-        var dash = document.getElementById('btnGoDashboard');
-        var train = document.getElementById('btnGoTraining');
-        var hint = document.getElementById('profileNavHint');
-        if (!dash || !train) return;
-        var premium = !!(NHSAuth.user && NHSAuth.user.premium);
-        var ok = premium || (typeof NHSAuth.isProfileComplete === 'function' && NHSAuth.isProfileComplete());
-        dash.disabled = !ok;
-        train.disabled = !ok;
-        dash.setAttribute('aria-disabled', ok ? 'false' : 'true');
-        train.setAttribute('aria-disabled', ok ? 'false' : 'true');
-        if (hint) {
-          hint.style.display = !premium && !ok ? 'block' : 'none';
-        }
-      }
-
       (async function boot() {
         await NHSAuth.refresh();
         if (!NHSAuth.requireAuth()) return;
         document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
         fillFromUser(NHSAuth.user);
-        updateProfileNavButtons();
         wireVisibilityPanel();
         await loadVisibility();
         var req = new URLSearchParams(window.location.search).get('required');
@@ -351,15 +304,6 @@
           lead.textContent = 'Optional details for your HR profile. You can change them any time.';
         }
       })();
-
-      document.getElementById('btnGoDashboard').addEventListener('click', function () {
-        if (this.disabled) return;
-        window.location.assign('/static/dashboard/');
-      });
-      document.getElementById('btnGoTraining').addEventListener('click', function () {
-        if (this.disabled) return;
-        window.location.assign('/static/staff/#list');
-      });
 
       document.getElementById('btnSignOut').addEventListener('click', async function () {
         await NHSAuth.signOut();
@@ -412,18 +356,22 @@
         });
       })();
 
-      (function wireAutoRedirectCancellation() {
-        /* If the user does anything after save, do not steal focus with a redirect. */
-        ['click', 'keydown', 'focusin', 'pointerdown', 'touchstart', 'wheel'].forEach(function (evt) {
-          document.addEventListener(evt, cancelAutoRedirect, { capture: true, passive: true });
-        });
-      })();
+      // Prevent accidental form submission via Enter key — Save All button handles it
+      document.getElementById('profileForm').addEventListener('submit', function (e) { e.preventDefault(); });
 
-      document.getElementById('profileForm').addEventListener('submit', async function (e) {
-        e.preventDefault();
-        setStatus('');
-        cancelAutoRedirect();
-        var fd = new FormData(e.target);
+      document.getElementById('btnSaveAll').addEventListener('click', async function () {
+        var btn = this;
+        var statusEl = document.getElementById('saveAllStatus');
+        function setSaveStatus(msg, kind) {
+          if (!statusEl) return;
+          statusEl.textContent = msg || '';
+          statusEl.className = kind ? kind : '';
+        }
+        btn.disabled = true;
+        setSaveStatus('Saving…');
+
+        // 1. Validate and save profile
+        var fd = new FormData(document.getElementById('profileForm'));
         var payload = {
           display_name: (fd.get('display_name') || '').trim(),
           gmc_number: (fd.get('gmc_number') || '').trim(),
@@ -431,25 +379,40 @@
         };
         if (!NHSAuth.user || !NHSAuth.user.premium) {
           if (!payload.display_name || !payload.current_trust) {
-            setStatus('Please fill in full name and current trust.', 'err');
+            setSaveStatus('Please fill in full name and current trust.', 'err');
+            btn.disabled = false;
             return;
           }
           var gmcDigits = String(payload.gmc_number || '').replace(/\D/g, '');
           if (gmcDigits.length !== 7) {
-            setStatus('GMC number must be exactly 7 digits.', 'err');
+            setSaveStatus('GMC number must be exactly 7 digits.', 'err');
+            btn.disabled = false;
             return;
           }
           payload.gmc_number = gmcDigits;
         }
         try {
           await NHSAuth.updateProfile(payload);
-          fillFromUser(NHSAuth.user);
-          updateProfileNavButtons();
-          setStatus('Profile saved.', 'ok');
-          armAutoRedirectToDashboard();
         } catch (err) {
-          setStatus(err.message || 'Could not save profile', 'err');
+          setSaveStatus(err.message || 'Could not save profile.', 'err');
+          btn.disabled = false;
+          return;
         }
+
+        // 2. Save visibility (only for non-premium / doctor accounts)
+        if (!NHSAuth.user || !NHSAuth.user.premium) {
+          try {
+            await fetch('/api/me/visibility', {
+              method: 'PUT',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ mode: getVisMode(), allowlist: _visAllowlist }),
+            });
+          } catch (err) { /* non-fatal */ }
+        }
+
+        // 3. Navigate to dashboard
+        window.location.assign('/static/dashboard/');
       });
 
       // ── Visibility panel ──────────────────────────────────────────────────────
@@ -593,19 +556,6 @@
           });
         }
 
-        document.getElementById('btnSaveVisibility').addEventListener('click', async function () {
-          setVisStatus('Saving…');
-          try {
-            var r = await fetch('/api/me/visibility', {
-              method: 'PUT',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ mode: getVisMode(), allowlist: _visAllowlist }),
-            });
-            if (!r.ok) { var d = await r.json(); throw new Error(d.detail || 'Error'); }
-            setVisStatus('Saved.', 'ok');
-          } catch (err) { setVisStatus(err.message || 'Could not save', 'err'); }
-        });
       }
       // ─────────────────────────────────────────────────────────────────────────
 
