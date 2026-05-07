@@ -550,3 +550,45 @@ a:hover {
   clip: rect(0, 0, 0, 0);
   border: 0;
 }
+
+/* ── Onboarding nudge bar ─────────────────────────────────────────────── */
+.onb-nudge {
+  background: #e8f4fb;
+  border: 1px solid #acd5ee;
+  border-radius: 6px;
+  padding: 0.7rem 1rem;
+  margin-bottom: 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.85rem;
+  font-size: 0.9375rem;
+}
+.onb-nudge__step {
+  font-weight: 700;
+  color: #005eb8;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.onb-nudge__msg {
+  flex: 1;
+  min-width: 10rem;
+}
+.onb-nudge__cta {
+  white-space: nowrap;
+  font-weight: 600;
+  color: #005eb8;
+}
+.onb-nudge__dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--nhsuk-secondary-text);
+  font-size: 1.2rem;
+  padding: 0 0.1rem;
+  line-height: 1;
+  margin-left: auto;
+}
+.onb-nudge__dismiss:hover { color: var(--nhsuk-text); }

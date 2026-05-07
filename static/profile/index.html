@@ -89,7 +89,7 @@
   </header>
 
   <main class="nhsuk-main" id="maincontent" role="main">
-    <h1 class="nhsuk-page-heading">Your profile</h1>
+    <h1 class="nhsuk-page-heading" id="profilePageHeading">Your profile</h1>
     <p class="nhsuk-lead" id="profileLead">Add a few details.</p>
 
     <section class="nhsuk-card" style="max-width: 32rem;">
@@ -166,6 +166,7 @@
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/ods-trust-suggest.js"></script>
+  <script src="/static/shared/onboarding-nudge.js"></script>
   <script>
     (function () {
       function escapeHtml(s) {
@@ -298,6 +299,19 @@
         var lead = document.getElementById('profileLead');
         if (lead && NHSAuth.user.premium) {
           lead.textContent = 'Optional details for your HR profile. You can change them any time.';
+        }
+
+        /* Onboarding nudge — step 2: show only until they've visited requirements */
+        var _reqsVisited = false;
+        try { _reqsVisited = !!localStorage.getItem('nhs_gs_reqs_visited'); } catch (e) {}
+        if (!NHSAuth.user.premium && !_reqsVisited && window.NHSOnboardingNudge) {
+          NHSOnboardingNudge.show({
+            insertAfterId: 'profilePageHeading',
+            step: 2,
+            message: 'Fill in your name, GMC number, and trust — then check what your trust requires.',
+            ctaLabel: 'Check your trust\u2019s requirements',
+            ctaHref: '/static/requirements/',
+          });
         }
       })();
 

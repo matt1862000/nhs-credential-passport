@@ -347,7 +347,7 @@
     </div>
   </header>
   <main class="nhsuk-main" id="maincontent" role="main">
-    <h2 class="nhsuk-page-heading">My training</h2>
+    <h2 class="nhsuk-page-heading" id="staffPageHeading">My training</h2>
     <p class="nhsuk-body-s">Manage your training list. Use the tabs to add, import from ESR, or share records with others.</p>
     <div class="nhsuk-card" id="profileGateNotice" hidden style="border-left:4px solid var(--nhsuk-warning); padding:0.9rem 1rem; margin:0.75rem 0 1rem 0;">
       <p style="margin:0; font-weight:700;">Complete your profile to verify with HR.</p>
@@ -506,6 +506,7 @@
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/ods-trust-suggest.js"></script>
+  <script src="/static/shared/onboarding-nudge.js"></script>
   <script>
     const MODULES = [
       { code: 'fire_safety', name: 'Fire Safety' },
@@ -1709,6 +1710,28 @@
       if (em) em.textContent = NHSAuth.user.email || '';
       await pullMergeFromServer();
       await refreshVerifiedMap();
+
+      /* Onboarding nudge — step 4 (add first record) or step 5 (share for verification) */
+      if (!NHSAuth.user.premium && window.NHSOnboardingNudge && NHSOnboardingNudge.shouldShow()) {
+        var _walletLen = 0;
+        try { _walletLen = (JSON.parse(localStorage.getItem('nhs_credentials') || '[]') || []).length; } catch (e) {}
+        if (_walletLen === 0) {
+          NHSOnboardingNudge.show({
+            insertAfterId: 'staffPageHeading',
+            step: 4,
+            message: 'Add your first training record using the <strong>Add training</strong> tab below.',
+          });
+        } else {
+          NHSOnboardingNudge.show({
+            insertAfterId: 'staffPageHeading',
+            step: 5,
+            message: 'Select a record and click <strong>Share for verification</strong> to send it to your trust HR team.',
+            ctaLabel: 'Back to dashboard',
+            ctaHref: '/static/dashboard/',
+          });
+        }
+      }
+
       var summaryStrip = document.getElementById('staffTrainingSummaryStrip');
       if (summaryStrip) summaryStrip.hidden = !!(NHSAuth.user && NHSAuth.user.premium);
       applyProfileToAddForm();

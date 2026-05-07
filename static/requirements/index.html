@@ -74,7 +74,7 @@
   </header>
 
   <main class="nhsuk-main req-wrap" id="maincontent" role="main">
-    <h1 class="nhsuk-page-heading">My trust requirements</h1>
+    <h1 class="nhsuk-page-heading" id="reqPageHeading">My trust requirements</h1>
     <p class="nhsuk-lead" id="pageLeadText">Checking your training against your trust's mandatory requirements&hellip;</p>
 
     <div id="noTrustMsg" class="req-no-trust" hidden>
@@ -125,6 +125,7 @@
   </main>
 
   <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/onboarding-nudge.js"></script>
   <script>
     (function () {
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -292,6 +293,18 @@
 
         // Mark as visited so the onboarding checklist progresses past this step
         try { localStorage.setItem('nhs_gs_reqs_visited', '1'); } catch (e) {}
+
+        var _walletForNudge = 0;
+        try { _walletForNudge = (JSON.parse(localStorage.getItem('nhs_credentials') || '[]') || []).length; } catch (e) {}
+        if (_walletForNudge === 0) {
+          NHSOnboardingNudge.show({
+            insertAfterId: 'reqPageHeading',
+            step: 3,
+            message: 'Review what your trust requires below, then add records to cover any gaps.',
+            ctaLabel: 'Add a training record',
+            ctaHref: '/static/staff/#add',
+          });
+        }
 
         try {
           var [reqData, wallet] = await Promise.all([
