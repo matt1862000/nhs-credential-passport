@@ -53,8 +53,10 @@
       : '';
 
     nudge.innerHTML =
-      '<span class="onb-nudge__step">Getting started &middot; Step ' + config.step + ' of ' + total + '</span>' +
-      '<span class="onb-nudge__msg">' + config.message + ctaHtml + '</span>' +
+      '<div class="onb-nudge__body">' +
+        '<div class="onb-nudge__step">Getting started &middot; Step ' + config.step + ' of ' + total + '</div>' +
+        '<div class="onb-nudge__msg">' + config.message + ctaHtml + '</div>' +
+      '</div>' +
       '<button type="button" class="onb-nudge__dismiss" aria-label="Hide this hint">&times;</button>';
 
     anchor.parentNode.insertBefore(nudge, anchor.nextSibling);

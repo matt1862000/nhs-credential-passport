@@ -556,39 +556,43 @@ a:hover {
   background: #e8f4fb;
   border: 1px solid #acd5ee;
   border-radius: 6px;
-  padding: 0.7rem 1rem;
+  padding: 0.65rem 2.5rem 0.65rem 1rem;
   margin-bottom: 1.25rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem 0.85rem;
+  position: relative;
   font-size: 0.9375rem;
+}
+.onb-nudge__body {
+  display: block;
 }
 .onb-nudge__step {
   font-weight: 700;
   color: #005eb8;
-  white-space: nowrap;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.2rem;
 }
 .onb-nudge__msg {
-  flex: 1;
-  min-width: 10rem;
+  color: var(--nhsuk-text);
+  line-height: 1.4;
 }
 .onb-nudge__cta {
+  display: inline-block;
+  margin-left: 0.75rem;
   white-space: nowrap;
   font-weight: 600;
   color: #005eb8;
 }
 .onb-nudge__dismiss {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.6rem;
   background: none;
   border: none;
   cursor: pointer;
   color: var(--nhsuk-secondary-text);
   font-size: 1.2rem;
-  padding: 0 0.1rem;
+  padding: 0.1rem 0.25rem;
   line-height: 1;
-  margin-left: auto;
 }
 .onb-nudge__dismiss:hover { color: var(--nhsuk-text); }
