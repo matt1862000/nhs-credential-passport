@@ -110,19 +110,49 @@
     .nhs-gs-next__title {
       font-weight: 700;
       font-size: 0.9375rem;
-      margin: 0 0 0.6rem 0;
+      margin: 0 0 0.85rem 0;
+      color: #212b32;
     }
-    .nhs-gs-next__links {
+    .nhs-gs-next__grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+      gap: 0.65rem;
+    }
+    .nhs-gs-next__card {
       display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem 1rem;
+      flex-direction: column;
+      gap: 0.25rem;
+      padding: 0.75rem 0.9rem;
+      background: #f0f4f5;
+      border: 1px solid #d8dde0;
+      border-radius: 4px;
+      text-decoration: none;
+      color: #212b32;
+      transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
     }
-    .nhs-gs-next__link {
-      font-size: 0.9rem;
+    .nhs-gs-next__card:hover {
+      background: #e4edf7;
+      border-color: #005eb8;
+      color: #212b32;
+      text-decoration: none;
+    }
+    .nhs-gs-next__card:active {
+      transform: translateY(1px);
+    }
+    .nhs-gs-next__card-icon {
+      font-size: 1.35rem;
+      line-height: 1;
+    }
+    .nhs-gs-next__card-label {
+      font-weight: 700;
+      font-size: 0.875rem;
       color: #005eb8;
+      line-height: 1.3;
     }
-    .nhs-gs-next__link::before {
-      content: '→ ';
+    .nhs-gs-next__card-desc {
+      font-size: 0.8125rem;
+      color: #4c6272;
+      line-height: 1.35;
     }
   </style>
 </head>
@@ -191,11 +221,28 @@
       <ol class="nhs-gs__steps" id="gsStepList"></ol>
 
       <div class="nhs-gs-next" id="gsWhatsNext" hidden>
-        <p class="nhs-gs-next__title">You&rsquo;re all set. Here&rsquo;s what to try next:</p>
-        <div class="nhs-gs-next__links">
-          <a class="nhs-gs-next__link" href="/static/staff/#import">Import from ESR — add many records at once</a>
-          <a class="nhs-gs-next__link" href="/static/plan-move/">Plan a trust move — check your training gaps</a>
-          <a class="nhs-gs-next__link" href="/static/staff/#bulk">Download verified PDFs</a>
+        <p class="nhs-gs-next__title">You&rsquo;re all set &mdash; here&rsquo;s what to explore next:</p>
+        <div class="nhs-gs-next__grid">
+          <a class="nhs-gs-next__card" href="/static/staff/#import">
+            <span class="nhs-gs-next__card-icon">📥</span>
+            <span class="nhs-gs-next__card-label">Import from ESR</span>
+            <span class="nhs-gs-next__card-desc">Bulk-add records from your ESR export in one go.</span>
+          </a>
+          <a class="nhs-gs-next__card" href="/static/plan-move/">
+            <span class="nhs-gs-next__card-icon">🏥</span>
+            <span class="nhs-gs-next__card-label">Plan a trust move</span>
+            <span class="nhs-gs-next__card-desc">See training gaps before joining your new trust.</span>
+          </a>
+          <a class="nhs-gs-next__card" href="/static/staff/#bulk">
+            <span class="nhs-gs-next__card-icon">⬇️</span>
+            <span class="nhs-gs-next__card-label">Download verified PDFs</span>
+            <span class="nhs-gs-next__card-desc">Save HR-verified evidence to share with employers.</span>
+          </a>
+          <a class="nhs-gs-next__card" href="/static/messages/">
+            <span class="nhs-gs-next__card-icon">💬</span>
+            <span class="nhs-gs-next__card-label">Message HR</span>
+            <span class="nhs-gs-next__card-desc">Ask your trust HR team a question directly.</span>
+          </a>
         </div>
       </div>
     </div>
