@@ -137,6 +137,7 @@ a:hover {
   align-items: center;
 }
 .nhsuk-menu__panel {
+  display: none; /* hidden by default; JS removes [hidden] to show */
   position: absolute;
   right: 0;
   top: calc(100% + 0.35rem);
@@ -147,6 +148,9 @@ a:hover {
   box-shadow: 0 10px 28px rgba(33, 43, 50, 0.22);
   padding: 0.35rem;
   z-index: 60;
+}
+.nhsuk-menu__panel:not([hidden]) {
+  display: block;
 }
 .nhsuk-menu__panel a,
 .nhsuk-menu__panel button {
