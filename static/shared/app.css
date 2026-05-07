@@ -557,16 +557,21 @@ a:hover {
 
 /* ── Onboarding nudge bar ─────────────────────────────────────────────── */
 .onb-nudge {
-  background: #e8f4fb;
-  border: 1px solid #acd5ee;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem 0.75rem;
+  background: #ccecf8;
+  border: 1px solid #41b6e6;
+  border-left: 4px solid #005eb8;
   border-radius: 6px;
-  padding: 0.65rem 2.5rem 0.65rem 1rem;
+  padding: 0.75rem 0.85rem;
   margin-bottom: 1.25rem;
-  position: relative;
   font-size: 0.9375rem;
+  box-shadow: 0 2px 6px rgba(0, 94, 184, 0.08);
 }
 .onb-nudge__body {
-  display: block;
+  flex: 1;
+  min-width: 0;
 }
 .onb-nudge__step {
   font-weight: 700;
@@ -574,11 +579,11 @@ a:hover {
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin-bottom: 0.2rem;
+  margin-bottom: 0.35rem;
 }
 .onb-nudge__msg {
   color: var(--nhsuk-text);
-  line-height: 1.4;
+  line-height: 1.45;
 }
 .onb-nudge__cta {
   display: inline-block;
@@ -588,15 +593,19 @@ a:hover {
   color: #005eb8;
 }
 .onb-nudge__dismiss {
-  position: absolute;
-  top: 0.5rem;
-  right: 0.6rem;
-  background: none;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: -0.15rem;
+  background: transparent;
   border: none;
   cursor: pointer;
   color: var(--nhsuk-secondary-text);
-  font-size: 1.2rem;
-  padding: 0.1rem 0.25rem;
+  font-size: 1.35rem;
   line-height: 1;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
 }
-.onb-nudge__dismiss:hover { color: var(--nhsuk-text); }
+.onb-nudge__dismiss:hover {
+  color: var(--nhsuk-text);
+  background: rgba(255, 255, 255, 0.65);
+}
