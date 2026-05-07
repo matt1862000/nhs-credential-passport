@@ -386,17 +386,33 @@ def me_verified_map(request: Request):
     return db.doctor_verified_map(uid)
 
 
+def _hr_trust(hr_user: dict) -> Optional[str]:
+    """Normalised current_trust of an HR user, used for trust-scoping inbox queries."""
+    t = (hr_user.get("current_trust") or "").strip().lower()
+    return t or None
+
+
+def _assert_same_trust(hr_user: dict, session: dict) -> None:
+    """Raise 403 if the session's doctor is not from the HR user's trust."""
+    trust = _hr_trust(hr_user)
+    if not trust:
+        return  # HR account has no trust set — don't block (edge case / admin)
+    doc_trust = (session.get("doctor_trust") or "").strip().lower()
+    if doc_trust != trust:
+        raise HTTPException(status_code=403, detail="This submission is not from your trust.")
+
+
 @router.get("/hr/shares")
 def hr_shares_list(request: Request, limit: int = 50):
-    require_premium_user(request)
-    return {"sessions": db.share_inbox_list(limit=limit)}
+    hr = require_premium_user(request)
+    return {"sessions": db.share_inbox_list(limit=limit, hr_trust=_hr_trust(hr))}
 
 
 @router.get("/hr/doctors/{doctor_user_id}/queue")
 def hr_doctor_queue(request: Request, doctor_user_id: int):
     """Merged inbox for one clinician (all share sessions combined)."""
-    require_premium_user(request)
-    q = db.share_doctor_queue(int(doctor_user_id))
+    hr = require_premium_user(request)
+    q = db.share_doctor_queue(int(doctor_user_id), hr_trust=_hr_trust(hr))
     if not q:
         raise HTTPException(status_code=404, detail="Clinician not found")
     return q
@@ -404,10 +420,11 @@ def hr_doctor_queue(request: Request, doctor_user_id: int):
 
 @router.get("/hr/shares/{session_id}")
 def hr_shares_get(request: Request, session_id: int):
-    require_premium_user(request)
+    hr = require_premium_user(request)
     s = db.share_session_get(int(session_id))
     if not s:
         raise HTTPException(status_code=404, detail="Share not found")
+    _assert_same_trust(hr, s)
     return s
 
 
@@ -417,6 +434,7 @@ def hr_share_item_verify(request: Request, session_id: int, credential_id: str):
     s = db.share_session_get(int(session_id))
     if not s:
         raise HTTPException(status_code=404, detail="Share not found")
+    _assert_same_trust(hr, s)
     if str(s.get("share_kind") or "review").lower() == "portfolio":
         raise HTTPException(
             status_code=400,
@@ -435,6 +453,7 @@ async def hr_share_item_decline(request: Request, session_id: int, credential_id
     s = db.share_session_get(int(session_id))
     if not s:
         raise HTTPException(status_code=404, detail="Share not found")
+    _assert_same_trust(hr, s)
     if str(s.get("share_kind") or "review").lower() == "portfolio":
         raise HTTPException(
             status_code=400,

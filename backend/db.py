@@ -280,35 +280,64 @@ def share_session_create(
     return {"session_id": session_id, "share_token": token, "created_at": now}
 
 
-def share_inbox_list(limit: int = 50) -> list[dict]:
+def share_inbox_list(limit: int = 50, hr_trust: Optional[str] = None) -> list[dict]:
+    trust_filter = (hr_trust or "").strip().lower()
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_share_tables(conn)
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            """
-            SELECT
-              s.id as session_id,
-              s.created_at as created_at,
-              s.doctor_user_id as doctor_user_id,
-              s.doctor_email as doctor_email,
-              u.display_name as doctor_name,
-              u.gmc_number as doctor_gmc,
-              u.current_trust as doctor_trust,
-              s.status as status,
-              IFNULL(s.share_kind, 'review') as share_kind,
-              COUNT(i.credential_id) as total_count,
-              SUM(CASE WHEN i.status = 'VERIFIED' THEN 1 ELSE 0 END) as verified_count,
-              SUM(CASE WHEN i.status = 'DECLINED' THEN 1 ELSE 0 END) as declined_count,
-              SUM(CASE WHEN i.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count
-            FROM share_sessions s
-            JOIN users u ON u.id = s.doctor_user_id
-            LEFT JOIN share_items i ON i.session_id = s.id
-            GROUP BY s.id
-            ORDER BY s.id DESC
-            LIMIT ?
-            """,
-            (max(1, min(int(limit or 50), 200)),),
-        ).fetchall()
+        if trust_filter:
+            rows = conn.execute(
+                """
+                SELECT
+                  s.id as session_id,
+                  s.created_at as created_at,
+                  s.doctor_user_id as doctor_user_id,
+                  s.doctor_email as doctor_email,
+                  u.display_name as doctor_name,
+                  u.gmc_number as doctor_gmc,
+                  u.current_trust as doctor_trust,
+                  s.status as status,
+                  IFNULL(s.share_kind, 'review') as share_kind,
+                  COUNT(i.credential_id) as total_count,
+                  SUM(CASE WHEN i.status = 'VERIFIED' THEN 1 ELSE 0 END) as verified_count,
+                  SUM(CASE WHEN i.status = 'DECLINED' THEN 1 ELSE 0 END) as declined_count,
+                  SUM(CASE WHEN i.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count
+                FROM share_sessions s
+                JOIN users u ON u.id = s.doctor_user_id
+                LEFT JOIN share_items i ON i.session_id = s.id
+                WHERE LOWER(TRIM(COALESCE(u.current_trust, ''))) = ?
+                GROUP BY s.id
+                ORDER BY s.id DESC
+                LIMIT ?
+                """,
+                (trust_filter, max(1, min(int(limit or 50), 200))),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT
+                  s.id as session_id,
+                  s.created_at as created_at,
+                  s.doctor_user_id as doctor_user_id,
+                  s.doctor_email as doctor_email,
+                  u.display_name as doctor_name,
+                  u.gmc_number as doctor_gmc,
+                  u.current_trust as doctor_trust,
+                  s.status as status,
+                  IFNULL(s.share_kind, 'review') as share_kind,
+                  COUNT(i.credential_id) as total_count,
+                  SUM(CASE WHEN i.status = 'VERIFIED' THEN 1 ELSE 0 END) as verified_count,
+                  SUM(CASE WHEN i.status = 'DECLINED' THEN 1 ELSE 0 END) as declined_count,
+                  SUM(CASE WHEN i.status = 'PENDING' THEN 1 ELSE 0 END) as pending_count
+                FROM share_sessions s
+                JOIN users u ON u.id = s.doctor_user_id
+                LEFT JOIN share_items i ON i.session_id = s.id
+                GROUP BY s.id
+                ORDER BY s.id DESC
+                LIMIT ?
+                """,
+                (max(1, min(int(limit or 50), 200)),),
+            ).fetchall()
     out = []
     for r in rows:
         out.append(
@@ -331,7 +360,7 @@ def share_inbox_list(limit: int = 50) -> list[dict]:
     return out
 
 
-def share_doctor_queue(doctor_user_id: int) -> Optional[dict]:
+def share_doctor_queue(doctor_user_id: int, hr_trust: Optional[str] = None) -> Optional[dict]:
     """All share items across every session for one clinician (for merged HR review)."""
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_share_tables(conn)
@@ -348,6 +377,11 @@ def share_doctor_queue(doctor_user_id: int) -> Optional[dict]:
         ).fetchone()
         if not doc:
             return None
+        # Trust-scoping: if the HR user's trust is set, doctor must belong to the same trust.
+        if hr_trust:
+            doc_trust = (doc["doctor_trust"] or "").strip().lower()
+            if doc_trust != hr_trust.strip().lower():
+                return None
         rows = conn.execute(
             """
             SELECT
