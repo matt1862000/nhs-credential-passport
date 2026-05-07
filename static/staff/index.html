@@ -1263,11 +1263,6 @@
         if (verifyBtnTitle) verifyBtnAttrs += ' title="' + verifyBtnTitle.replace(/"/g, '&quot;') + '"';
         var verifyBtnOnclick = profileOk ? `onclick="shareCred('${c.credential_id}')"` : `onclick="return openProfileForVerification();"`;
         var showVerifyHrButton = !(v && v.shared && (st === 'VERIFIED' || st === 'DECLINED'));
-        var portfolioRefAttrs = profileOk ? '' : ' disabled title="Complete your profile (name, GMC, trust) to create a reference link"';
-        var portfolioRefBtn =
-          v && v.shared && st === 'VERIFIED'
-            ? `<button type="button" class="nhsuk-button nhsuk-button--secondary"${portfolioRefAttrs} onclick="sharePortfolioCred('${c.credential_id}')">Share reference (new employer)</button>`
-            : '';
         return `
           <div class="nhsuk-card ${c.revoked ? 'revoked' : ''}" data-id="${c.credential_id}">
             <div class="nhsuk-card__row" style="display:flex; align-items:flex-start; gap:0.75rem;">
@@ -1278,7 +1273,6 @@
                 <span class="nhsuk-tag nhsuk-tag--${status}">${expiryStatusLabel(status)}</span>${verifiedTag}${declinedTag}
                 <div class="nhsuk-card__actions">
                   ${showVerifyHrButton ? `<button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>${verifyBtnText}</button>` : ''}
-                  ${portfolioRefBtn}
                   ${!c.import_evidence_batch ? `<button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download evidence</button>` : ''}
                   ${credHasEsrEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
