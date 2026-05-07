@@ -442,6 +442,24 @@ def hr_doctors_search(request: Request, q: str = "", limit: int = 30):
     return {"results": results}
 
 
+@router.get("/hr/doctors/{doctor_user_id}/training")
+def hr_doctor_training(request: Request, doctor_user_id: int):
+    """Read-only verified training for a doctor found via search.
+    Checks visibility settings but skips trust-inbox scoping (doctor may be at a different trust)."""
+    hr = require_premium_user(request)
+    trust = (hr.get("current_trust") or "").strip()
+    if not trust:
+        raise HTTPException(status_code=400, detail="Your HR account must have a current trust set.")
+    # Check doctor visibility allows this HR trust
+    with __import__('sqlite3').connect(db.DB_PATH) as conn:
+        if not db._doctor_visible_to_trust(int(doctor_user_id), trust, conn):
+            raise HTTPException(status_code=403, detail="This clinician has not permitted your trust to view their records.")
+    q = db.share_doctor_queue(int(doctor_user_id), hr_trust=None)
+    if not q:
+        raise HTTPException(status_code=404, detail="Clinician not found")
+    return q
+
+
 @router.get("/hr/doctors/{doctor_user_id}/queue")
 def hr_doctor_queue(request: Request, doctor_user_id: int):
     """Merged inbox for one clinician (all share sessions combined)."""

@@ -801,9 +801,9 @@
           var tbody = document.getElementById('searchDoctorItemsTbody');
           if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">Loading…</td></tr>';
           try {
-            var payload = await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorId)) + '/queue');
+            var payload = await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorId)) + '/training');
             var items = (payload.items || []).filter(function (it) {
-              return (it.hr_decision || '').toLowerCase() === 'verified';
+              return (it.status || '').toLowerCase() === 'verified';
             });
             if (!items.length) {
               if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">No verified records for this clinician yet.</td></tr>';
