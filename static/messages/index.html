@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Messages &mdash; NHS Training Passport</title>
+  <link rel="stylesheet" href="/static/shared/app.css">
+  <style>
+    .msg-wrap { max-width: 52rem; }
+    /* Thread layout */
+    .msg-layout { display: flex; gap: 1rem; align-items: flex-start; }
+    .msg-sidebar { width: 16rem; flex-shrink: 0; }
+    .msg-thread { flex: 1; min-width: 0; }
+    @media (max-width: 640px) {
+      .msg-layout { flex-direction: column; }
+      .msg-sidebar { width: 100%; }
+    }
+    /* Conversation list */
+    .msg-conv-list { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; overflow: hidden; }
+    .msg-conv-item { display: block; padding: 0.75rem 1rem; border-bottom: 1px solid var(--nhsuk-border); cursor: pointer; text-decoration: none; color: var(--nhsuk-text); }
+    .msg-conv-item:last-child { border-bottom: none; }
+    .msg-conv-item:hover, .msg-conv-item.active { background: #e8f0fe; }
+    .msg-conv-trust { font-weight: 700; font-size: 0.9375rem; line-height: 1.3; }
+    .msg-conv-preview { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .msg-unread-dot { display: inline-block; width: 0.55rem; height: 0.55rem; background: var(--nhsuk-link); border-radius: 50%; margin-left: 0.4rem; vertical-align: middle; }
+    .msg-new-btn { display: block; width: 100%; text-align: left; padding: 0.75rem 1rem; background: #005eb8; color: #fff; border: none; cursor: pointer; font-size: 0.9375rem; font-weight: 600; border-radius: 6px 6px 0 0; }
+    .msg-new-btn:hover { background: #003d78; }
+    /* Thread */
+    .msg-thread-card { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; display: flex; flex-direction: column; min-height: 24rem; }
+    .msg-thread-header { padding: 0.85rem 1rem; border-bottom: 1px solid var(--nhsuk-border); font-weight: 700; font-size: 1rem; }
+    .msg-bubbles { flex: 1; padding: 1rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.65rem; min-height: 14rem; max-height: 50vh; }
+    .msg-bubble { max-width: 80%; padding: 0.6rem 0.85rem; border-radius: 12px; font-size: 0.9375rem; line-height: 1.45; word-break: break-word; }
+    .msg-bubble--mine { align-self: flex-end; background: #005eb8; color: #fff; border-bottom-right-radius: 3px; }
+    .msg-bubble--theirs { align-self: flex-start; background: #f0f4f5; color: var(--nhsuk-text); border-bottom-left-radius: 3px; }
+    .msg-bubble-meta { font-size: 0.75rem; margin-top: 0.2rem; opacity: 0.7; }
+    .msg-compose { display: flex; gap: 0.5rem; padding: 0.85rem 1rem; border-top: 1px solid var(--nhsuk-border); }
+    .msg-compose textarea { flex: 1; resize: none; border: 2px solid var(--nhsuk-border); border-radius: 4px; padding: 0.5rem 0.65rem; font-size: 0.9375rem; font-family: inherit; min-height: 2.75rem; max-height: 8rem; }
+    .msg-compose textarea:focus { outline: 3px solid #ffbf47; border-color: var(--nhsuk-text); }
+    .msg-send-btn { align-self: flex-end; white-space: nowrap; }
+    .msg-empty { color: var(--nhsuk-secondary-text); font-style: italic; font-size: 0.9375rem; text-align: center; padding: 2rem 1rem; }
+    .msg-no-conv { padding: 1.25rem; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); text-align: center; }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/static/dashboard/" aria-label="Dashboard">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">Training Passport</span>
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <a href="/static/dashboard/">&larr; Dashboard</a>
+        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main msg-wrap" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">Messages</h1>
+
+    <div id="mainContent" hidden>
+      <div class="msg-layout">
+        <!-- Sidebar: conversation list -->
+        <div class="msg-sidebar">
+          <div class="msg-conv-list" id="convList">
+            <button type="button" class="msg-new-btn" id="btnNewConv">+ Message my trust HR</button>
+            <div id="convItems"><p class="msg-no-conv">No conversations yet.</p></div>
+          </div>
+        </div>
+        <!-- Thread panel -->
+        <div class="msg-thread" id="threadPanel">
+          <div class="msg-thread-card">
+            <div class="msg-thread-header" id="threadHeader">Select a conversation</div>
+            <div class="msg-bubbles" id="bubbles"><p class="msg-empty">Choose a conversation on the left, or start a new one.</p></div>
+            <div class="msg-compose" id="composeArea" hidden>
+              <textarea id="msgInput" placeholder="Type a message…" rows="2" aria-label="Message"></textarea>
+              <button type="button" class="nhsuk-button msg-send-btn" id="btnSend">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/shared/auth.js"></script>
+  <script>
+    (function () {
+      function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+      function show(el, on) { if (el) el.hidden = !on; }
+
+      function wireHamburgerMenu() {
+        var btn = document.getElementById('btnMenu'), panel = document.getElementById('menuPanel');
+        if (!btn || !panel) return;
+        function close() { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+        function open()  { panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); }
+        btn.addEventListener('click', function (e) { e.preventDefault(); panel.hidden ? open() : close(); });
+        document.addEventListener('click', function (e) { if (!panel.hidden && !btn.contains(e.target) && !panel.contains(e.target)) close(); }, true);
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+      }
+
+      async function apiJson(url, opts) {
+        opts = opts || {};
+        opts.credentials = 'include';
+        var res = await fetch(url, opts);
+        var text = await res.text();
+        var data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (e) {}
+        if (!res.ok) { throw new Error((data && data.detail) || text || res.statusText); }
+        return data;
+      }
+
+      function fmtTime(iso) {
+        if (!iso) return '';
+        var d = new Date(iso + (iso.endsWith('Z') ? '' : 'Z'));
+        return isNaN(d) ? iso.slice(0, 16).replace('T', ' ') :
+          d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      }
+
+      var _myId = null;
+      var _activeConvId = null;
+      var _pollTimer = null;
+
+      function renderBubbles(messages) {
+        var container = document.getElementById('bubbles');
+        if (!container) return;
+        if (!messages || !messages.length) {
+          container.innerHTML = '<p class="msg-empty">No messages yet. Say hello!</p>';
+          return;
+        }
+        container.innerHTML = messages.map(function (m) {
+          var mine = String(m.sender_user_id) === String(_myId);
+          var cls = mine ? 'msg-bubble--mine' : 'msg-bubble--theirs';
+          var name = mine ? 'You' : esc(m.sender_name || m.sender_email || 'HR');
+          return (
+            '<div class="msg-bubble ' + cls + '">' +
+              esc(m.body) +
+              '<div class="msg-bubble-meta">' + esc(name) + ' · ' + esc(fmtTime(m.sent_at)) + '</div>' +
+            '</div>'
+          );
+        }).join('');
+        container.scrollTop = container.scrollHeight;
+      }
+
+      async function loadThread(convId) {
+        _activeConvId = convId;
+        var header = document.getElementById('threadHeader');
+        var compose = document.getElementById('composeArea');
+        try {
+          var data = await apiJson('/api/me/messages/' + encodeURIComponent(String(convId)));
+          var conv = (_convs || []).find(function (c) { return c.id === convId; });
+          if (header) header.textContent = conv ? (conv.hr_trust || 'HR') : 'Conversation';
+          renderBubbles(data.messages || []);
+          show(compose, true);
+          // Refresh conv list to clear unread badge
+          await loadConversations(false);
+          // Start polling for new messages
+          startPolling(convId);
+        } catch (err) {
+          if (header) header.textContent = 'Error';
+          var b = document.getElementById('bubbles');
+          if (b) b.innerHTML = '<p class="msg-empty" style="color:var(--nhsuk-error);">' + esc(err.message) + '</p>';
+        }
+      }
+
+      function startPolling(convId) {
+        if (_pollTimer) clearInterval(_pollTimer);
+        _pollTimer = setInterval(async function () {
+          if (_activeConvId !== convId) { clearInterval(_pollTimer); return; }
+          try {
+            var data = await apiJson('/api/me/messages/' + encodeURIComponent(String(convId)));
+            renderBubbles(data.messages || []);
+          } catch (e) {}
+        }, 6000);
+      }
+
+      var _convs = [];
+
+      function renderConvList() {
+        var container = document.getElementById('convItems');
+        if (!container) return;
+        if (!_convs.length) {
+          container.innerHTML = '<p class="msg-no-conv">No conversations yet.</p>';
+          return;
+        }
+        container.innerHTML = _convs.map(function (c) {
+          var active = c.id === _activeConvId ? ' active' : '';
+          var unread = c.unread_count > 0 ? '<span class="msg-unread-dot" aria-label="' + c.unread_count + ' unread"></span>' : '';
+          var preview = c.last_body ? esc(String(c.last_body).slice(0, 50)) : '<em>No messages yet</em>';
+          return (
+            '<div class="msg-conv-item' + active + '" data-conv-id="' + c.id + '" tabindex="0" role="button">' +
+              '<div class="msg-conv-trust">' + esc(c.hr_trust || 'HR') + unread + '</div>' +
+              '<div class="msg-conv-preview">' + preview + '</div>' +
+            '</div>'
+          );
+        }).join('');
+      }
+
+      async function loadConversations(selectFirst) {
+        try {
+          var data = await apiJson('/api/me/messages');
+          _convs = data.conversations || [];
+          renderConvList();
+          if (selectFirst && _convs.length && _activeConvId === null) {
+            await loadThread(_convs[0].id);
+          }
+        } catch (err) { /* silent */ }
+      }
+
+      document.getElementById('convItems').addEventListener('click', async function (e) {
+        var item = e.target.closest('[data-conv-id]');
+        if (!item) return;
+        await loadThread(parseInt(item.getAttribute('data-conv-id'), 10));
+        renderConvList();
+      });
+      document.getElementById('convItems').addEventListener('keydown', async function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          var item = e.target.closest('[data-conv-id]');
+          if (item) { e.preventDefault(); await loadThread(parseInt(item.getAttribute('data-conv-id'), 10)); }
+        }
+      });
+
+      document.getElementById('btnNewConv').addEventListener('click', async function () {
+        this.disabled = true;
+        this.textContent = 'Starting…';
+        try {
+          var conv = await apiJson('/api/me/messages/start', { method: 'POST' });
+          // Merge into list if not already there
+          if (!_convs.find(function (c) { return c.id === conv.id; })) {
+            _convs.unshift(conv);
+          }
+          renderConvList();
+          await loadThread(conv.id);
+        } catch (err) {
+          alert(err.message || 'Could not start conversation');
+        } finally {
+          this.disabled = false;
+          this.textContent = '+ Message my trust HR';
+        }
+      });
+
+      async function sendMessage() {
+        var inp = document.getElementById('msgInput');
+        var text = (inp ? inp.value : '').trim();
+        if (!text || _activeConvId === null) return;
+        var btn = document.getElementById('btnSend');
+        if (btn) btn.disabled = true;
+        try {
+          await apiJson('/api/me/messages/' + encodeURIComponent(String(_activeConvId)) + '/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ body: text }),
+          });
+          if (inp) inp.value = '';
+          var data = await apiJson('/api/me/messages/' + encodeURIComponent(String(_activeConvId)));
+          renderBubbles(data.messages || []);
+          await loadConversations(false);
+        } catch (err) {
+          alert(err.message || 'Could not send');
+        } finally {
+          if (btn) btn.disabled = false;
+        }
+      }
+
+      document.getElementById('btnSend').addEventListener('click', sendMessage);
+      document.getElementById('msgInput').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+      });
+
+      (async function boot() {
+        await NHSAuth.refresh();
+        if (!NHSAuth.requireAuth()) return;
+        _myId = NHSAuth.user.id;
+        document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
+        wireHamburgerMenu();
+        document.getElementById('btnSignOut').addEventListener('click', async function () {
+          await NHSAuth.signOut(); window.location.replace('/');
+        });
+        show(document.getElementById('mainContent'), true);
+        await loadConversations(true);
+      })();
+    })();
+  </script>
+</body>
+</html>

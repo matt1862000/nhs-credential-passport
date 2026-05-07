@@ -85,6 +85,14 @@
           <p class="nhs-action-desc">Download PDFs for training HR has already verified.</p>
           <span class="nhs-action-cta">Export &rsaquo;</span>
         </a>
+        <a class="nhs-action-card" href="/static/messages/" role="listitem" id="doctorMsgCard">
+          <div class="nhs-action-title nhs-action-title--inline">
+            <span>Messages</span>
+            <span id="doctorMsgBadge" class="nhs-inbox-pending-badge" hidden aria-live="polite"></span>
+          </div>
+          <p class="nhs-action-desc">Send and receive messages from your trust HR team.</p>
+          <span class="nhs-action-cta">Open messages &rsaquo;</span>
+        </a>
       </div>
     </section>
 
@@ -96,6 +104,14 @@
           <div class="nhs-action-title">Mandatory requirements</div>
           <p class="nhs-action-desc">View and edit the list of mandatory training topics for your trust.</p>
           <span class="nhs-action-cta">Manage &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/hr/messages/" role="listitem" id="hrMsgCard">
+          <div class="nhs-action-title nhs-action-title--inline">
+            <span>Messages</span>
+            <span id="hrMsgBadge" class="nhs-inbox-pending-badge" hidden aria-live="polite"></span>
+          </div>
+          <p class="nhs-action-desc">Reply to messages from clinicians at your trust.</p>
+          <span class="nhs-action-cta">Open messages &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/hr/" role="listitem" id="hrInboxCard">
           <div class="nhs-action-title nhs-action-title--inline">
@@ -185,6 +201,25 @@
         }
       }
 
+      async function loadMsgBadge(isHr) {
+        var url = isHr ? '/api/hr/messages/unread-count' : '/api/me/messages/unread-count';
+        var badgeId = isHr ? 'hrMsgBadge' : 'doctorMsgBadge';
+        var badge = document.getElementById(badgeId);
+        if (!badge) return;
+        try {
+          var r = await fetch(url, { credentials: 'include' });
+          if (!r.ok) { badge.hidden = true; return; }
+          var data = await r.json();
+          var n = Number(data.unread || 0);
+          badge.textContent = n > 0 ? String(n) : '';
+          badge.hidden = n === 0;
+          badge.setAttribute('data-empty', n === 0 ? '1' : '0');
+          badge.setAttribute('aria-label', n === 0 ? 'No unread messages' : n + ' unread message' + (n === 1 ? '' : 's'));
+        } catch (e) {
+          badge.hidden = true;
+        }
+      }
+
       function renderStats(list) {
         list = Array.isArray(list) ? list : (window.NHSWallet ? NHSWallet.getWallet() : []);
         var valid = 0, expiring = 0, expired = 0;
@@ -224,7 +259,12 @@
         var doctorActions = document.getElementById('doctorActions');
         if (doctorActions && NHSAuth.user.premium) doctorActions.hidden = true;
 
-        if (NHSAuth.user.premium) void loadHrInboxPendingBadge();
+        if (NHSAuth.user.premium) {
+          void loadHrInboxPendingBadge();
+          void loadMsgBadge(true);
+        } else {
+          void loadMsgBadge(false);
+        }
 
         var dashboardTrainingStats = document.getElementById('dashboardTrainingStats');
         if (dashboardTrainingStats) dashboardTrainingStats.hidden = !!NHSAuth.user.premium;

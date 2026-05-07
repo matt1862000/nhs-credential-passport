@@ -602,3 +602,115 @@ async def hr_mandatory_topics_reorder(request: Request):
         raise HTTPException(status_code=400, detail="ids must be a list")
     db.mandatory_topic_reorder(trust, [int(i) for i in ids])
     return {"ok": True}
+
+
+# ── Messaging ─────────────────────────────────────────────────────────────────
+
+def _get_conversation_assert_doctor(conv_id: int, doctor_user_id: int):
+    """Fetch conversation and verify it belongs to this doctor."""
+    convs = db.conversations_for_doctor(int(doctor_user_id))
+    conv = next((c for c in convs if c["id"] == int(conv_id)), None)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv
+
+
+def _get_conversation_assert_hr(conv_id: int, hr_trust: str):
+    """Fetch conversation and verify it belongs to this HR trust."""
+    convs = db.conversations_for_hr_trust(hr_trust)
+    conv = next((c for c in convs if c["id"] == int(conv_id)), None)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv
+
+
+# Doctor endpoints
+@router.get("/me/messages")
+def me_messages_list(request: Request):
+    uid = require_user_id(request)
+    convs = db.conversations_for_doctor(uid)
+    return {"conversations": convs}
+
+
+@router.get("/me/messages/unread-count")
+def me_messages_unread(request: Request):
+    uid = require_user_id(request)
+    return {"unread": db.messages_unread_count_for_doctor(uid)}
+
+
+@router.get("/me/messages/{conv_id}")
+def me_messages_thread(request: Request, conv_id: int):
+    uid = require_user_id(request)
+    _get_conversation_assert_doctor(conv_id, uid)
+    msgs = db.messages_list(int(conv_id), viewer_user_id=uid, viewer_is_hr=False)
+    return {"messages": msgs}
+
+
+@router.post("/me/messages/start")
+async def me_messages_start(request: Request):
+    """Start (or retrieve) a conversation with the doctor's current trust HR."""
+    uid = require_user_id(request)
+    user = db.user_get_by_id(uid)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    trust = (user.get("current_trust") or "").strip()
+    if not trust:
+        raise HTTPException(status_code=400, detail="Set your current trust in your profile before messaging HR.")
+    conv = db.conversation_get_or_create(uid, trust)
+    return conv
+
+
+@router.post("/me/messages/{conv_id}/send")
+async def me_messages_send(request: Request, conv_id: int):
+    uid = require_user_id(request)
+    _get_conversation_assert_doctor(conv_id, uid)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    text = str(body.get("body") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message body cannot be empty")
+    msg = db.message_send_body(int(conv_id), uid, text)
+    return msg
+
+
+# HR endpoints
+@router.get("/hr/messages")
+def hr_messages_list(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    convs = db.conversations_for_hr_trust(trust)
+    return {"conversations": convs}
+
+
+@router.get("/hr/messages/unread-count")
+def hr_messages_unread(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    return {"unread": db.messages_unread_count_for_hr(trust)}
+
+
+@router.get("/hr/messages/{conv_id}")
+def hr_messages_thread(request: Request, conv_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    _get_conversation_assert_hr(conv_id, trust)
+    msgs = db.messages_list(int(conv_id), viewer_user_id=int(hr["id"]), viewer_is_hr=True)
+    return {"messages": msgs}
+
+
+@router.post("/hr/messages/{conv_id}/send")
+async def hr_messages_send(request: Request, conv_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    _get_conversation_assert_hr(conv_id, trust)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    text = str(body.get("body") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message body cannot be empty")
+    msg = db.message_send_body(int(conv_id), int(hr["id"]), text)
+    return msg

@@ -57,6 +57,7 @@ def init_db():
         _ensure_csv_import_evidence_table(conn)
         _ensure_visibility_tables(conn)
         _ensure_mandatory_topics_table(conn)
+        _ensure_messaging_tables(conn)
         _ensure_seed_privileged_user(conn)
         _ensure_seed_rotherham_user(conn)
         conn.commit()
@@ -296,6 +297,227 @@ def mandatory_topic_reorder(trust_name: str, ordered_ids: list[int]) -> None:
                 (idx, int(tid), trust_name),
             )
         conn.commit()
+
+
+def _ensure_messaging_tables(conn: sqlite3.Connection) -> None:
+    """Free-form messaging between a doctor and an HR trust (one thread per pair)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doctor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            hr_trust TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_message_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(doctor_user_id, hr_trust)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_trust ON conversations(hr_trust)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            sender_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            body TEXT NOT NULL,
+            sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+            read_at TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, sent_at)")
+
+
+# ── Messaging helpers ────────────────────────────────────────────────────────
+
+def _conv_row(r) -> dict:
+    return {
+        "id": int(r["id"]),
+        "doctor_user_id": int(r["doctor_user_id"]),
+        "doctor_name": r["doctor_name"],
+        "doctor_email": r["doctor_email"],
+        "doctor_gmc": r["doctor_gmc"],
+        "hr_trust": r["hr_trust"],
+        "created_at": r["created_at"],
+        "last_message_at": r["last_message_at"],
+        "unread_count": int(r["unread_count"] or 0),
+        "last_body": r["last_body"],
+    }
+
+
+def _msg_row(r) -> dict:
+    return {
+        "id": int(r["id"]),
+        "conversation_id": int(r["conversation_id"]),
+        "sender_user_id": int(r["sender_user_id"]),
+        "sender_name": r["sender_name"],
+        "sender_email": r["sender_email"],
+        "body": r["body"],
+        "sent_at": r["sent_at"],
+        "read_at": r["read_at"],
+    }
+
+
+def conversation_get_or_create(doctor_user_id: int, hr_trust: str) -> dict:
+    hr_trust = (hr_trust or "").strip()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_messaging_tables(conn)
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "INSERT OR IGNORE INTO conversations (doctor_user_id, hr_trust, created_at, last_message_at) VALUES (?, ?, datetime('now'), datetime('now'))",
+            (int(doctor_user_id), hr_trust),
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT c.id, c.doctor_user_id, c.hr_trust, c.created_at, c.last_message_at,
+                   u.display_name as doctor_name, u.email as doctor_email, u.gmc_number as doctor_gmc,
+                   0 as unread_count,
+                   (SELECT body FROM messages WHERE conversation_id = c.id ORDER BY sent_at DESC LIMIT 1) as last_body
+            FROM conversations c JOIN users u ON u.id = c.doctor_user_id
+            WHERE c.doctor_user_id = ? AND c.hr_trust = ?
+            """,
+            (int(doctor_user_id), hr_trust),
+        ).fetchone()
+    return _conv_row(row)
+
+
+def conversations_for_doctor(doctor_user_id: int) -> list[dict]:
+    """All conversation threads for a doctor (one per HR trust they've messaged)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_messaging_tables(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT c.id, c.doctor_user_id, c.hr_trust, c.created_at, c.last_message_at,
+                   u.display_name as doctor_name, u.email as doctor_email, u.gmc_number as doctor_gmc,
+                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id
+                    AND m.sender_user_id != ? AND m.read_at IS NULL) as unread_count,
+                   (SELECT body FROM messages WHERE conversation_id = c.id ORDER BY sent_at DESC LIMIT 1) as last_body
+            FROM conversations c JOIN users u ON u.id = c.doctor_user_id
+            WHERE c.doctor_user_id = ?
+            ORDER BY c.last_message_at DESC
+            """,
+            (int(doctor_user_id), int(doctor_user_id)),
+        ).fetchall()
+    return [_conv_row(r) for r in rows]
+
+
+def conversations_for_hr_trust(hr_trust: str) -> list[dict]:
+    """All conversation threads where the HR trust is the recipient side."""
+    hr_trust = (hr_trust or "").strip()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_messaging_tables(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT c.id, c.doctor_user_id, c.hr_trust, c.created_at, c.last_message_at,
+                   u.display_name as doctor_name, u.email as doctor_email, u.gmc_number as doctor_gmc,
+                   (SELECT COUNT(*) FROM messages m
+                    JOIN users su ON su.id = m.sender_user_id
+                    WHERE m.conversation_id = c.id AND su.premium = 0 AND m.read_at IS NULL) as unread_count,
+                   (SELECT body FROM messages WHERE conversation_id = c.id ORDER BY sent_at DESC LIMIT 1) as last_body
+            FROM conversations c JOIN users u ON u.id = c.doctor_user_id
+            WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
+            ORDER BY c.last_message_at DESC
+            """,
+            (hr_trust,),
+        ).fetchall()
+    return [_conv_row(r) for r in rows]
+
+
+def messages_list(conversation_id: int, viewer_user_id: int, viewer_is_hr: bool) -> list[dict]:
+    """Return all messages in a conversation, marking unread ones as read."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_messaging_tables(conn)
+        conn.row_factory = sqlite3.Row
+        # Mark messages from the other party as read
+        now = datetime.utcnow().isoformat()
+        if viewer_is_hr:
+            # HR reads messages sent by the doctor (premium=0)
+            conn.execute(
+                """UPDATE messages SET read_at = ? WHERE conversation_id = ? AND read_at IS NULL
+                   AND sender_user_id IN (SELECT id FROM users WHERE premium = 0)""",
+                (now, int(conversation_id)),
+            )
+        else:
+            # Doctor reads messages not sent by themselves
+            conn.execute(
+                "UPDATE messages SET read_at = ? WHERE conversation_id = ? AND read_at IS NULL AND sender_user_id != ?",
+                (now, int(conversation_id), int(viewer_user_id)),
+            )
+        conn.commit()
+        rows = conn.execute(
+            """
+            SELECT m.id, m.conversation_id, m.sender_user_id, m.body, m.sent_at, m.read_at,
+                   u.display_name as sender_name, u.email as sender_email
+            FROM messages m JOIN users u ON u.id = m.sender_user_id
+            WHERE m.conversation_id = ?
+            ORDER BY m.sent_at ASC
+            """,
+            (int(conversation_id),),
+        ).fetchall()
+    return [_msg_row(r) for r in rows]
+
+
+def message_send(conversation_id: int, sender_user_id: int) -> dict:
+    """Insert a message — called after the body is validated in the API layer."""
+    # Note: body is passed via a separate parameter to avoid circular import confusion
+    raise NotImplementedError("Use message_send_body instead")
+
+
+def message_send_body(conversation_id: int, sender_user_id: int, body: str) -> dict:
+    body = (body or "").strip()
+    if not body:
+        raise ValueError("Message body cannot be empty")
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_messaging_tables(conn)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(
+            "INSERT INTO messages (conversation_id, sender_user_id, body, sent_at) VALUES (?, ?, ?, ?)",
+            (int(conversation_id), int(sender_user_id), body, now),
+        )
+        conn.execute(
+            "UPDATE conversations SET last_message_at = ? WHERE id = ?",
+            (now, int(conversation_id)),
+        )
+        conn.commit()
+        row = conn.execute(
+            """SELECT m.id, m.conversation_id, m.sender_user_id, m.body, m.sent_at, m.read_at,
+                      u.display_name as sender_name, u.email as sender_email
+               FROM messages m JOIN users u ON u.id = m.sender_user_id
+               WHERE m.id = ?""",
+            (cursor.lastrowid,),
+        ).fetchone()
+    return _msg_row(row)
+
+
+def messages_unread_count_for_doctor(doctor_user_id: int) -> int:
+    """Total unread messages from HR across all conversations."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_messaging_tables(conn)
+        row = conn.execute(
+            """SELECT COUNT(*) FROM messages m
+               JOIN conversations c ON c.id = m.conversation_id
+               JOIN users su ON su.id = m.sender_user_id
+               WHERE c.doctor_user_id = ? AND su.premium = 1 AND m.read_at IS NULL""",
+            (int(doctor_user_id),),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def messages_unread_count_for_hr(hr_trust: str) -> int:
+    """Total unread messages from doctors for an HR trust."""
+    hr_trust = (hr_trust or "").strip()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_messaging_tables(conn)
+        row = conn.execute(
+            """SELECT COUNT(*) FROM messages m
+               JOIN conversations c ON c.id = m.conversation_id
+               JOIN users su ON su.id = m.sender_user_id
+               WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
+                 AND su.premium = 0 AND m.read_at IS NULL""",
+            (hr_trust,),
+        ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def _ensure_csv_import_evidence_table(conn: sqlite3.Connection) -> None:
