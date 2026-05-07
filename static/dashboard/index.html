@@ -425,7 +425,7 @@
             .then(function (r) { return r.ok ? r.json() : {}; })
             .then(function (map) {
               _gsAnyVerified = Object.values(map || {}).some(function (v) {
-                return v && v.shared && String(v.status || '').toUpperCase() === 'VERIFIED';
+                return v && v.shared === true;
               });
               renderGettingStarted(list.length, _gsAnyVerified);
             })
