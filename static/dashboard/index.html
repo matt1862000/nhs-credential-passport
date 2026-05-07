@@ -5,6 +5,126 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dashboard &mdash; NHS Training Passport</title>
   <link rel="stylesheet" href="/static/shared/app.css">
+  <style>
+    /* Getting-started checklist card */
+    .nhs-gs {
+      background: #fff;
+      border: 1px solid #d8dde0;
+      border-left: 4px solid #005eb8;
+      border-radius: 4px;
+      padding: 1.25rem 1.5rem;
+      margin-top: 1.5rem;
+      max-width: 46rem;
+      box-shadow: 0 2px 8px rgba(33,43,50,0.07);
+    }
+    .nhs-gs__head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 0.6rem;
+    }
+    .nhs-gs__title {
+      font-weight: 700;
+      font-size: 1rem;
+    }
+    .nhs-gs__subtitle {
+      font-size: 0.875rem;
+      color: #4c6272;
+      margin-left: 0.6rem;
+    }
+    .nhs-gs__dismiss {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1.4rem;
+      line-height: 1;
+      color: #4c6272;
+      padding: 0 0.2rem;
+      flex-shrink: 0;
+    }
+    .nhs-gs__dismiss:hover { color: #212b32; }
+    .nhs-gs__bar-wrap {
+      height: 5px;
+      background: #d8dde0;
+      border-radius: 3px;
+      margin-bottom: 1rem;
+      overflow: hidden;
+    }
+    .nhs-gs__bar-fill {
+      height: 100%;
+      background: #005eb8;
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+    .nhs-gs__steps {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+    .nhs-gs__step {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.65rem;
+      font-size: 0.9375rem;
+      line-height: 1.4;
+    }
+    .nhs-gs__icon {
+      flex-shrink: 0;
+      width: 1.35rem;
+      height: 1.35rem;
+      border-radius: 50%;
+      border: 2px solid #adb5bd;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      margin-top: 0.05rem;
+      color: transparent;
+    }
+    .nhs-gs__step--done .nhs-gs__icon {
+      background: #007f3b;
+      border-color: #007f3b;
+      color: #fff;
+    }
+    .nhs-gs__step--active .nhs-gs__icon {
+      border-color: #005eb8;
+    }
+    .nhs-gs__step--done .nhs-gs__text {
+      color: #4c6272;
+      text-decoration: line-through;
+    }
+    .nhs-gs__step--active .nhs-gs__text {
+      font-weight: 600;
+    }
+    /* What's next section */
+    .nhs-gs-next {
+      margin-top: 1.25rem;
+      padding-top: 1.1rem;
+      border-top: 1px solid #d8dde0;
+    }
+    .nhs-gs-next__title {
+      font-weight: 700;
+      font-size: 0.9375rem;
+      margin: 0 0 0.6rem 0;
+    }
+    .nhs-gs-next__links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1rem;
+    }
+    .nhs-gs-next__link {
+      font-size: 0.9rem;
+      color: #005eb8;
+    }
+    .nhs-gs-next__link::before {
+      content: '→ ';
+    }
+  </style>
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
@@ -57,17 +177,26 @@
       </div>
     </section>
 
-    <div id="gettingStartedBanner" hidden aria-live="polite" style="
-      background:#fff; border:2px solid #005eb8; border-left:5px solid #005eb8;
-      border-radius:4px; padding:1.25rem 1.5rem; margin-top:1.5rem; max-width:44rem;
-    ">
-      <p style="font-weight:700; font-size:1.0625rem; margin:0 0 0.35rem 0;">Your training list is empty — let&rsquo;s add your first record.</p>
-      <p style="font-size:0.9375rem; color:#4c6272; margin:0 0 1rem 0;">
-        Add completions individually, or import a bulk export straight from ESR.
-      </p>
-      <div style="display:flex; flex-wrap:wrap; gap:0.75rem; align-items:center;">
-        <a class="nhsuk-button" href="/static/staff/#add" style="margin:0;">Add a record &rsaquo;</a>
-        <a class="nhsuk-button nhsuk-button--ghost" href="/static/staff/#import" style="margin:0;">Import from ESR &rsaquo;</a>
+    <div id="gettingStartedCard" class="nhs-gs" hidden aria-label="Getting started guide">
+      <div class="nhs-gs__head">
+        <div>
+          <span class="nhs-gs__title">Get started</span>
+          <span class="nhs-gs__subtitle" id="gsProgressText"></span>
+        </div>
+        <button type="button" class="nhs-gs__dismiss" id="gsDismissBtn" aria-label="Dismiss guide">&times;</button>
+      </div>
+      <div class="nhs-gs__bar-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="4" id="gsBarWrap">
+        <div class="nhs-gs__bar-fill" id="gsBarFill" style="width:0%"></div>
+      </div>
+      <ol class="nhs-gs__steps" id="gsStepList"></ol>
+
+      <div class="nhs-gs-next" id="gsWhatsNext" hidden>
+        <p class="nhs-gs-next__title">You&rsquo;re all set. Here&rsquo;s what to try next:</p>
+        <div class="nhs-gs-next__links">
+          <a class="nhs-gs-next__link" href="/static/staff/#import">Import from ESR — add many records at once</a>
+          <a class="nhs-gs-next__link" href="/static/plan-move/">Plan a trust move — check your training gaps</a>
+          <a class="nhs-gs-next__link" href="/static/staff/#bulk">Download verified PDFs</a>
+        </div>
       </div>
     </div>
 
@@ -219,6 +348,60 @@
         }
       }
 
+      var _gsVerifiedChecked = false;
+      var _gsAnyVerified = false;
+
+      var GS_DISMISS_KEY = 'nhs_gs_dismissed';
+
+      var GS_STEPS_DEF = [
+        { id: 'gs1', label: 'Create your account' },
+        { id: 'gs2', label: 'Complete your profile' },
+        { id: 'gs3', label: '<a href="/static/staff/#add">Add your first training record</a>' },
+        { id: 'gs4', label: '<a href="/static/staff/#list">Share a record with HR for verification</a>' },
+      ];
+
+      function renderGettingStarted(walletLen, anyVerified) {
+        var card = document.getElementById('gettingStartedCard');
+        if (!card) return;
+        if (localStorage.getItem(GS_DISMISS_KEY)) { card.hidden = true; return; }
+
+        var done = [true, true, walletLen > 0, anyVerified];
+        var doneCount = done.filter(Boolean).length;
+        var allDone = doneCount === 4;
+
+        card.hidden = false;
+
+        /* progress bar */
+        var pct = Math.round((doneCount / 4) * 100);
+        var fill = document.getElementById('gsBarFill');
+        var barWrap = document.getElementById('gsBarWrap');
+        var progText = document.getElementById('gsProgressText');
+        if (fill) fill.style.width = pct + '%';
+        if (barWrap) barWrap.setAttribute('aria-valuenow', doneCount);
+        if (progText) progText.textContent = doneCount + ' / 4';
+
+        /* steps */
+        var list = document.getElementById('gsStepList');
+        if (list) {
+          var nextSet = false;
+          list.innerHTML = GS_STEPS_DEF.map(function (s, i) {
+            var isDone = done[i];
+            var isNext = !isDone && !nextSet;
+            if (isNext) nextSet = true;
+            var cls = 'nhs-gs__step' + (isDone ? ' nhs-gs__step--done' : (isNext ? ' nhs-gs__step--active' : ''));
+            var tick = isDone ? '✓' : '';
+            return '<li class="' + cls + '">'
+              + '<span class="nhs-gs__icon" aria-hidden="true">' + tick + '</span>'
+              + '<span class="nhs-gs__text">' + s.label + '</span>'
+              + '</li>';
+          }).join('');
+        }
+
+        /* what's next */
+        var next = document.getElementById('gsWhatsNext');
+        if (next) next.hidden = !allDone;
+      }
+
       function renderStats(list) {
         list = Array.isArray(list) ? list : (window.NHSWallet ? NHSWallet.getWallet() : []);
         var valid = 0, expiring = 0, expired = 0;
@@ -233,8 +416,21 @@
         document.getElementById('statExpired').textContent = expired;
         document.getElementById('statTotal').textContent = list.length;
 
-        var banner = document.getElementById('gettingStartedBanner');
-        if (banner) banner.hidden = list.length > 0;
+        renderGettingStarted(list.length, _gsAnyVerified);
+
+        /* fetch verified-map once we know they have records */
+        if (list.length > 0 && !_gsVerifiedChecked) {
+          _gsVerifiedChecked = true;
+          fetch('/api/me/verified-map', { credentials: 'include' })
+            .then(function (r) { return r.ok ? r.json() : {}; })
+            .then(function (map) {
+              _gsAnyVerified = Object.values(map || {}).some(function (v) {
+                return v && v.shared && String(v.status || '').toUpperCase() === 'VERIFIED';
+              });
+              renderGettingStarted(list.length, _gsAnyVerified);
+            })
+            .catch(function () {});
+        }
       }
 
       async function fetchServerWallet() {
@@ -278,6 +474,15 @@
           window.addEventListener('nhs-wallet-updated', renderStats);
         }
       })();
+
+      var gsDismiss = document.getElementById('gsDismissBtn');
+      if (gsDismiss) {
+        gsDismiss.addEventListener('click', function () {
+          localStorage.setItem(GS_DISMISS_KEY, '1');
+          var card = document.getElementById('gettingStartedCard');
+          if (card) card.hidden = true;
+        });
+      }
 
       document.getElementById('btnSignOut').addEventListener('click', async function () {
         await NHSAuth.signOut();
