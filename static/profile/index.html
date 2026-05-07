@@ -91,7 +91,6 @@
   <main class="nhsuk-main" id="maincontent" role="main">
     <h1 class="nhsuk-page-heading">Your profile</h1>
     <p class="nhsuk-lead" id="profileLead">Add a few details.</p>
-    <p class="nhsuk-body-s" id="profileRequiredBanner" style="max-width:32rem; display:none; padding:0.75rem 1rem; border-left:4px solid var(--nhsuk-error); background: var(--nhsuk-panel); border:1px solid var(--nhsuk-border); border-radius:4px; margin:0 0 1rem 0;">Please complete every field below before using the rest of the service.</p>
 
     <section class="nhsuk-card" style="max-width: 32rem;">
       <form id="profileForm" novalidate>
@@ -296,10 +295,7 @@
         fillFromUser(NHSAuth.user);
         wireVisibilityPanel();
         await loadVisibility();
-        var req = new URLSearchParams(window.location.search).get('required');
-        var banner = document.getElementById('profileRequiredBanner');
         var lead = document.getElementById('profileLead');
-        if (banner && req === '1' && !NHSAuth.user.premium) banner.style.display = 'block';
         if (lead && NHSAuth.user.premium) {
           lead.textContent = 'Optional details for your HR profile. You can change them any time.';
         }
