@@ -424,6 +424,15 @@
         var tbody = document.getElementById('itemsTbody');
         var s = payload;
         var merged = fixedSessionId == null || fixedSessionId === '';
+        var fallbackAnyCert = '';
+        var fallbackAnyFilename = '';
+        var fallbackAnyItem = (s.items || []).find(function (x) {
+          return x && x.certificate_base64 && String(x.certificate_base64).trim();
+        });
+        if (fallbackAnyItem) {
+          fallbackAnyCert = String(fallbackAnyItem.certificate_base64 || '').trim();
+          fallbackAnyFilename = String(fallbackAnyItem.certificate_filename || 'evidence');
+        }
         var portfolioSession = String(s.share_kind || '').toLowerCase() === 'portfolio';
         var anyPortfolioMerged = false;
         if (merged) {
@@ -538,13 +547,17 @@
               fallbackSameSubmissionCert = String(fallbackItem.certificate_base64).trim();
             }
           }
-          var hasCert = !!(rowCert || fallbackSameSubmissionCert);
+          var hasCert = !!(rowCert || fallbackSameSubmissionCert || fallbackAnyCert);
           var modLabel = esc(it.module_name || it.credential_id || '—');
           var modCell = hasCert
             ? '<button type="button" class="hr-module-name-btn" data-view-cert="1" data-cid="' +
               esc(it.credential_id) +
               '" data-sid="' +
               esc(sidForApi) +
+              '" data-fallback-any="' +
+              esc(fallbackAnyCert) +
+              '" data-fallback-fn="' +
+              esc(fallbackAnyFilename) +
               '" title="View evidence uploaded with this record">' +
               modLabel +
               '</button>'
@@ -602,6 +615,13 @@
                   String(x.certificate_base64).trim();
               });
               if (fallback) it = fallback;
+            }
+            if ((!it || !it.certificate_base64) && viewCert.getAttribute('data-fallback-any')) {
+              it = {
+                module_name: (it && it.module_name) || 'Evidence',
+                certificate_base64: viewCert.getAttribute('data-fallback-any'),
+                certificate_filename: viewCert.getAttribute('data-fallback-fn') || 'evidence',
+              };
             }
             if (it && it.certificate_base64) openHrCertModal(it);
             return;
