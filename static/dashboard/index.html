@@ -406,6 +406,7 @@
       var GS_DISMISS_KEY = 'nhs_gs_dismissed'; /* overwritten with user-scoped key after boot */
 
       var GS_REQS_VISITED_KEY = 'nhs_gs_reqs_visited'; /* overwritten with user-scoped key after boot */
+      var _gsAutoDismissTimer = null;
 
       var GS_STEPS_DEF = [
         { id: 'gs1', label: 'Create your account' },
@@ -426,6 +427,19 @@
         var allDone = doneCount === 5;
 
         card.hidden = false;
+
+        /* auto-dismiss a few seconds after completion */
+        if (!allDone && _gsAutoDismissTimer) {
+          clearTimeout(_gsAutoDismissTimer);
+          _gsAutoDismissTimer = null;
+        }
+        if (allDone && !_gsAutoDismissTimer) {
+          _gsAutoDismissTimer = setTimeout(function () {
+            try { localStorage.setItem(GS_DISMISS_KEY, '1'); } catch (e) {}
+            var c2 = document.getElementById('gettingStartedCard');
+            if (c2) c2.hidden = true;
+          }, 3000);
+        }
 
         /* progress bar */
         var pct = Math.round((doneCount / 5) * 100);
