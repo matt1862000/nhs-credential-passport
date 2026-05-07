@@ -376,9 +376,17 @@
           <label class="nhsuk-label" for="filterStatus">Filter by status</label>
           <select class="nhsuk-select" id="filterStatus" aria-label="Filter by status">
             <option value="">All</option>
-            <option value="valid">In date</option>
-            <option value="expiring">Expiring soon</option>
-            <option value="expired">Expired</option>
+            <optgroup label="Expiry">
+              <option value="valid">In date</option>
+              <option value="expiring">Expiring soon</option>
+              <option value="expired">Expired</option>
+            </optgroup>
+            <optgroup label="HR verification">
+              <option value="hr-verified">Verified by HR</option>
+              <option value="hr-pending">Pending verification</option>
+              <option value="hr-declined">Declined</option>
+              <option value="hr-not-shared">Not yet shared with HR</option>
+            </optgroup>
           </select>
         </div>
         <div class="nhsuk-form-group">
@@ -1242,8 +1250,19 @@
       const statusFilter = (document.getElementById('filterStatus') || {}).value || '';
       const moduleFilter = (document.getElementById('filterModule') || {}).value || '';
       return list.filter(c => {
-        const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
-        if (statusFilter && status !== statusFilter) return false;
+        if (statusFilter) {
+          if (statusFilter === 'hr-verified' || statusFilter === 'hr-pending' || statusFilter === 'hr-declined' || statusFilter === 'hr-not-shared') {
+            const v = (verifiedMap && verifiedMap[String(c.credential_id || '').trim()]) || null;
+            const st = v && v.status ? String(v.status).toUpperCase().trim() : '';
+            if (statusFilter === 'hr-verified'    && !(v && v.shared && st === 'VERIFIED'))  return false;
+            if (statusFilter === 'hr-pending'     && !(v && v.shared && st === 'PENDING'))   return false;
+            if (statusFilter === 'hr-declined'    && !(v && v.shared && st === 'DECLINED'))  return false;
+            if (statusFilter === 'hr-not-shared'  && (v && v.shared))                        return false;
+          } else {
+            const status = c.revoked ? 'revoked' : statusClass(c.expiry_date, false);
+            if (status !== statusFilter) return false;
+          }
+        }
         if (moduleFilter && (c.module_name || '') !== moduleFilter) return false;
         return true;
       });
