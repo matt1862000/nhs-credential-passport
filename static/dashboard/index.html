@@ -428,7 +428,7 @@
 
         card.hidden = false;
 
-        /* auto-dismiss a few seconds after completion */
+        /* auto-dismiss 10s after completion */
         if (!allDone && _gsAutoDismissTimer) {
           clearTimeout(_gsAutoDismissTimer);
           _gsAutoDismissTimer = null;
@@ -438,7 +438,7 @@
             try { localStorage.setItem(GS_DISMISS_KEY, '1'); } catch (e) {}
             var c2 = document.getElementById('gettingStartedCard');
             if (c2) c2.hidden = true;
-          }, 3000);
+          }, 10000);
         }
 
         /* progress bar */
