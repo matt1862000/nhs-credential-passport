@@ -127,11 +127,11 @@
         <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnGoTraining" disabled aria-disabled="true">My training</button>
       </div>
       <p id="profileNavHint" role="note">Save your profile with all three fields filled in before you can open the dashboard or My training.</p>
-    </section>
 
-    <section class="nhsuk-card" id="visibilitySection" style="max-width:32rem; margin-top:1.5rem; display:none;">
-      <h2 style="font-size:1.125rem; font-weight:700; margin:0 0 0.35rem 0;">Who can see my verified training?</h2>
-      <p class="nhsuk-body-s" style="color:var(--nhsuk-secondary-text); margin:0 0 0.75rem 0;">HR staff at NHS trusts can search for your name or GMC number to view your verified e-learning records. Choose who is allowed.</p>
+      <div id="visibilitySection" style="display:none;">
+        <hr style="border:none; border-top:1px solid var(--nhsuk-border); margin:1.25rem 0;">
+        <h2 style="font-size:1.125rem; font-weight:700; margin:0 0 0.35rem 0;">Who can see my verified training?</h2>
+        <p class="nhsuk-body-s" style="color:var(--nhsuk-secondary-text); margin:0 0 0.75rem 0;">HR staff at NHS trusts can search for your name or GMC number to view your verified e-learning records. Choose who is allowed.</p>
 
       <div class="vis-radio-group" id="visRadioGroup">
         <label>
@@ -171,6 +171,7 @@
 
       <button type="button" class="nhsuk-button" id="btnSaveVisibility" style="margin-top:1rem;">Save visibility</button>
       <p id="visibilityStatus" role="status" aria-live="polite"></p>
+      </div><!-- /visibilitySection -->
     </section>
   </main>
 
