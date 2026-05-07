@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mandatory requirements &mdash; NHS Training Passport</title>
+  <link rel="stylesheet" href="/static/shared/app.css">
+  <style>
+    .mand-wrap { max-width: 52rem; }
+    .mand-card { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; padding: 1.25rem 1.5rem; margin-top: 1.25rem; }
+    .mand-table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; margin-top: 0.75rem; }
+    .mand-table th, .mand-table td { text-align: left; padding: 0.7rem 0.85rem; border-bottom: 1px solid var(--nhsuk-border); vertical-align: middle; }
+    .mand-table th { background: #f0f4f5; font-weight: 700; white-space: nowrap; }
+    .mand-table tr:last-child td { border-bottom: none; }
+    .mand-table td:last-child { white-space: nowrap; text-align: right; }
+    .mand-drag-handle { cursor: grab; color: var(--nhsuk-secondary-text); padding-right: 0.5rem; font-size: 1.1rem; user-select: none; }
+    .mand-drag-handle:active { cursor: grabbing; }
+    tr.dragging { opacity: 0.45; }
+    tr.drag-over { outline: 2px solid var(--nhsuk-link); outline-offset: -2px; }
+    .mand-btn-sm { padding: 0.35rem 0.7rem; font-size: 0.875rem; font-weight: 600; border-radius: 4px; border: 1px solid; cursor: pointer; }
+    .mand-btn-edit { background: #fff; border-color: var(--nhsuk-link); color: var(--nhsuk-link); }
+    .mand-btn-edit:hover { background: #e8f0fe; }
+    .mand-btn-del { background: #fff; border-color: var(--nhsuk-error); color: var(--nhsuk-error); margin-left: 0.35rem; }
+    .mand-btn-del:hover { background: #fef2f2; }
+    .mand-empty { color: var(--nhsuk-secondary-text); padding: 0.75rem 0; font-style: italic; }
+    /* Add / edit form */
+    .mand-form { display: flex; flex-wrap: wrap; gap: 0.65rem; align-items: flex-end; margin-top: 1rem; }
+    .mand-form .mand-fg { display: flex; flex-direction: column; gap: 0.3rem; }
+    .mand-form .mand-fg label { font-size: 0.875rem; font-weight: 600; }
+    .mand-form .mand-fg input { padding: 0.45rem 0.65rem; border: 2px solid var(--nhsuk-border); border-radius: 4px; font-size: 0.9375rem; min-width: 14rem; }
+    .mand-form .mand-fg input:focus { outline: 3px solid #ffbf47; outline-offset: 0; border-color: var(--nhsuk-text); }
+    .mand-form .mand-fg--wide input { min-width: 20rem; }
+    .mand-status { min-height: 1.25rem; font-size: 0.875rem; margin-top: 0.5rem; }
+    .mand-status.ok { color: var(--nhsuk-success); font-weight: 600; }
+    .mand-status.err { color: var(--nhsuk-error); font-weight: 600; }
+    .mand-edit-inline td { background: #f9fbff; }
+    .mand-edit-inline input { padding: 0.35rem 0.55rem; border: 2px solid var(--nhsuk-border); border-radius: 4px; font-size: 0.9375rem; width: 100%; box-sizing: border-box; }
+    .mand-edit-inline input:focus { outline: 3px solid #ffbf47; border-color: var(--nhsuk-text); }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/static/dashboard/" aria-label="Dashboard">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">Training Passport</span>
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <a href="/static/dashboard/">&larr; Dashboard</a>
+        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main mand-wrap" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">Mandatory training requirements</h1>
+    <p class="nhsuk-lead" id="trustNameLead">Manage the list of mandatory topics for your trust. These are pre-loaded with UK CSTF defaults — add, edit, remove, or reorder them as needed.</p>
+
+    <div id="notPremium" class="mand-card" hidden>
+      <p style="margin:0; font-weight:700;">This page is only for HR accounts.</p>
+    </div>
+
+    <div id="mainContent" hidden>
+      <div class="mand-card">
+        <div style="display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:0.5rem;">
+          <h2 style="margin:0; font-size:1.125rem;">Mandatory topics</h2>
+          <p class="nhsuk-body-s" style="margin:0; color:var(--nhsuk-secondary-text);" id="trustLabel"></p>
+        </div>
+        <p class="nhsuk-body-s" style="margin:0.35rem 0 0 0; color:var(--nhsuk-secondary-text);">Drag rows to reorder. Click <strong>Edit</strong> to change a topic inline.</p>
+
+        <div style="overflow-x:auto;">
+          <table class="mand-table" aria-label="Mandatory topics">
+            <thead>
+              <tr>
+                <th style="width:1.5rem;"></th>
+                <th>Topic</th>
+                <th>Category</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="topicsTbody"></tbody>
+          </table>
+        </div>
+        <p id="listStatus" class="mand-status" role="status" aria-live="polite"></p>
+      </div>
+
+      <div class="mand-card">
+        <h2 style="margin:0 0 0.75rem 0; font-size:1.125rem;">Add a topic</h2>
+        <div class="mand-form" id="addForm">
+          <div class="mand-fg mand-fg--wide">
+            <label for="newTopic">Topic name</label>
+            <input type="text" id="newTopic" placeholder="e.g. Manual Handling" maxlength="200" autocomplete="off">
+          </div>
+          <div class="mand-fg mand-fg--wide">
+            <label for="newCategory">Category</label>
+            <input type="text" id="newCategory" placeholder="e.g. UK CSTF / statutory" maxlength="200" autocomplete="off">
+          </div>
+          <button type="button" class="nhsuk-button" id="btnAdd" style="margin:0; align-self:flex-end;">Add topic</button>
+        </div>
+        <p id="addStatus" class="mand-status" role="status" aria-live="polite"></p>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/shared/auth.js"></script>
+  <script>
+    (function () {
+      function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+      function show(el, on) { if (el) el.hidden = !on; }
+
+      function wireHamburgerMenu() {
+        var btn = document.getElementById('btnMenu');
+        var panel = document.getElementById('menuPanel');
+        if (!btn || !panel) return;
+        function close() { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+        function open() { panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); }
+        btn.addEventListener('click', function (e) { e.preventDefault(); if (panel.hidden) open(); else close(); });
+        document.addEventListener('click', function (e) {
+          if (panel.hidden) return;
+          if (btn.contains(e.target) || panel.contains(e.target)) return;
+          close();
+        }, true);
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+      }
+
+      async function apiJson(url, opts) {
+        opts = opts || {};
+        opts.credentials = 'include';
+        var res = await fetch(url, opts);
+        var text = await res.text();
+        var data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          var d = data && data.detail;
+          throw new Error(typeof d === 'string' ? d : (text || res.statusText));
+        }
+        return data;
+      }
+
+      var _topics = [];
+      var _dragSrcIdx = null;
+
+      function setStatus(id, msg, kind) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = msg || '';
+        el.className = 'mand-status' + (kind ? ' ' + kind : '');
+      }
+
+      function renderTopics() {
+        var tbody = document.getElementById('topicsTbody');
+        if (!tbody) return;
+        if (!_topics.length) {
+          tbody.innerHTML = '<tr><td colspan="4" class="mand-empty">No topics yet — add one below.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = _topics.map(function (t, idx) {
+          return (
+            '<tr draggable="true" data-idx="' + idx + '" data-id="' + esc(String(t.id)) + '">' +
+            '<td><span class="mand-drag-handle" title="Drag to reorder">&#8597;</span></td>' +
+            '<td>' + esc(t.topic_name) + '</td>' +
+            '<td>' + esc(t.category || '—') + '</td>' +
+            '<td>' +
+              '<button type="button" class="mand-btn-sm mand-btn-edit" data-edit="' + idx + '">Edit</button>' +
+              '<button type="button" class="mand-btn-sm mand-btn-del" data-delete="' + String(t.id) + '">Remove</button>' +
+            '</td>' +
+            '</tr>'
+          );
+        }).join('');
+        wireDragDrop();
+      }
+
+      function startInlineEdit(idx) {
+        var tbody = document.getElementById('topicsTbody');
+        var row = tbody && tbody.querySelector('tr[data-idx="' + idx + '"]');
+        if (!row) return;
+        var t = _topics[idx];
+        row.className = 'mand-edit-inline';
+        row.setAttribute('draggable', 'false');
+        row.innerHTML =
+          '<td></td>' +
+          '<td><input type="text" class="edit-topic-name" value="' + esc(t.topic_name) + '" maxlength="200" aria-label="Topic name"></td>' +
+          '<td><input type="text" class="edit-category" value="' + esc(t.category || '') + '" maxlength="200" aria-label="Category"></td>' +
+          '<td>' +
+            '<button type="button" class="mand-btn-sm mand-btn-edit" data-save="' + String(t.id) + '" data-idx="' + idx + '">Save</button>' +
+            '<button type="button" class="mand-btn-sm mand-btn-del" data-cancel="1" style="border-color:var(--nhsuk-border);color:var(--nhsuk-secondary-text);">Cancel</button>' +
+          '</td>';
+        var nameInput = row.querySelector('.edit-topic-name');
+        if (nameInput) { nameInput.focus(); nameInput.select(); }
+      }
+
+      async function saveInlineEdit(topicId, idx, row) {
+        var nameInput = row.querySelector('.edit-topic-name');
+        var catInput = row.querySelector('.edit-category');
+        var topicName = (nameInput ? nameInput.value : '').trim();
+        var category = (catInput ? catInput.value : '').trim();
+        if (!topicName) { setStatus('listStatus', 'Topic name cannot be empty.', 'err'); return; }
+        try {
+          await apiJson('/api/hr/mandatory-topics/' + encodeURIComponent(String(topicId)), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic_name: topicName, category: category }),
+          });
+          _topics[idx] = { id: topicId, topic_name: topicName, category: category, sort_order: _topics[idx].sort_order };
+          renderTopics();
+          setStatus('listStatus', 'Saved.', 'ok');
+        } catch (err) {
+          setStatus('listStatus', err.message || 'Could not save.', 'err');
+        }
+      }
+
+      function wireTbodyEvents() {
+        var tbody = document.getElementById('topicsTbody');
+        if (!tbody) return;
+        tbody.addEventListener('click', async function (e) {
+          var editBtn = e.target.closest('button[data-edit]');
+          var saveBtn = e.target.closest('button[data-save]');
+          var cancelBtn = e.target.closest('button[data-cancel]');
+          var delBtn = e.target.closest('button[data-delete]');
+
+          if (editBtn) {
+            startInlineEdit(parseInt(editBtn.getAttribute('data-edit'), 10));
+            return;
+          }
+          if (cancelBtn) {
+            renderTopics();
+            return;
+          }
+          if (saveBtn) {
+            var tid = parseInt(saveBtn.getAttribute('data-save'), 10);
+            var idx = parseInt(saveBtn.getAttribute('data-idx'), 10);
+            var row2 = saveBtn.closest('tr');
+            await saveInlineEdit(tid, idx, row2);
+            return;
+          }
+          if (delBtn) {
+            var did = parseInt(delBtn.getAttribute('data-delete'), 10);
+            var topicName = (_topics.find(function (t) { return t.id === did; }) || {}).topic_name || 'this topic';
+            if (!confirm('Remove "' + topicName + '"?')) return;
+            try {
+              await apiJson('/api/hr/mandatory-topics/' + encodeURIComponent(String(did)), { method: 'DELETE' });
+              _topics = _topics.filter(function (t) { return t.id !== did; });
+              renderTopics();
+              setStatus('listStatus', 'Topic removed.', 'ok');
+            } catch (err) {
+              setStatus('listStatus', err.message || 'Could not remove.', 'err');
+            }
+          }
+        });
+      }
+
+      // ── Drag-to-reorder ──────────────────────────────────────────────────────
+      function wireDragDrop() {
+        var tbody = document.getElementById('topicsTbody');
+        if (!tbody) return;
+        var rows = Array.from(tbody.querySelectorAll('tr[data-idx]'));
+        rows.forEach(function (row) {
+          row.addEventListener('dragstart', function (e) {
+            _dragSrcIdx = parseInt(row.getAttribute('data-idx'), 10);
+            e.dataTransfer.effectAllowed = 'move';
+            setTimeout(function () { row.classList.add('dragging'); }, 0);
+          });
+          row.addEventListener('dragend', function () {
+            row.classList.remove('dragging');
+            tbody.querySelectorAll('tr').forEach(function (r) { r.classList.remove('drag-over'); });
+          });
+          row.addEventListener('dragover', function (e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            tbody.querySelectorAll('tr').forEach(function (r) { r.classList.remove('drag-over'); });
+            row.classList.add('drag-over');
+          });
+          row.addEventListener('drop', async function (e) {
+            e.preventDefault();
+            row.classList.remove('drag-over');
+            var targetIdx = parseInt(row.getAttribute('data-idx'), 10);
+            if (_dragSrcIdx === null || _dragSrcIdx === targetIdx) return;
+            var moved = _topics.splice(_dragSrcIdx, 1)[0];
+            _topics.splice(targetIdx, 0, moved);
+            _dragSrcIdx = null;
+            renderTopics();
+            // Persist new order
+            try {
+              await apiJson('/api/hr/mandatory-topics/reorder', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: _topics.map(function (t) { return t.id; }) }),
+              });
+              setStatus('listStatus', 'Order saved.', 'ok');
+            } catch (err) {
+              setStatus('listStatus', 'Could not save order: ' + (err.message || err), 'err');
+            }
+          });
+        });
+      }
+
+      async function loadTopics() {
+        setStatus('listStatus', 'Loading…');
+        try {
+          var data = await apiJson('/api/hr/mandatory-topics');
+          _topics = data.topics || [];
+          renderTopics();
+          wireTbodyEvents();
+          setStatus('listStatus', '');
+        } catch (err) {
+          setStatus('listStatus', err.message || 'Could not load topics.', 'err');
+        }
+      }
+
+      document.getElementById('btnAdd').addEventListener('click', async function () {
+        var topicInput = document.getElementById('newTopic');
+        var catInput = document.getElementById('newCategory');
+        var topicName = (topicInput ? topicInput.value : '').trim();
+        var category = (catInput ? catInput.value : '').trim();
+        if (!topicName) { setStatus('addStatus', 'Topic name is required.', 'err'); return; }
+        setStatus('addStatus', 'Adding…');
+        try {
+          var added = await apiJson('/api/hr/mandatory-topics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic_name: topicName, category: category }),
+          });
+          _topics.push(added);
+          renderTopics();
+          wireTbodyEvents();
+          if (topicInput) topicInput.value = '';
+          if (catInput) catInput.value = '';
+          setStatus('addStatus', 'Topic added.', 'ok');
+        } catch (err) {
+          setStatus('addStatus', err.message || 'Could not add topic.', 'err');
+        }
+      });
+
+      document.getElementById('newTopic').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); document.getElementById('btnAdd').click(); }
+      });
+
+      (async function boot() {
+        await NHSAuth.refresh();
+        if (!NHSAuth.requireAuth()) return;
+        document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
+        wireHamburgerMenu();
+        document.getElementById('btnSignOut').addEventListener('click', async function () {
+          await NHSAuth.signOut();
+          window.location.replace('/');
+        });
+
+        if (!NHSAuth.user.premium) {
+          show(document.getElementById('notPremium'), true);
+          return;
+        }
+
+        show(document.getElementById('mainContent'), true);
+        var trust = (NHSAuth.user.current_trust || '').trim();
+        var trustLabel = document.getElementById('trustLabel');
+        if (trustLabel && trust) trustLabel.textContent = trust;
+        var lead = document.getElementById('trustNameLead');
+        if (lead && trust) lead.textContent = 'Mandatory training requirements for ' + trust + '. Pre-loaded with UK CSTF defaults — add, edit, remove, or reorder as needed.';
+
+        await loadTopics();
+      })();
+    })();
+  </script>
+</body>
+</html>

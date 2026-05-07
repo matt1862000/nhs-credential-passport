@@ -524,3 +524,81 @@ async def hr_share_item_decline(request: Request, session_id: int, credential_id
         raise HTTPException(status_code=400, detail="Decline reason required")
     db.share_item_set_decision(int(session_id), str(credential_id), int(hr["id"]), status="DECLINED", decline_reason=reason)
     return {"ok": True}
+
+
+# ── Mandatory topics ──────────────────────────────────────────────────────────
+
+def _hr_trust_required(hr_user: dict) -> str:
+    trust = (hr_user.get("current_trust") or "").strip()
+    if not trust:
+        raise HTTPException(status_code=400, detail="Your HR account must have a current trust set in your profile.")
+    return trust
+
+
+@router.get("/hr/mandatory-topics")
+def hr_mandatory_topics_list(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    return {"topics": db.mandatory_topics_list(trust)}
+
+
+@router.post("/hr/mandatory-topics")
+async def hr_mandatory_topic_add(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    topic_name = str(body.get("topic_name") or "").strip()
+    category = str(body.get("category") or "").strip()
+    if not topic_name:
+        raise HTTPException(status_code=400, detail="topic_name is required")
+    try:
+        topic = db.mandatory_topic_add(trust, topic_name, category)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return topic
+
+
+@router.put("/hr/mandatory-topics/{topic_id}")
+async def hr_mandatory_topic_update(request: Request, topic_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    topic_name = str(body.get("topic_name") or "").strip()
+    category = str(body.get("category") or "").strip()
+    if not topic_name:
+        raise HTTPException(status_code=400, detail="topic_name is required")
+    updated = db.mandatory_topic_update(int(topic_id), trust, topic_name, category)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return {"ok": True}
+
+
+@router.delete("/hr/mandatory-topics/{topic_id}")
+def hr_mandatory_topic_delete(request: Request, topic_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    deleted = db.mandatory_topic_delete(int(topic_id), trust)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return {"ok": True}
+
+
+@router.post("/hr/mandatory-topics/reorder")
+async def hr_mandatory_topics_reorder(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    ids = body.get("ids")
+    if not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="ids must be a list")
+    db.mandatory_topic_reorder(trust, [int(i) for i in ids])
+    return {"ok": True}

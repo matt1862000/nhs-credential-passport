@@ -56,6 +56,7 @@ def init_db():
         _ensure_share_tables(conn)
         _ensure_csv_import_evidence_table(conn)
         _ensure_visibility_tables(conn)
+        _ensure_mandatory_topics_table(conn)
         _ensure_seed_privileged_user(conn)
         _ensure_seed_rotherham_user(conn)
         conn.commit()
@@ -184,6 +185,117 @@ def hr_doctor_search(q: str, hr_trust: str, limit: int = 30) -> list[dict]:
                 "current_trust": r["current_trust"],
             })
     return out
+
+
+_DEFAULT_MANDATORY_TOPICS = [
+    ("Information Governance",                    "UK CSTF / statutory"),
+    ("Fire Safety",                               "UK CSTF / statutory"),
+    ("Infection Prevention and Control",          "UK CSTF / statutory"),
+    ("Safeguarding (adults & children) Level 3",  "UK CSTF / trust policy"),
+    ("Health, Safety and Welfare",                "UK CSTF / statutory"),
+    ("Equality, Diversity and Human Rights",      "UK CSTF / statutory"),
+    ("Trust / local induction (destination-specific)", "Local — usually not portable"),
+]
+
+
+def _ensure_mandatory_topics_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS trust_mandatory_topics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trust_name TEXT NOT NULL,
+            topic_name TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT '',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tmt_trust ON trust_mandatory_topics(trust_name)")
+
+
+# ── Mandatory topics helpers ─────────────────────────────────────────────────
+
+def mandatory_topics_list(trust_name: str) -> list[dict]:
+    """Return topics for a trust; seeds defaults on first access."""
+    trust_name = (trust_name or "").strip()
+    if not trust_name:
+        return []
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mandatory_topics_table(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, topic_name, category, sort_order FROM trust_mandatory_topics WHERE trust_name = ? ORDER BY sort_order, id",
+            (trust_name,),
+        ).fetchall()
+        if not rows:
+            # Seed defaults for this trust
+            now = datetime.utcnow().isoformat()
+            for idx, (topic, cat) in enumerate(_DEFAULT_MANDATORY_TOPICS):
+                conn.execute(
+                    "INSERT INTO trust_mandatory_topics (trust_name, topic_name, category, sort_order, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (trust_name, topic, cat, idx, now),
+                )
+            conn.commit()
+            rows = conn.execute(
+                "SELECT id, topic_name, category, sort_order FROM trust_mandatory_topics WHERE trust_name = ? ORDER BY sort_order, id",
+                (trust_name,),
+            ).fetchall()
+    return [{"id": r["id"], "topic_name": r["topic_name"], "category": r["category"], "sort_order": r["sort_order"]} for r in rows]
+
+
+def mandatory_topic_add(trust_name: str, topic_name: str, category: str) -> dict:
+    trust_name = (trust_name or "").strip()
+    topic_name = (topic_name or "").strip()
+    category = (category or "").strip()
+    if not trust_name or not topic_name:
+        raise ValueError("trust_name and topic_name are required")
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mandatory_topics_table(conn)
+        max_order = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) FROM trust_mandatory_topics WHERE trust_name = ?", (trust_name,)
+        ).fetchone()[0]
+        cursor = conn.execute(
+            "INSERT INTO trust_mandatory_topics (trust_name, topic_name, category, sort_order) VALUES (?, ?, ?, ?)",
+            (trust_name, topic_name, category, max_order + 1),
+        )
+        conn.commit()
+        return {"id": cursor.lastrowid, "topic_name": topic_name, "category": category, "sort_order": max_order + 1}
+
+
+def mandatory_topic_update(topic_id: int, trust_name: str, topic_name: str, category: str) -> bool:
+    trust_name = (trust_name or "").strip()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mandatory_topics_table(conn)
+        cursor = conn.execute(
+            "UPDATE trust_mandatory_topics SET topic_name = ?, category = ? WHERE id = ? AND trust_name = ?",
+            ((topic_name or "").strip(), (category or "").strip(), int(topic_id), trust_name),
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+def mandatory_topic_delete(topic_id: int, trust_name: str) -> bool:
+    trust_name = (trust_name or "").strip()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mandatory_topics_table(conn)
+        cursor = conn.execute(
+            "DELETE FROM trust_mandatory_topics WHERE id = ? AND trust_name = ?",
+            (int(topic_id), trust_name),
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+def mandatory_topic_reorder(trust_name: str, ordered_ids: list[int]) -> None:
+    """Update sort_order to match the given id sequence."""
+    trust_name = (trust_name or "").strip()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mandatory_topics_table(conn)
+        for idx, tid in enumerate(ordered_ids):
+            conn.execute(
+                "UPDATE trust_mandatory_topics SET sort_order = ? WHERE id = ? AND trust_name = ?",
+                (idx, int(tid), trust_name),
+            )
+        conn.commit()
 
 
 def _ensure_csv_import_evidence_table(conn: sqlite3.Connection) -> None:
