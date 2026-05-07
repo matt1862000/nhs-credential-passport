@@ -248,6 +248,18 @@ async def me_profile_put(request: Request):
     return {"ok": True}
 
 
+@router.get("/me/trust-requirements")
+def me_trust_requirements(request: Request):
+    uid = require_user_id(request)
+    u = db.user_get_by_id(uid)
+    if not u:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    trust = (u.get("current_trust") or "").strip()
+    if not trust:
+        return {"topics": [], "trust": None}
+    return {"topics": db.mandatory_topics_list(trust), "trust": trust}
+
+
 @router.get("/me/wallet")
 def me_wallet_get(request: Request):
     uid = _current_user_id(request)

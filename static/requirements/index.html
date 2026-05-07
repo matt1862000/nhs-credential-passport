@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My trust requirements &mdash; NHS Training Passport</title>
+  <link rel="stylesheet" href="/static/shared/app.css">
+  <style>
+    [hidden] { display: none !important; }
+    .req-wrap { max-width: 52rem; }
+    .req-summary {
+      display: flex; flex-wrap: wrap; gap: 1rem;
+      margin: 1.25rem 0 1.5rem 0;
+    }
+    .req-summary-pill {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 8px;
+      padding: 0.75rem 1.25rem; min-width: 7rem; text-align: center;
+    }
+    .req-summary-pill__count {
+      font-size: 2rem; font-weight: 700; line-height: 1;
+    }
+    .req-summary-pill__label {
+      font-size: 0.8125rem; margin-top: 0.25rem; color: var(--nhsuk-secondary-text);
+    }
+    .req-summary-pill--met .req-summary-pill__count { color: var(--nhsuk-success, #007f3b); }
+    .req-summary-pill--expiring .req-summary-pill__count { color: #d5700a; }
+    .req-summary-pill--gap .req-summary-pill__count { color: var(--nhsuk-error); }
+    .req-table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
+    .req-table th, .req-table td { text-align: left; padding: 0.7rem 0.85rem; border-bottom: 1px solid var(--nhsuk-border); vertical-align: top; }
+    .req-table th { background: #f0f4f5; font-weight: 700; white-space: nowrap; }
+    .req-table tr:last-child td { border-bottom: none; }
+    .req-tag {
+      display: inline-block; padding: 0.2rem 0.55rem; border-radius: 3px;
+      font-size: 0.8125rem; font-weight: 700; white-space: nowrap;
+    }
+    .req-tag--met { background: #d1f2e1; color: #005a24; }
+    .req-tag--expiring { background: #fef3da; color: #7a4700; }
+    .req-tag--expired { background: #fde8e8; color: #a30000; }
+    .req-tag--gap { background: #fde8e8; color: #a30000; }
+    .req-detail { font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
+    .req-card { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; padding: 1.25rem 1.5rem; margin-top: 1.25rem; }
+    .req-empty { color: var(--nhsuk-secondary-text); padding: 0.75rem 0; font-style: italic; }
+    .req-no-trust { margin-top: 1.5rem; }
+    .req-status { min-height: 1.25rem; font-size: 0.875rem; margin-top: 0.5rem; }
+    .req-status.err { color: var(--nhsuk-error); font-weight: 600; }
+    .req-footnote { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 1rem; }
+    .req-add-link { margin-top: 1.5rem; }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/static/dashboard/" aria-label="Dashboard">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">Training Passport</span>
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <a href="/static/dashboard/">&larr; Dashboard</a>
+        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main req-wrap" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">My trust requirements</h1>
+    <p class="nhsuk-lead" id="pageLeadText">Checking your training against your trust's mandatory requirements&hellip;</p>
+
+    <div id="noTrustMsg" class="req-no-trust" hidden>
+      <div class="nhsuk-warning-callout">
+        <h2 class="nhsuk-warning-callout__label">No trust set</h2>
+        <p>Your profile does not have a current trust set. <a href="/static/profile/">Update your profile</a> to see your trust's requirements.</p>
+      </div>
+    </div>
+
+    <div id="noTopicsMsg" hidden>
+      <div class="nhsuk-warning-callout">
+        <h2 class="nhsuk-warning-callout__label">No requirements set yet</h2>
+        <p id="noTopicsText">Your trust has not yet added any mandatory training requirements to this system. Contact your HR or Medical Education team.</p>
+      </div>
+    </div>
+
+    <div id="mainContent" hidden>
+      <div class="req-summary" id="reqSummary" role="status" aria-live="polite"></div>
+
+      <div class="req-card">
+        <div style="display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:0.5rem; margin-bottom:0.75rem;">
+          <h2 style="margin:0; font-size:1.125rem;">Requirements checklist</h2>
+          <span class="nhsuk-body-s" style="color:var(--nhsuk-secondary-text);" id="trustLabel"></span>
+        </div>
+        <p id="reqStatus" class="req-status" role="status" aria-live="polite"></p>
+        <div style="overflow-x:auto;">
+          <table class="req-table" aria-label="Requirements vs your training">
+            <thead>
+              <tr>
+                <th>Required topic</th>
+                <th>Category</th>
+                <th>Status</th>
+                <th>Your record</th>
+              </tr>
+            </thead>
+            <tbody id="reqTbody"></tbody>
+          </table>
+        </div>
+        <p class="req-footnote">Matches are made by comparing topic names to your training record titles. <a href="/static/staff/#list">View and manage your training records.</a></p>
+      </div>
+
+      <div id="noWalletMsg" class="req-add-link" hidden>
+        <p>You have not added any training records yet. <a href="/static/staff/#add">Add your first record</a> or <a href="/static/staff/#import">import from ESR</a>.</p>
+      </div>
+    </div>
+
+    <p id="loadError" class="req-status err" role="alert" hidden></p>
+  </main>
+
+  <script src="/static/shared/auth.js"></script>
+  <script>
+    (function () {
+      function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+      function show(el, on) { if (el) el.hidden = !on; }
+
+      function wireHamburgerMenu() {
+        var btn = document.getElementById('btnMenu');
+        var panel = document.getElementById('menuPanel');
+        if (!btn || !panel) return;
+        function close() { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+        function open() { panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); }
+        btn.addEventListener('click', function (e) { e.preventDefault(); if (panel.hidden) open(); else close(); });
+        document.addEventListener('click', function (e) {
+          if (panel.hidden) return;
+          if (btn.contains(e.target) || panel.contains(e.target)) return;
+          close();
+        }, true);
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+      }
+
+      async function apiJson(url) {
+        var res = await fetch(url, { credentials: 'include' });
+        if (!res.ok) {
+          var data = null;
+          try { data = await res.json(); } catch (e) {}
+          throw new Error((data && data.detail) || res.statusText);
+        }
+        return res.json();
+      }
+
+      function todayIso() {
+        var d = new Date();
+        return d.getFullYear() + '-' +
+          String(d.getMonth() + 1).padStart(2, '0') + '-' +
+          String(d.getDate()).padStart(2, '0');
+      }
+
+      function expiryStatus(expiryDate) {
+        if (!expiryDate) return 'met';
+        var today = todayIso();
+        if (expiryDate < today) return 'expired';
+        // warn if expiring within ~90 days
+        var warn = new Date();
+        warn.setDate(warn.getDate() + 90);
+        var warnIso = warn.getFullYear() + '-' +
+          String(warn.getMonth() + 1).padStart(2, '0') + '-' +
+          String(warn.getDate()).padStart(2, '0');
+        if (expiryDate <= warnIso) return 'expiring';
+        return 'met';
+      }
+
+      /**
+       * Find the best non-revoked wallet entry that matches a topic name.
+       * Matching: topic name ⊂ module_name (case-insensitive), or module_name ⊂ topic name.
+       * From all matches, prefer the one with the latest (furthest) expiry date.
+       */
+      function findBestMatch(topicName, wallet) {
+        var tNorm = topicName.toLowerCase().trim();
+        var matches = wallet.filter(function (c) {
+          if (c.revoked) return false;
+          var mNorm = (c.module_name || '').toLowerCase().trim();
+          return mNorm.indexOf(tNorm) !== -1 || tNorm.indexOf(mNorm) !== -1;
+        });
+        if (!matches.length) return null;
+        // Sort by expiry descending; no expiry = furthest future
+        matches.sort(function (a, b) {
+          var ae = a.expiry_date || '9999-99-99';
+          var be = b.expiry_date || '9999-99-99';
+          return be > ae ? 1 : be < ae ? -1 : 0;
+        });
+        return matches[0];
+      }
+
+      function renderTable(topics, wallet) {
+        var tbody = document.getElementById('reqTbody');
+        if (!tbody) return;
+
+        var nMet = 0, nExpiring = 0, nGap = 0;
+
+        var rows = topics.map(function (t) {
+          var match = findBestMatch(t.topic_name, wallet);
+          var statusKey, tagClass, tagLabel, detailHtml;
+
+          if (match) {
+            statusKey = expiryStatus(match.expiry_date);
+            if (statusKey === 'met') {
+              tagClass = 'req-tag--met';
+              tagLabel = 'Met';
+              nMet++;
+            } else if (statusKey === 'expiring') {
+              tagClass = 'req-tag--expiring';
+              tagLabel = 'Expiring soon';
+              nExpiring++;
+            } else {
+              tagClass = 'req-tag--expired';
+              tagLabel = 'Expired';
+              nGap++;
+            }
+            detailHtml =
+              '<div>' + esc(match.module_name || '') + '</div>' +
+              '<div class="req-detail">' +
+              (match.expiry_date ? 'Expires ' + esc(match.expiry_date) : 'No expiry') +
+              (match.issuing_trust_name ? ' &middot; ' + esc(match.issuing_trust_name) : '') +
+              '</div>';
+          } else {
+            tagClass = 'req-tag--gap';
+            tagLabel = 'Not found';
+            nGap++;
+            detailHtml = '<span style="color:var(--nhsuk-secondary-text);">—</span>';
+          }
+
+          return '<tr>' +
+            '<td>' + esc(t.topic_name) + '</td>' +
+            '<td>' + esc(t.category || '—') + '</td>' +
+            '<td><span class="req-tag ' + tagClass + '">' + tagLabel + '</span></td>' +
+            '<td>' + detailHtml + '</td>' +
+            '</tr>';
+        });
+
+        tbody.innerHTML = rows.join('');
+
+        // Summary pills
+        var summaryEl = document.getElementById('reqSummary');
+        if (summaryEl) {
+          summaryEl.innerHTML =
+            '<div class="req-summary-pill req-summary-pill--met">' +
+              '<span class="req-summary-pill__count">' + nMet + '</span>' +
+              '<span class="req-summary-pill__label">Met</span>' +
+            '</div>' +
+            '<div class="req-summary-pill req-summary-pill--expiring">' +
+              '<span class="req-summary-pill__count">' + nExpiring + '</span>' +
+              '<span class="req-summary-pill__label">Expiring&nbsp;soon</span>' +
+            '</div>' +
+            '<div class="req-summary-pill req-summary-pill--gap">' +
+              '<span class="req-summary-pill__count">' + nGap + '</span>' +
+              '<span class="req-summary-pill__label">Gap&nbsp;/&nbsp;Expired</span>' +
+            '</div>';
+        }
+
+        show(document.getElementById('noWalletMsg'), wallet.length === 0);
+      }
+
+      (async function boot() {
+        await NHSAuth.refresh();
+        if (!NHSAuth.requireAuth()) return;
+        if (!NHSAuth.requireProfileComplete()) return;
+        document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
+        wireHamburgerMenu();
+        document.getElementById('btnSignOut').addEventListener('click', async function () {
+          await NHSAuth.signOut();
+          window.location.replace('/');
+        });
+
+        var trust = (NHSAuth.user.current_trust || '').trim();
+        if (!trust) {
+          document.getElementById('pageLeadText').textContent = '';
+          show(document.getElementById('noTrustMsg'), true);
+          return;
+        }
+
+        document.getElementById('pageLeadText').textContent =
+          'How your training compares to ' + trust + '\u2019s mandatory requirements.';
+        var trustLabel = document.getElementById('trustLabel');
+        if (trustLabel) trustLabel.textContent = trust;
+
+        try {
+          var [reqData, wallet] = await Promise.all([
+            apiJson('/api/me/trust-requirements'),
+            apiJson('/api/me/wallet'),
+          ]);
+
+          var topics = (reqData && reqData.topics) || [];
+
+          if (!topics.length) {
+            var noTopics = document.getElementById('noTopicsMsg');
+            var noTopicsText = document.getElementById('noTopicsText');
+            if (noTopicsText) noTopicsText.textContent =
+              trust + ' has not yet added any mandatory training requirements to this system. Contact your HR or Medical Education team.';
+            document.getElementById('pageLeadText').textContent = '';
+            show(noTopics, true);
+            return;
+          }
+
+          if (!Array.isArray(wallet)) wallet = [];
+
+          show(document.getElementById('mainContent'), true);
+          renderTable(topics, wallet);
+
+        } catch (err) {
+          var errEl = document.getElementById('loadError');
+          if (errEl) {
+            errEl.textContent = 'Could not load requirements: ' + (err.message || err);
+            errEl.hidden = false;
+          }
+          document.getElementById('pageLeadText').textContent = '';
+        }
+      })();
+    })();
+  </script>
+</body>
+</html>
