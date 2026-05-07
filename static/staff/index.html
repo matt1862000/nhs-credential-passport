@@ -213,15 +213,29 @@
       font-weight: 600;
       cursor: pointer;
       font-family: inherit;
+      touch-action: manipulation;
+      user-select: none;
+      transition:
+        background-color 0.15s ease,
+        transform 0.08s ease,
+        box-shadow 0.08s ease,
+        opacity 0.15s ease;
     }
     .nhsuk-button:hover { background: var(--nhsuk-button-hover); }
     .nhsuk-button:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
+    .nhsuk-button:active:not(:disabled) {
+      transform: translateY(1px);
+      box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.22);
+    }
     .nhsuk-button--secondary { background: var(--nhsuk-link); }
     .nhsuk-button--secondary:hover { background: #004c8f; }
+    .nhsuk-button--secondary:active:not(:disabled) { background: #003066; }
     .nhsuk-button--remove { background: var(--nhsuk-secondary-text); }
     .nhsuk-button--remove:hover { background: #3d4f5c; }
+    .nhsuk-button--remove:active:not(:disabled) { background: #2d3c46; }
     .nhsuk-button--warning { background: var(--nhsuk-error); }
     .nhsuk-button--warning:hover { background: #a01e12; }
+    .nhsuk-button--warning:active:not(:disabled) { background: #851910; }
     .nhsuk-button.is-loading {
       position: relative;
       opacity: 0.9;
@@ -239,9 +253,9 @@
       border: 2px solid rgba(255, 255, 255, 0.55);
       border-top-color: #fff;
       border-radius: 50%;
-      animation: nhs-spin 0.7s linear infinite;
+      animation: nhsuk-btn-spin 0.7s linear infinite;
     }
-    @keyframes nhs-spin {
+    @keyframes nhsuk-btn-spin {
       to { transform: rotate(360deg); }
     }
     .nhsuk-card {
@@ -1548,6 +1562,8 @@
         submitBtn.dataset.busy = busy ? '1' : '0';
         submitBtn.disabled = !!busy;
         submitBtn.classList.toggle('is-loading', !!busy);
+        if (busy) submitBtn.setAttribute('aria-busy', 'true');
+        else submitBtn.removeAttribute('aria-busy');
         submitBtn.textContent = busy ? 'Adding…' : 'Add training';
       }
       setAddBusy(true);

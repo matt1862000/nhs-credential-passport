@@ -368,6 +368,8 @@
           statusEl.className = kind ? kind : '';
         }
         btn.disabled = true;
+        btn.classList.add('is-loading');
+        btn.setAttribute('aria-busy', 'true');
         setSaveStatus('Saving…');
 
         // 1. Validate and save profile
@@ -381,12 +383,16 @@
           if (!payload.display_name || !payload.current_trust) {
             setSaveStatus('Please fill in full name and current trust.', 'err');
             btn.disabled = false;
+            btn.classList.remove('is-loading');
+            btn.removeAttribute('aria-busy');
             return;
           }
           var gmcDigits = String(payload.gmc_number || '').replace(/\D/g, '');
           if (gmcDigits.length !== 7) {
             setSaveStatus('GMC number must be exactly 7 digits.', 'err');
             btn.disabled = false;
+            btn.classList.remove('is-loading');
+            btn.removeAttribute('aria-busy');
             return;
           }
           payload.gmc_number = gmcDigits;
@@ -396,6 +402,8 @@
         } catch (err) {
           setSaveStatus(err.message || 'Could not save profile.', 'err');
           btn.disabled = false;
+          btn.classList.remove('is-loading');
+          btn.removeAttribute('aria-busy');
           return;
         }
 

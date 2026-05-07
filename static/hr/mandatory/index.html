@@ -319,11 +319,18 @@
       }
 
       document.getElementById('btnAdd').addEventListener('click', async function () {
+        var btnAdd = this;
         var topicInput = document.getElementById('newTopic');
         var catInput = document.getElementById('newCategory');
         var topicName = (topicInput ? topicInput.value : '').trim();
         var category = (catInput ? catInput.value : '').trim();
-        if (!topicName) { setStatus('addStatus', 'Topic name is required.', 'err'); return; }
+        if (!topicName) {
+          setStatus('addStatus', 'Topic name is required.', 'err');
+          return;
+        }
+        btnAdd.disabled = true;
+        btnAdd.classList.add('is-loading');
+        btnAdd.setAttribute('aria-busy', 'true');
         setStatus('addStatus', 'Adding…');
         try {
           var added = await apiJson('/api/hr/mandatory-topics', {
@@ -339,6 +346,10 @@
           setStatus('addStatus', 'Topic added.', 'ok');
         } catch (err) {
           setStatus('addStatus', err.message || 'Could not add topic.', 'err');
+        } finally {
+          btnAdd.disabled = false;
+          btnAdd.classList.remove('is-loading');
+          btnAdd.removeAttribute('aria-busy');
         }
       });
 

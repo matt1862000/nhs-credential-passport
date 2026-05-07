@@ -13,10 +13,11 @@
     { id: 'other', label: 'Another trust (generic guidance)' },
   ];
 
-  var joinSel = document.getElementById('joinTrust');
-  var leaveSel = document.getElementById('leaveTrust');
-  var btnRefresh = document.getElementById('btnRefreshChecklist');
-  var cache = {};
+    var joinSel = document.getElementById('joinTrust');
+    var leaveSel = document.getElementById('leaveTrust');
+    var btnRefresh = document.getElementById('btnRefreshChecklist');
+    var cache = {};
+    var checklistReqSeq = 0;
 
   function escapeHtml(s) {
     if (s == null) return '';
@@ -275,13 +276,29 @@
     var joinId = joinSel.value;
     var leaveId = leaveSel.value;
     document.getElementById('movingError').textContent = '';
+    var seq = ++checklistReqSeq;
+    if (btnRefresh) {
+      btnRefresh.disabled = true;
+      btnRefresh.classList.add('is-loading');
+      btnRefresh.setAttribute('aria-busy', 'true');
+    }
     loadConfig(joinId)
       .then(function (cfg) {
+        if (seq !== checklistReqSeq) return;
         render(cfg, joinId, leaveId);
       })
       .catch(function (err) {
+        if (seq !== checklistReqSeq) return;
         document.getElementById('movingError').textContent = err.message || String(err);
         document.getElementById('movingResults').hidden = true;
+      })
+      .finally(function () {
+        if (seq !== checklistReqSeq) return;
+        if (btnRefresh) {
+          btnRefresh.disabled = false;
+          btnRefresh.classList.remove('is-loading');
+          btnRefresh.removeAttribute('aria-busy');
+        }
       });
   }
 

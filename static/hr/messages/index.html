@@ -245,7 +245,13 @@
         var text = (inp ? inp.value : '').trim();
         if (!text || _activeConvId === null) return;
         var btn = document.getElementById('btnSend');
-        if (btn) btn.disabled = true;
+        if (btn) {
+          if (!btn.dataset.defaultLabel) btn.dataset.defaultLabel = btn.textContent;
+          btn.disabled = true;
+          btn.classList.add('is-loading');
+          btn.setAttribute('aria-busy', 'true');
+          btn.textContent = 'Sending…';
+        }
         try {
           await apiJson('/api/hr/messages/' + encodeURIComponent(String(_activeConvId)) + '/send', {
             method: 'POST',
@@ -259,7 +265,12 @@
         } catch (err) {
           alert(err.message || 'Could not send');
         } finally {
-          if (btn) btn.disabled = false;
+          if (btn) {
+            btn.disabled = false;
+            btn.classList.remove('is-loading');
+            btn.removeAttribute('aria-busy');
+            if (btn.dataset.defaultLabel) btn.textContent = btn.dataset.defaultLabel;
+          }
         }
       }
 

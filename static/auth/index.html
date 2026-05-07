@@ -119,9 +119,31 @@
         }
       }
 
+      function setSubmitBusy(formId, busy, busyLabel) {
+        var form = document.getElementById(formId);
+        if (!form) return;
+        var btn = form.querySelector('button[type="submit"]');
+        if (!btn) return;
+        if (busy) {
+          if (btn.dataset.defaultSubmitLabel === undefined) btn.dataset.defaultSubmitLabel = btn.textContent;
+          btn.disabled = true;
+          btn.classList.add('is-loading');
+          btn.setAttribute('aria-busy', 'true');
+          btn.textContent = busyLabel || 'Working…';
+        } else {
+          btn.disabled = false;
+          btn.classList.remove('is-loading');
+          btn.removeAttribute('aria-busy');
+          if (btn.dataset.defaultSubmitLabel !== undefined) {
+            btn.textContent = btn.dataset.defaultSubmitLabel;
+          }
+        }
+      }
+
       document.getElementById('formSignIn').addEventListener('submit', async function (e) {
         e.preventDefault();
         showErr('signInError', '');
+        setSubmitBusy('formSignIn', true, 'Signing in…');
         var fd = new FormData(this);
         try {
           await NHSAuth.signIn((fd.get('email') || '').trim(), fd.get('password') || '');
@@ -136,12 +158,14 @@
           }
         } catch (err) {
           showErr('signInError', err.message || 'Could not sign in');
+          setSubmitBusy('formSignIn', false);
         }
       });
 
       document.getElementById('formRegister').addEventListener('submit', async function (e) {
         e.preventDefault();
         showErr('registerError', '');
+        setSubmitBusy('formRegister', true, 'Creating account…');
         var fd = new FormData(this);
         try {
           await NHSAuth.register((fd.get('email') || '').trim(), fd.get('password') || '');
@@ -153,6 +177,7 @@
           NHSAuth.redirectAfterAuth('/static/profile/?welcome=1');
         } catch (err) {
           showErr('registerError', err.message || 'Could not create account');
+          setSubmitBusy('formRegister', false);
         }
       });
 
