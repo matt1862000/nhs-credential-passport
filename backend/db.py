@@ -1134,7 +1134,9 @@ def doctor_verified_map(doctor_user_id: int) -> dict:
             prev["pending_target_trust"] = None
         elif prev.get("status") not in ("VERIFIED", "DECLINED"):
             prev["status"] = "PENDING"
-            prev["pending_target_trust"] = (r["target_trust"] or "").strip() or None
+            # Rows are ordered by newest session first; keep the newest pending target trust.
+            if not prev.get("pending_target_trust"):
+                prev["pending_target_trust"] = (r["target_trust"] or "").strip() or None
         out[cid] = prev
     return out
 
