@@ -702,6 +702,8 @@ def _ensure_share_tables(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE share_sessions ADD COLUMN share_kind TEXT NOT NULL DEFAULT 'review'"
         )
+    if "target_trust" not in cols_s:
+        conn.execute("ALTER TABLE share_sessions ADD COLUMN target_trust TEXT")
     cols_i = [row[1] for row in conn.execute("PRAGMA table_info(share_items)").fetchall()]
     if "issuing_trust_name" not in cols_i:
         conn.execute("ALTER TABLE share_items ADD COLUMN issuing_trust_name TEXT")
@@ -764,6 +766,7 @@ def share_session_create(
     doctor_email: str,
     items: list[dict],
     share_kind: str = "review",
+    target_trust: Optional[str] = None,
 ) -> dict:
     """
     Create a share session containing credential ids.
@@ -779,8 +782,15 @@ def share_session_create(
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_share_tables(conn)
         cur = conn.execute(
-            "INSERT INTO share_sessions (created_at, doctor_user_id, doctor_email, share_token, status, share_kind) VALUES (?, ?, ?, ?, 'OPEN', ?)",
-            (now, doctor_user_id, (doctor_email or "").strip().lower(), token, sk),
+            "INSERT INTO share_sessions (created_at, doctor_user_id, doctor_email, share_token, status, share_kind, target_trust) VALUES (?, ?, ?, ?, 'OPEN', ?, ?)",
+            (
+                now,
+                doctor_user_id,
+                (doctor_email or "").strip().lower(),
+                token,
+                sk,
+                (target_trust or "").strip() or None,
+            ),
         )
         session_id = int(cur.lastrowid)
         for it in items or []:
@@ -848,6 +858,7 @@ def share_inbox_list(limit: int = 50, hr_trust: Optional[str] = None) -> list[di
                   u.display_name as doctor_name,
                   u.gmc_number as doctor_gmc,
                   u.current_trust as doctor_trust,
+                  s.target_trust as target_trust,
                   s.status as status,
                   IFNULL(s.share_kind, 'review') as share_kind,
                   COUNT(i.credential_id) as total_count,
@@ -857,7 +868,7 @@ def share_inbox_list(limit: int = 50, hr_trust: Optional[str] = None) -> list[di
                 FROM share_sessions s
                 JOIN users u ON u.id = s.doctor_user_id
                 LEFT JOIN share_items i ON i.session_id = s.id
-                WHERE LOWER(TRIM(COALESCE(u.current_trust, ''))) = ?
+                WHERE LOWER(TRIM(COALESCE(s.target_trust, ''))) = ?
                 GROUP BY s.id
                 ORDER BY s.id DESC
                 LIMIT ?
@@ -875,6 +886,7 @@ def share_inbox_list(limit: int = 50, hr_trust: Optional[str] = None) -> list[di
                   u.display_name as doctor_name,
                   u.gmc_number as doctor_gmc,
                   u.current_trust as doctor_trust,
+                  s.target_trust as target_trust,
                   s.status as status,
                   IFNULL(s.share_kind, 'review') as share_kind,
                   COUNT(i.credential_id) as total_count,
@@ -901,6 +913,7 @@ def share_inbox_list(limit: int = 50, hr_trust: Optional[str] = None) -> list[di
                 "doctor_name": r["doctor_name"],
                 "doctor_gmc": r["doctor_gmc"],
                 "doctor_trust": r["doctor_trust"],
+                "target_trust": r["target_trust"],
                 "status": r["status"],
                 "share_kind": str(r["share_kind"] or "review"),
                 "total_count": int(r["total_count"] or 0),
@@ -989,6 +1002,7 @@ def share_session_get(session_id: int) -> Optional[dict]:
             SELECT
               s.id as session_id, s.created_at, s.doctor_user_id, s.doctor_email, s.share_token, s.status,
               IFNULL(s.share_kind, 'review') as share_kind,
+              s.target_trust as target_trust,
               u.display_name as doctor_name, u.gmc_number as doctor_gmc, u.current_trust as doctor_trust
             FROM share_sessions s
             JOIN users u ON u.id = s.doctor_user_id
@@ -1017,6 +1031,7 @@ def share_session_get(session_id: int) -> Optional[dict]:
         "doctor_name": s["doctor_name"],
         "doctor_gmc": s["doctor_gmc"],
         "doctor_trust": s["doctor_trust"],
+        "target_trust": s["target_trust"],
         "share_token": s["share_token"],
         "status": s["status"],
         "share_kind": str(s["share_kind"] or "review"),
@@ -1084,23 +1099,31 @@ def share_item_set_decision(
 
 
 def doctor_verified_map(doctor_user_id: int) -> dict:
-    """Return { credential_id: { shared, status, decision_at, decline_reason } } for a doctor."""
+    """Return { credential_id: { shared, status, decision_at, decline_reason, pending_target_trust? } } for a doctor."""
     out: dict = {}
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_share_tables(conn)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT i.credential_id, i.status, i.decision_at, i.decline_reason
+            SELECT i.credential_id, i.status, i.decision_at, i.decline_reason,
+                   s.target_trust, s.created_at
             FROM share_sessions s
             JOIN share_items i ON i.session_id = s.id
             WHERE s.doctor_user_id = ?
+            ORDER BY datetime(COALESCE(s.created_at, '')) DESC
             """,
             (int(doctor_user_id),),
         ).fetchall()
     for r in rows:
         cid = r["credential_id"]
-        prev = out.get(cid) or {"shared": True, "status": "PENDING", "decision_at": None, "decline_reason": None}
+        prev = out.get(cid) or {
+            "shared": True,
+            "status": "PENDING",
+            "decision_at": None,
+            "decline_reason": None,
+            "pending_target_trust": None,
+        }
         prev["shared"] = True
         # Prefer terminal statuses over pending, and carry decline reason
         st = (r["status"] or "").upper()
@@ -1108,8 +1131,10 @@ def doctor_verified_map(doctor_user_id: int) -> dict:
             prev["status"] = st
             prev["decision_at"] = r["decision_at"]
             prev["decline_reason"] = r["decline_reason"]
+            prev["pending_target_trust"] = None
         elif prev.get("status") not in ("VERIFIED", "DECLINED"):
             prev["status"] = "PENDING"
+            prev["pending_target_trust"] = (r["target_trust"] or "").strip() or None
         out[cid] = prev
     return out
 

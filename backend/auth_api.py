@@ -383,6 +383,7 @@ async def me_shares_post(request: Request):
         doctor_email=u.get("email") or "",
         items=items,
         share_kind="portfolio" if portfolio else "review",
+        target_trust=u.get("current_trust") or None,
     )
     base = _public_app_base(request)
     share_url = f"{base}/static/hr/?session={created['session_id']}"
@@ -434,7 +435,7 @@ def _assert_same_trust(hr_user: dict, session: dict) -> None:
     trust = _hr_trust(hr_user)
     if not trust:
         return  # HR account has no trust set — don't block (edge case / admin)
-    doc_trust = (session.get("doctor_trust") or "").strip().lower()
+    doc_trust = (session.get("target_trust") or session.get("doctor_trust") or "").strip().lower()
     if doc_trust != trust:
         raise HTTPException(status_code=403, detail="This submission is not from your trust.")
 

@@ -1438,10 +1438,17 @@
         var profileOk = !!(window.NHSAuth && NHSAuth.user && NHSAuth.user.display_name && NHSAuth.user.gmc_number && NHSAuth.user.current_trust);
         var alreadyPending = !!(v && v.shared && st === 'PENDING');
         var alreadyDecided = !!(v && v.shared && (st === 'VERIFIED' || st === 'DECLINED'));
-        var canVerifyWithHr = profileOk && !alreadyPending && !alreadyDecided;
-        var verifyBtnText = alreadyPending ? 'Pending verification' : (st === 'VERIFIED' ? 'Verified' : (st === 'DECLINED' ? 'Declined' : 'Verify with HR'));
+        var pendingTarget = v && v.pending_target_trust ? String(v.pending_target_trust).trim().toLowerCase() : '';
+        var myTrust = (window.NHSAuth && NHSAuth.user && NHSAuth.user.current_trust || '').trim().toLowerCase();
+        var allowResend = alreadyPending && pendingTarget && myTrust && pendingTarget !== myTrust;
+        var canVerifyWithHr = profileOk && (!alreadyPending || allowResend) && !alreadyDecided;
+        var verifyBtnText = allowResend
+          ? 'Send to HR at my current trust'
+          : (alreadyPending ? 'Pending verification' : (st === 'VERIFIED' ? 'Verified' : (st === 'DECLINED' ? 'Declined' : 'Verify with HR')));
         var verifyBtnAttrs = canVerifyWithHr ? '' : ' disabled';
-        var verifyBtnTitle = !profileOk ? 'Complete your profile to verify with HR' : (alreadyPending ? 'Already sent to HR' : (alreadyDecided ? 'Decision already recorded' : ''));
+        var verifyBtnTitle = !profileOk
+          ? 'Complete your profile to verify with HR'
+          : (allowResend ? 'You previously sent this to a different trust. Send again to your current trust HR.' : (alreadyPending ? 'Already sent to HR' : (alreadyDecided ? 'Decision already recorded' : '')));
         if (verifyBtnTitle) verifyBtnAttrs += ' title="' + verifyBtnTitle.replace(/"/g, '&quot;') + '"';
         var verifyBtnOnclick = profileOk ? `onclick="shareCred('${c.credential_id}')"` : `onclick="return openProfileForVerification();"`;
         var showVerifyHrButton = !(v && v.shared && (st === 'VERIFIED' || st === 'DECLINED'));
