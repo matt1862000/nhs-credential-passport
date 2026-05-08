@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scope &mdash; Training Passport</title>
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260508-1">
+  <style>
+    .scope-wrap { max-width: 1040px; margin: 0 auto; padding: 1.75rem 1.5rem 2.75rem; }
+    .scope-wrap h1 { margin: 0 0 0.6rem 0; }
+    .scope-lede { margin: 0 0 1.25rem; color: var(--nhsuk-secondary-text); max-width: 56rem; font-size: 1.0625rem; line-height: 1.55; }
+    .scope-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: stretch; margin-top: 1rem; }
+    @media (max-width: 720px) { .scope-grid { grid-template-columns: 1fr; } }
+    .scope-panel { background: var(--nhsuk-panel); border: 1px solid var(--nhsuk-border); border-radius: 4px; padding: 1.15rem 1.25rem; box-shadow: var(--nhsuk-card-shadow); }
+    .scope-panel h2 { margin: 0 0 0.65rem 0; font-size: 1rem; font-weight: 700; color: var(--nhsuk-link); }
+    .scope-panel--muted h2 { color: var(--nhsuk-secondary-text); }
+    .scope-panel ul { margin: 0; padding-left: 1.15rem; font-size: 0.9375rem; color: var(--nhsuk-text); line-height: 1.5; }
+    .scope-panel li { margin: 0.35rem 0; }
+    .scope-note { margin-top: 1.25rem; font-size: 0.875rem; color: var(--nhsuk-secondary-text); max-width: 56rem; }
+  </style>
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo" href="/" aria-label="Training Passport homepage">
+          <svg class="nhsuk-header__logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 80" focusable="false" role="img" aria-label="NHS">
+            <path fill="currentColor" d="M200 0v80H0V0h200Zm-27.5 5.5c-14.5 0-29 5-29 22 0 10.2 7.7 13.5 14.7 16.3l.7.3c5.4 2 10.1 3.9 10.1 8.4 0 6.5-8.5 7.5-14 7.5s-12.5-1.5-16-3.5L135 70c5.5 2 13.5 3.5 20 3.5 15.5 0 32-4.5 32-22.5 0-19.5-25.5-16.5-25.5-25.5 0-5.5 5.5-6.5 12.5-6.5a35 35 0 0 1 14.5 3l4-13.5c-4.5-2-12-3-20-3Zm-131 2h-22l-14 65H22l9-45h.5l13.5 45h21.5l14-65H64l-9 45h-.5l-13-45Zm63 0h-18l-13 65h17l6-28H117l-5.5 28H129l13.5-65H125L119.5 32h-20l5-24.5Z" />
+          </svg>
+          <span class="nhsuk-header__service-name">Training Passport</span>
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Top">
+        <a href="/static/auth/?mode=signin">Sign in</a>
+        <a href="/static/auth/?mode=register">Create account</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="scope-wrap" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">What Training Passport covers</h1>
+    <p class="scope-lede">Training Passport focuses on <strong>mandatory and statutory training evidence</strong>: collecting records and evidence in one place, supporting HR verification, and helping you reuse verified completions when you move trusts. It is not a full replacement for local onboarding and pre-employment checks.</p>
+
+    <div class="scope-grid">
+      <section class="scope-panel" aria-label="In Training Passport">
+        <h2>In Training Passport</h2>
+        <ul>
+          <li>One place for completions and evidence (add or ESR import)</li>
+          <li>Send records to HR for verification</li>
+          <li>Visibility controls so permitted HR can discover verified training</li>
+          <li>Plan a trust move: compare your wallet to destination checklist packs (where available)</li>
+          <li>Message HR, including other trusts supported on the service</li>
+        </ul>
+      </section>
+
+      <section class="scope-panel scope-panel--muted" aria-label="Still local to each employer">
+        <h2>Still local to each employer</h2>
+        <ul>
+          <li>Pre-employment checks (DBS, right to work, occupational health, references)</li>
+          <li>Professional registration and revalidation with regulators</li>
+          <li>Trust induction, IT access, safeguarding pathways, specialty competencies</li>
+          <li>Final acceptance of any credential always rests with the receiving organisation</li>
+        </ul>
+      </section>
+    </div>
+
+    <p class="scope-note">Pilot demonstration service—not an official NHS national passport. Requirements and acceptance policies remain those of each employer.</p>
+  </main>
+
+  <script src="/static/shared/auth.js"></script>
+  <script>
+    (async function () {
+      try {
+        await NHSAuth.refresh();
+        if (NHSAuth.user) window.location.replace('/static/dashboard/');
+      } catch (e) {}
+    })();
+  </script>
+</body>
+</html>
+

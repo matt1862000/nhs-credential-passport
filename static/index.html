@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NHS Training Passport</title>
-  <link rel="stylesheet" href="/static/shared/app.css">
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260508-1">
   <style>
     .nhs-landing-band {
       max-width: 1040px;
@@ -55,6 +55,9 @@
     }
     .nhs-landing-panel li { margin: 0.35rem 0; }
     .nhs-landing-panel--muted h3 { color: var(--nhsuk-secondary-text); }
+    .nhs-landing-cta-row { margin-top: 0.95rem; display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+    .nhs-landing-cta-row a { font-size: 0.9375rem; }
+    .nhs-landing-cta-row .nhs-landing-mini { font-size: 0.875rem; color: var(--nhsuk-secondary-text); }
     .nhs-landing-note {
       margin: 1.25rem 0 0;
       font-size: 0.8125rem;
@@ -86,8 +89,8 @@
   <section class="nhs-hero" aria-labelledby="heroTitle">
     <div class="nhs-hero__inner">
       <div>
-        <h1 id="heroTitle">Verified NHS mandatory training you can carry—not another full onboarding from scratch.</h1>
-        <p class="lead">National programmes for sharing <em>all</em> staff credentials between trusts are still evolving; many clinicians still re-prove the same learning every time they move. Training Passport focuses on the slice employers actually re-check often: <strong>mandatory and statutory training</strong>—stored once, verified by HR, visible under your control, and mapped to your next trust&rsquo;s requirements.</p>
+        <h1 id="heroTitle">Portable, HR‑verified mandatory training records for NHS staff.</h1>
+        <p class="lead">Training Passport is a focused solution for mandatory/statutory training evidence: store records in one place, capture HR verification, control visibility, and map completions to destination trust requirements.</p>
         <div class="nhs-hero__ctas">
           <a class="nhsuk-button" href="/static/auth/?mode=register">Create an account</a>
           <a class="nhsuk-button nhsuk-button--ghost" href="/static/auth/?mode=signin">Sign in</a>
@@ -105,30 +108,32 @@
   </section>
 
   <section class="nhs-landing-band" aria-labelledby="landingContextTitle">
-    <h2 id="landingContextTitle">What this solves today—and what it doesn&rsquo;t</h2>
-    <p class="nhs-landing-lede">Commentary on NHS workforce mobility often highlights the gap left when narrow &ldquo;digital passport&rdquo; pilots retire or stall: receiving trusts still need assurance, while clinicians repeat paperwork. Partial portability—especially around <strong>pre-employment checks</strong>—does not remove the need to evidence <strong>ongoing mandatory training</strong>. Training Passport is built for that ongoing layer: a structured wallet, HR attestation, and tools so you and authorised HR can reuse verified completions instead of starting from zero each time.</p>
+    <h2 id="landingContextTitle">Built for clinicians moving trusts</h2>
+    <p class="nhs-landing-lede">Keep mandatory training evidence in one place, get HR verification when needed, and reuse verified completions when you change employer.</p>
     <div class="nhs-landing-grid">
       <div class="nhs-landing-panel">
-        <h3>In Training Passport</h3>
+        <h3>What you can do</h3>
         <ul>
-          <li>One place for completions and evidence (add or ESR import)</li>
-          <li>Share with HR for verification; audit-friendly decisions on what was checked</li>
-          <li>Visibility you control so permitted HR can discover verified training</li>
-          <li><strong>Plan a trust move</strong>: compare your wallet to pilot destination checklist packs</li>
-          <li>Message HR—including another trust&rsquo;s HR where the service supports it</li>
+          <li>Add training or import from ESR (with evidence)</li>
+          <li>Send items to HR for verification</li>
+          <li>Control visibility so permitted HR can find your verified training</li>
+          <li>Plan a trust move against destination checklist packs</li>
+          <li>Message HR (including supported other trusts)</li>
         </ul>
+        <div class="nhs-landing-cta-row">
+          <a href="/static/scope/">What this covers (and what it doesn&rsquo;t)</a>
+          <span class="nhs-landing-mini">Pre‑employment checks (DBS, right to work, OH) stay local.</span>
+        </div>
       </div>
       <div class="nhs-landing-panel nhs-landing-panel--muted">
-        <h3>Still with Medical Staffing / HR locally</h3>
+        <h3>What to expect at a new trust</h3>
         <ul>
-          <li>Pre-employment checks (e.g. DBS, right to work, occupational health, references)</li>
-          <li>Professional registration and revalidation with regulators</li>
-          <li>Trust induction, IT access, safeguarding pathways, and specialty competencies</li>
-          <li>Final acceptance of any credential always rests with the receiving organisation</li>
+          <li>Trust induction, local systems and role-specific requirements may still be needed</li>
+          <li>The receiving organisation makes the final decision on what they accept</li>
         </ul>
       </div>
     </div>
-    <p class="nhs-landing-note">Pilot demonstration service—not an official NHS national passport. Requirements and acceptance policies remain those of each employer; use this to prepare evidence and conversations, not as a substitute for local compliance processes.</p>
+    <p class="nhs-landing-note">Pilot demonstration service—not an official NHS national passport. Acceptance policies remain those of each employer.</p>
   </section>
   </main>
 
