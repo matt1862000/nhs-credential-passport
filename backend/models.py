@@ -1,5 +1,5 @@
 """
-NHS Training Passport — data models and W3C-aligned schema.
+DocPass — data models and W3C-aligned schema.
 Credential fields per plan: staff name, identifier, module (CSTF),
 completion date, expiry date, issuing Trust ODS + name, credential ID, signature, issued date.
 """

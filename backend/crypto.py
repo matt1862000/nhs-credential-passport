@@ -79,7 +79,7 @@ def get_public_jwk_dict():
     with open(PUBLIC_KEY_PATH) as f:
         d = json.load(f)
     if "kid" not in d:
-        d["kid"] = "nhs-credential-passport-1"
+        d["kid"] = "docpass-1"
     return d
 
 

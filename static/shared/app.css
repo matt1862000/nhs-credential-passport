@@ -76,6 +76,15 @@ a:hover {
   width: 88px;
   fill: currentColor;
 }
+.nhsuk-header__service-logo--docpass {
+  gap: 0;
+}
+.docpass-header-logo {
+  display: block;
+  height: 44px;
+  width: auto;
+  max-width: min(240px, 58vw);
+}
 .nhsuk-header__service-name {
   white-space: nowrap;
 }

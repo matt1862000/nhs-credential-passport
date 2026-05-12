@@ -1,5 +1,5 @@
 """
-NHS Training Passport — Phase 2 MVP API.
+DocPass — Phase 2 MVP API.
 Issuing service, verification endpoint, revoke, and did:web public key.
 """
 import os
@@ -76,8 +76,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="NHS Training Passport",
-    description="Phase 2 MVP — issue, verify, revoke credentials",
+    title="DocPass",
+    description="DocPass (docpass.co.uk) — issue, verify, revoke credentials",
     lifespan=lifespan,
 )
 # Trust X-Forwarded-* from Render/nginx so request.url uses public https host (fixes share / verify links).
@@ -305,7 +305,7 @@ def index():
             return HTMLResponse(content=f.read(), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     # Fallback if file missing (e.g. in tests)
     return HTMLResponse(
-        content="<html><body><h1>NHS Training Passport</h1><p><a href='/static/'>Go to app</a></p></body></html>",
+        content="<html><body><h1>DocPass</h1><p><a href='/static/'>Go to app</a></p></body></html>",
         headers={"Cache-Control": "no-cache"},
     )
 

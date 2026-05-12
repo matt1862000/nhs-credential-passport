@@ -1,4 +1,6 @@
-# NHS Training Passport — Phase 2 MVP
+# DocPass — Phase 2 MVP
+
+**Product:** [DocPass](https://docpass.co.uk) — professional credential wallet for NHS doctors (mandatory / statutory training evidence, HR verification, trust moves).
 
 From-idea-to-pilot build: **issue**, **verify**, and **revoke** e-learning credentials with no ESR integration. Uses W3C-style Verifiable Credentials (signed JWT) and did:web for the public key.
 

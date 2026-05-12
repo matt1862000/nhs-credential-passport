@@ -51,7 +51,7 @@ def credential_to_pdf(
     )
 
     story = []
-    story.append(Paragraph("NHS Training Record", title_style))
+    story.append(Paragraph("DocPass training record", title_style))
     story.append(Paragraph("This document is a verifiable credential. Scan the QR code or open the verification link to confirm its validity.", body_style))
     story.append(Spacer(1, 12))
 
