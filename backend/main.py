@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, HTTPException, File, UploadFile, Query
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from . import crypto
@@ -40,6 +41,21 @@ from .auth_api import router as auth_router, require_user_id
 
 # Base URL for verification links (default for local dev)
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
+
+
+class NoCacheStaticHtmlMiddleware(BaseHTTPMiddleware):
+    """Stop browsers/CDNs from holding stale copies of /static/**/*.html (branding, nav)."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.method != "GET" or not request.url.path.startswith("/static/"):
+            return response
+        ct = response.headers.get("content-type", "")
+        if "text/html" not in ct:
+            return response
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        return response
 
 
 def _normalize_evidence_content_type(content_type: Optional[str], filename: Optional[str]) -> Optional[str]:
@@ -83,6 +99,7 @@ app = FastAPI(
 # Trust X-Forwarded-* from Render/nginx so request.url uses public https host (fixes share / verify links).
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(NoCacheStaticHtmlMiddleware)
 app.include_router(auth_router)
 
 
