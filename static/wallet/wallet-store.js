@@ -219,7 +219,7 @@
       throw new Error('To keep one file updated automatically, use Google Chrome or Microsoft Edge on a computer.');
     }
     var handles = await window.showOpenFilePicker({
-      types: [{ description: 'Training list backup', accept: { 'application/json': ['.json'] } }],
+      types: [{ description: 'DocPass training list backup', accept: { 'application/json': ['.json'] } }],
       excludeAcceptAllOption: false,
       multiple: false,
     });
