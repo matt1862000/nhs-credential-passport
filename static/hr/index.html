@@ -240,7 +240,6 @@
     <div id="hrPremiumNav" class="hr-segment" role="tablist" aria-label="HR tools" hidden style="margin-top:0.75rem;">
       <button type="button" role="tab" class="active" data-hr-nav="inbox" aria-selected="true">Inbox</button>
       <button type="button" role="tab" data-hr-nav="search" aria-selected="false">Search doctors</button>
-      <button type="button" role="tab" data-hr-nav="bulk" aria-selected="false">Bulk add training</button>
     </div>
 
     <div id="notPremium" class="hr-card" hidden>
@@ -340,7 +339,8 @@
 
     <div id="bulkView" class="hr-card" hidden>
       <div class="hr-inbox-head">
-        <h2>Bulk add training</h2>
+        <h2>Bulk roster training</h2>
+        <a href="/static/hr/" class="nhsuk-link" style="font-size:0.9375rem;font-weight:600;">Back to inbox</a>
       </div>
       <p class="hr-muted" style="margin:0 0 0.75rem 0;">Issue the same module completion to many clinicians using one shared class evidence file. Only people on your roster who have allowed your trust receive a record.</p>
       <div class="hr-bulk-panel">
@@ -1127,7 +1127,7 @@
           var nav = document.getElementById('hrPremiumNav');
           if (!nav) return;
           Array.from(nav.querySelectorAll('button[data-hr-nav]')).forEach(function (b) {
-            var on = b.getAttribute('data-hr-nav') === which;
+            var on = Boolean(which) && b.getAttribute('data-hr-nav') === which;
             b.classList.toggle('active', on);
             b.setAttribute('aria-selected', on ? 'true' : 'false');
           });
@@ -1157,7 +1157,7 @@
           show(document.getElementById('searchView'), false);
           show(document.getElementById('searchDoctorView'), false);
           show(document.getElementById('bulkView'), true);
-          activateHrNav('bulk');
+          activateHrNav(null);
           void fillHrIssuingTrustFieldsIfEmpty();
         }
 
@@ -1175,9 +1175,6 @@
             } else if (w === 'search') {
               window.history.pushState({}, '', '/static/hr/?search=1');
               showSearchView();
-            } else if (w === 'bulk') {
-              window.history.pushState({}, '', '/static/hr/?bulk=1');
-              showBulkView();
             }
           });
         }
