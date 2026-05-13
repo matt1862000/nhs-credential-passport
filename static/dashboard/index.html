@@ -293,11 +293,11 @@
 
     <section id="premiumTrustTools" style="margin-top:2.25rem;" hidden aria-labelledby="premiumToolsTitle">
       <h2 id="premiumToolsTitle" class="nhsuk-page-heading" style="font-size:1.5rem;">Trust tools (premium)</h2>
-      <p class="nhsuk-lead" style="font-size:1.0625rem;">Trust tools for managing clinician records and trust requirements.</p>
+      <p class="nhsuk-lead" style="font-size:1.0625rem;">For trust HR: mandatory topics, clinician messages, verifying training shared into the inbox, finding staff, and recording single or bulk completions.</p>
       <div class="nhs-action-grid" role="list">
         <a class="nhs-action-card" href="/static/hr/mandatory/" role="listitem">
           <div class="nhs-action-title">Mandatory requirements</div>
-          <p class="nhs-action-desc">View and edit the list of mandatory training topics for your trust.</p>
+          <p class="nhs-action-desc">Set the mandatory training topics your trust expects for staff.</p>
           <span class="nhs-action-cta">Manage &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/hr/messages/" role="listitem" id="hrMsgCard">
@@ -305,21 +305,26 @@
             <span>Messages</span>
             <span id="hrMsgBadge" class="nhs-inbox-pending-badge" hidden aria-live="polite"></span>
           </div>
-          <p class="nhs-action-desc">Reply to messages from clinicians at your trust.</p>
+          <p class="nhs-action-desc">Conversations with clinicians at your trust.</p>
           <span class="nhs-action-cta">Open messages &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/hr/" role="listitem" id="hrInboxCard">
           <div class="nhs-action-title nhs-action-title--inline">
-            <span>HR inbox</span>
+            <span>Verify shared training</span>
             <span id="hrInboxPendingBadge" class="nhs-inbox-pending-badge" hidden aria-live="polite">&mdash;</span>
           </div>
-          <p class="nhs-action-desc" id="hrInboxCardDesc">See training shared by clinicians and mark records as verified.</p>
+          <p class="nhs-action-desc" id="hrInboxCardDesc">Review credentials clinicians have shared with your trust for verification.</p>
           <span class="nhs-action-cta">Open inbox &rsaquo;</span>
         </a>
         <a class="nhs-action-card" href="/static/hr/?search=1" role="listitem">
-          <div class="nhs-action-title">Search for a doctor</div>
-          <p class="nhs-action-desc">Find any clinician by name, email, or GMC number and view their verified training records.</p>
+          <div class="nhs-action-title">Search clinicians</div>
+          <p class="nhs-action-desc">Find someone by name, email, or GMC; view verified training and add one completion with evidence.</p>
           <span class="nhs-action-cta">Search &rsaquo;</span>
+        </a>
+        <a class="nhs-action-card" href="/static/hr/?bulk=1" role="listitem">
+          <div class="nhs-action-title">Bulk roster training</div>
+          <p class="nhs-action-desc">Issue the same module to many staff from a roster file and one class evidence upload.</p>
+          <span class="nhs-action-cta">Open bulk issue &rsaquo;</span>
         </a>
       </div>
     </section>
@@ -363,18 +368,18 @@
           badge.setAttribute(
             'aria-label',
             total === 0
-              ? 'No e-learning records awaiting verification'
+              ? 'No training records awaiting verification'
               : total === 1
-                ? '1 e-learning record awaiting verification'
-                : total + ' e-learning records awaiting verification'
+                ? '1 training record awaiting verification'
+                : total + ' training records awaiting verification'
           );
           if (desc) {
             desc.textContent =
               total === 0
-                ? 'No records awaiting verification right now. Shared training will appear here when clinicians send them for review.'
+                ? 'Nothing in the inbox right now. When clinicians share credentials for review, they will appear here.'
                 : total === 1
-                  ? '1 record shared by a clinician is awaiting verification in your inbox.'
-                  : total + ' records shared by clinicians are awaiting verification in your inbox.';
+                  ? '1 shared record is waiting for verification in your inbox.'
+                  : total + ' shared records are waiting for verification in your inbox.';
           }
         } catch (e) {
           badge.hidden = true;
