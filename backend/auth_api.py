@@ -836,7 +836,6 @@ async def hr_doctor_add_training(
     expiry_date: str = Form(...),
     issuing_trust_ods_code: Optional[str] = Form(None),
     issuing_trust_name: Optional[str] = Form(None),
-    dry_run: Optional[str] = Form(None),
 ):
     """
     Premium HR: add one training completion to a specific clinician (same rules as bulk roster —
@@ -846,7 +845,6 @@ async def hr_doctor_add_training(
     trust = (hr.get("current_trust") or "").strip()
     if not trust:
         raise HTTPException(status_code=400, detail="Your HR account must have a current trust set.")
-    is_dry = str(dry_run or "").strip().lower() in ("1", "true", "yes", "on")
 
     doc = db.user_get_by_id(int(doctor_user_id))
     if not doc:
@@ -883,7 +881,7 @@ async def hr_doctor_add_training(
     if kind == "error":
         assert err_row is not None
         return HrBulkTrainingResponse(
-            dry_run=is_dry,
+            dry_run=False,
             aborted=False,
             issuing_trust_ods_code=ods,
             issuing_trust_name=issuing_name,
@@ -899,12 +897,12 @@ async def hr_doctor_add_training(
     if kind == "skipped":
         row = HrBulkTrainingRow(
             roster_line=roster_line,
-            status="would_skip_duplicate" if is_dry else "skipped_duplicate",
+            status="skipped_duplicate",
             message="Clinician already has this completion in their wallet.",
             doctor_user_id=doc_id,
         )
         return HrBulkTrainingResponse(
-            dry_run=is_dry,
+            dry_run=False,
             aborted=False,
             issuing_trust_ods_code=ods,
             issuing_trust_name=issuing_name,
@@ -917,31 +915,10 @@ async def hr_doctor_add_training(
         )
 
     assert rec is not None
-    if is_dry:
-        return HrBulkTrainingResponse(
-            dry_run=True,
-            aborted=False,
-            issuing_trust_ods_code=ods,
-            issuing_trust_name=issuing_name,
-            module_code=mc,
-            attempted=1,
-            issued=0,
-            skipped_duplicate=0,
-            errors=0,
-            rows=[
-                HrBulkTrainingRow(
-                    roster_line=roster_line,
-                    status="dry_run_ok",
-                    message="Would issue credential (duplicate check passed).",
-                    doctor_user_id=doc_id,
-                )
-            ],
-        )
-
     if evidence is None or not (evidence.filename or "").strip():
         raise HTTPException(
             status_code=400,
-            detail="Evidence file is required to issue a credential (preview-only dry run does not need evidence).",
+            detail="Evidence file is required to issue a credential.",
         )
     ev_raw = await evidence.read()
     if len(ev_raw) > MAX_HR_BULK_EVIDENCE_BYTES:
@@ -1023,22 +1000,20 @@ async def hr_bulk_training(
     expiry_date: str = Form(...),
     issuing_trust_ods_code: Optional[str] = Form(None),
     issuing_trust_name: Optional[str] = Form(None),
-    dry_run: Optional[str] = Form(None),
 ):
     """
     Premium HR: issue one CSTF-style module completion to many clinicians from a roster file
     (one GMC or email per line, or CSV with identifier in the first column) plus shared evidence.
 
-    Non–dry-run behaviour is all-or-nothing on roster validation: every line is checked first; if any
-    line fails (unknown clinician, visibility, premium account, or wallet size guard), nothing is
-    issued. When the roster is clean, lines that would duplicate an existing wallet entry are
-    skipped and all remaining lines are issued in one pass.
+    All-or-nothing on roster validation: every line is checked first; if any line fails
+    (unknown clinician, visibility, premium account, or wallet size guard), nothing is issued.
+    When the roster is clean, lines that would duplicate an existing wallet entry are skipped
+    and all remaining lines are issued in one pass.
     """
     hr = require_premium_user(request)
     trust = (hr.get("current_trust") or "").strip()
     if not trust:
         raise HTTPException(status_code=400, detail="Your HR account must have a current trust set.")
-    is_dry = str(dry_run or "").strip().lower() in ("1", "true", "yes", "on")
 
     raw_roster = await roster.read()
     if len(raw_roster) > MAX_HR_BULK_ROSTER_BYTES:
@@ -1109,55 +1084,6 @@ async def hr_bulk_training(
 
     def _row_missing(line: str) -> HrBulkTrainingRow:
         return HrBulkTrainingRow(roster_line=line, status="error", message="No matching clinician account.")
-
-    def _rows_dry_run() -> tuple[list[HrBulkTrainingRow], int, int]:
-        rows_out: list[HrBulkTrainingRow] = []
-        err_n = skip_n = 0
-        for p in plans:
-            if p["kind"] == "missing":
-                rows_out.append(_row_missing(p["line"]))
-                err_n += 1
-            elif p["kind"] == "error":
-                assert p["err_row"] is not None
-                rows_out.append(p["err_row"])
-                err_n += 1
-            elif p["kind"] == "skipped":
-                doc_id = int(p["doc"]["id"])
-                rows_out.append(
-                    HrBulkTrainingRow(
-                        roster_line=p["line"],
-                        status="would_skip_duplicate",
-                        message="Clinician already has this completion in their wallet.",
-                        doctor_user_id=doc_id,
-                    )
-                )
-                skip_n += 1
-            else:
-                doc_id = int(p["doc"]["id"])
-                rows_out.append(
-                    HrBulkTrainingRow(
-                        roster_line=p["line"],
-                        status="dry_run_ok",
-                        message="Would issue credential (duplicate check passed).",
-                        doctor_user_id=doc_id,
-                    )
-                )
-        return rows_out, err_n, skip_n
-
-    if is_dry:
-        rows_out, errors, skipped = _rows_dry_run()
-        return HrBulkTrainingResponse(
-            dry_run=True,
-            aborted=False,
-            issuing_trust_ods_code=ods,
-            issuing_trust_name=issuing_name,
-            module_code=mc,
-            attempted=len(lines),
-            issued=0,
-            skipped_duplicate=skipped,
-            errors=errors,
-            rows=rows_out,
-        )
 
     has_classify_error = any(p["kind"] in ("missing", "error") for p in plans)
     if has_classify_error:

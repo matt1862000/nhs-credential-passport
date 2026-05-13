@@ -355,7 +355,7 @@
           </div>
           <div class="nhsuk-form-group" id="bulkEvidenceGroup">
             <label class="nhsuk-label" for="bulkEvidence">Class evidence</label>
-            <span class="nhsuk-hint" id="bulkEvidenceHint">Upload a PDF or image (PNG, JPEG, WebP) of the attendance or completion record for the class. Not required when dry run is ticked.</span>
+            <span class="nhsuk-hint" id="bulkEvidenceHint">Upload a PDF or image (PNG, JPEG, WebP) of the attendance or completion record for the class. Required when at least one person would receive a new credential.</span>
             <div class="hr-bulk-file">
               <input class="nhsuk-input" type="file" id="bulkEvidence" name="evidence" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*" aria-describedby="bulkEvidenceHint">
             </div>
@@ -392,11 +392,6 @@
               <input class="nhsuk-input" type="text" id="bulkIssuingName" name="issuing_trust_name" placeholder="Defaults from trust config or your profile trust" autocomplete="organization">
             </div>
           </fieldset>
-          <div class="hr-bulk-check">
-            <input type="checkbox" id="bulkDryRun" name="dry_run" value="true" aria-describedby="bulkDryHint">
-            <label for="bulkDryRun">Preview only — check the roster; nothing is saved and no evidence is sent.</label>
-          </div>
-          <p class="nhsuk-hint" id="bulkDryHint" style="margin:-0.25rem 0 0.75rem 0;">Use this to confirm every line is recognised and allowed before you submit with evidence. A normal submit validates the whole roster first, then either issues every new credential in one go or saves nothing if any line fails.</p>
           <div class="hr-bulk-actions">
             <button type="submit" class="nhsuk-button" id="bulkSubmit">Submit</button>
             <button type="reset" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="bulkReset" form="bulkForm">Clear form</button>
@@ -434,7 +429,7 @@
         <form id="addTrainingForm" class="hr-bulk-form" novalidate>
           <div class="nhsuk-form-group">
             <label class="nhsuk-label" for="addTrainingEvidence">Evidence (class or completion record)</label>
-            <span class="nhsuk-hint" id="addTrainingEvidenceHint">PDF or image (PNG, JPEG, WebP). Required unless dry run is ticked.</span>
+            <span class="nhsuk-hint" id="addTrainingEvidenceHint">PDF or image (PNG, JPEG, WebP). Required to issue a credential.</span>
             <div class="hr-bulk-file">
               <input class="nhsuk-input" type="file" id="addTrainingEvidence" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*" aria-describedby="addTrainingEvidenceHint">
             </div>
@@ -470,11 +465,6 @@
               <input class="nhsuk-input" type="text" id="addTrainingIssuingName" placeholder="Optional" autocomplete="organization">
             </div>
           </fieldset>
-          <div class="hr-bulk-check">
-            <input type="checkbox" id="addTrainingDryRun" name="dry_run" value="true" aria-describedby="addTrainingDryHint">
-            <label for="addTrainingDryRun">Preview only — validate; do not issue or upload evidence.</label>
-          </div>
-          <p class="nhsuk-hint" id="addTrainingDryHint" style="margin:-0.25rem 0 0.75rem 0;">Confirms eligibility without writing to the wallet. A normal submit runs the same checks, then issues once or returns an error without saving.</p>
           <div class="hr-bulk-actions">
             <button type="submit" class="nhsuk-button" id="addTrainingSubmit">Submit</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="addTrainingCancel">Cancel</button>
@@ -1085,25 +1075,6 @@
           else el.classList.add('hr-muted');
         }
 
-        function syncAddTrainingDryRun() {
-          var dry = document.getElementById('addTrainingDryRun');
-          var ev = document.getElementById('addTrainingEvidence');
-          var hint = document.getElementById('addTrainingEvidenceHint');
-          if (!ev) return;
-          if (dry && dry.checked) {
-            ev.removeAttribute('required');
-            ev.disabled = true;
-            ev.value = '';
-            var nm = document.getElementById('addTrainingEvidenceName');
-            if (nm) nm.textContent = 'No file chosen';
-            if (hint) hint.textContent = 'Skipped in preview — no file is sent to the server.';
-          } else {
-            ev.disabled = false;
-            ev.setAttribute('required', 'required');
-            if (hint) hint.textContent = 'PDF or image (PNG, JPEG, WebP). Required to issue (not required for preview only).';
-          }
-        }
-
         function openHrAddTrainingModal(doctorId, doctorName) {
           var m = document.getElementById('hrAddTrainingModal');
           var t = document.getElementById('hrAddTrainingTitle');
@@ -1113,7 +1084,6 @@
           var dname = doctorName || '';
           if (t) t.textContent = 'Add training — ' + (dname || 'Clinician');
           form.reset();
-          syncAddTrainingDryRun();
           var nm = document.getElementById('addTrainingEvidenceName');
           if (nm) nm.textContent = 'No file chosen';
           setAddTrainingStatus('', 'muted');
@@ -1234,15 +1204,12 @@
           addTrainingFormEl.addEventListener('submit', async function (e) {
             e.preventDefault();
             if (addTrainingBusy || !addTrainingDoctorId) return;
-            var dryEl = document.getElementById('addTrainingDryRun');
             var evEl = document.getElementById('addTrainingEvidence');
             var addMod = document.getElementById('addTrainingModule');
             if (!addTrainingFormEl.reportValidity()) return;
-            if (!dryEl || !dryEl.checked) {
-              if (!evEl || !evEl.files || !evEl.files[0]) {
-                setAddTrainingStatus('Choose an evidence file to issue, or tick Preview only.', 'error');
-                return;
-              }
+            if (!evEl || !evEl.files || !evEl.files[0]) {
+              setAddTrainingStatus('Choose an evidence file.', 'error');
+              return;
             }
             addTrainingBusy = true;
             addTrainingSubmitBtn.disabled = true;
@@ -1257,7 +1224,6 @@
               var iname = (document.getElementById('addTrainingIssuingName') || {}).value;
               if (ods && String(ods).trim()) fd.append('issuing_trust_ods_code', String(ods).trim());
               if (iname && String(iname).trim()) fd.append('issuing_trust_name', String(iname).trim());
-              if (dryEl && dryEl.checked) fd.append('dry_run', 'true');
               var url = '/api/hr/doctors/' + encodeURIComponent(addTrainingDoctorId) + '/add-training';
               var res = await fetch(url, { method: 'POST', body: fd, credentials: 'include' });
               var text = await res.text();
@@ -1272,12 +1238,11 @@
               var issued = Number(data.issued || 0);
               setAddTrainingStatus(
                 (row0.message || 'Done.') +
-                  (data.dry_run ? ' (preview only)' : '') +
                   (issued ? ' Close this dialog to return to the list; the table below refreshes automatically.' : ''),
                 errCount > 0 ? 'error' : 'ok'
               );
               var sdv = document.getElementById('searchDoctorView');
-              if (!data.dry_run && issued && sdv && !sdv.hidden) {
+              if (issued && sdv && !sdv.hidden) {
                 var titleEl = document.getElementById('searchDoctorTitle');
                 var dnm = '';
                 if (titleEl) {
@@ -1306,31 +1271,6 @@
         wireBulkFileName('bulkRoster', 'bulkRosterName');
         wireBulkFileName('bulkEvidence', 'bulkEvidenceName');
         wireBulkFileName('addTrainingEvidence', 'addTrainingEvidenceName');
-        var addTrainingDryEl = document.getElementById('addTrainingDryRun');
-        if (addTrainingDryEl) addTrainingDryEl.addEventListener('change', syncAddTrainingDryRun);
-        syncAddTrainingDryRun();
-
-        function syncBulkDryRunEvidence() {
-          var dryEl = document.getElementById('bulkDryRun');
-          var ev = document.getElementById('bulkEvidence');
-          var hint = document.getElementById('bulkEvidenceHint');
-          if (!ev) return;
-          if (dryEl && dryEl.checked) {
-            ev.removeAttribute('required');
-            ev.disabled = true;
-            ev.value = '';
-            var nm = document.getElementById('bulkEvidenceName');
-            if (nm) nm.textContent = 'No file chosen';
-            if (hint) hint.textContent = 'Skipped in preview — no file is sent to the server.';
-          } else {
-            ev.disabled = false;
-            ev.setAttribute('required', 'required');
-            if (hint) hint.textContent = 'Upload a PDF or image (PNG, JPEG, WebP) of the attendance or completion record. Required for a live submit when at least one person would get a new credential.';
-          }
-        }
-        var dryRunEl = document.getElementById('bulkDryRun');
-        if (dryRunEl) dryRunEl.addEventListener('change', syncBulkDryRunEvidence);
-        syncBulkDryRunEvidence();
 
         var bulkForm = document.getElementById('bulkForm');
         if (bulkForm) {
@@ -1340,7 +1280,6 @@
               var en = document.getElementById('bulkEvidenceName');
               if (rn) rn.textContent = 'No file chosen';
               if (en) en.textContent = 'No file chosen';
-              syncBulkDryRunEvidence();
               var st = document.getElementById('bulkStatus');
               if (st) {
                 st.textContent = '';
@@ -1376,17 +1315,10 @@
             var tbody = document.getElementById('bulkResultsTbody');
             var rosterEl = document.getElementById('bulkRoster');
             var evEl = document.getElementById('bulkEvidence');
-            var dryEl = document.getElementById('bulkDryRun');
             if (!bulkFormEl.reportValidity()) return;
             if (!rosterEl || !rosterEl.files || !rosterEl.files[0]) {
               setBulkStatusMessage('Choose a roster file.', 'error');
               return;
-            }
-            if (!dryEl || !dryEl.checked) {
-              if (!evEl || !evEl.files || !evEl.files[0]) {
-                setBulkStatusMessage('Choose an evidence file for a live submit, or tick Preview only.', 'error');
-                return;
-              }
             }
             bulkSubmitBusy = true;
             btnBulkSubmit.disabled = true;
@@ -1404,7 +1336,6 @@
               var iname = (document.getElementById('bulkIssuingName') || {}).value;
               if (ods && String(ods).trim()) fd.append('issuing_trust_ods_code', String(ods).trim());
               if (iname && String(iname).trim()) fd.append('issuing_trust_name', String(iname).trim());
-              if (dryEl && dryEl.checked) fd.append('dry_run', 'true');
               var res = await fetch('/api/hr/bulk-training', { method: 'POST', body: fd, credentials: 'include' });
               var text = await res.text();
               var data = null;
@@ -1415,12 +1346,10 @@
               }
               var errCount = Number(data.errors || 0);
               var aborted = Boolean(data.aborted);
-              var dry = Boolean(data.dry_run);
               var summary =
                 'Issued: ' + String(data.issued || 0) +
                 ' · Skipped (duplicate): ' + String(data.skipped_duplicate || 0) +
-                ' · Errors: ' + String(errCount) +
-                (dry ? ' (preview only)' : '');
+                ' · Errors: ' + String(errCount);
               if (aborted) {
                 setBulkStatusMessage(
                   'Nothing was saved. Fix the roster errors (or wallet size errors) and submit again. ' + summary,
