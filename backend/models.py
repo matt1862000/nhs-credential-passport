@@ -111,6 +111,10 @@ class HrBulkTrainingRow(BaseModel):
 
 class HrBulkTrainingResponse(BaseModel):
     dry_run: bool
+    aborted: bool = Field(
+        default=False,
+        description="True when validation failed and no credentials were written for this request.",
+    )
     issuing_trust_ods_code: str = ""
     issuing_trust_name: str = ""
     module_code: str = ""

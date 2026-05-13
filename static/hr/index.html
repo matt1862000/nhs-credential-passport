@@ -394,9 +394,9 @@
           </fieldset>
           <div class="hr-bulk-check">
             <input type="checkbox" id="bulkDryRun" name="dry_run" value="true" aria-describedby="bulkDryHint">
-            <label for="bulkDryRun">Dry run — check the roster only; do not issue credentials or upload evidence.</label>
+            <label for="bulkDryRun">Preview only — check the roster; nothing is saved and no evidence is sent.</label>
           </div>
-          <p class="nhsuk-hint" id="bulkDryHint" style="margin:-0.25rem 0 0.75rem 0;">Use this first to confirm everyone on the list is found and allowed for your trust.</p>
+          <p class="nhsuk-hint" id="bulkDryHint" style="margin:-0.25rem 0 0.75rem 0;">Use this to confirm every line is recognised and allowed before you submit with evidence. A normal submit validates the whole roster first, then either issues every new credential in one go or saves nothing if any line fails.</p>
           <div class="hr-bulk-actions">
             <button type="submit" class="nhsuk-button" id="bulkSubmit">Submit</button>
             <button type="reset" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="bulkReset" form="bulkForm">Clear form</button>
@@ -472,9 +472,9 @@
           </fieldset>
           <div class="hr-bulk-check">
             <input type="checkbox" id="addTrainingDryRun" name="dry_run" value="true" aria-describedby="addTrainingDryHint">
-            <label for="addTrainingDryRun">Dry run — validate only; do not issue or upload evidence.</label>
+            <label for="addTrainingDryRun">Preview only — validate; do not issue or upload evidence.</label>
           </div>
-          <p class="nhsuk-hint" id="addTrainingDryHint" style="margin:-0.25rem 0 0.75rem 0;">Confirms this person is eligible without writing to their wallet.</p>
+          <p class="nhsuk-hint" id="addTrainingDryHint" style="margin:-0.25rem 0 0.75rem 0;">Confirms eligibility without writing to the wallet. A normal submit runs the same checks, then issues once or returns an error without saving.</p>
           <div class="hr-bulk-actions">
             <button type="submit" class="nhsuk-button" id="addTrainingSubmit">Submit</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="addTrainingCancel">Cancel</button>
@@ -1096,11 +1096,11 @@
             ev.value = '';
             var nm = document.getElementById('addTrainingEvidenceName');
             if (nm) nm.textContent = 'No file chosen';
-            if (hint) hint.textContent = 'Skipped in dry run — no file is sent to the server.';
+            if (hint) hint.textContent = 'Skipped in preview — no file is sent to the server.';
           } else {
             ev.disabled = false;
             ev.setAttribute('required', 'required');
-            if (hint) hint.textContent = 'PDF or image (PNG, JPEG, WebP). Required unless dry run is ticked.';
+            if (hint) hint.textContent = 'PDF or image (PNG, JPEG, WebP). Required to issue (not required for preview only).';
           }
         }
 
@@ -1240,7 +1240,7 @@
             if (!addTrainingFormEl.reportValidity()) return;
             if (!dryEl || !dryEl.checked) {
               if (!evEl || !evEl.files || !evEl.files[0]) {
-                setAddTrainingStatus('Choose an evidence file, or tick dry run.', 'error');
+                setAddTrainingStatus('Choose an evidence file to issue, or tick Preview only.', 'error');
                 return;
               }
             }
@@ -1272,7 +1272,7 @@
               var issued = Number(data.issued || 0);
               setAddTrainingStatus(
                 (row0.message || 'Done.') +
-                  (data.dry_run ? ' (dry run)' : '') +
+                  (data.dry_run ? ' (preview only)' : '') +
                   (issued ? ' Close this dialog to return to the list; the table below refreshes automatically.' : ''),
                 errCount > 0 ? 'error' : 'ok'
               );
@@ -1321,11 +1321,11 @@
             ev.value = '';
             var nm = document.getElementById('bulkEvidenceName');
             if (nm) nm.textContent = 'No file chosen';
-            if (hint) hint.textContent = 'Skipped in dry run — no file is sent to the server.';
+            if (hint) hint.textContent = 'Skipped in preview — no file is sent to the server.';
           } else {
             ev.disabled = false;
             ev.setAttribute('required', 'required');
-            if (hint) hint.textContent = 'Upload a PDF or image (PNG, JPEG, WebP) of the attendance or completion record for the class. Not required when dry run is ticked.';
+            if (hint) hint.textContent = 'Upload a PDF or image (PNG, JPEG, WebP) of the attendance or completion record. Required for a live submit when at least one person would get a new credential.';
           }
         }
         var dryRunEl = document.getElementById('bulkDryRun');
@@ -1384,7 +1384,7 @@
             }
             if (!dryEl || !dryEl.checked) {
               if (!evEl || !evEl.files || !evEl.files[0]) {
-                setBulkStatusMessage('Choose an evidence file, or tick dry run.', 'error');
+                setBulkStatusMessage('Choose an evidence file for a live submit, or tick Preview only.', 'error');
                 return;
               }
             }
@@ -1414,13 +1414,21 @@
                 throw new Error(typeof d === 'string' ? d : (text || res.statusText));
               }
               var errCount = Number(data.errors || 0);
-              setBulkStatusMessage(
+              var aborted = Boolean(data.aborted);
+              var dry = Boolean(data.dry_run);
+              var summary =
                 'Issued: ' + String(data.issued || 0) +
-                  ' · Skipped (duplicate): ' + String(data.skipped_duplicate || 0) +
-                  ' · Errors: ' + String(errCount) +
-                  (data.dry_run ? ' (dry run)' : ''),
-                errCount > 0 ? 'error' : 'ok'
-              );
+                ' · Skipped (duplicate): ' + String(data.skipped_duplicate || 0) +
+                ' · Errors: ' + String(errCount) +
+                (dry ? ' (preview only)' : '');
+              if (aborted) {
+                setBulkStatusMessage(
+                  'Nothing was saved. Fix the roster errors (or wallet size errors) and submit again. ' + summary,
+                  'error'
+                );
+              } else {
+                setBulkStatusMessage(summary, errCount > 0 ? 'error' : 'ok');
+              }
               if (wrap && tbody && data.rows && data.rows.length) {
                 wrap.hidden = false;
                 tbody.innerHTML = data.rows.map(function (r) {
