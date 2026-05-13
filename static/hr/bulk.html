@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="application-name" content="DocPass">
+  <meta name="theme-color" content="#005eb8">
+
+  <title>Bulk add training &mdash; DocPass</title>
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260516-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260517-1">
+
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/static/dashboard/" aria-label="Dashboard">
+          <img class="docpass-header-logo" src="/static/shared/docpass-logo.svg?v=20260516" alt="DocPass — professional credential wallet" width="420" height="120">
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/dashboard/" role="menuitem">Dashboard</a>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">Bulk add training</h1>
+    <p class="nhsuk-lead">Issue the same module completion to many clinicians using one roster file and shared class evidence.</p>
+
+    <div id="notPremium" class="hr-card" hidden>
+      <p style="margin:0; font-weight:700;">This page is only for HR accounts.</p>
+      <p class="hr-muted" style="margin:0.5rem 0 0 0;">Sign in with an HR account to continue.</p>
+    </div>
+
+    <div id="bulkView" class="hr-card" hidden>
+      <div class="hr-inbox-head">
+        <h2>Upload details</h2>
+      </div>
+      <p class="hr-muted" style="margin:0 0 0.75rem 0;">Issue the same module completion to many clinicians using one shared class evidence file. Only people on your roster who have allowed your trust receive a record.</p>
+      <div class="hr-bulk-panel">
+        <form id="bulkForm" class="hr-bulk-form" novalidate>
+          <div class="nhsuk-form-group">
+            <label class="nhsuk-label" for="bulkRoster">Roster file</label>
+            <span class="nhsuk-hint" id="bulkRosterHint">Plain text or CSV — one GMC number or work email per line, or CSV with the identifier in the first column. Maximum 50 people per upload.</span>
+            <div class="hr-bulk-file">
+              <input class="nhsuk-input" type="file" id="bulkRoster" name="roster" accept=".txt,.csv,text/plain,text/csv" required aria-describedby="bulkRosterHint">
+            </div>
+            <span class="hr-bulk-file-name" id="bulkRosterName" aria-live="polite">No file chosen</span>
+          </div>
+          <div class="nhsuk-form-group" id="bulkEvidenceGroup">
+            <label class="nhsuk-label" for="bulkEvidence">Class evidence</label>
+            <span class="nhsuk-hint" id="bulkEvidenceHint">Upload a PDF or image (PNG, JPEG, WebP) of the attendance or completion record for the class. Required when at least one person would receive a new credential.</span>
+            <div class="hr-bulk-file">
+              <input class="nhsuk-input" type="file" id="bulkEvidence" name="evidence" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*" aria-describedby="bulkEvidenceHint">
+            </div>
+            <span class="hr-bulk-file-name" id="bulkEvidenceName" aria-live="polite">No file chosen</span>
+          </div>
+          <div class="nhsuk-form-group">
+            <label class="nhsuk-label" for="bulkModule">Module</label>
+            <span class="nhsuk-hint">The same module and dates are applied to every eligible person on the roster.</span>
+            <select class="nhsuk-select" id="bulkModule" name="module_code" required></select>
+          </div>
+          <div class="nhsuk-form-group">
+            <span class="nhsuk-label">Completion and expiry</span>
+            <span class="nhsuk-hint">Use the date picker (stored as YYYY-MM-DD).</span>
+            <div class="hr-bulk-dates">
+              <div>
+                <label class="nhsuk-label nhsuk-label--s" for="bulkCompletion">Completion date</label>
+                <input class="nhsuk-input" type="date" id="bulkCompletion" name="completion_date" required>
+              </div>
+              <div>
+                <label class="nhsuk-label nhsuk-label--s" for="bulkExpiry">Expiry date</label>
+                <input class="nhsuk-input" type="date" id="bulkExpiry" name="expiry_date" required>
+              </div>
+            </div>
+          </div>
+          <fieldset class="hr-bulk-fieldset">
+            <legend class="nhsuk-label">Issuing trust on the credential</legend>
+            <span class="nhsuk-hint">Pre-filled from your signed-in HR account (profile trust and organisation directory). Edit if anything is wrong, or change your profile trust in the staff app.</span>
+            <div class="nhsuk-form-group" style="margin-bottom:0.75rem;">
+              <label class="nhsuk-label nhsuk-label--s" for="bulkOds">ODS code</label>
+              <input class="nhsuk-input" type="text" id="bulkOds" name="issuing_trust_ods_code" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false">
+            </div>
+            <div class="nhsuk-form-group" style="margin-bottom:0;">
+              <label class="nhsuk-label nhsuk-label--s" for="bulkIssuingName">Trust display name</label>
+              <input class="nhsuk-input" type="text" id="bulkIssuingName" name="issuing_trust_name" placeholder="Shown on the credential" autocomplete="organization">
+            </div>
+          </fieldset>
+          <div class="hr-bulk-actions">
+            <button type="submit" class="nhsuk-button" id="bulkSubmit">Submit</button>
+            <button type="reset" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="bulkReset" form="bulkForm">Clear form</button>
+          </div>
+        </form>
+      </div>
+      <div class="hr-bulk-status-wrap">
+        <p id="bulkStatus" class="hr-muted hr-bulk-status--muted" role="status" aria-live="polite"></p>
+      </div>
+      <div id="bulkTableWrap" class="hr-table-wrap" hidden style="margin-top:1rem;">
+        <table class="hr-table" aria-label="Bulk training results">
+          <thead>
+            <tr>
+              <th>Roster line</th>
+              <th>Result</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody id="bulkResultsTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+
+  </main>
+
+  <script src="/static/shared/auth.js"></script>
+  <script>window.__HR_PAGE__ = 'bulk';</script>
+  <script src="/static/hr/hr-app.js?v=20260517-1"></script>
+</body>
+</html>
+

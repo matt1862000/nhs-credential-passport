@@ -1,0 +1,229 @@
+    .hr-wrap { max-width: 56rem; }
+    .hr-card { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; box-shadow: 0 2px 8px rgba(33, 43, 50, 0.06); padding: 1.25rem 1.5rem; margin-top: 1.25rem; }
+    .hr-inbox-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.75rem 1rem; margin: 0 0 0.75rem 0; }
+    .hr-inbox-head h2 { margin: 0; font-size: 1.25rem; }
+    .hr-inbox-summary { margin: 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); max-width: 28rem; }
+    .hr-inbox-summary strong { color: var(--nhsuk-text); }
+    .hr-segment { display: inline-flex; gap: 0; margin: 0.25rem 0 1rem 0; border: 1px solid var(--nhsuk-border); border-radius: 6px; overflow: hidden; background: #f0f4f5; }
+    .hr-segment button { margin: 0; border: none; border-radius: 0; background: transparent; padding: 0.5rem 1rem; font-size: 0.9375rem; font-weight: 600; color: var(--nhsuk-secondary-text); cursor: pointer; }
+    .hr-segment button + button { border-left: 1px solid var(--nhsuk-border); }
+    .hr-segment button.active { background: #fff; color: var(--nhsuk-link); box-shadow: 0 1px 0 #fff; }
+    .hr-segment button:focus { outline: 3px solid #ffbf47; outline-offset: -2px; }
+    .hr-table-wrap { overflow-x: auto; }
+    .hr-table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
+    .hr-table th, .hr-table td { text-align: left; padding: 0.75rem 0.85rem; border-bottom: 1px solid var(--nhsuk-border); vertical-align: top; }
+    .hr-table th { background: #f0f4f5; font-weight: 700; white-space: nowrap; }
+    .hr-table th:first-child, .hr-table td:first-child { min-width: 11rem; }
+    .hr-table tr:last-child td { border-bottom: none; }
+    .hr-muted { color: var(--nhsuk-secondary-text); font-size: 0.9375rem; }
+    .hr-doctor-name { font-weight: 700; color: var(--nhsuk-text); line-height: 1.35; }
+    .hr-doctor-meta { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; line-height: 1.35; }
+    .hr-doctor-meta span { color: #4c6272; }
+    .hr-date-main { font-weight: 600; color: var(--nhsuk-text); }
+    .hr-date-sub { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
+    .hr-count-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+    .hr-count-pill { display: inline-flex; align-items: center; padding: 0.2rem 0.55rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.02em; border: 1px solid var(--nhsuk-border); }
+    .hr-count-pill--pending { background: #fff7e6; color: #8a5b00; border-color: rgba(212, 160, 0, 0.45); }
+    .hr-count-pill--verified { background: #dbeafe; color: #1d4ed8; border-color: rgba(29, 78, 216, 0.25); }
+    .hr-count-pill--declined { background: #fef2f2; color: #b42318; border-color: rgba(180, 35, 24, 0.25); }
+    .hr-open-wrap { text-align: right; white-space: nowrap; }
+    .hr-open-btn { display: inline-block; padding: 0.5rem 1rem; font-size: 0.9375rem; font-weight: 600; text-decoration: none; border-radius: 4px; background: var(--nhsuk-link); color: #fff !important; border: 2px solid transparent; }
+    .hr-open-btn:hover, .hr-open-btn:focus { background: #003d78; color: #fff !important; outline: 3px solid #ffbf47; }
+    .hr-pill { display: inline-block; padding: 0.15rem 0.45rem; border-radius: 999px; font-size: 0.75rem; font-weight: 800; letter-spacing: 0.02em; border: 1px solid var(--nhsuk-border); color: var(--nhsuk-secondary-text); background: #eef0f2; }
+    .hr-pill--verified { background: #dbeafe; color: #1d4ed8; border-color: rgba(29, 78, 216, 0.25); }
+    .hr-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .hr-btn-small { padding: 0.55rem 0.9rem; font-size: 0.9375rem; }
+    .hr-session-meta { display: block; margin: 0.35rem 0 0 0; font-size: 0.875rem; color: var(--nhsuk-secondary-text); line-height: 1.45; max-width: 42rem; }
+    .hr-session-meta .hr-doctor-name { display: inline; font-size: inherit; }
+    .hr-module-name-btn {
+      display: inline; margin: 0; padding: 0; border: none; background: none; color: #005eb8;
+      font: inherit; font-weight: 700; text-align: left; cursor: pointer; text-decoration: underline;
+      text-underline-offset: 2px; max-width: 100%;
+    }
+    .hr-module-name-btn:hover { color: #003087; }
+    .hr-module-name-btn:focus { outline: 3px solid #ffbf47; outline-offset: 2px; }
+    .hr-session-divider td {
+      background: #f0f4f5;
+      font-size: 0.8125rem;
+      font-weight: 700;
+      color: var(--nhsuk-secondary-text);
+      padding: 0.5rem 0.85rem !important;
+      border-bottom: 1px solid var(--nhsuk-border);
+    }
+    .hr-modal { position: fixed; inset: 0; z-index: 200; background: rgba(15, 23, 42, 0.55); display: flex; align-items: center; justify-content: center; padding: 1rem; }
+    .hr-modal[hidden] { display: none !important; }
+    .hr-modal__panel { background: #fff; border-radius: 8px; max-width: min(900px, 96vw); max-height: 92vh; overflow: auto; padding: 1.25rem 1.5rem; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25); }
+    .hr-modal__panel--narrow { max-width: min(34rem, 96vw); }
+    .hr-modal__title { margin: 0 0 0.75rem 0; font-size: 1.125rem; }
+    .hr-cert-img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+    .hr-cert-iframe { width: 100%; min-height: 70vh; border: 1px solid #d8dde0; border-radius: 4px; }
+    /* Search for doctor */
+    .hr-search-box-wrap { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: flex-start; margin-bottom: 0.75rem; }
+    .hr-search-box-wrap input { flex: 1; min-width: 18rem; }
+    .hr-search-results { margin-top: 0.5rem; }
+    .hr-search-result-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; padding: 0.75rem 0; border-bottom: 1px solid var(--nhsuk-border); }
+    .hr-search-result-row:last-child { border-bottom: none; }
+    .hr-search-result-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; justify-content: flex-end; }
+    .hr-search-result-name { font-weight: 700; color: var(--nhsuk-text); }
+    .hr-search-result-meta { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
+    .hr-search-empty { color: var(--nhsuk-secondary-text); font-size: 0.9375rem; padding: 0.5rem 0; }
+    /* Bulk training — match staff / NHS form patterns */
+    .hr-bulk-panel {
+      background: var(--nhsuk-panel);
+      border: 1px solid var(--nhsuk-border);
+      border-left: 4px solid var(--nhsuk-link);
+      border-radius: 4px;
+      box-shadow: var(--nhsuk-card-shadow);
+      padding: 1.25rem 1.5rem;
+      margin-top: 0.35rem;
+    }
+    .hr-bulk-form .nhsuk-form-group { margin-bottom: 1.25rem; }
+    .hr-bulk-form .nhsuk-form-group:last-of-type { margin-bottom: 0; }
+    .hr-bulk-form .nhsuk-hint {
+      display: block;
+      font-size: 0.875rem;
+      color: var(--nhsuk-secondary-text);
+      margin: 0.35rem 0 0.5rem 0;
+      line-height: 1.45;
+      max-width: 36rem;
+    }
+    .hr-bulk-form .nhsuk-input,
+    .hr-bulk-form .nhsuk-select { max-width: 36rem; }
+    .hr-bulk-form .nhsuk-select {
+      display: block;
+      width: 100%;
+      min-height: 3rem;
+      padding: 0.75rem 2.25rem 0.75rem 0.75rem;
+      border: 2px solid var(--nhsuk-border);
+      border-radius: 4px;
+      font-size: 1rem;
+      font-family: inherit;
+      background: #fff;
+      color: var(--nhsuk-text);
+    }
+    .hr-bulk-form .nhsuk-select:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 0;
+      border-color: var(--nhsuk-text);
+    }
+    .hr-bulk-file { max-width: 36rem; }
+    .hr-bulk-file input[type="file"] {
+      width: 100%;
+      padding: 0.65rem 0.75rem;
+      border: 2px dashed var(--nhsuk-border);
+      border-radius: 4px;
+      background: rgba(240, 244, 245, 0.75);
+      font-size: 0.9375rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .hr-bulk-file input[type="file"]:hover { border-color: #aeb7bd; }
+    .hr-bulk-file input[type="file"]:focus {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 0;
+      border-style: solid;
+      border-color: var(--nhsuk-link);
+      background: #fff;
+    }
+    .hr-bulk-file-name {
+      display: block;
+      font-size: 0.875rem;
+      color: var(--nhsuk-secondary-text);
+      margin-top: 0.45rem;
+    }
+    .hr-bulk-dates {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem 1.25rem;
+      max-width: 36rem;
+      margin-top: 0.35rem;
+    }
+    @media (max-width: 30rem) {
+      .hr-bulk-dates { grid-template-columns: 1fr; }
+    }
+    .hr-bulk-form .nhsuk-label--s {
+      font-size: 1rem;
+      margin-bottom: 0.3rem;
+    }
+    .hr-bulk-fieldset {
+      border: 0;
+      margin: 0 0 1.25rem 0;
+      padding: 0;
+      max-width: 36rem;
+    }
+    .hr-bulk-fieldset legend.nhsuk-label { padding: 0; }
+    .hr-bulk-check {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.65rem;
+      max-width: 36rem;
+      padding: 1rem 0 0.25rem 0;
+      margin: 0 0 0.25rem 0;
+      border-top: 1px solid var(--nhsuk-border);
+    }
+    .hr-bulk-check input[type="checkbox"] {
+      width: 1.35rem;
+      height: 1.35rem;
+      margin-top: 0.12rem;
+      flex-shrink: 0;
+      accent-color: var(--nhsuk-link);
+      cursor: pointer;
+    }
+    .hr-bulk-check label {
+      font-size: 1rem;
+      font-weight: 400;
+      margin: 0;
+      cursor: pointer;
+      line-height: 1.45;
+    }
+    .hr-bulk-form input[type="file"]:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .hr-bulk-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      margin-top: 0.25rem;
+    }
+    .hr-bulk-status-wrap {
+      margin-top: 1.25rem;
+      padding: 1rem 1.25rem;
+      border-radius: 4px;
+      border: 1px solid var(--nhsuk-border);
+      background: #fff;
+      min-height: 2.75rem;
+    }
+    #bulkStatus.hr-bulk-status--error { color: var(--nhsuk-error); font-weight: 600; margin: 0; }
+    #bulkStatus.hr-bulk-status--ok { color: var(--nhsuk-success); font-weight: 600; margin: 0; }
+    #bulkStatus.hr-bulk-status--muted { margin: 0; }
+    #addTrainingStatus.hr-bulk-status--error { color: var(--nhsuk-error); font-weight: 600; margin: 0; }
+    #addTrainingStatus.hr-bulk-status--ok { color: var(--nhsuk-success); font-weight: 600; margin: 0; }
+    #addTrainingStatus.hr-bulk-status--muted { margin: 0; }
+    .hr-page-nav { display: inline-flex; flex-wrap: wrap; }
+    .hr-page-nav a.hr-nav-link {
+      margin: 0;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      padding: 0.5rem 1rem;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      color: var(--nhsuk-secondary-text);
+      text-decoration: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
+    }
+    .hr-page-nav a.hr-nav-link + a.hr-nav-link { border-left: 1px solid var(--nhsuk-border); }
+    .hr-page-nav a.hr-nav-link.active {
+      background: #fff;
+      color: var(--nhsuk-link);
+      box-shadow: 0 1px 0 #fff;
+    }
+    .hr-page-nav a.hr-nav-link:focus {
+      outline: 3px solid #ffbf47;
+      outline-offset: -2px;
+    }
