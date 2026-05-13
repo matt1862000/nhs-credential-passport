@@ -344,12 +344,26 @@
         });
       }
 
+      async function fillHrIssuingOdsFromOrdIfBlank(nameId, odsId) {
+        var nameEl = document.getElementById(nameId);
+        var odsEl = document.getElementById(odsId);
+        if (!nameEl || !odsEl || !window.NHSOdsTrustSuggest) return;
+        var nm = String(nameEl.value || '').trim();
+        if (nm.length < 3 || String(odsEl.value || '').trim()) return;
+        try {
+          var org = await NHSOdsTrustSuggest.pickBestOrg(nm, { minLength: 3 });
+          if (org && org.OrgId) odsEl.value = String(org.OrgId).trim().toUpperCase();
+        } catch (e) {}
+      }
+
       async function fillHrIssuingTrustFieldsIfEmpty() {
         var d = await fetchHrIssuingDefaults();
         setInputIfEmpty('bulkIssuingName', d.issuing_trust_name);
         setInputIfEmpty('bulkOds', d.issuing_trust_ods_code);
         setInputIfEmpty('addTrainingIssuingName', d.issuing_trust_name);
         setInputIfEmpty('addTrainingOds', d.issuing_trust_ods_code);
+        await fillHrIssuingOdsFromOrdIfBlank('bulkIssuingName', 'bulkOds');
+        await fillHrIssuingOdsFromOrdIfBlank('addTrainingIssuingName', 'addTrainingOds');
         syncHrTrustSuggestLastAutoFromDom();
       }
 
