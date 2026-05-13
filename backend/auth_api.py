@@ -208,6 +208,34 @@ def _hr_resolve_issuing_trust(
     return ods, name
 
 
+def _hr_issuing_defaults_payload(hr: dict) -> dict:
+    """Suggested ODS + display name for HR forms (same source as server-side resolution when overrides are blank)."""
+    profile_trust = (hr.get("current_trust") or "").strip()
+    if not profile_trust:
+        return {
+            "profile_trust": "",
+            "issuing_trust_ods_code": "",
+            "issuing_trust_name": "",
+            "matched_trust_config": False,
+        }
+    matched = _match_trust_config_json(profile_trust)
+    if matched:
+        ods = str(matched.get("ods") or "").strip().upper()
+        name = str(matched.get("display_name") or "").strip() or profile_trust
+        return {
+            "profile_trust": profile_trust,
+            "issuing_trust_ods_code": ods,
+            "issuing_trust_name": name,
+            "matched_trust_config": True,
+        }
+    return {
+        "profile_trust": profile_trust,
+        "issuing_trust_ods_code": "",
+        "issuing_trust_name": profile_trust,
+        "matched_trust_config": False,
+    }
+
+
 def _staff_identifier_for_issue(doc: dict) -> str:
     gmc_digits = _normalize_gmc(str(doc.get("gmc_number") or ""))
     if len(gmc_digits) >= 7:
@@ -805,6 +833,13 @@ def hr_doctors_search(request: Request, q: str = "", limit: int = 30):
         raise HTTPException(status_code=400, detail="Your HR account must have a current trust set to search for doctors.")
     results = db.hr_doctor_search(q=q, hr_trust=trust, limit=limit)
     return {"results": results}
+
+
+@router.get("/hr/issuing-defaults")
+def hr_issuing_defaults(request: Request):
+    """Suggested issuing-trust ODS and display name from the signed-in HR profile and static trust directory."""
+    hr = require_premium_user(request)
+    return _hr_issuing_defaults_payload(hr)
 
 
 @router.get("/hr/doctors/{doctor_user_id}/training")

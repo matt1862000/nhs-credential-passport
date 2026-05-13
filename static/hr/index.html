@@ -382,14 +382,14 @@
           </div>
           <fieldset class="hr-bulk-fieldset">
             <legend class="nhsuk-label">Issuing trust on the credential</legend>
-            <span class="nhsuk-hint">Optional if your profile trust matches a configured trust. Otherwise enter the trust ODS code (for example RHQ) so the credential matches your organisation.</span>
+            <span class="nhsuk-hint">Pre-filled from your signed-in HR account (profile trust and organisation directory). Edit if anything is wrong, or change your profile trust in the staff app.</span>
             <div class="nhsuk-form-group" style="margin-bottom:0.75rem;">
               <label class="nhsuk-label nhsuk-label--s" for="bulkOds">ODS code</label>
               <input class="nhsuk-input" type="text" id="bulkOds" name="issuing_trust_ods_code" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false">
             </div>
             <div class="nhsuk-form-group" style="margin-bottom:0;">
               <label class="nhsuk-label nhsuk-label--s" for="bulkIssuingName">Trust display name</label>
-              <input class="nhsuk-input" type="text" id="bulkIssuingName" name="issuing_trust_name" placeholder="Defaults from trust config or your profile trust" autocomplete="organization">
+              <input class="nhsuk-input" type="text" id="bulkIssuingName" name="issuing_trust_name" placeholder="Shown on the credential" autocomplete="organization">
             </div>
           </fieldset>
           <div class="hr-bulk-actions">
@@ -455,14 +455,14 @@
           </div>
           <fieldset class="hr-bulk-fieldset">
             <legend class="nhsuk-label">Issuing trust on the credential</legend>
-            <span class="nhsuk-hint">Optional if your profile trust matches config; otherwise enter ODS code (e.g. RHQ).</span>
+            <span class="nhsuk-hint">Pre-filled from your signed-in HR account. Edit if anything is wrong.</span>
             <div class="nhsuk-form-group" style="margin-bottom:0.75rem;">
               <label class="nhsuk-label nhsuk-label--s" for="addTrainingOds">ODS code</label>
               <input class="nhsuk-input" type="text" id="addTrainingOds" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false">
             </div>
             <div class="nhsuk-form-group" style="margin-bottom:0;">
               <label class="nhsuk-label nhsuk-label--s" for="addTrainingIssuingName">Trust display name</label>
-              <input class="nhsuk-input" type="text" id="addTrainingIssuingName" placeholder="Optional" autocomplete="organization">
+              <input class="nhsuk-input" type="text" id="addTrainingIssuingName" placeholder="Shown on the credential" autocomplete="organization">
             </div>
           </fieldset>
           <div class="hr-bulk-actions">
@@ -587,6 +587,35 @@
         return data;
       }
 
+      var hrIssuingDefaultsCache = null;
+      async function fetchHrIssuingDefaults() {
+        if (hrIssuingDefaultsCache) return hrIssuingDefaultsCache;
+        try {
+          hrIssuingDefaultsCache = await apiJson('/api/hr/issuing-defaults');
+        } catch (e) {
+          hrIssuingDefaultsCache = {
+            profile_trust: '',
+            issuing_trust_ods_code: '',
+            issuing_trust_name: '',
+            matched_trust_config: false,
+          };
+        }
+        return hrIssuingDefaultsCache;
+      }
+      function setInputIfEmpty(id, val) {
+        var el = document.getElementById(id);
+        if (!el || val == null || String(val).trim() === '') return;
+        if (String(el.value || '').trim() !== '') return;
+        el.value = String(val);
+      }
+      async function fillHrIssuingTrustFieldsIfEmpty() {
+        var d = await fetchHrIssuingDefaults();
+        setInputIfEmpty('bulkOds', d.issuing_trust_ods_code);
+        setInputIfEmpty('bulkIssuingName', d.issuing_trust_name);
+        setInputIfEmpty('addTrainingOds', d.issuing_trust_ods_code);
+        setInputIfEmpty('addTrainingIssuingName', d.issuing_trust_name);
+      }
+
       var inboxTab = 'new';
       var itemsTab = 'new';
       var lastSessionPayload = null;
@@ -693,6 +722,7 @@
           '<tr><td colspan="4" class="hr-muted">' +
             (inboxTab === 'new' ? 'No sets need action right now.' : 'No completed sets to show.') +
             '</td></tr>';
+        void fillHrIssuingTrustFieldsIfEmpty();
       }
 
       /**
@@ -1087,6 +1117,7 @@
           var nm = document.getElementById('addTrainingEvidenceName');
           if (nm) nm.textContent = 'No file chosen';
           setAddTrainingStatus('', 'muted');
+          void fillHrIssuingTrustFieldsIfEmpty();
           m.hidden = false;
         }
 
@@ -1127,6 +1158,7 @@
           show(document.getElementById('searchDoctorView'), false);
           show(document.getElementById('bulkView'), true);
           activateHrNav('bulk');
+          void fillHrIssuingTrustFieldsIfEmpty();
         }
 
         var hrNavRoot = document.getElementById('hrPremiumNav');
@@ -1280,6 +1312,7 @@
               var en = document.getElementById('bulkEvidenceName');
               if (rn) rn.textContent = 'No file chosen';
               if (en) en.textContent = 'No file chosen';
+              void fillHrIssuingTrustFieldsIfEmpty();
               var st = document.getElementById('bulkStatus');
               if (st) {
                 st.textContent = '';
