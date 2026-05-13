@@ -486,11 +486,12 @@ a:hover {
   flex: 1 1 auto;
   background: linear-gradient(180deg, #ffffff 0%, #eef3f5 55%, var(--nhsuk-body-bg) 100%);
   border-bottom: 1px solid var(--nhsuk-border);
-  padding: 2.5rem 1.5rem 2.5rem;
+  padding: 2.5rem 0;
 }
 .nhs-hero__inner {
   max-width: 1040px;
   margin: 0 auto;
+  padding: 0 1.5rem;
   display: grid;
   grid-template-columns: 1.4fr 1fr;
   gap: 2.5rem;
