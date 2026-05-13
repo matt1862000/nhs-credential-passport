@@ -8,7 +8,7 @@
 
   <title>Search doctors &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260516-1">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260517-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260518-1">
 
 </head>
 <body>
@@ -122,14 +122,17 @@
           </div>
           <fieldset class="hr-bulk-fieldset">
             <legend class="nhsuk-label">Issuing trust on the credential</legend>
-            <span class="nhsuk-hint">Pre-filled from your signed-in HR account. Edit if anything is wrong.</span>
+            <span class="nhsuk-hint" id="addTrainingIssuingTrustHint">Search by trust name. Your HR organisation is filled in by default; pick a row to set the ODS code, or type a new name.</span>
             <div class="nhsuk-form-group" style="margin-bottom:0.75rem;">
-              <label class="nhsuk-label nhsuk-label--s" for="addTrainingOds">ODS code</label>
-              <input class="nhsuk-input" type="text" id="addTrainingOds" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false">
+              <label class="nhsuk-label nhsuk-label--s" for="addTrainingIssuingName">Trust display name</label>
+              <div class="nhs-ac-wrap" id="hrAddTrainingTrustAcWrap">
+                <input class="nhsuk-input" type="text" id="addTrainingIssuingName" placeholder="e.g. Sheffield Teaching Hospitals" autocomplete="off" spellcheck="false" aria-describedby="addTrainingIssuingTrustHint" role="combobox" aria-autocomplete="list" aria-controls="hrAddTrainingTrustSuggestList" aria-expanded="false">
+                <ul id="hrAddTrainingTrustSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching NHS trusts"></ul>
+              </div>
             </div>
             <div class="nhsuk-form-group" style="margin-bottom:0;">
-              <label class="nhsuk-label nhsuk-label--s" for="addTrainingIssuingName">Trust display name</label>
-              <input class="nhsuk-input" type="text" id="addTrainingIssuingName" placeholder="Shown on the credential" autocomplete="organization">
+              <label class="nhsuk-label nhsuk-label--s" for="addTrainingOds">ODS code</label>
+              <input class="nhsuk-input" type="text" id="addTrainingOds" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false">
             </div>
           </fieldset>
           <div class="hr-bulk-actions">
@@ -145,9 +148,10 @@
 
   </main>
 
+  <script src="/static/shared/ods-trust-suggest.js"></script>
   <script src="/static/shared/auth.js"></script>
   <script>window.__HR_PAGE__ = 'search';</script>
-  <script src="/static/hr/hr-app.js?v=20260517-1"></script>
+  <script src="/static/hr/hr-app.js?v=20260518-1"></script>
 </body>
 </html>
 

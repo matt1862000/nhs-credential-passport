@@ -129,12 +129,228 @@
         if (String(el.value || '').trim() !== '') return;
         el.value = String(val);
       }
+
+      var hrTrustSuggestSyncFns = [];
+      function syncHrTrustSuggestLastAutoFromDom() {
+        hrTrustSuggestSyncFns.forEach(function (fn) {
+          try {
+            fn();
+          } catch (e) {}
+        });
+      }
+
+      var hrTrustAutocompleteInited = false;
+      function wireHrIssuingTrustAutocomplete(opts) {
+        var nameId = opts.nameId;
+        var odsId = opts.odsId;
+        var listId = opts.listId;
+        var wrapId = opts.wrapId;
+        var nameEl = document.getElementById(nameId);
+        var odsEl = document.getElementById(odsId);
+        var listEl = document.getElementById(listId);
+        var wrapEl = document.getElementById(wrapId);
+        if (!nameEl || !odsEl || !listEl || !wrapEl || !window.NHSOdsTrustSuggest) return;
+
+        var items = [];
+        var active = -1;
+        var debSuggest = null;
+        var debOds = null;
+        var lastAuto = { name: '', ods: '' };
+
+        hrTrustSuggestSyncFns.push(function () {
+          lastAuto.name = String(nameEl.value || '').trim();
+          lastAuto.ods = String(odsEl.value || '').trim();
+        });
+
+        function hideList() {
+          listEl.innerHTML = '';
+          listEl.hidden = true;
+          active = -1;
+          items = [];
+          nameEl.setAttribute('aria-expanded', 'false');
+          nameEl.removeAttribute('aria-activedescendant');
+        }
+
+        function updateHighlight() {
+          var lis = listEl.querySelectorAll('li[role="option"]');
+          for (var j = 0; j < lis.length; j++) {
+            lis[j].setAttribute('aria-selected', j === active ? 'true' : 'false');
+          }
+          if (active >= 0 && lis[active]) {
+            nameEl.setAttribute('aria-activedescendant', lis[active].id);
+            try {
+              lis[active].scrollIntoView({ block: 'nearest' });
+            } catch (eSc) {}
+          } else {
+            nameEl.removeAttribute('aria-activedescendant');
+          }
+        }
+
+        function applyIndex(idx) {
+          if (idx < 0 || idx >= items.length) return;
+          var it = items[idx];
+          nameEl.value = it.name || nameEl.value;
+          if (it.ods) {
+            var curOds = String(odsEl.value || '').trim();
+            var shouldReplace = !curOds || curOds === lastAuto.ods;
+            if (shouldReplace) odsEl.value = it.ods;
+            lastAuto.name = String(nameEl.value || '').trim();
+            lastAuto.ods = it.ods;
+          }
+          hideList();
+        }
+
+        function renderList(rows) {
+          items = rows || [];
+          listEl.innerHTML = '';
+          active = -1;
+          if (!items.length) {
+            hideList();
+            return;
+          }
+          for (var i = 0; i < items.length; i++) {
+            var it = items[i];
+            var li = document.createElement('li');
+            li.setAttribute('role', 'option');
+            li.id = listId + '-opt-' + i;
+            li.dataset.index = String(i);
+            var nameSpan = document.createElement('span');
+            nameSpan.textContent = it.name;
+            li.appendChild(nameSpan);
+            if (it.ods) {
+              var meta = document.createElement('span');
+              meta.className = 'nhs-suggest-meta';
+              meta.textContent = 'ODS ' + it.ods;
+              li.appendChild(meta);
+            }
+            listEl.appendChild(li);
+          }
+          listEl.hidden = false;
+          nameEl.setAttribute('aria-expanded', 'true');
+        }
+
+        async function runSuggest() {
+          var q = String(nameEl.value || '').trim();
+          if (q.length < 2) {
+            hideList();
+            return;
+          }
+          try {
+            var res = await NHSOdsTrustSuggest.search(q, { minLength: 2, limit: 8 });
+            renderList(res);
+          } catch (e) {
+            hideList();
+          }
+        }
+
+        async function runPickBestOds() {
+          var t = nameEl.value.trim();
+          if (t.length < 3) return;
+          var curOds = odsEl.value.trim();
+          if (curOds && curOds !== lastAuto.ods) return;
+          try {
+            var org = await NHSOdsTrustSuggest.pickBestOrg(t, { minLength: 3 });
+            if (!org || !org.OrgId) return;
+            lastAuto.name = t;
+            lastAuto.ods = org.OrgId;
+            odsEl.value = org.OrgId;
+          } catch (e2) {}
+        }
+
+        nameEl.addEventListener('input', function () {
+          if (!String(nameEl.value || '').trim()) {
+            lastAuto.name = '';
+            lastAuto.ods = '';
+          }
+          if (debSuggest) clearTimeout(debSuggest);
+          debSuggest = setTimeout(function () {
+            debSuggest = null;
+            void runSuggest();
+          }, 320);
+          if (debOds) clearTimeout(debOds);
+          debOds = setTimeout(function () {
+            debOds = null;
+            void runPickBestOds();
+          }, 480);
+        });
+        nameEl.addEventListener('change', function () {
+          void runPickBestOds();
+        });
+        odsEl.addEventListener('input', function () {
+          var v = String(odsEl.value || '').trim();
+          if (!v) {
+            lastAuto.name = '';
+            lastAuto.ods = '';
+          } else if (v !== lastAuto.ods) {
+            lastAuto.name = '';
+            lastAuto.ods = '';
+          }
+        });
+        listEl.addEventListener('mousedown', function (ev) {
+          if (ev.target.closest('li[role="option"]')) ev.preventDefault();
+        });
+        listEl.addEventListener('click', function (ev) {
+          var li = ev.target.closest('li[role="option"]');
+          if (!li) return;
+          applyIndex(parseInt(li.dataset.index, 10));
+        });
+        nameEl.addEventListener('keydown', function (e) {
+          if (listEl.hidden || !items.length) return;
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            hideList();
+            return;
+          }
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            active = Math.min(active + 1, items.length - 1);
+            if (active < 0) active = 0;
+            updateHighlight();
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            active = Math.max(active - 1, 0);
+            updateHighlight();
+          } else if (e.key === 'Enter' && active >= 0) {
+            e.preventDefault();
+            applyIndex(active);
+          }
+        });
+        nameEl.addEventListener('blur', function () {
+          window.setTimeout(hideList, 200);
+        });
+        document.addEventListener(
+          'click',
+          function (e) {
+            if (!wrapEl.contains(e.target)) hideList();
+          },
+          true
+        );
+      }
+
+      function initHrIssuingTrustAutocomplete() {
+        if (hrTrustAutocompleteInited) return;
+        hrTrustAutocompleteInited = true;
+        wireHrIssuingTrustAutocomplete({
+          nameId: 'bulkIssuingName',
+          odsId: 'bulkOds',
+          listId: 'hrBulkTrustSuggestList',
+          wrapId: 'hrBulkTrustAcWrap',
+        });
+        wireHrIssuingTrustAutocomplete({
+          nameId: 'addTrainingIssuingName',
+          odsId: 'addTrainingOds',
+          listId: 'hrAddTrainingTrustSuggestList',
+          wrapId: 'hrAddTrainingTrustAcWrap',
+        });
+      }
+
       async function fillHrIssuingTrustFieldsIfEmpty() {
         var d = await fetchHrIssuingDefaults();
-        setInputIfEmpty('bulkOds', d.issuing_trust_ods_code);
         setInputIfEmpty('bulkIssuingName', d.issuing_trust_name);
-        setInputIfEmpty('addTrainingOds', d.issuing_trust_ods_code);
+        setInputIfEmpty('bulkOds', d.issuing_trust_ods_code);
         setInputIfEmpty('addTrainingIssuingName', d.issuing_trust_name);
+        setInputIfEmpty('addTrainingOds', d.issuing_trust_ods_code);
+        syncHrTrustSuggestLastAutoFromDom();
       }
 
       var inboxTab = 'new';
@@ -641,8 +857,10 @@
           var nm = document.getElementById('addTrainingEvidenceName');
           if (nm) nm.textContent = 'No file chosen';
           setAddTrainingStatus('', 'muted');
-          void fillHrIssuingTrustFieldsIfEmpty();
-          m.hidden = false;
+          void (async function () {
+            await fillHrIssuingTrustFieldsIfEmpty();
+            m.hidden = false;
+          })();
         }
 
         var searchDoctorItemsCache = [];
@@ -650,6 +868,7 @@
         var bulkMod = document.getElementById('bulkModule');
         if (bulkMod) fillHrModuleSelect(bulkMod);
         fillHrModuleSelect(document.getElementById('addTrainingModule'));
+        initHrIssuingTrustAutocomplete();
 
         var sdTbody = document.getElementById('searchDoctorItemsTbody');
         if (sdTbody && !sdTbody.dataset.certWired) {
@@ -1025,7 +1244,7 @@
 
         if (HR_PAGE === 'bulk') {
           show(document.getElementById('bulkView'), true);
-          void fillHrIssuingTrustFieldsIfEmpty();
+          await fillHrIssuingTrustFieldsIfEmpty();
           return;
         }
 

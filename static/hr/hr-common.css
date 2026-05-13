@@ -227,3 +227,20 @@
       outline: 3px solid #ffbf47;
       outline-offset: -2px;
     }
+    /* NHS ORD trust name autocomplete (matches staff app pattern) */
+    .nhs-ac-wrap { position: relative; max-width: 36rem; }
+    .nhs-ac-wrap .nhsuk-input { max-width: none; }
+    .nhs-suggest-list {
+      position: absolute; left: 0; right: 0; top: 100%; margin: 0.15rem 0 0 0;
+      padding: 0; list-style: none; max-height: 14rem; overflow-y: auto;
+      z-index: 50; background: #fff; border: 1px solid var(--nhsuk-border);
+      border-radius: 4px; box-shadow: 0 4px 14px rgba(33, 43, 50, 0.12);
+    }
+    .nhs-suggest-list li {
+      padding: 0.5rem 0.75rem; cursor: pointer; font-size: 1rem; line-height: 1.35;
+      border-bottom: 1px solid var(--nhsuk-border);
+    }
+    .nhs-suggest-list li:last-child { border-bottom: none; }
+    .nhs-suggest-list li:hover,
+    .nhs-suggest-list li[aria-selected="true"] { background: rgba(240, 244, 245, 0.9); }
+    .nhs-suggest-meta { display: block; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
