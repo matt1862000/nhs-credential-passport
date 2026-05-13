@@ -3,6 +3,7 @@ Minimal storage: credential_id -> revocation and expiry.
 No full PII stored; JWT holds the claims.
 """
 import os
+import re
 import sqlite3
 from pathlib import Path
 from datetime import datetime
@@ -58,6 +59,7 @@ def init_db():
         _ensure_visibility_tables(conn)
         _ensure_mandatory_topics_table(conn)
         _ensure_messaging_tables(conn)
+        _ensure_hr_attestations_table(conn)
         _ensure_seed_privileged_user(conn)
         _ensure_seed_rotherham_user(conn)
         conn.commit()
@@ -175,17 +177,158 @@ def hr_doctor_search(q: str, hr_trust: str, limit: int = 30) -> list[dict]:
             """,
             (pat, pat, pat, max(1, min(int(limit), 100))),
         ).fetchall()
-    out = []
-    for r in rows:
-        if _doctor_visible_to_trust(int(r["id"]), hr_trust, conn):
-            out.append({
-                "id": int(r["id"]),
-                "email": r["email"],
-                "display_name": r["display_name"],
-                "gmc_number": r["gmc_number"],
-                "current_trust": r["current_trust"],
-            })
-    return out
+        out = []
+        for r in rows:
+            if _doctor_visible_to_trust(int(r["id"]), hr_trust, conn):
+                out.append(
+                    {
+                        "id": int(r["id"]),
+                        "email": r["email"],
+                        "display_name": r["display_name"],
+                        "gmc_number": r["gmc_number"],
+                        "current_trust": r["current_trust"],
+                    }
+                )
+        return out
+
+
+def _ensure_hr_attestations_table(conn: sqlite3.Connection) -> None:
+    """HR-issued credentials on behalf of doctors: drives verified-map + HR training view."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS hr_attested_credentials (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doctor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            credential_id TEXT NOT NULL,
+            hr_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            verified_by_trust_name TEXT NOT NULL,
+            module_name TEXT,
+            expiry_date TEXT,
+            attested_at TEXT NOT NULL,
+            UNIQUE(doctor_user_id, credential_id)
+        )
+        """
+    )
+
+
+def hr_lookup_doctor_by_roster_line(identifier: str) -> Optional[dict]:
+    """
+    Resolve a single roster token (email or GMC) to a non-premium user row.
+    Returns dict with id, email, display_name, gmc_number, current_trust, premium or None.
+    """
+    ident = (identifier or "").strip()
+    if not ident:
+        return None
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = None
+        if "@" in ident:
+            row = conn.execute(
+                "SELECT id, email, display_name, gmc_number, current_trust, premium FROM users WHERE email = ?",
+                (ident.lower(),),
+            ).fetchone()
+        else:
+            digits = re.sub(r"\D", "", ident)
+            if not digits:
+                return None
+            row = conn.execute(
+                """
+                SELECT id, email, display_name, gmc_number, current_trust, premium
+                FROM users
+                WHERE premium = 0
+                  AND REPLACE(REPLACE(REPLACE(COALESCE(gmc_number,''),' ',''),'-',''),'/','') = ?
+                """,
+                (digits,),
+            ).fetchone()
+            if row is None and len(digits) >= 7:
+                g7 = digits[-7:]
+                row = conn.execute(
+                    """
+                    SELECT id, email, display_name, gmc_number, current_trust, premium
+                    FROM users
+                    WHERE premium = 0
+                      AND LENGTH(REPLACE(REPLACE(REPLACE(COALESCE(gmc_number,''),' ',''),'-',''),'/','')) >= 7
+                      AND SUBSTR(REPLACE(REPLACE(REPLACE(COALESCE(gmc_number,''),' ',''),'-',''),'/',''), -7) = ?
+                    """,
+                    (g7,),
+                ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": int(row["id"]),
+            "email": row["email"],
+            "display_name": row["display_name"],
+            "gmc_number": row["gmc_number"],
+            "current_trust": row["current_trust"],
+            "premium": int(row["premium"] or 0),
+        }
+
+
+def hr_attestation_upsert(
+    doctor_user_id: int,
+    credential_id: str,
+    hr_user_id: int,
+    verified_by_trust_name: str,
+    module_name: Optional[str],
+    expiry_date: Optional[str],
+) -> None:
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_attestations_table(conn)
+        conn.execute(
+            """
+            INSERT INTO hr_attested_credentials (
+                doctor_user_id, credential_id, hr_user_id, verified_by_trust_name,
+                module_name, expiry_date, attested_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(doctor_user_id, credential_id) DO UPDATE SET
+                hr_user_id = excluded.hr_user_id,
+                verified_by_trust_name = excluded.verified_by_trust_name,
+                module_name = excluded.module_name,
+                expiry_date = excluded.expiry_date,
+                attested_at = excluded.attested_at
+            """,
+            (
+                int(doctor_user_id),
+                str(credential_id),
+                int(hr_user_id),
+                str(verified_by_trust_name).strip(),
+                (module_name or "").strip() or None,
+                (expiry_date or "").strip() or None,
+                now,
+            ),
+        )
+        conn.commit()
+
+
+def hr_attested_rows_for_doctor_trust(doctor_user_id: int, hr_trust: str) -> list[dict]:
+    """Attestations visible to an HR trust (same trust name as stored at issue time)."""
+    t = (hr_trust or "").strip().lower()
+    if not t:
+        return []
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_attestations_table(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT credential_id, module_name, expiry_date, attested_at, verified_by_trust_name
+            FROM hr_attested_credentials
+            WHERE doctor_user_id = ?
+              AND LOWER(TRIM(verified_by_trust_name)) = ?
+            ORDER BY datetime(COALESCE(attested_at, '')) DESC
+            """,
+            (int(doctor_user_id), t),
+        ).fetchall()
+    return [
+        {
+            "credential_id": r["credential_id"],
+            "module_name": r["module_name"],
+            "expiry_date": r["expiry_date"],
+            "attested_at": r["attested_at"],
+            "verified_by_trust_name": r["verified_by_trust_name"],
+        }
+        for r in rows
+    ]
 
 
 _DEFAULT_MANDATORY_TOPICS = [
@@ -1101,8 +1244,10 @@ def share_item_set_decision(
 def doctor_verified_map(doctor_user_id: int) -> dict:
     """Return { credential_id: { shared, status, decision_at, decline_reason, pending_target_trust? } } for a doctor."""
     out: dict = {}
+    attest_rows: list = []
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_share_tables(conn)
+        _ensure_hr_attestations_table(conn)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
@@ -1112,6 +1257,14 @@ def doctor_verified_map(doctor_user_id: int) -> dict:
             JOIN share_items i ON i.session_id = s.id
             WHERE s.doctor_user_id = ?
             ORDER BY datetime(COALESCE(s.created_at, '')) DESC
+            """,
+            (int(doctor_user_id),),
+        ).fetchall()
+        attest_rows = conn.execute(
+            """
+            SELECT credential_id, attested_at
+            FROM hr_attested_credentials
+            WHERE doctor_user_id = ?
             """,
             (int(doctor_user_id),),
         ).fetchall()
@@ -1137,6 +1290,23 @@ def doctor_verified_map(doctor_user_id: int) -> dict:
             # Rows are ordered by newest session first; keep the newest pending target trust.
             if not prev.get("pending_target_trust"):
                 prev["pending_target_trust"] = (r["target_trust"] or "").strip() or None
+        out[cid] = prev
+    for ar in attest_rows:
+        cid = ar["credential_id"]
+        prev = out.get(cid) or {
+            "shared": True,
+            "status": "PENDING",
+            "decision_at": None,
+            "decline_reason": None,
+            "pending_target_trust": None,
+        }
+        if prev.get("status") == "DECLINED":
+            continue
+        prev["shared"] = True
+        prev["status"] = "VERIFIED"
+        prev["decision_at"] = ar["attested_at"]
+        prev["decline_reason"] = None
+        prev["pending_target_trust"] = None
         out[cid] = prev
     return out
 

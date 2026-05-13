@@ -5,15 +5,24 @@ PII in wallet entries is the same as localStorage today (JWT payloads); registry
 import json
 import os
 import re
-from datetime import datetime
+import base64
+from datetime import datetime, date
+from pathlib import Path
 import sqlite3
 from typing import Optional
 
 import bcrypt
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from . import crypto, db, session_auth
+from .credential_service import (
+    completion_dedupe_key,
+    issue_credentials,
+    revoke_credential,
+    wallet_dedupe_keys,
+)
+from .models import CompletionRecord, CSTF_MODULES, HrBulkTrainingResponse, HrBulkTrainingRow
 
 router = APIRouter(prefix="/api")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -29,6 +38,9 @@ def _public_app_base(request: Request) -> str:
 GMC_RE = re.compile(r"^\d{7}$")
 MAX_WALLET_BYTES = 4 * 1024 * 1024
 DEV_SEED_EMAIL = "sheffieldhr@nhs.net"
+MAX_HR_BULK_ROSTER_BYTES = 256 * 1024
+MAX_HR_BULK_LINES = 50
+MAX_HR_BULK_EVIDENCE_BYTES = 10 * 1024 * 1024
 
 
 def _normalize_email(email: str) -> str:
@@ -105,6 +117,149 @@ def _issuing_trust_from_wallet_entry(w: dict) -> Optional[str]:
         return None
     name = (payload.get("issuing_trust_name") or "").strip()
     return name or None
+
+
+def _hr_evidence_content_type(content_type: Optional[str], filename: Optional[str]) -> Optional[str]:
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if ct in ("image/jpeg", "image/png", "image/webp", "application/pdf"):
+        return ct
+    fn = (filename or "").lower()
+    if fn.endswith(".pdf"):
+        return "application/pdf"
+    if fn.endswith(".png"):
+        return "image/png"
+    if fn.endswith(".jpg") or fn.endswith(".jpeg"):
+        return "image/jpeg"
+    if fn.endswith(".webp"):
+        return "image/webp"
+    return None
+
+
+def _decode_roster_text(raw: bytes) -> Optional[str]:
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def _parse_roster_lines(text: str) -> list[str]:
+    out: list[str] = []
+    for raw_line in (text or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "," in line:
+            line = line.split(",")[0].strip().strip('"')
+        if line:
+            out.append(line)
+    return out
+
+
+def _match_trust_config_json(hr_trust_name: str) -> Optional[dict]:
+    """Best-effort match HR profile trust string to static/trust/config/*.json."""
+    t = (hr_trust_name or "").strip().lower()
+    if not t:
+        return None
+    root = Path(__file__).resolve().parent.parent / "static" / "trust" / "config"
+    if not root.is_dir():
+        return None
+    best: Optional[dict] = None
+    for path in sorted(root.glob("*.json")):
+        try:
+            raw = path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        dn = str(data.get("display_name") or "").strip().lower()
+        if not dn:
+            continue
+        if dn in t or t in dn:
+            if best is None or len(dn) > len(str(best.get("display_name") or "")):
+                best = data
+    return best
+
+
+def _hr_resolve_issuing_trust(
+    hr: dict,
+    ods_override: Optional[str],
+    name_override: Optional[str],
+) -> tuple[str, str]:
+    ods = (ods_override or "").strip().upper()
+    name = (name_override or "").strip()
+    hr_trust = (hr.get("current_trust") or "").strip()
+    matched = _match_trust_config_json(hr_trust) if (not ods or not name) else None
+    if matched:
+        if not ods:
+            ods = str(matched.get("ods") or "").strip().upper()
+        if not name:
+            name = str(matched.get("display_name") or "").strip()
+    if not ods:
+        raise HTTPException(
+            status_code=400,
+            detail="Issuing trust ODS code is required (enter it on the form, or align your profile trust name with a file under static/trust/config).",
+        )
+    if not name:
+        name = hr_trust or "Issuing trust"
+    return ods, name
+
+
+def _staff_identifier_for_issue(doc: dict) -> str:
+    gmc_digits = _normalize_gmc(str(doc.get("gmc_number") or ""))
+    if len(gmc_digits) >= 7:
+        return gmc_digits[-7:]
+    em = (doc.get("email") or "").strip().lower()
+    if em:
+        return em
+    return str(int(doc["id"]))
+
+
+def _merge_hr_attested_wallet_items_into_training(q: dict, hr_trust: str) -> None:
+    """Append HR-bulk-issued credentials to the merged training payload (same item shape as share_items)."""
+    doctor_id = int(q["doctor_user_id"])
+    attested = db.hr_attested_rows_for_doctor_trust(doctor_id, hr_trust)
+    if not attested:
+        return
+    wallet_raw = db.user_wallet_get(doctor_id)
+    try:
+        wallet = json.loads(wallet_raw)
+    except Exception:
+        wallet = []
+    if not isinstance(wallet, list):
+        wallet = []
+    wallet_by_id: dict = {}
+    for c in wallet:
+        if isinstance(c, dict) and c.get("credential_id"):
+            wallet_by_id[str(c["credential_id"])] = c
+    existing = {str(it.get("credential_id")) for it in (q.get("items") or []) if it.get("credential_id")}
+    items = q.setdefault("items", [])
+    for row in attested:
+        cid = str(row["credential_id"])
+        if cid in existing:
+            continue
+        w = wallet_by_id.get(cid, {})
+        issuer = _issuing_trust_from_wallet_entry(w)
+        items.append(
+            {
+                "session_id": -1,
+                "session_created_at": row.get("attested_at"),
+                "session_share_kind": "hr_bulk",
+                "credential_id": cid,
+                "module_name": row.get("module_name") or w.get("module_name"),
+                "expiry_date": row.get("expiry_date") or w.get("expiry_date"),
+                "status": "VERIFIED",
+                "decision_at": row.get("attested_at"),
+                "decline_reason": None,
+                "certificate_base64": w.get("certificate_base64"),
+                "certificate_filename": w.get("certificate_filename"),
+                "issuing_trust_name": issuer,
+                "verified_by_trust_name": row.get("verified_by_trust_name"),
+            }
+        )
+        existing.add(cid)
 
 
 def _session_response(data: dict, user_id: int, email: str, request: Request) -> JSONResponse:
@@ -472,7 +627,233 @@ def hr_doctor_training(request: Request, doctor_user_id: int):
     q = db.share_doctor_queue(int(doctor_user_id), hr_trust=None)
     if not q:
         raise HTTPException(status_code=404, detail="Clinician not found")
+    _merge_hr_attested_wallet_items_into_training(q, trust)
     return q
+
+
+@router.post("/hr/bulk-training", response_model=HrBulkTrainingResponse)
+async def hr_bulk_training(
+    request: Request,
+    roster: UploadFile = File(...),
+    evidence: Optional[UploadFile] = File(None),
+    module_code: str = Form(...),
+    completion_date: str = Form(...),
+    expiry_date: str = Form(...),
+    issuing_trust_ods_code: Optional[str] = Form(None),
+    issuing_trust_name: Optional[str] = Form(None),
+    dry_run: Optional[str] = Form(None),
+):
+    """
+    Premium HR: issue one CSTF-style module completion to many clinicians from a roster file
+    (one GMC or email per line, or CSV with identifier in the first column) plus shared evidence.
+    """
+    hr = require_premium_user(request)
+    trust = (hr.get("current_trust") or "").strip()
+    if not trust:
+        raise HTTPException(status_code=400, detail="Your HR account must have a current trust set.")
+    is_dry = str(dry_run or "").strip().lower() in ("1", "true", "yes", "on")
+
+    raw_roster = await roster.read()
+    if len(raw_roster) > MAX_HR_BULK_ROSTER_BYTES:
+        raise HTTPException(status_code=413, detail="Roster file too large")
+    text = _decode_roster_text(raw_roster)
+    if text is None:
+        raise HTTPException(status_code=400, detail="Roster encoding not recognised (try UTF-8).")
+    lines = _parse_roster_lines(text)
+    if not lines:
+        raise HTTPException(status_code=400, detail="Roster is empty.")
+    if len(lines) > MAX_HR_BULK_LINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many roster lines ({len(lines)}). Maximum is {MAX_HR_BULK_LINES} per upload.",
+        )
+
+    ev_b64 = ""
+    ev_name = "evidence"
+    if not is_dry:
+        if evidence is None or not (evidence.filename or "").strip():
+            raise HTTPException(status_code=400, detail="Evidence file is required unless dry run is enabled.")
+        ev_raw = await evidence.read()
+        if len(ev_raw) > MAX_HR_BULK_EVIDENCE_BYTES:
+            raise HTTPException(status_code=413, detail="Evidence file too large (max 10 MB).")
+        ev_ct = _hr_evidence_content_type(evidence.content_type, evidence.filename)
+        if not ev_ct:
+            raise HTTPException(
+                status_code=400,
+                detail="Evidence must be a PDF or image (JPEG, PNG, or WebP).",
+            )
+        ev_name = (evidence.filename or "evidence").strip()
+        ev_b64 = base64.b64encode(ev_raw).decode("ascii")
+
+    mc = str(module_code or "").strip().lower()
+    module_lookup = dict(CSTF_MODULES)
+    if mc not in module_lookup:
+        raise HTTPException(status_code=400, detail="Unknown module_code.")
+    module_name = module_lookup[mc]
+
+    try:
+        cd = date.fromisoformat(str(completion_date).strip()[:10])
+        ed = date.fromisoformat(str(expiry_date).strip()[:10])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="completion_date and expiry_date must be YYYY-MM-DD.")
+
+    ods, issuing_name = _hr_resolve_issuing_trust(hr, issuing_trust_ods_code, issuing_trust_name)
+
+    base = _public_app_base(request)
+    rows_out: list[HrBulkTrainingRow] = []
+    issued = 0
+    skipped = 0
+    errors = 0
+
+    for line in lines:
+        doc = db.hr_lookup_doctor_by_roster_line(line)
+        if not doc:
+            errors += 1
+            rows_out.append(HrBulkTrainingRow(roster_line=line, status="error", message="No matching clinician account."))
+            continue
+        if doc.get("premium"):
+            errors += 1
+            rows_out.append(HrBulkTrainingRow(roster_line=line, status="error", message="Identifier matches an HR/admin account, not a clinician."))
+            continue
+        doc_id = int(doc["id"])
+        with sqlite3.connect(db.DB_PATH) as conn:
+            if not db._doctor_visible_to_trust(doc_id, trust, conn):
+                errors += 1
+                rows_out.append(
+                    HrBulkTrainingRow(
+                        roster_line=line,
+                        status="error",
+                        message="This clinician has not permitted your trust to view or update their records.",
+                        doctor_user_id=doc_id,
+                    )
+                )
+                continue
+
+        staff_name = (doc.get("display_name") or doc.get("email") or "").strip() or "Clinician"
+        staff_identifier = _staff_identifier_for_issue(doc)
+        rec = CompletionRecord(
+            staff_full_name=staff_name,
+            staff_identifier=staff_identifier,
+            module_code=mc,
+            module_name=module_name,
+            completion_date=cd,
+            expiry_date=ed,
+            issuing_trust_ods_code=ods,
+            issuing_trust_name=issuing_name,
+        )
+
+        wallet_raw = db.user_wallet_get(doc_id)
+        existing_keys = wallet_dedupe_keys(wallet_raw)
+        dedupe_key = completion_dedupe_key(rec)
+        if dedupe_key in existing_keys:
+            skipped += 1
+            rows_out.append(
+                HrBulkTrainingRow(
+                    roster_line=line,
+                    status="would_skip_duplicate" if is_dry else "skipped_duplicate",
+                    message="Clinician already has this completion in their wallet.",
+                    doctor_user_id=doc_id,
+                )
+            )
+            continue
+
+        if is_dry:
+            rows_out.append(
+                HrBulkTrainingRow(
+                    roster_line=line,
+                    status="dry_run_ok",
+                    message="Would issue credential (duplicate check passed).",
+                    doctor_user_id=doc_id,
+                )
+            )
+            continue
+
+        results, _iss_skipped = issue_credentials(
+            [rec],
+            base,
+            include_pdf=False,
+            skip_duplicate_keys=existing_keys,
+        )
+        r0 = results[0] if results else None
+        if r0 is None:
+            skipped += 1
+            rows_out.append(
+                HrBulkTrainingRow(
+                    roster_line=line,
+                    status="skipped_duplicate",
+                    message="Clinician already has this completion in their wallet.",
+                    doctor_user_id=doc_id,
+                )
+            )
+            continue
+
+        try:
+            wallet = json.loads(wallet_raw)
+        except Exception:
+            wallet = []
+        if not isinstance(wallet, list):
+            wallet = []
+        cred_id = r0["credential_id"]
+        wallet.append(
+            {
+                "credential_id": cred_id,
+                "verification_url": r0["verification_url"],
+                "jwt": r0["jwt"],
+                "pdf_base64": r0.get("pdf_base64"),
+                "module_name": module_name,
+                "expiry_date": ed.isoformat(),
+                "revoked": False,
+                "certificate_base64": ev_b64,
+                "certificate_filename": ev_name,
+            }
+        )
+        merged = json.dumps(wallet)
+        if len(merged.encode("utf-8")) > MAX_WALLET_BYTES:
+            try:
+                revoke_credential(cred_id)
+            except Exception:
+                pass
+            errors += 1
+            rows_out.append(
+                HrBulkTrainingRow(
+                    roster_line=line,
+                    status="error",
+                    message="Clinician wallet would exceed server size limit after adding this record.",
+                    doctor_user_id=doc_id,
+                )
+            )
+            continue
+        db.user_wallet_put(doc_id, merged)
+        db.hr_attestation_upsert(
+            doctor_user_id=doc_id,
+            credential_id=cred_id,
+            hr_user_id=int(hr["id"]),
+            verified_by_trust_name=trust,
+            module_name=module_name,
+            expiry_date=ed.isoformat(),
+        )
+        issued += 1
+        rows_out.append(
+            HrBulkTrainingRow(
+                roster_line=line,
+                status="ok",
+                message="Issued and recorded as HR-verified for your trust.",
+                doctor_user_id=doc_id,
+                credential_id=cred_id,
+            )
+        )
+
+    return HrBulkTrainingResponse(
+        dry_run=is_dry,
+        issuing_trust_ods_code=ods,
+        issuing_trust_name=issuing_name,
+        module_code=mc,
+        attempted=len(lines),
+        issued=issued,
+        skipped_duplicate=skipped,
+        errors=errors,
+        rows=rows_out,
+    )
 
 
 @router.get("/hr/doctors/{doctor_user_id}/queue")

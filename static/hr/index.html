@@ -104,6 +104,12 @@
     <h1 class="nhsuk-page-heading">HR inbox</h1>
     <p class="nhsuk-lead">Review training sent by clinicians and mark records as verified or declined.</p>
 
+    <div id="hrPremiumNav" class="hr-segment" role="tablist" aria-label="HR tools" hidden style="margin-top:0.75rem;">
+      <button type="button" role="tab" class="active" data-hr-nav="inbox" aria-selected="true">Inbox</button>
+      <button type="button" role="tab" data-hr-nav="search" aria-selected="false">Search doctors</button>
+      <button type="button" role="tab" data-hr-nav="bulk" aria-selected="false">Bulk add training</button>
+    </div>
+
     <div id="notPremium" class="hr-card" hidden>
       <p style="margin:0; font-weight:700;">This page is only for HR accounts.</p>
       <p class="hr-muted" style="margin:0.5rem 0 0 0;">Sign in with an HR account to continue.</p>
@@ -188,9 +194,67 @@
               <th>Module</th>
               <th>Expires</th>
               <th>Status</th>
+              <th>Evidence</th>
             </tr>
           </thead>
           <tbody id="searchDoctorItemsTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="bulkView" class="hr-card" hidden>
+      <div class="hr-inbox-head">
+        <h2>Bulk add training</h2>
+      </div>
+      <p class="hr-muted" style="margin:0 0 1rem 0;">Issue one module completion to many clinicians using a shared class evidence file. Put one GMC number or work email per line (or a CSV with the identifier in the first column). Only clinicians who have permitted your trust receive records.</p>
+      <div style="display:grid; gap:1rem; max-width:40rem;">
+        <div>
+          <label class="nhsuk-label" for="bulkRoster">Roster file (.txt or .csv)</label>
+          <input class="nhsuk-input" type="file" id="bulkRoster" accept=".txt,.csv,text/plain,text/csv">
+        </div>
+        <div>
+          <label class="nhsuk-label" for="bulkEvidence">Class evidence (PDF or image)</label>
+          <input class="nhsuk-input" type="file" id="bulkEvidence" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*">
+        </div>
+        <div>
+          <label class="nhsuk-label" for="bulkModule">Module</label>
+          <select class="nhsuk-select" id="bulkModule"></select>
+        </div>
+        <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:flex-end;">
+          <div style="flex:1; min-width:10rem;">
+            <label class="nhsuk-label" for="bulkCompletion">Completion date</label>
+            <input class="nhsuk-input" type="date" id="bulkCompletion">
+          </div>
+          <div style="flex:1; min-width:10rem;">
+            <label class="nhsuk-label" for="bulkExpiry">Expiry date</label>
+            <input class="nhsuk-input" type="date" id="bulkExpiry">
+          </div>
+        </div>
+        <div>
+          <label class="nhsuk-label" for="bulkOds">Issuing trust ODS code <span class="hr-muted" style="font-weight:400;">(optional if your profile trust matches static/trust/config)</span></label>
+          <input class="nhsuk-input" type="text" id="bulkOds" placeholder="e.g. RHQ" autocomplete="off">
+        </div>
+        <div>
+          <label class="nhsuk-label" for="bulkIssuingName">Issuing trust display name <span class="hr-muted" style="font-weight:400;">(optional)</span></label>
+          <input class="nhsuk-input" type="text" id="bulkIssuingName" placeholder="Defaults from trust config or your profile trust">
+        </div>
+        <label class="nhsuk-label" style="font-weight:400;">
+          <input type="checkbox" id="bulkDryRun" style="margin-right:0.35rem;">
+          Dry run (check roster only; do not issue credentials)
+        </label>
+        <button type="button" class="nhsuk-button" id="bulkSubmit">Submit</button>
+      </div>
+      <p id="bulkStatus" class="hr-muted" style="margin-top:1rem; min-height:1.25rem;" aria-live="polite"></p>
+      <div id="bulkTableWrap" class="hr-table-wrap" hidden style="margin-top:1rem;">
+        <table class="hr-table" aria-label="Bulk training results">
+          <thead>
+            <tr>
+              <th>Roster line</th>
+              <th>Result</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody id="bulkResultsTbody"></tbody>
         </table>
       </div>
     </div>
@@ -739,26 +803,180 @@
 
         if (!NHSAuth.user.premium) {
           show(document.getElementById('notPremium'), true);
+          show(document.getElementById('hrPremiumNav'), false);
           show(document.getElementById('inboxView'), false);
           show(document.getElementById('sessionView'), false);
           show(document.getElementById('searchView'), false);
           show(document.getElementById('searchDoctorView'), false);
+          show(document.getElementById('bulkView'), false);
           return;
         }
 
-        // ── Search for doctor wiring ──────────────────────────────────────────
+        show(document.getElementById('hrPremiumNav'), true);
+
+        var BULK_MODULES = [
+          { code: 'fire_safety', name: 'Fire Safety' },
+          { code: 'infection_control', name: 'Infection Prevention and Control' },
+          { code: 'information_governance', name: 'Information Governance' },
+          { code: 'moving_handling', name: 'Moving and Handling' },
+          { code: 'resuscitation', name: 'Resuscitation Awareness' },
+          { code: 'conflict_resolution', name: 'Conflict Resolution' },
+          { code: 'safeguarding_level_1', name: 'Safeguarding Adults and Children Level 1' },
+          { code: 'safeguarding_level_2', name: 'Safeguarding Adults and Children Level 2' },
+          { code: 'safeguarding_level_3', name: 'Safeguarding Adults and Children Level 3' },
+          { code: 'non_cstf', name: 'Non-CSTF competency (ESR / local)' },
+        ];
+
+        var searchDoctorItemsCache = [];
+
+        function activateHrNav(which) {
+          var nav = document.getElementById('hrPremiumNav');
+          if (!nav) return;
+          Array.from(nav.querySelectorAll('button[data-hr-nav]')).forEach(function (b) {
+            var on = b.getAttribute('data-hr-nav') === which;
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+          });
+        }
+
         function showSearchView() {
           show(document.getElementById('inboxView'), false);
           show(document.getElementById('sessionView'), false);
+          show(document.getElementById('bulkView'), false);
           show(document.getElementById('searchView'), true);
           show(document.getElementById('searchDoctorView'), false);
+          activateHrNav('search');
         }
 
         function showInboxView() {
           show(document.getElementById('searchView'), false);
           show(document.getElementById('searchDoctorView'), false);
+          show(document.getElementById('bulkView'), false);
           show(document.getElementById('inboxView'), true);
           show(document.getElementById('sessionView'), false);
+          activateHrNav('inbox');
+        }
+
+        function showBulkView() {
+          show(document.getElementById('inboxView'), false);
+          show(document.getElementById('sessionView'), false);
+          show(document.getElementById('searchView'), false);
+          show(document.getElementById('searchDoctorView'), false);
+          show(document.getElementById('bulkView'), true);
+          activateHrNav('bulk');
+        }
+
+        var hrNavRoot = document.getElementById('hrPremiumNav');
+        if (hrNavRoot) {
+          hrNavRoot.addEventListener('click', function (e) {
+            var b = e.target && e.target.closest('button[data-hr-nav]');
+            if (!b) return;
+            e.preventDefault();
+            var w = b.getAttribute('data-hr-nav');
+            if (w === 'inbox') {
+              window.history.pushState({}, '', '/static/hr/');
+              showInboxView();
+              void loadInbox();
+            } else if (w === 'search') {
+              window.history.pushState({}, '', '/static/hr/?search=1');
+              showSearchView();
+            } else if (w === 'bulk') {
+              window.history.pushState({}, '', '/static/hr/?bulk=1');
+              showBulkView();
+            }
+          });
+        }
+
+        var bulkMod = document.getElementById('bulkModule');
+        if (bulkMod) {
+          BULK_MODULES.forEach(function (m) {
+            var o = document.createElement('option');
+            o.value = m.code;
+            o.textContent = m.name;
+            bulkMod.appendChild(o);
+          });
+        }
+
+        var sdTbody = document.getElementById('searchDoctorItemsTbody');
+        if (sdTbody && !sdTbody.dataset.certWired) {
+          sdTbody.dataset.certWired = '1';
+          sdTbody.addEventListener('click', function (e) {
+            var btn = e.target && e.target.closest('button[data-view-docs-cid]');
+            if (!btn) return;
+            var cid = btn.getAttribute('data-view-docs-cid');
+            var it = searchDoctorItemsCache.find(function (x) { return String(x.credential_id) === String(cid); });
+            if (it && it.certificate_base64) openHrCertModal(it);
+          });
+        }
+
+        var bulkSubmitBusy = false;
+        var btnBulkSubmit = document.getElementById('bulkSubmit');
+        if (btnBulkSubmit) {
+          btnBulkSubmit.addEventListener('click', async function () {
+            if (bulkSubmitBusy) return;
+            var statusEl = document.getElementById('bulkStatus');
+            var wrap = document.getElementById('bulkTableWrap');
+            var tbody = document.getElementById('bulkResultsTbody');
+            var rosterEl = document.getElementById('bulkRoster');
+            var evEl = document.getElementById('bulkEvidence');
+            var dryEl = document.getElementById('bulkDryRun');
+            if (!rosterEl || !rosterEl.files || !rosterEl.files[0]) {
+              if (statusEl) statusEl.textContent = 'Choose a roster file.';
+              return;
+            }
+            if (!dryEl || !dryEl.checked) {
+              if (!evEl || !evEl.files || !evEl.files[0]) {
+                if (statusEl) statusEl.textContent = 'Choose an evidence file (or tick dry run).';
+                return;
+              }
+            }
+            bulkSubmitBusy = true;
+            btnBulkSubmit.disabled = true;
+            if (statusEl) statusEl.textContent = 'Submitting…';
+            if (wrap) wrap.hidden = true;
+            if (tbody) tbody.innerHTML = '';
+            try {
+              var fd = new FormData();
+              fd.append('roster', rosterEl.files[0]);
+              if (evEl && evEl.files && evEl.files[0]) fd.append('evidence', evEl.files[0]);
+              fd.append('module_code', (bulkMod && bulkMod.value) ? bulkMod.value : 'fire_safety');
+              fd.append('completion_date', (document.getElementById('bulkCompletion') || {}).value || '');
+              fd.append('expiry_date', (document.getElementById('bulkExpiry') || {}).value || '');
+              var ods = (document.getElementById('bulkOds') || {}).value;
+              var iname = (document.getElementById('bulkIssuingName') || {}).value;
+              if (ods && String(ods).trim()) fd.append('issuing_trust_ods_code', String(ods).trim());
+              if (iname && String(iname).trim()) fd.append('issuing_trust_name', String(iname).trim());
+              if (dryEl && dryEl.checked) fd.append('dry_run', 'true');
+              var res = await fetch('/api/hr/bulk-training', { method: 'POST', body: fd, credentials: 'include' });
+              var text = await res.text();
+              var data = null;
+              try { data = text ? JSON.parse(text) : null; } catch (e2) { data = null; }
+              if (!res.ok) {
+                var d = data && data.detail;
+                throw new Error(typeof d === 'string' ? d : (text || res.statusText));
+              }
+              if (statusEl) {
+                statusEl.textContent =
+                  'Issued: ' + String(data.issued || 0) +
+                  ' · Skipped (duplicate): ' + String(data.skipped_duplicate || 0) +
+                  ' · Errors: ' + String(data.errors || 0) +
+                  (data.dry_run ? ' (dry run)' : '');
+              }
+              if (wrap && tbody && data.rows && data.rows.length) {
+                wrap.hidden = false;
+                tbody.innerHTML = data.rows.map(function (r) {
+                  return (
+                    '<tr><td>' + esc(r.roster_line) + '</td><td>' + esc(r.status) + '</td><td>' + esc(r.message || '') + '</td></tr>'
+                  );
+                }).join('');
+              }
+            } catch (err) {
+              if (statusEl) statusEl.textContent = err.message || 'Request failed.';
+            } finally {
+              bulkSubmitBusy = false;
+              btnBulkSubmit.disabled = false;
+            }
+          });
         }
 
         var btnGoSearch = document.getElementById('btnGoSearch');
@@ -774,6 +992,7 @@
           btnBackToSearch.addEventListener('click', function () {
             show(document.getElementById('searchDoctorView'), false);
             show(document.getElementById('searchView'), true);
+            activateHrNav('search');
           });
         }
 
@@ -828,14 +1047,15 @@
           var metaBlock = document.getElementById('searchDoctorMetaBlock');
           if (metaBlock) metaBlock.innerHTML = '';
           var tbody = document.getElementById('searchDoctorItemsTbody');
-          if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">Loading…</td></tr>';
+          if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">Loading…</td></tr>';
           try {
             var payload = await apiJson('/api/hr/doctors/' + encodeURIComponent(String(doctorId)) + '/training');
             var items = (payload.items || []).filter(function (it) {
               return (it.status || '').toLowerCase() === 'verified';
             });
+            searchDoctorItemsCache = items;
             if (!items.length) {
-              if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">No verified records for this clinician yet.</td></tr>';
+              if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">No verified records for this clinician yet.</td></tr>';
               return;
             }
             if (tbody) {
@@ -844,17 +1064,22 @@
                 var expiry = it.expiry_date ? esc(String(it.expiry_date).slice(0, 10)) : '—';
                 var issuer = it.issuing_trust_name ? '<div style="font-size:0.8125rem;color:var(--nhsuk-secondary-text);">Issuing: ' + esc(it.issuing_trust_name) + '</div>' : '';
                 var verifiedAt = it.verified_by_trust_name ? '<div style="font-size:0.8125rem;color:var(--nhsuk-secondary-text);">HR verified at: ' + esc(it.verified_by_trust_name) + '</div>' : '';
+                var evCell = it.certificate_base64
+                  ? ('<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-view-docs-cid="' +
+                    esc(String(it.credential_id || '')) + '">View</button>')
+                  : '—';
                 return (
                   '<tr>' +
                   '<td>' + name + issuer + '</td>' +
                   '<td>' + expiry + '</td>' +
                   '<td><span class="hr-pill hr-pill--verified">Verified</span>' + verifiedAt + '</td>' +
+                  '<td>' + evCell + '</td>' +
                   '</tr>'
                 );
               }).join('');
             }
           } catch (err) {
-            if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="hr-muted">' + esc(err.message || 'Could not load.') + '</td></tr>';
+            if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="hr-muted">' + esc(err.message || 'Could not load.') + '</td></tr>';
           }
         }
 
@@ -873,11 +1098,16 @@
         var doctorId = qs().get('doctor');
         var sessionId = qs().get('session');
         var isSearch = qs().get('search');
-        if (isSearch) {
+        var isBulk = qs().get('bulk');
+        show(document.getElementById('hrPremiumNav'), !(doctorId || sessionId));
+        if (isBulk) {
+          showBulkView();
+        } else if (isSearch) {
           showSearchView();
         } else if (doctorId) {
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
+          show(document.getElementById('bulkView'), false);
           wireTabs('sessionView', function (tab) {
             itemsTab = tab === 'archived' ? 'archived' : 'new';
             if (lastSessionPayload) renderItemsTable(lastSessionPayload, null);
@@ -886,12 +1116,17 @@
         } else if (sessionId) {
           show(document.getElementById('sessionView'), true);
           show(document.getElementById('inboxView'), false);
+          show(document.getElementById('bulkView'), false);
           wireTabs('sessionView', function (tab) {
             itemsTab = tab === 'archived' ? 'archived' : 'new';
             if (lastSessionPayload) renderItemsTable(lastSessionPayload, sessionId);
           });
           await loadSession(sessionId);
         } else {
+          show(document.getElementById('searchView'), false);
+          show(document.getElementById('searchDoctorView'), false);
+          show(document.getElementById('bulkView'), false);
+          activateHrNav('inbox');
           show(document.getElementById('inboxView'), true);
           show(document.getElementById('sessionView'), false);
           wireTabs('inboxView', async function (tab) {

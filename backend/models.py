@@ -101,5 +101,26 @@ class CsvImportResponse(BaseModel):
     skipped_duplicate_count: int = 0
 
 
+class HrBulkTrainingRow(BaseModel):
+    roster_line: str
+    status: str
+    message: str = ""
+    doctor_user_id: Optional[int] = None
+    credential_id: Optional[str] = None
+
+
+class HrBulkTrainingResponse(BaseModel):
+    dry_run: bool
+    issuing_trust_ods_code: str = ""
+    issuing_trust_name: str = ""
+    module_code: str = ""
+    attempted: int = 0
+    issued: int = 0
+    skipped_duplicate: int = 0
+    errors: int = 0
+    rows: list[HrBulkTrainingRow] = []
+
+
 IssueResponse.model_rebuild()
 CsvImportResponse.model_rebuild()
+HrBulkTrainingResponse.model_rebuild()
