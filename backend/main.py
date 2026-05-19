@@ -31,6 +31,7 @@ from .models import (
     VerifyResponse,
     CsvImportResponse,
     CsvImportInvalidRow,
+    CsvImportSkippedRow,
 )
 from .csv_import import (
     ImportProfileContext,
