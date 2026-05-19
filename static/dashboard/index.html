@@ -528,8 +528,8 @@
         GS_DISMISS_KEY = 'nhs_gs_dismissed_' + _uid;
         GS_REQS_VISITED_KEY = 'nhs_gs_reqs_visited_' + _uid;
         document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
-        var first = (NHSAuth.user.email || '').split('@')[0];
-        if (first) document.getElementById('welcomeTitle').textContent = 'Hello, ' + first;
+        var greetName = NHSAuth.displayName();
+        if (greetName) document.getElementById('welcomeTitle').textContent = 'Hello, ' + greetName;
 
         var premiumEl = document.getElementById('premiumTrustTools');
         if (premiumEl && NHSAuth.user.premium) premiumEl.hidden = false;

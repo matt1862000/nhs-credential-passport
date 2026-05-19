@@ -222,6 +222,17 @@
       return false;
     },
 
+    /** Preferred label for UI greetings (profile full name, else email local-part). */
+    displayName(user) {
+      var u = user || this.user;
+      if (!u) return '';
+      var name = String(u.display_name || '').trim();
+      if (name) return name;
+      var email = String(u.email || '').trim();
+      if (email && email.indexOf('@') > 0) return email.split('@')[0];
+      return email;
+    },
+
     /** Full name, GMC, current trust — required for standard (non-premium) accounts. */
     isProfileComplete() {
       var u = this.user;
