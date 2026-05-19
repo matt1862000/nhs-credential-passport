@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
 
   <title>My training — DocPass</title>
-  <link rel="stylesheet" href="/static/shared/app.css?v=20260514-2">
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260519-1">
   <style>
     :root {
       --nhsuk-text: #212b32;
@@ -35,17 +35,7 @@
       margin: 0;
       min-height: 100vh;
     }
-    .nhsuk-header { background-color: #005eb8; padding: 0.75rem 0; }
-    .nhsuk-header__container { max-width: 960px; margin: 0 auto; padding: 0 1.5rem; }
-    .nhsuk-header__service { display: flex; align-items: center; }
-    .nhsuk-header__service-logo { display: flex; align-items: center; gap: 0.75rem; color: #fff; text-decoration: none; font-weight: 600; font-size: 1.25rem; }
-    .nhsuk-header__service-logo:hover { color: #fff; text-decoration: underline; }
-    .nhsuk-header__service-logo:focus { outline: 3px solid #ffeb3b; outline-offset: 2px; }
-    .nhsuk-header__logo { flex-shrink: 0; height: 40px; width: 100px; fill: currentColor; }
-    .nhsuk-header__service-name { white-space: nowrap; }
-    .nhsuk-header__service-logo--docpass { gap: 0; }
-    .docpass-header-logo { display: block; height: 44px; width: auto; max-width: min(240px, 58vw); }
-    .nhsuk-main { max-width: 960px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+    .nhsuk-main { max-width: 1040px; margin: 0 auto; padding: 2.5rem 1.5rem; }
     .nhsuk-page-heading { font-size: 2.25rem; font-weight: 700; margin: 0 0 0.5rem 0; color: var(--nhsuk-text); letter-spacing: -0.02em; }
     .nhsuk-body-s { font-size: 1.0625rem; color: var(--nhsuk-secondary-text); margin-bottom: 1.5rem; max-width: 38em; }
     .nhsuk-tabs { display: flex; gap: 0; margin: 1.5rem 0; border-bottom: 2px solid var(--nhsuk-border); }
@@ -406,17 +396,17 @@
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
-    <div class="nhsuk-header__container" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;">
+    <div class="nhsuk-header__container">
       <div class="nhsuk-header__service">
         <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/static/dashboard/" aria-label="Dashboard">
-          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260514-2" alt="DocPass — professional credential wallet" width="420" height="146">
+          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260519-1" alt="DocPass — professional credential wallet" width="420" height="146">
         </a>
       </div>
-      <nav aria-label="Account" style="display:flex;align-items:center;gap:0.85rem;color:#fff;font-size:0.9375rem;">
-        <span id="navEmail" style="font-weight:600;white-space:nowrap;">&nbsp;</span>
-        <div class="nhsuk-menu" style="position:relative;display:inline-flex;align-items:center;">
-          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel" style="color:#fff;background:transparent;border:1px solid rgba(255,255,255,0.4);padding:0.4rem 0.8rem;border-radius:4px;font-family:inherit;font-size:0.875rem;cursor:pointer;">Menu</button>
-          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden style="right:0;top:calc(100% + 0.35rem);">
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
             <a href="/static/dashboard/" role="menuitem">Dashboard</a>
             <a href="/static/profile/" role="menuitem">Profile</a>
             <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
