@@ -518,7 +518,7 @@
     <section id="import" role="tabpanel" aria-labelledby="tab-import" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel">
         <h3 class="nhsuk-bulk-export-panel__title">Import from ESR</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Choose your ESR CSV export, then add <strong>evidence</strong> (for example a screenshot of your ESR Compliance page). Press <strong>Upload</strong> only when both are ready — the file is not sent until then.</p>
+        <p class="nhsuk-bulk-export-panel__desc">Choose your ESR CSV export, then add <strong>evidence</strong> (for example a screenshot of your ESR Compliance page). Press <strong>Upload</strong> only when both are ready — the file is not sent until then. We import <strong>your</strong> rows only (matched to your profile name and GMC); team or trust-wide exports skip everyone else’s training.</p>
 
         <div class="esr-help" aria-label="Help exporting ESR CSV">
           <details>
@@ -527,7 +527,7 @@
             <ol>
               <li>Log into the ESR Portal.</li>
               <li>Scroll down to <strong>Compliance</strong> and expand the menu (down arrow).</li>
-              <li>Click <strong>View My Compliance</strong>.</li>
+              <li>Click <strong>View My Compliance</strong> (your own record — not a team list).</li>
               <li>Click <strong>Export</strong>.</li>
               <li>Save the CSV, then take a screenshot or export a PDF from ESR as supporting evidence.</li>
               <li>Return here, choose your CSV and evidence file, then press <strong>Upload</strong>.</li>
@@ -1165,7 +1165,21 @@
         return;
       }
       var parts = [];
-      parts.push('<p class="nhsuk-body-s">Rows in file: <strong>' + data.total_data_rows + '</strong> · Valid: <strong>' + data.valid_row_count + '</strong>' + (data.invalid && data.invalid.length ? ' · With errors: <strong>' + data.invalid.length + '</strong>' : '') + '</p>');
+      parts.push('<p class="nhsuk-body-s">Rows in file: <strong>' + data.total_data_rows + '</strong> · Ready to import: <strong>' + data.valid_row_count + '</strong>' + (data.invalid && data.invalid.length ? ' · With errors: <strong>' + data.invalid.length + '</strong>' : '') + (data.skipped && data.skipped.length ? ' · Skipped: <strong>' + data.skipped.length + '</strong>' : '') + '</p>');
+      if (data.multi_person_export) {
+        parts.push('<p class="nhsuk-body-s" style="margin-top:0.5rem;">This file looks like a <strong>team or trust-wide</strong> export. Only rows matching your profile are imported; other people’s training is skipped.</p>');
+      }
+      if (data.skipped && data.skipped.length) {
+        parts.push('<p class="nhsuk-body-s" style="margin:0.5rem 0 0.25rem 0; font-weight:600;">Skipped rows</p>');
+        parts.push('<ul style="margin:0 0 0 1.25rem; color:var(--nhsuk-secondary-text); font-size:0.9375rem; max-height:10rem; overflow-y:auto;">');
+        data.skipped.slice(0, 12).forEach(function(row) {
+          parts.push('<li>Row ' + row.row + ': ' + escapeHtml(row.message) + '</li>');
+        });
+        if (data.skipped.length > 12) {
+          parts.push('<li>… and ' + (data.skipped.length - 12) + ' more</li>');
+        }
+        parts.push('</ul>');
+      }
       if (data.invalid && data.invalid.length) {
         parts.push('<ul style="margin:0.5rem 0 0 1.25rem; color:var(--nhsuk-error); font-size:0.9375rem;">');
         data.invalid.forEach(function(row) {

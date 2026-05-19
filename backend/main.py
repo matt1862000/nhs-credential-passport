@@ -3,6 +3,7 @@ DocPass — Phase 2 MVP API.
 Issuing service, verification endpoint, revoke, and did:web public key.
 """
 import os
+import re
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -32,6 +33,7 @@ from .models import (
     CsvImportInvalidRow,
 )
 from .csv_import import (
+    ImportProfileContext,
     parse_completion_csv,
     csv_template_header,
     MAX_CSV_BYTES,
@@ -184,29 +186,57 @@ async def api_import_csv(
     if text is None:
         raise HTTPException(status_code=400, detail="CSV encoding not recognised (try UTF-8 or Windows-1252)")
 
-    parsed, fatal = parse_completion_csv(text)
+    doctor = db.user_get_by_id(uid)
+    profile = None
+    if doctor:
+        gmc = re.sub(r"\D", "", str(doctor.get("gmc_number") or ""))
+        profile = ImportProfileContext(
+            display_name=str(doctor.get("display_name") or "").strip(),
+            staff_identifier=gmc[-7:] if len(gmc) >= 7 else gmc,
+            current_trust=str(doctor.get("current_trust") or "").strip(),
+            personal_scope=True,
+        )
+
+    parsed, fatal = parse_completion_csv(text, profile=profile)
     if fatal:
         return CsvImportResponse(dry_run=dry_run, fatal_error=fatal)
 
-    invalid_rows = [CsvImportInvalidRow(row=p.row_number, message=p.error) for p in parsed if p.error]
+    invalid_rows = [
+        CsvImportInvalidRow(row=p.row_number, message=p.error)
+        for p in parsed
+        if p.error and not p.skipped
+    ]
+    skipped_rows = [
+        CsvImportSkippedRow(row=p.row_number, message=p.error or "")
+        for p in parsed
+        if p.skipped
+    ]
+    skipped_other = sum(
+        1 for p in parsed if p.skipped and p.error and "another person" in (p.error or "")
+    )
     valid = [p for p in parsed if p.record is not None]
+    multi_person = skipped_other > 0 or len(
+        {p.record.staff_full_name for p in valid if p.record}
+    ) > 1
     base = str(request.base_url).rstrip("/")
 
-    if dry_run:
-        return CsvImportResponse(
-            dry_run=True,
+    def _csv_response(**kwargs):
+        base_fields = dict(
             total_data_rows=len(parsed),
             valid_row_count=len(valid),
             invalid=invalid_rows,
+            skipped=skipped_rows,
+            skipped_other_person_count=skipped_other,
+            multi_person_export=multi_person,
         )
+        base_fields.update(kwargs)
+        return CsvImportResponse(**base_fields)
+
+    if dry_run:
+        return _csv_response(dry_run=True)
 
     if not valid:
-        return CsvImportResponse(
-            dry_run=False,
-            total_data_rows=len(parsed),
-            valid_row_count=0,
-            invalid=invalid_rows,
-        )
+        return _csv_response(dry_run=False)
 
     ev_bytes: Optional[bytes] = None
     ev_name = ""
@@ -231,7 +261,6 @@ async def api_import_csv(
 
     # Fill in the doctor's current trust as issuing_trust_name for ESR records
     # that don't carry an explicit trust name in the CSV.
-    doctor = db.user_get_by_id(uid)
     doctor_trust = ((doctor.get("current_trust") or "") if doctor else "").strip()
     for p in valid:
         if p.record and not (p.record.issuing_trust_name or "").strip() and doctor_trust:
@@ -278,11 +307,8 @@ async def api_import_csv(
             # Do not fail the import if audit storage fails
             pass
 
-    return CsvImportResponse(
+    return _csv_response(
         dry_run=False,
-        total_data_rows=len(parsed),
-        valid_row_count=len(valid),
-        invalid=invalid_rows,
         credentials=credentials_out,
         skipped_duplicate_count=skipped_dups,
     )

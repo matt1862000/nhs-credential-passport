@@ -89,6 +89,11 @@ class CsvImportInvalidRow(BaseModel):
     message: str
 
 
+class CsvImportSkippedRow(BaseModel):
+    row: int
+    message: str
+
+
 class CsvImportResponse(BaseModel):
     """Bulk CSV import: validate and optionally issue."""
 
@@ -97,6 +102,9 @@ class CsvImportResponse(BaseModel):
     total_data_rows: int = 0
     valid_row_count: int = 0
     invalid: list[CsvImportInvalidRow] = []
+    skipped: list[CsvImportSkippedRow] = []
+    skipped_other_person_count: int = 0
+    multi_person_export: bool = False
     credentials: list[IssuedCredentialInfo] = []
     skipped_duplicate_count: int = 0
 
