@@ -25,6 +25,9 @@ DEV_SEED_TRUST_SHEFFIELD = "SHEFFIELD HEALTH PARTNERSHIP UNIVERSITY NHS FOUNDATI
 DEV_SEED_TRUST_ROTHERHAM = "ROTHERHAM DONCASTER AND SOUTH HUMBER NHS FOUNDATION TRUST"
 DEV_SEED_DISPLAY_SHEFFIELD = "Sheffield HR"
 DEV_SEED_DISPLAY_ROTHERHAM = "Rotherham HR"
+_LEGACY_SHEFFIELD_PARTNERSHIP_TRUST_LABELS = (
+    "Sheffield Health and Social Care NHS Foundation Trust",
+)
 
 
 def default_hr_display_name(email: str) -> Optional[str]:
@@ -88,7 +91,22 @@ def init_db():
         _ensure_hr_cohorts_tables(conn)
         _ensure_seed_privileged_user(conn)
         _ensure_seed_rotherham_user(conn)
+        _backfill_sheffield_partnership_trust_labels(conn)
         conn.commit()
+
+
+def _backfill_sheffield_partnership_trust_labels(conn: sqlite3.Connection) -> None:
+    """Fix clinicians provisioned with the old wrong SHSC label instead of Sheffield Partnership."""
+    from . import trust_packs
+
+    new_label = trust_packs.trust_display_name(DEV_SEED_TRUST_SHEFFIELD)
+    if not new_label:
+        return
+    for old in _LEGACY_SHEFFIELD_PARTNERSHIP_TRUST_LABELS:
+        conn.execute(
+            "UPDATE users SET current_trust = ? WHERE TRIM(COALESCE(current_trust, '')) = ?",
+            (new_label, old),
+        )
 
 
 def _ensure_visibility_tables(conn: sqlite3.Connection) -> None:
