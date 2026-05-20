@@ -14,6 +14,7 @@
    */
   var ODS_TO_CONFIG_ID = {
     RHQ: 'sheffield',
+    TAH: 'sheffield-health-partnership',
     RXE: 'rotherham',
   };
 
@@ -23,6 +24,8 @@
    */
   var NAME_TO_CONFIG_ID = [
     { substr: 'sheffield teaching', id: 'sheffield' },
+    { substr: 'sheffield health', id: 'sheffield-health-partnership' },
+    { substr: 'social care nhs foundation', id: 'sheffield-health-partnership' },
     { substr: 'rotherham doncaster', id: 'rotherham' },
     { substr: 'south humber nhs foundation', id: 'rotherham' },
   ];

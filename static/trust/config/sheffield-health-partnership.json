@@ -1,74 +1,214 @@
 {
   "trust_id": "sheffield_health_partnership",
-  "display_name": "Sheffield Health Partnership University NHS Foundation Trust",
+  "display_name": "Sheffield Health and Social Care NHS Foundation Trust",
+  "trust_name_aliases": [
+    "Sheffield Health Partnership University NHS Foundation Trust",
+    "Sheffield Health and Social Care NHS Foundation Trust"
+  ],
   "ods": "TAH",
-  "disclaimer": "Pilot demonstration content only — not an official trust policy. Confirm with Medical Staffing, HR, and your specialty team.",
+  "disclaimer": "Mandatory training list published by the trust. Confirm any role-specific requirements with Medical Staffing, HR, or your line manager. DocPass shows where to complete training and whether your wallet records match.",
+  "esr_resource_url": "https://www.shsc.nhs.uk/jarvis/training-guides-and-support",
   "mandatory_examples": [
     {
-      "id": "ig",
-      "label": "Information Governance",
-      "category": "UK CSTF / statutory",
-      "match_module_codes": ["information_governance"],
-      "match_name_substrings": ["information governance", "ig level"]
+      "id": "jarvis_autism_l1",
+      "label": "Autism Awareness Level 1",
+      "category": "Assessments via JARVIS",
+      "delivery_channel": "jarvis",
+      "resource_url": "https://www.shsc.nhs.uk/jarvis/autism-awareness-level-1",
+      "match_module_codes": [],
+      "match_name_substrings": ["autism awareness", "autism awareness level 1"]
     },
     {
-      "id": "fire",
+      "id": "jarvis_clinical_risk",
+      "label": "Clinical Risk Assessment",
+      "category": "Assessments via JARVIS",
+      "delivery_channel": "jarvis",
+      "resource_url": "https://www.shsc.nhs.uk/jarvis/clinical-risk-assessment",
+      "match_module_codes": [],
+      "match_name_substrings": ["clinical risk assessment", "clinical risk"]
+    },
+    {
+      "id": "jarvis_dols_l2",
+      "label": "Deprivation of Liberty Safeguards (DOLS)",
+      "category": "Assessments via JARVIS",
+      "delivery_channel": "jarvis",
+      "resource_url": "https://www.shsc.nhs.uk/jarvis/deprivation-of-liberty-safeguards-level-2",
+      "match_module_codes": [],
+      "match_name_substrings": ["deprivation of liberty", "dols", "liberty safeguards"]
+    },
+    {
+      "id": "esr_smoking",
+      "label": "Brief Advice on Smoking",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": [],
+      "match_name_substrings": ["brief advice on smoking", "smoking cessation", "smoking"]
+    },
+    {
+      "id": "esr_carefalls",
+      "label": "CareFalls — Reducing Patient Falls",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": [],
+      "match_name_substrings": ["carefalls", "reducing patient falls", "patient falls"]
+    },
+    {
+      "id": "esr_conflict",
+      "label": "Conflict Resolution (England)",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": ["conflict_resolution"],
+      "match_name_substrings": ["conflict resolution"]
+    },
+    {
+      "id": "esr_dementia",
+      "label": "Dementia Awareness",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": [],
+      "match_name_substrings": ["dementia awareness", "dementia"]
+    },
+    {
+      "id": "esr_candour",
+      "label": "Duty of Candour",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": [],
+      "match_name_substrings": ["duty of candour", "candour"]
+    },
+    {
+      "id": "esr_edhr",
+      "label": "Equality, Diversity & Human Rights",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": [],
+      "match_name_substrings": ["equality", "diversity", "human rights", "edhr"]
+    },
+    {
+      "id": "esr_fire",
       "label": "Fire Safety",
-      "category": "UK CSTF / statutory",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
       "match_module_codes": ["fire_safety"],
       "match_name_substrings": ["fire safety"]
     },
     {
-      "id": "ipc",
-      "label": "Infection Prevention and Control",
-      "category": "UK CSTF / statutory",
+      "id": "esr_speak_up",
+      "label": "Freedom to Speak Up",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": [],
+      "match_name_substrings": ["freedom to speak up", "speak up"]
+    },
+    {
+      "id": "esr_hsw",
+      "label": "Health, Safety & Welfare",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": [],
+      "match_name_substrings": ["health, safety", "health safety and welfare", "health safety welfare"]
+    },
+    {
+      "id": "esr_ipc_l1",
+      "label": "Infection Prevention & Control Level 1",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
       "match_module_codes": ["infection_control"],
-      "match_name_substrings": ["infection prevention", "infection control", "ipc"]
+      "match_name_substrings": ["infection prevention", "infection control level 1", "ipc level 1"]
     },
     {
-      "id": "sg_l3",
-      "label": "Safeguarding (adults & children) Level 3",
-      "category": "UK CSTF / trust policy",
-      "match_module_codes": ["safeguarding_level_3"],
-      "match_name_substrings": ["safeguarding level 3", "adult safeguarding level 3", "sg3"],
-      "partial_module_codes": ["safeguarding_level_1", "safeguarding_level_2"],
-      "partial_name_substrings": ["safeguarding level 1", "safeguarding level 2", "level 1 safeguarding", "level 2 safeguarding"],
-      "partial_hint": "You may have a lower safeguarding level in your wallet; many clinical roles at this trust require Level 3. Confirm with Medical Staffing / HR."
+      "id": "esr_ipc_l2",
+      "label": "Infection Prevention & Control Level 2",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": ["infection_control"],
+      "match_name_substrings": ["infection prevention", "infection control level 2", "ipc level 2"]
     },
     {
-      "id": "hs",
-      "label": "Health, Safety and Welfare",
-      "category": "UK CSTF / statutory",
+      "id": "esr_ig",
+      "label": "Information Governance & Data Security",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": ["information_governance"],
+      "match_name_substrings": ["information governance", "data security", "ig & data"]
+    },
+    {
+      "id": "esr_mca_l2",
+      "label": "Mental Capacity Act Level 2",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
       "match_module_codes": [],
-      "match_name_substrings": ["health, safety and welfare", "health safety welfare"]
+      "match_name_substrings": ["mental capacity act", "mca level 2"]
     },
     {
-      "id": "ed",
-      "label": "Equality, Diversity and Human Rights",
-      "category": "UK CSTF / statutory",
-      "match_module_codes": [],
-      "match_name_substrings": ["equality", "diversity and human rights", "edhr"]
+      "id": "esr_moving",
+      "label": "Moving and Handling (Load)",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": ["moving_handling"],
+      "match_name_substrings": ["moving and handling", "manual handling"]
     },
     {
-      "id": "local_induction",
-      "label": "Trust / local induction (destination-specific)",
-      "category": "Local — usually not portable",
+      "id": "esr_oliver",
+      "label": "Oliver McGowan Learning Disability & Autism",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
       "match_module_codes": [],
-      "match_name_substrings": ["corporate induction", "local induction", "sheffield health partnership induction"]
+      "match_name_substrings": ["oliver mcgowan", "learning disability & autism", "learning disability and autism"]
+    },
+    {
+      "id": "esr_patient_safety",
+      "label": "Patient Safety Level 1",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": [],
+      "match_name_substrings": ["patient safety level 1", "patient safety"]
+    },
+    {
+      "id": "esr_prevent",
+      "label": "Prevent WRAP Level 3",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": [],
+      "match_name_substrings": ["prevent wrap", "prevent level 3", "wrap level 3"]
+    },
+    {
+      "id": "esr_resus",
+      "label": "Resuscitation Level 1",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": ["resuscitation"],
+      "match_name_substrings": ["resuscitation level 1", "basic life support", "bls"]
+    },
+    {
+      "id": "esr_sharps",
+      "label": "Safe Sharps",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": [],
+      "match_name_substrings": ["safe sharps", "sharps"]
+    },
+    {
+      "id": "esr_misconduct",
+      "label": "Understanding sexual misconduct in the workplace",
+      "category": "E-learning via ESR",
+      "delivery_channel": "esr",
+      "match_module_codes": [],
+      "match_name_substrings": ["sexual misconduct", "misconduct in the workplace"]
     }
   ],
   "recognition_when_joining": {
     "_default": {
       "issuer_trust_name_hints": [],
       "issuer_ods_hints": [],
-      "summary": "When moving from another employer, only cryptographically verifiable training with clear CSTF-aligned titles is likely to be considered; everything else is decided by your new trust’s HR and Medical Staffing.",
+      "summary": "When moving from another employer, only cryptographically verifiable training with clear titles is likely to be considered; everything else is decided by your new trust's HR and Medical Staffing.",
       "often_portable_topics": [
         "UK CSTF statutory topics where titles clearly match",
         "Resuscitation at the correct level for your role"
       ],
       "typically_local_at_destination": [
         "Trust induction",
-        "Local safeguarding and security",
+        "JARVIS assessments",
         "Specialty-specific courses"
       ]
     }

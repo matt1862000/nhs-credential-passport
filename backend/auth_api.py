@@ -628,6 +628,23 @@ async def me_profile_put(request: Request):
     return {"ok": True}
 
 
+def _try_seed_mandatory_from_pack(trust_name: str) -> Optional[str]:
+    """If trust has no topics and a static pack exists, seed once. Returns message or None."""
+    from . import trust_packs
+
+    trust_name = (trust_name or "").strip()
+    if not trust_name or db.mandatory_topics_count(trust_name) > 0:
+        return None
+    pack_id = trust_packs.pack_id_for_trust_name(trust_name)
+    if not pack_id:
+        return None
+    pack = trust_packs.load_trust_pack(pack_id)
+    if not pack:
+        return None
+    _n, msg = db.seed_mandatory_from_trust_pack(trust_name, pack)
+    return msg if _n else None
+
+
 @router.get("/me/trust-requirements")
 def me_trust_requirements(request: Request):
     uid = require_user_id(request)
@@ -637,6 +654,7 @@ def me_trust_requirements(request: Request):
     trust = (u.get("current_trust") or "").strip()
     if not trust:
         return {"topics": [], "trust": None}
+    _try_seed_mandatory_from_pack(trust)
     return {"topics": db.mandatory_topics_list(trust), "trust": trust}
 
 
@@ -1399,11 +1417,63 @@ def _hr_trust_required(hr_user: dict) -> str:
     return trust
 
 
+def _parse_match_hints(body: dict) -> Optional[dict]:
+    hints = body.get("match_hints")
+    if isinstance(hints, dict):
+        return hints
+    subs = body.get("match_name_substrings")
+    codes = body.get("match_module_codes")
+    if subs or codes:
+        out: dict = {}
+        if codes:
+            out["match_module_codes"] = codes
+        if subs:
+            out["match_name_substrings"] = subs
+        return out
+    return None
+
+
 @router.get("/hr/mandatory-topics")
 def hr_mandatory_topics_list(request: Request):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
-    return {"topics": db.mandatory_topics_list(trust)}
+    _try_seed_mandatory_from_pack(trust)
+    return {
+        "topics": db.mandatory_topics_list(trust, seed_defaults=False),
+        "trust": trust,
+        "pack_available": bool(_pack_id_for_hr_trust(trust)),
+    }
+
+
+def _pack_id_for_hr_trust(trust: str):
+    from . import trust_packs
+
+    return trust_packs.pack_id_for_trust_name(trust)
+
+
+@router.post("/hr/mandatory-topics/seed-from-pack")
+async def hr_mandatory_topics_seed_from_pack(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    from . import trust_packs
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    pack_id = str(body.get("pack_id") or "").strip() or trust_packs.pack_id_for_trust_name(trust)
+    if not pack_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No trust pack found for your profile trust name. Set current trust to match the pack display name or pass pack_id.",
+        )
+    pack = trust_packs.load_trust_pack(pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Trust pack not found")
+    n, msg = db.seed_mandatory_from_trust_pack(trust, pack)
+    if n == 0 and "skipped" in msg.lower():
+        raise HTTPException(status_code=409, detail=msg)
+    return {"ok": True, "seeded": n, "message": msg, "topics": db.mandatory_topics_list(trust, seed_defaults=False)}
 
 
 @router.post("/hr/mandatory-topics")
@@ -1419,7 +1489,14 @@ async def hr_mandatory_topic_add(request: Request):
     if not topic_name:
         raise HTTPException(status_code=400, detail="topic_name is required")
     try:
-        topic = db.mandatory_topic_add(trust, topic_name, category)
+        topic = db.mandatory_topic_add(
+            trust,
+            topic_name,
+            category,
+            delivery_channel=str(body.get("delivery_channel") or "").strip() or None,
+            resource_url=str(body.get("resource_url") or "").strip() or None,
+            match_hints=_parse_match_hints(body),
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return topic
@@ -1437,7 +1514,18 @@ async def hr_mandatory_topic_update(request: Request, topic_id: int):
     category = str(body.get("category") or "").strip()
     if not topic_name:
         raise HTTPException(status_code=400, detail="topic_name is required")
-    updated = db.mandatory_topic_update(int(topic_id), trust, topic_name, category)
+    updated = db.mandatory_topic_update(
+        int(topic_id),
+        trust,
+        topic_name,
+        category,
+        delivery_channel=str(body.get("delivery_channel") or "").strip() or None,
+        resource_url=str(body.get("resource_url") or "").strip() or None,
+        match_hints=_parse_match_hints(body),
+        update_delivery_channel="delivery_channel" in body,
+        update_resource_url="resource_url" in body,
+        update_match_hints="match_hints" in body or "match_name_substrings" in body,
+    )
     if not updated:
         raise HTTPException(status_code=404, detail="Topic not found")
     return {"ok": True}

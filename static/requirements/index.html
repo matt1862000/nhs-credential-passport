@@ -49,6 +49,8 @@
     .req-status.err { color: var(--nhsuk-error); font-weight: 600; }
     .req-footnote { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 1rem; }
     .req-add-link { margin-top: 1.5rem; }
+    .req-complete-link { font-weight: 600; white-space: nowrap; }
+    .req-complete-hint { display: block; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; max-width: 14rem; line-height: 1.35; }
   </style>
 </head>
 <body>
@@ -106,6 +108,7 @@
               <tr>
                 <th>Required topic</th>
                 <th>Category</th>
+                <th>Complete training</th>
                 <th>Status</th>
                 <th>Your record</th>
               </tr>
@@ -125,6 +128,7 @@
   </main>
 
   <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/mandatory-match.js"></script>
   <script src="/static/shared/onboarding-nudge.js"></script>
   <script>
     (function () {
@@ -177,26 +181,41 @@
         return 'met';
       }
 
-      /**
-       * Find the best non-revoked wallet entry that matches a topic name.
-       * Matching: topic name ⊂ module_name (case-insensitive), or module_name ⊂ topic name.
-       * From all matches, prefer the one with the latest (furthest) expiry date.
-       */
-      function findBestMatch(topicName, wallet) {
-        var tNorm = topicName.toLowerCase().trim();
+      function findBestMatch(topic, wallet) {
+        if (window.NHSMandatoryMatch && typeof NHSMandatoryMatch.findBestMatch === 'function') {
+          return NHSMandatoryMatch.findBestMatch(topic, wallet);
+        }
+        var tNorm = (topic.topic_name || topic).toLowerCase().trim();
         var matches = wallet.filter(function (c) {
           if (c.revoked) return false;
           var mNorm = (c.module_name || '').toLowerCase().trim();
           return mNorm.indexOf(tNorm) !== -1 || tNorm.indexOf(mNorm) !== -1;
         });
         if (!matches.length) return null;
-        // Sort by expiry descending; no expiry = furthest future
         matches.sort(function (a, b) {
           var ae = a.expiry_date || '9999-99-99';
           var be = b.expiry_date || '9999-99-99';
           return be > ae ? 1 : be < ae ? -1 : 0;
         });
         return matches[0];
+      }
+
+      function completeTrainingCell(topic) {
+        var url = (topic.resource_url || '').trim();
+        var ch = (topic.delivery_channel || '').toLowerCase();
+        if (!url) {
+          return '<span style="color:var(--nhsuk-secondary-text);">Ask HR</span>';
+        }
+        if (ch === 'jarvis') {
+          return '<a class="req-complete-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Open in JARVIS</a>';
+        }
+        if (ch === 'esr') {
+          return (
+            '<a class="req-complete-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">ESR / training guides</a>' +
+            '<span class="req-complete-hint">Complete in ESR, then export <strong>View My Compliance</strong> to import here.</span>'
+          );
+        }
+        return '<a class="req-complete-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Open link</a>';
       }
 
       function renderTable(topics, wallet) {
@@ -206,7 +225,7 @@
         var nMet = 0, nExpiring = 0, nGap = 0;
 
         var rows = topics.map(function (t) {
-          var match = findBestMatch(t.topic_name, wallet);
+          var match = findBestMatch(t, wallet);
           var statusKey, tagClass, tagLabel, detailHtml;
 
           if (match) {
@@ -240,6 +259,7 @@
           return '<tr>' +
             '<td>' + esc(t.topic_name) + '</td>' +
             '<td>' + esc(t.category || '—') + '</td>' +
+            '<td>' + completeTrainingCell(t) + '</td>' +
             '<td><span class="req-tag ' + tagClass + '">' + tagLabel + '</span></td>' +
             '<td>' + detailHtml + '</td>' +
             '</tr>';

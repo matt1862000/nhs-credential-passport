@@ -65,7 +65,7 @@
 
   <main class="nhsuk-main mand-wrap" id="maincontent" role="main">
     <h1 class="nhsuk-page-heading">Mandatory training requirements</h1>
-    <p class="nhsuk-lead" id="trustNameLead">Manage the list of mandatory topics for your trust. These are pre-loaded with UK CSTF defaults — add, edit, remove, or reorder them as needed.</p>
+    <p class="nhsuk-lead" id="trustNameLead">Manage the list of mandatory topics for your trust. Load the official trust pack once, then edit or reorder as needed.</p>
 
     <div id="notPremium" class="mand-card" hidden>
       <p style="margin:0; font-weight:700;">This page is only for HR accounts.</p>
@@ -78,6 +78,9 @@
           <p class="nhsuk-body-s" style="margin:0; color:var(--nhsuk-secondary-text);" id="trustLabel"></p>
         </div>
         <p class="nhsuk-body-s" style="margin:0.35rem 0 0 0; color:var(--nhsuk-secondary-text);">Drag rows to reorder. Click <strong>Edit</strong> to change a topic inline.</p>
+        <p style="margin:0.75rem 0 0 0;">
+          <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnSeedPack" hidden>Load official trust pack (23 topics)</button>
+        </p>
 
         <div style="overflow-x:auto;">
           <table class="mand-table" aria-label="Mandatory topics">
@@ -86,6 +89,7 @@
                 <th style="width:1.5rem;"></th>
                 <th>Topic</th>
                 <th>Category</th>
+                <th>Where</th>
                 <th></th>
               </tr>
             </thead>
@@ -104,7 +108,19 @@
           </div>
           <div class="mand-fg mand-fg--wide">
             <label for="newCategory">Category</label>
-            <input type="text" id="newCategory" placeholder="e.g. UK CSTF / statutory" maxlength="200" autocomplete="off">
+            <input type="text" id="newCategory" placeholder="e.g. E-learning via ESR" maxlength="200" autocomplete="off">
+          </div>
+          <div class="mand-fg">
+            <label for="newChannel">Where to complete</label>
+            <select id="newChannel" style="padding:0.45rem 0.65rem;border:2px solid var(--nhsuk-border);border-radius:4px;font-size:0.9375rem;">
+              <option value="">—</option>
+              <option value="jarvis">JARVIS</option>
+              <option value="esr">ESR</option>
+            </select>
+          </div>
+          <div class="mand-fg mand-fg--wide">
+            <label for="newUrl">Link (JARVIS page or ESR guides)</label>
+            <input type="url" id="newUrl" placeholder="https://…" maxlength="500" autocomplete="off">
           </div>
           <button type="button" class="nhsuk-button" id="btnAdd" style="margin:0; align-self:flex-end;">Add topic</button>
         </div>
@@ -150,6 +166,20 @@
 
       var _topics = [];
       var _dragSrcIdx = null;
+      var _packAvailable = false;
+
+      function channelLabel(ch) {
+        if (ch === 'jarvis') return 'JARVIS';
+        if (ch === 'esr') return 'ESR';
+        return '—';
+      }
+
+      function linkPreview(url) {
+        if (!url) return '—';
+        var u = String(url);
+        if (u.length > 36) u = u.slice(0, 33) + '…';
+        return '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(u) + '</a>';
+      }
 
       function setStatus(id, msg, kind) {
         var el = document.getElementById(id);
@@ -162,7 +192,7 @@
         var tbody = document.getElementById('topicsTbody');
         if (!tbody) return;
         if (!_topics.length) {
-          tbody.innerHTML = '<tr><td colspan="4" class="mand-empty">No topics yet — add one below.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" class="mand-empty">No topics yet — load the trust pack or add one below.</td></tr>';
           return;
         }
         tbody.innerHTML = _topics.map(function (t, idx) {
@@ -171,6 +201,7 @@
             '<td><span class="mand-drag-handle" title="Drag to reorder">&#8597;</span></td>' +
             '<td>' + esc(t.topic_name) + '</td>' +
             '<td>' + esc(t.category || '—') + '</td>' +
+            '<td>' + esc(channelLabel(t.delivery_channel)) + '<br>' + linkPreview(t.resource_url) + '</td>' +
             '<td>' +
               '<button type="button" class="mand-btn-sm mand-btn-edit" data-edit="' + idx + '">Edit</button>' +
               '<button type="button" class="mand-btn-sm mand-btn-del" data-delete="' + String(t.id) + '">Remove</button>' +
@@ -192,6 +223,14 @@
           '<td></td>' +
           '<td><input type="text" class="edit-topic-name" value="' + esc(t.topic_name) + '" maxlength="200" aria-label="Topic name"></td>' +
           '<td><input type="text" class="edit-category" value="' + esc(t.category || '') + '" maxlength="200" aria-label="Category"></td>' +
+          '<td style="white-space:normal;text-align:left;">' +
+            '<select class="edit-channel" aria-label="Where to complete" style="width:100%;margin-bottom:0.35rem;padding:0.35rem;">' +
+              '<option value="">—</option>' +
+              '<option value="jarvis"' + (t.delivery_channel === 'jarvis' ? ' selected' : '') + '>JARVIS</option>' +
+              '<option value="esr"' + (t.delivery_channel === 'esr' ? ' selected' : '') + '>ESR</option>' +
+            '</select>' +
+            '<input type="url" class="edit-url" value="' + esc(t.resource_url || '') + '" maxlength="500" aria-label="Link" style="width:100%;">' +
+          '</td>' +
           '<td>' +
             '<button type="button" class="mand-btn-sm mand-btn-edit" data-save="' + String(t.id) + '" data-idx="' + idx + '">Save</button>' +
             '<button type="button" class="mand-btn-sm mand-btn-del" data-cancel="1" style="border-color:var(--nhsuk-border);color:var(--nhsuk-secondary-text);">Cancel</button>' +
@@ -203,16 +242,30 @@
       async function saveInlineEdit(topicId, idx, row) {
         var nameInput = row.querySelector('.edit-topic-name');
         var catInput = row.querySelector('.edit-category');
+        var chInput = row.querySelector('.edit-channel');
+        var urlInput = row.querySelector('.edit-url');
         var topicName = (nameInput ? nameInput.value : '').trim();
         var category = (catInput ? catInput.value : '').trim();
+        var channel = (chInput ? chInput.value : '').trim();
+        var url = (urlInput ? urlInput.value : '').trim();
         if (!topicName) { setStatus('listStatus', 'Topic name cannot be empty.', 'err'); return; }
         try {
           await apiJson('/api/hr/mandatory-topics/' + encodeURIComponent(String(topicId)), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ topic_name: topicName, category: category }),
+            body: JSON.stringify({
+              topic_name: topicName,
+              category: category,
+              delivery_channel: channel,
+              resource_url: url,
+            }),
           });
-          _topics[idx] = { id: topicId, topic_name: topicName, category: category, sort_order: _topics[idx].sort_order };
+          _topics[idx] = Object.assign({}, _topics[idx], {
+            topic_name: topicName,
+            category: category,
+            delivery_channel: channel || null,
+            resource_url: url || null,
+          });
           renderTopics();
           setStatus('listStatus', 'Saved.', 'ok');
         } catch (err) {
@@ -305,13 +358,21 @@
         });
       }
 
+      function updateSeedButton() {
+        var btn = document.getElementById('btnSeedPack');
+        if (!btn) return;
+        btn.hidden = !_packAvailable || _topics.length > 0;
+      }
+
       async function loadTopics() {
         setStatus('listStatus', 'Loading…');
         try {
           var data = await apiJson('/api/hr/mandatory-topics');
           _topics = data.topics || [];
+          _packAvailable = !!data.pack_available;
           renderTopics();
           wireTbodyEvents();
+          updateSeedButton();
           setStatus('listStatus', '');
         } catch (err) {
           setStatus('listStatus', err.message || 'Could not load topics.', 'err');
@@ -324,6 +385,8 @@
         var catInput = document.getElementById('newCategory');
         var topicName = (topicInput ? topicInput.value : '').trim();
         var category = (catInput ? catInput.value : '').trim();
+        var channel = (document.getElementById('newChannel') || {}).value || '';
+        var url = (document.getElementById('newUrl') || {}).value || '';
         if (!topicName) {
           setStatus('addStatus', 'Topic name is required.', 'err');
           return;
@@ -336,13 +399,23 @@
           var added = await apiJson('/api/hr/mandatory-topics', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ topic_name: topicName, category: category }),
+            body: JSON.stringify({
+              topic_name: topicName,
+              category: category,
+              delivery_channel: channel,
+              resource_url: url.trim(),
+            }),
           });
           _topics.push(added);
           renderTopics();
           wireTbodyEvents();
+          updateSeedButton();
           if (topicInput) topicInput.value = '';
           if (catInput) catInput.value = '';
+          var chEl = document.getElementById('newChannel');
+          var urlEl = document.getElementById('newUrl');
+          if (chEl) chEl.value = '';
+          if (urlEl) urlEl.value = '';
           setStatus('addStatus', 'Topic added.', 'ok');
         } catch (err) {
           setStatus('addStatus', err.message || 'Could not add topic.', 'err');
@@ -355,6 +428,29 @@
 
       document.getElementById('newTopic').addEventListener('keydown', function (e) {
         if (e.key === 'Enter') { e.preventDefault(); document.getElementById('btnAdd').click(); }
+      });
+
+      document.getElementById('btnSeedPack').addEventListener('click', async function () {
+        var btn = this;
+        if (!confirm('Load the official Sheffield mandatory training pack? This only works when the list is empty.')) return;
+        btn.disabled = true;
+        setStatus('listStatus', 'Loading trust pack…');
+        try {
+          var data = await apiJson('/api/hr/mandatory-topics/seed-from-pack', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          _topics = data.topics || [];
+          renderTopics();
+          wireTbodyEvents();
+          updateSeedButton();
+          setStatus('listStatus', data.message || 'Trust pack loaded.', 'ok');
+        } catch (err) {
+          setStatus('listStatus', err.message || 'Could not load pack.', 'err');
+        } finally {
+          btn.disabled = false;
+        }
       });
 
       (async function boot() {
@@ -377,7 +473,7 @@
         var trustLabel = document.getElementById('trustLabel');
         if (trustLabel && trust) trustLabel.textContent = trust;
         var lead = document.getElementById('trustNameLead');
-        if (lead && trust) lead.textContent = 'Mandatory training requirements for ' + trust + '. Pre-loaded with UK CSTF defaults — add, edit, remove, or reorder as needed.';
+        if (lead && trust) lead.textContent = 'Mandatory training requirements for ' + trust + '. Load the official trust pack once, then edit links or topics as needed.';
 
         await loadTopics();
       })();

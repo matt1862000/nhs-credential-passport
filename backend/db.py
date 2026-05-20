@@ -354,64 +354,220 @@ def _ensure_mandatory_topics_table(conn: sqlite3.Connection) -> None:
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tmt_trust ON trust_mandatory_topics(trust_name)")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(trust_mandatory_topics)").fetchall()}
+    if "delivery_channel" not in cols:
+        conn.execute("ALTER TABLE trust_mandatory_topics ADD COLUMN delivery_channel TEXT")
+    if "resource_url" not in cols:
+        conn.execute("ALTER TABLE trust_mandatory_topics ADD COLUMN resource_url TEXT")
+    if "match_hints_json" not in cols:
+        conn.execute("ALTER TABLE trust_mandatory_topics ADD COLUMN match_hints_json TEXT")
+
+
+def _mandatory_topic_row_to_dict(r: sqlite3.Row) -> dict:
+    import json as _json
+
+    hints = None
+    raw = r["match_hints_json"] if "match_hints_json" in r.keys() else None
+    if raw:
+        try:
+            hints = _json.loads(raw)
+        except (_json.JSONDecodeError, TypeError):
+            hints = None
+    return {
+        "id": r["id"],
+        "topic_name": r["topic_name"],
+        "category": r["category"],
+        "sort_order": r["sort_order"],
+        "delivery_channel": r["delivery_channel"] if "delivery_channel" in r.keys() else None,
+        "resource_url": r["resource_url"] if "resource_url" in r.keys() else None,
+        "match_hints": hints,
+    }
+
+
+_MANDATORY_TOPIC_SELECT = """
+    SELECT id, topic_name, category, sort_order, delivery_channel, resource_url, match_hints_json
+    FROM trust_mandatory_topics WHERE trust_name = ? ORDER BY sort_order, id
+"""
 
 
 # ── Mandatory topics helpers ─────────────────────────────────────────────────
 
-def mandatory_topics_list(trust_name: str) -> list[dict]:
-    """Return topics for a trust; seeds defaults on first access."""
+def mandatory_topics_count(trust_name: str) -> int:
+    trust_name = (trust_name or "").strip()
+    if not trust_name:
+        return 0
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mandatory_topics_table(conn)
+        n = conn.execute(
+            "SELECT COUNT(*) FROM trust_mandatory_topics WHERE trust_name = ?",
+            (trust_name,),
+        ).fetchone()[0]
+    return int(n)
+
+
+def mandatory_topics_list(trust_name: str, *, seed_defaults: bool = True) -> list[dict]:
+    """Return topics for a trust; optionally seeds generic CSTF defaults when empty."""
     trust_name = (trust_name or "").strip()
     if not trust_name:
         return []
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_mandatory_topics_table(conn)
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT id, topic_name, category, sort_order FROM trust_mandatory_topics WHERE trust_name = ? ORDER BY sort_order, id",
-            (trust_name,),
-        ).fetchall()
-        if not rows:
-            # Seed defaults for this trust
+        rows = conn.execute(_MANDATORY_TOPIC_SELECT, (trust_name,)).fetchall()
+        if not rows and seed_defaults:
             now = datetime.utcnow().isoformat()
             for idx, (topic, cat) in enumerate(_DEFAULT_MANDATORY_TOPICS):
                 conn.execute(
-                    "INSERT INTO trust_mandatory_topics (trust_name, topic_name, category, sort_order, created_at) VALUES (?, ?, ?, ?, ?)",
+                    """INSERT INTO trust_mandatory_topics
+                       (trust_name, topic_name, category, sort_order, created_at)
+                       VALUES (?, ?, ?, ?, ?)""",
                     (trust_name, topic, cat, idx, now),
                 )
             conn.commit()
-            rows = conn.execute(
-                "SELECT id, topic_name, category, sort_order FROM trust_mandatory_topics WHERE trust_name = ? ORDER BY sort_order, id",
-                (trust_name,),
-            ).fetchall()
-    return [{"id": r["id"], "topic_name": r["topic_name"], "category": r["category"], "sort_order": r["sort_order"]} for r in rows]
+            rows = conn.execute(_MANDATORY_TOPIC_SELECT, (trust_name,)).fetchall()
+    return [_mandatory_topic_row_to_dict(r) for r in rows]
 
 
-def mandatory_topic_add(trust_name: str, topic_name: str, category: str) -> dict:
+def mandatory_topics_insert_batch(trust_name: str, rows: list[dict]) -> int:
+    """Insert mandatory topic rows; returns count inserted."""
+    trust_name = (trust_name or "").strip()
+    if not trust_name or not rows:
+        return 0
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_mandatory_topics_table(conn)
+        for row in rows:
+            conn.execute(
+                """INSERT INTO trust_mandatory_topics
+                   (trust_name, topic_name, category, sort_order, delivery_channel, resource_url, match_hints_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    trust_name,
+                    row["topic_name"],
+                    row.get("category") or "",
+                    int(row.get("sort_order", 0)),
+                    row.get("delivery_channel"),
+                    row.get("resource_url"),
+                    row.get("match_hints_json"),
+                    now,
+                ),
+            )
+        conn.commit()
+    return len(rows)
+
+
+def seed_mandatory_from_trust_pack(trust_name: str, pack: dict) -> tuple[int, str]:
+    """
+    Seed topics from a trust pack JSON dict when trust has no rows yet.
+    Returns (rows_inserted, message).
+    """
+    from . import trust_packs
+
+    trust_name = (trust_name or "").strip()
+    if not trust_name:
+        return 0, "trust_name required"
+    if mandatory_topics_count(trust_name) > 0:
+        return 0, "Trust already has mandatory topics; seed skipped to preserve HR edits."
+    batch = trust_packs.mandatory_examples_to_rows(pack)
+    if not batch:
+        return 0, "Pack has no mandatory topics."
+    n = mandatory_topics_insert_batch(trust_name, batch)
+    return n, f"Seeded {n} mandatory topic(s) from trust pack."
+
+
+def mandatory_topic_add(
+    trust_name: str,
+    topic_name: str,
+    category: str,
+    *,
+    delivery_channel: Optional[str] = None,
+    resource_url: Optional[str] = None,
+    match_hints: Optional[dict] = None,
+) -> dict:
+    import json as _json
+
     trust_name = (trust_name or "").strip()
     topic_name = (topic_name or "").strip()
     category = (category or "").strip()
     if not trust_name or not topic_name:
         raise ValueError("trust_name and topic_name are required")
+    hints_json = _json.dumps(match_hints) if match_hints else None
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_mandatory_topics_table(conn)
         max_order = conn.execute(
-            "SELECT COALESCE(MAX(sort_order), -1) FROM trust_mandatory_topics WHERE trust_name = ?", (trust_name,)
+            "SELECT COALESCE(MAX(sort_order), -1) FROM trust_mandatory_topics WHERE trust_name = ?",
+            (trust_name,),
         ).fetchone()[0]
         cursor = conn.execute(
-            "INSERT INTO trust_mandatory_topics (trust_name, topic_name, category, sort_order) VALUES (?, ?, ?, ?)",
-            (trust_name, topic_name, category, max_order + 1),
+            """INSERT INTO trust_mandatory_topics
+               (trust_name, topic_name, category, sort_order, delivery_channel, resource_url, match_hints_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                trust_name,
+                topic_name,
+                category,
+                max_order + 1,
+                (delivery_channel or "").strip() or None,
+                (resource_url or "").strip() or None,
+                hints_json,
+            ),
         )
         conn.commit()
-        return {"id": cursor.lastrowid, "topic_name": topic_name, "category": category, "sort_order": max_order + 1}
+        tid = int(cursor.lastrowid)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT id, topic_name, category, sort_order, delivery_channel, resource_url, match_hints_json FROM trust_mandatory_topics WHERE id = ?",
+            (tid,),
+        ).fetchone()
+    return _mandatory_topic_row_to_dict(row)
 
 
-def mandatory_topic_update(topic_id: int, trust_name: str, topic_name: str, category: str) -> bool:
+def mandatory_topic_update(
+    topic_id: int,
+    trust_name: str,
+    topic_name: str,
+    category: str,
+    *,
+    delivery_channel: Optional[str] = None,
+    resource_url: Optional[str] = None,
+    match_hints: Optional[dict] = None,
+    update_delivery_channel: bool = False,
+    update_resource_url: bool = False,
+    update_match_hints: bool = False,
+) -> bool:
+    import json as _json
+
     trust_name = (trust_name or "").strip()
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_mandatory_topics_table(conn)
+        existing = conn.execute(
+            "SELECT delivery_channel, resource_url, match_hints_json FROM trust_mandatory_topics WHERE id = ? AND trust_name = ?",
+            (int(topic_id), trust_name),
+        ).fetchone()
+        if not existing:
+            return False
+        ch = existing[0]
+        url = existing[1]
+        hints_json = existing[2]
+        if update_delivery_channel:
+            ch = (delivery_channel or "").strip() or None
+        if update_resource_url:
+            url = (resource_url or "").strip() or None
+        if update_match_hints:
+            hints_json = _json.dumps(match_hints) if match_hints else None
         cursor = conn.execute(
-            "UPDATE trust_mandatory_topics SET topic_name = ?, category = ? WHERE id = ? AND trust_name = ?",
-            ((topic_name or "").strip(), (category or "").strip(), int(topic_id), trust_name),
+            """UPDATE trust_mandatory_topics SET
+               topic_name = ?, category = ?, delivery_channel = ?, resource_url = ?, match_hints_json = ?
+               WHERE id = ? AND trust_name = ?""",
+            (
+                (topic_name or "").strip(),
+                (category or "").strip(),
+                ch,
+                url,
+                hints_json,
+                int(topic_id),
+                trust_name,
+            ),
         )
         conn.commit()
     return cursor.rowcount > 0
