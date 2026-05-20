@@ -1652,6 +1652,39 @@ async def me_messages_send(request: Request, conv_id: int):
 
 
 # HR endpoints
+@router.get("/hr/messages/doctors/search")
+def hr_messages_doctors_search(request: Request, q: str = "", limit: int = 30):
+    """Search any registered clinician account to start a message (no visibility filter)."""
+    require_premium_user(request)
+    results = db.hr_doctors_search_messaging(q=q, limit=limit)
+    return {"results": results}
+
+
+@router.post("/hr/messages/start")
+async def hr_messages_start(request: Request):
+    """Start or open a conversation with any registered clinician."""
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    raw_id = body.get("doctor_user_id")
+    if raw_id is None or raw_id == "":
+        raise HTTPException(status_code=400, detail="doctor_user_id is required")
+    try:
+        doctor_id = int(raw_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="doctor_user_id must be an integer")
+    doc = db.user_get_by_id(doctor_id)
+    if not doc or db.user_is_premium(doc):
+        raise HTTPException(status_code=404, detail="Clinician not found")
+    if int(doc["id"]) == int(hr["id"]):
+        raise HTTPException(status_code=400, detail="Cannot message yourself")
+    conv = db.conversation_get_or_create(doctor_id, trust)
+    return conv
+
+
 @router.get("/hr/messages")
 def hr_messages_list(request: Request):
     hr = require_premium_user(request)

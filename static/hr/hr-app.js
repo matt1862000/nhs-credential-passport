@@ -1149,6 +1149,7 @@
                   '<div class="hr-search-result-actions">' +
                   '<button type="button" class="nhsuk-button hr-btn-small" data-search-doctor-id="' + esc(String(doc.id)) + '" data-search-doctor-name="' + esc(doc.display_name || doc.email || '') + '">View training</button>' +
                   '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-add-doctor-id="' + esc(String(doc.id)) + '" data-add-doctor-name="' + esc(doc.display_name || doc.email || '') + '">Add training</button>' +
+                  '<a class="nhsuk-button nhsuk-button--secondary hr-btn-small" href="/static/hr/messages/?doctor=' + encodeURIComponent(String(doc.id)) + '">Message</a>' +
                   '</div>' +
                   '</div>'
                 );

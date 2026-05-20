@@ -192,6 +192,44 @@ def hr_doctor_search(q: str, hr_trust: str, limit: int = 30) -> list[dict]:
         return out
 
 
+def hr_doctors_search_messaging(q: str, limit: int = 30) -> list[dict]:
+    """
+    Search any non-premium DocPass account by name / email / GMC (no visibility filter).
+    Used when HR starts a new message thread.
+    """
+    q = (q or "").strip()
+    if not q:
+        return []
+    pat = "%" + q.lower() + "%"
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT u.id, u.email, u.display_name, u.gmc_number, u.current_trust
+            FROM users u
+            WHERE u.premium = 0
+              AND (
+                LOWER(COALESCE(u.display_name, '')) LIKE ?
+                OR LOWER(u.email) LIKE ?
+                OR LOWER(COALESCE(u.gmc_number, '')) LIKE ?
+              )
+            ORDER BY u.display_name, u.email
+            LIMIT ?
+            """,
+            (pat, pat, pat, max(1, min(int(limit), 100))),
+        ).fetchall()
+    return [
+        {
+            "id": int(r["id"]),
+            "email": r["email"],
+            "display_name": r["display_name"],
+            "gmc_number": r["gmc_number"],
+            "current_trust": r["current_trust"],
+        }
+        for r in rows
+    ]
+
+
 def _ensure_hr_attestations_table(conn: sqlite3.Connection) -> None:
     """HR-issued credentials on behalf of doctors: drives verified-map + HR training view."""
     conn.execute(
