@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260521-3">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260521-4">
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
@@ -66,22 +66,21 @@
               </div>
               <div class="nhsuk-form-group nhsuk-form-group--roster" id="cohortEmailsGroup">
                 <label class="nhsuk-label" for="cohortEmails">NHS work emails</label>
-                <span class="nhsuk-hint nhsuk-hint--secondary">One per line (e.g. firstname.surname123@nhs.net).</span>
+                <span class="nhsuk-hint nhsuk-hint--secondary">One per line (e.g. firstname.surname123@nhs.net). Paste from Excel or Outlook, or upload a .csv / .txt export.</span>
+                <div class="hr-roster-paste">
+                  <textarea class="nhsuk-textarea hr-roster-paste__input" id="cohortEmails" rows="8" required placeholder="one@nhs.net&#10;two@nhs.net" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="cohortEmailsCount"></textarea>
+                </div>
+                <span class="hr-roster-line-count hr-roster-line-count--empty" id="cohortEmailsCount" aria-live="polite">0 addresses</span>
+                <p class="hr-roster-or">Or upload a file</p>
                 <div class="hr-roster-upload">
-                  <label class="nhsuk-label nhsuk-label--s" for="cohortEmailsFile">Upload CSV or plain text</label>
-                  <span class="nhsuk-hint">One email per line, or first column of a spreadsheet export (.csv or .txt).</span>
+                  <label class="nhsuk-label nhsuk-label--s" for="cohortEmailsFile">CSV or plain text</label>
+                  <span class="nhsuk-hint">First column of a spreadsheet, or one email per line.</span>
                   <div class="hr-bulk-file">
                     <input class="nhsuk-input" type="file" id="cohortEmailsFile" accept=".txt,.csv,text/plain,text/csv" aria-describedby="cohortEmailsFileStatus">
                   </div>
                   <span class="hr-roster-file-name" id="cohortEmailsFileName" aria-live="polite">No file chosen</span>
                   <p class="hr-roster-upload-status" id="cohortEmailsFileStatus" hidden role="status"></p>
                 </div>
-                <p class="hr-roster-or" aria-hidden="true">or paste below</p>
-                <span class="hr-roster-paste-tip">Paste from Excel or Outlook — one address per line.</span>
-                <div class="hr-roster-paste">
-                  <textarea class="nhsuk-textarea hr-roster-paste__input" id="cohortEmails" rows="8" required placeholder="one@nhs.net&#10;two@nhs.net" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
-                </div>
-                <span class="hr-roster-line-count hr-roster-line-count--empty" id="cohortEmailsCount" aria-live="polite">0 addresses</span>
               </div>
               <p class="hr-cohort-inset" style="margin-bottom:1rem;" id="welcomePreview"></p>
               <div class="hr-cohort-panel-actions">
@@ -153,24 +152,23 @@
             <div class="hr-cohort-inset" id="addWelcomeInset"></div>
           </details>
           <form id="formAddMembers" class="hr-bulk-form" novalidate>
-            <div class="nhsuk-form-group nhsuk-form-group--roster" id="addEmailsGroup">
+                        <div class="nhsuk-form-group nhsuk-form-group--roster" id="addEmailsGroup">
               <label class="nhsuk-label" for="addEmails">NHS work emails</label>
-              <span class="nhsuk-hint nhsuk-hint--secondary">One email per line (e.g. firstname.surname123@nhs.net).</span>
-              <span class="hr-roster-paste-tip">Paste from Excel or Outlook — one address per line.</span>
+              <span class="nhsuk-hint nhsuk-hint--secondary">One per line (e.g. firstname.surname123@nhs.net). Paste from Excel or Outlook, or upload a .csv / .txt export.</span>
+              <div class="hr-roster-paste">
+                <textarea class="nhsuk-textarea hr-roster-paste__input" id="addEmails" rows="8" required placeholder="one@nhs.net&#10;two@nhs.net" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="addEmailsCount"></textarea>
+              </div>
+              <span class="hr-roster-line-count hr-roster-line-count--empty" id="addEmailsCount" aria-live="polite">0 addresses</span>
+              <p class="hr-roster-or">Or upload a file</p>
               <div class="hr-roster-upload">
-                <label class="nhsuk-label nhsuk-label--s" for="addEmailsFile">Or upload CSV or plain text</label>
-                <span class="nhsuk-hint">One email per line, or first column of a spreadsheet export (.csv or .txt).</span>
+                <label class="nhsuk-label nhsuk-label--s" for="addEmailsFile">CSV or plain text</label>
+                <span class="nhsuk-hint">First column of a spreadsheet, or one email per line.</span>
                 <div class="hr-bulk-file">
                   <input class="nhsuk-input" type="file" id="addEmailsFile" accept=".txt,.csv,text/plain,text/csv" aria-describedby="addEmailsFileStatus">
                 </div>
                 <span class="hr-roster-file-name" id="addEmailsFileName" aria-live="polite">No file chosen</span>
                 <p class="hr-roster-upload-status" id="addEmailsFileStatus" hidden role="status"></p>
               </div>
-              <p class="hr-roster-or" aria-hidden="true">or type / paste below</p>
-              <div class="hr-roster-paste">
-                <textarea class="nhsuk-textarea hr-roster-paste__input" id="addEmails" rows="8" required placeholder="one@nhs.net&#10;two@nhs.net" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
-              </div>
-              <span class="hr-roster-line-count hr-roster-line-count--empty" id="addEmailsCount" aria-live="polite">0 addresses</span>
             </div>
             <div class="hr-cohort-panel-actions">
               <button type="submit" class="nhsuk-button nhsuk-button--secondary">Add to cohort</button>

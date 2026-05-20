@@ -332,13 +332,14 @@
     }
     .hr-roster-upload-status--error { color: var(--nhsuk-error); }
     .hr-roster-or {
-      margin: 0.65rem 0 0.5rem 0;
+      margin: 1rem 0 0.5rem 0;
       font-size: 0.8125rem;
       font-weight: 600;
       color: var(--nhsuk-secondary-text);
-      text-align: center;
+      text-align: left;
       max-width: 36rem;
     }
+    .hr-roster-upload { margin-top: 0; }
     .hr-roster-line-count {
       display: block;
       margin-top: 0.5rem;
