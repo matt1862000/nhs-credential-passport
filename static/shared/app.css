@@ -1,4 +1,6 @@
 /* Shared NHS-style base used by landing, auth, dashboard, plan-move pages. */
+@import url('/static/shared/import-result-viz.css?v=20260522-1');
+
 :root {
   --nhsuk-text: #212b32;
   --nhsuk-link: #005eb8;

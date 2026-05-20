@@ -102,6 +102,7 @@
             <tbody id="topicsTbody"></tbody>
           </table>
         </div>
+        <div id="seedPackViz" class="hr-provision-viz-wrap" aria-live="polite"></div>
         <p id="listStatus" class="mand-status" role="status" aria-live="polite"></p>
       </div>
 
@@ -135,6 +136,7 @@
     </div>
   </main>
 
+  <script src="/static/shared/import-result-viz.js?v=20260522-1"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260521-2"></script>
   <script>
@@ -441,7 +443,15 @@
         var btn = this;
         if (!confirm('Load the official Sheffield mandatory training pack? This only works when the list is empty.')) return;
         btn.disabled = true;
-        setStatus('listStatus', 'Loading trust pack…');
+        var seedViz = document.getElementById('seedPackViz');
+        var listSt = document.getElementById('listStatus');
+        setStatus('listStatus', '');
+        if (window.NHSBatchResultViz) {
+          NHSBatchResultViz.clear(seedViz);
+          NHSBatchResultViz.showLoading(seedViz, 'Loading trust pack…');
+        } else {
+          setStatus('listStatus', 'Loading trust pack…');
+        }
         try {
           var data = await apiJson('/api/hr/mandatory-topics/seed-from-pack', {
             method: 'POST',
@@ -452,8 +462,13 @@
           renderTopics();
           wireTbodyEvents();
           updateSeedButton();
-          setStatus('listStatus', data.message || 'Trust pack loaded.', 'ok');
+          if (window.NHSBatchResultViz) {
+            NHSBatchResultViz.trustPackSeed(seedViz, data);
+          } else {
+            setStatus('listStatus', data.message || 'Trust pack loaded.', 'ok');
+          }
         } catch (err) {
+          if (window.NHSBatchResultViz) NHSBatchResultViz.clear(seedViz);
           setStatus('listStatus', err.message || 'Could not load pack.', 'err');
         } finally {
           btn.disabled = false;

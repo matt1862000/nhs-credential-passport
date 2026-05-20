@@ -1,6 +1,10 @@
 (function () {
   var HR_PAGE = typeof window.__HR_PAGE__ === 'string' ? window.__HR_PAGE__ : 'inbox';
 
+  function batchViz() {
+    return window.NHSBatchResultViz;
+  }
+
       function wireHamburgerMenu() {
         var btn = document.getElementById('btnMenu');
         var panel = document.getElementById('menuPanel');
@@ -852,6 +856,7 @@
         function setAddTrainingStatus(msg, kind) {
           var el = document.getElementById('addTrainingStatus');
           if (!el) return;
+          el.hidden = false;
           el.textContent = msg || '';
           el.className = 'hr-bulk-status--muted';
           if (kind === 'error') el.className = 'hr-bulk-status--error';
@@ -870,7 +875,12 @@
           form.reset();
           var nm = document.getElementById('addTrainingEvidenceName');
           if (nm) nm.textContent = 'No file chosen';
-          setAddTrainingStatus('', 'muted');
+          if (batchViz()) batchViz().clear(document.getElementById('addTrainingProvisionResult'));
+          var addStEl = document.getElementById('addTrainingStatus');
+          if (addStEl) {
+            addStEl.hidden = true;
+            addStEl.textContent = '';
+          }
           void (async function () {
             await fillHrIssuingTrustFieldsIfEmpty();
             m.hidden = false;
@@ -1002,7 +1012,11 @@
             }
             addTrainingBusy = true;
             addTrainingSubmitBtn.disabled = true;
-            setAddTrainingStatus('Submitting…', 'muted');
+            var addVizEl = document.getElementById('addTrainingProvisionResult');
+            var addSt = document.getElementById('addTrainingStatus');
+            if (addSt) addSt.hidden = true;
+            if (batchViz()) batchViz().clear(addVizEl);
+            if (batchViz()) batchViz().showLoading(addVizEl, 'Issuing training record…');
             try {
               var fd = new FormData();
               if (evEl && evEl.files && evEl.files[0]) fd.append('evidence', evEl.files[0]);
@@ -1023,13 +1037,18 @@
                 throw new Error(typeof d === 'string' ? d : (text || res.statusText));
               }
               var errCount = Number(data.errors || 0);
-              var row0 = (data.rows && data.rows[0]) || {};
               var issued = Number(data.issued || 0);
-              setAddTrainingStatus(
-                (row0.message || 'Done.') +
-                  (issued ? ' Close this dialog to return to the list; the table below refreshes automatically.' : ''),
-                errCount > 0 ? 'error' : 'ok'
-              );
+              if (batchViz()) {
+                batchViz().singleTraining(addVizEl, data, {
+                  followUpNote: issued
+                    ? 'Close this dialog to return to the list; the table below refreshes automatically.'
+                    : '',
+                });
+              } else if (addSt) {
+                var row0 = (data.rows && data.rows[0]) || {};
+                addSt.hidden = false;
+                setAddTrainingStatus(row0.message || 'Done.', errCount > 0 ? 'error' : 'ok');
+              }
               var sdv = document.getElementById('searchDoctorView');
               if (issued && sdv && !sdv.hidden) {
                 var titleEl = document.getElementById('searchDoctorTitle');
@@ -1040,7 +1059,11 @@
                 await openSearchDoctorView(addTrainingDoctorId, dnm || 'Doctor');
               }
             } catch (err) {
-              setAddTrainingStatus(err.message || 'Request failed.', 'error');
+              if (batchViz()) batchViz().clear(addVizEl);
+              if (addSt) {
+                addSt.hidden = false;
+                setAddTrainingStatus(err.message || 'Request failed.', 'error');
+              }
             } finally {
               addTrainingBusy = false;
               addTrainingSubmitBtn.disabled = false;
@@ -1076,8 +1099,10 @@
               var st = document.getElementById('bulkStatus');
               if (st) {
                 st.textContent = '';
+                st.hidden = true;
                 st.className = 'hr-muted hr-bulk-status--muted';
               }
+              if (batchViz()) batchViz().clear(document.getElementById('bulkProvisionResult'));
               var wrap = document.getElementById('bulkTableWrap');
               var tb = document.getElementById('bulkResultsTbody');
               if (wrap) wrap.hidden = true;
@@ -1089,6 +1114,7 @@
         function setBulkStatusMessage(msg, kind) {
           var statusEl = document.getElementById('bulkStatus');
           if (!statusEl) return;
+          statusEl.hidden = false;
           statusEl.textContent = msg || '';
           statusEl.className = 'hr-bulk-status--muted';
           if (kind === 'error') statusEl.className = 'hr-bulk-status--error';
@@ -1118,7 +1144,11 @@
             }
             bulkSubmitBusy = true;
             btnBulkSubmit.disabled = true;
-            setBulkStatusMessage('Submitting…', 'muted');
+            var bulkVizEl = document.getElementById('bulkProvisionResult');
+            var bulkSt = document.getElementById('bulkStatus');
+            if (bulkSt) bulkSt.hidden = true;
+            if (batchViz()) batchViz().clear(bulkVizEl);
+            if (batchViz()) batchViz().showLoading(bulkVizEl, 'Issuing training to roster…');
             if (wrap) wrap.hidden = true;
             if (tbody) tbody.innerHTML = '';
             try {
@@ -1144,19 +1174,23 @@
                 var d = data && data.detail;
                 throw new Error(typeof d === 'string' ? d : (text || res.statusText));
               }
-              var errCount = Number(data.errors || 0);
-              var aborted = Boolean(data.aborted);
-              var summary =
-                'Issued: ' + String(data.issued || 0) +
-                ' · Skipped (duplicate): ' + String(data.skipped_duplicate || 0) +
-                ' · Errors: ' + String(errCount);
-              if (aborted) {
-                setBulkStatusMessage(
-                  'Nothing was saved. Fix the roster errors (or wallet size errors) and submit again. ' + summary,
-                  'error'
-                );
+              if (batchViz()) {
+                batchViz().bulkTraining(bulkVizEl, data);
               } else {
-                setBulkStatusMessage(summary, errCount > 0 ? 'error' : 'ok');
+                var errCount = Number(data.errors || 0);
+                var aborted = Boolean(data.aborted);
+                var summary =
+                  'Issued: ' + String(data.issued || 0) +
+                  ' · Skipped (duplicate): ' + String(data.skipped_duplicate || 0) +
+                  ' · Errors: ' + String(errCount);
+                if (aborted) {
+                  setBulkStatusMessage(
+                    'Nothing was saved. Fix the roster errors (or wallet size errors) and submit again. ' + summary,
+                    'error'
+                  );
+                } else {
+                  setBulkStatusMessage(summary, errCount > 0 ? 'error' : 'ok');
+                }
               }
               if (wrap && tbody && data.rows && data.rows.length) {
                 wrap.hidden = false;
@@ -1167,6 +1201,8 @@
                 }).join('');
               }
             } catch (err) {
+              if (batchViz()) batchViz().clear(bulkVizEl);
+              if (bulkSt) bulkSt.hidden = false;
               setBulkStatusMessage(err.message || 'Request failed.', 'error');
             } finally {
               bulkSubmitBusy = false;

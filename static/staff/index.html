@@ -256,160 +256,6 @@
       to { transform: rotate(360deg); }
     }
 
-    /* ESR import — animated result summary */
-    .csv-import-loader {
-      padding: 1rem 1.25rem;
-      background: var(--nhsuk-panel-bg);
-      border: 1px solid var(--nhsuk-border);
-      border-radius: 6px;
-      box-shadow: var(--nhsuk-card-shadow);
-    }
-    .csv-import-loader__track {
-      display: flex;
-      flex-direction: column;
-      gap: 0.45rem;
-      margin-bottom: 0.85rem;
-    }
-    .csv-import-loader__row {
-      display: block;
-      height: 0.5rem;
-      border-radius: 4px;
-      background: #e8edf0;
-      transform-origin: left center;
-      animation: csv-row-scan 1.1s ease-in-out infinite;
-    }
-    .csv-import-loader__row:nth-child(2) { animation-delay: 0.12s; width: 92%; }
-    .csv-import-loader__row:nth-child(3) { animation-delay: 0.24s; width: 78%; }
-    .csv-import-loader__row:nth-child(4) { animation-delay: 0.36s; width: 88%; }
-    .csv-import-loader__row:nth-child(5) { animation-delay: 0.48s; width: 65%; }
-    @keyframes csv-row-scan {
-      0%, 100% { background: #e8edf0; opacity: 0.85; }
-      45% { background: #b3d6c8; opacity: 1; }
-    }
-    .csv-import-loader__text {
-      margin: 0;
-      font-size: 0.9375rem;
-      color: var(--nhsuk-secondary-text);
-    }
-    .csv-import-viz {
-      padding: 1.1rem 1.25rem 1rem;
-      background: var(--nhsuk-panel-bg);
-      border: 1px solid var(--nhsuk-border);
-      border-radius: 6px;
-      box-shadow: var(--nhsuk-card-shadow);
-      opacity: 0;
-      transform: translateY(0.35rem);
-      animation: csv-viz-enter 0.45s ease forwards;
-    }
-    @keyframes csv-viz-enter {
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .csv-import-viz__bar {
-      display: flex;
-      height: 0.65rem;
-      border-radius: 999px;
-      overflow: hidden;
-      background: #e8edf0;
-      margin: 0.75rem 0 1rem;
-    }
-    .csv-import-viz__seg {
-      height: 100%;
-      width: 0;
-      flex-shrink: 0;
-      transition: width 0.85s cubic-bezier(0.22, 1, 0.36, 1);
-    }
-    .csv-import-viz.is-ready .csv-import-viz__seg--valid { width: var(--w-valid, 0%); }
-    .csv-import-viz.is-ready .csv-import-viz__seg--skipped { width: var(--w-skipped, 0%); }
-    .csv-import-viz.is-ready .csv-import-viz__seg--invalid { width: var(--w-invalid, 0%); }
-    .csv-import-viz__seg--valid { background: var(--nhsuk-success); }
-    .csv-import-viz__seg--skipped { background: #aeb7bd; }
-    .csv-import-viz__seg--invalid { background: var(--nhsuk-error); }
-    .csv-import-viz__stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
-      gap: 0.75rem 1rem;
-    }
-    .csv-import-stat__num {
-      display: block;
-      font-size: 1.75rem;
-      font-weight: 700;
-      line-height: 1.15;
-      color: var(--nhsuk-text);
-      font-variant-numeric: tabular-nums;
-    }
-    .csv-import-stat__label {
-      display: block;
-      font-size: 0.8125rem;
-      color: var(--nhsuk-secondary-text);
-      margin-top: 0.15rem;
-      line-height: 1.35;
-    }
-    .csv-import-stat--valid .csv-import-stat__num { color: var(--nhsuk-success); }
-    .csv-import-stat--invalid .csv-import-stat__num { color: var(--nhsuk-error); }
-    .csv-import-viz__note {
-      margin: 0.85rem 0 0;
-      font-size: 0.9375rem;
-      color: var(--nhsuk-secondary-text);
-      line-height: 1.45;
-      opacity: 0;
-      animation: csv-viz-enter 0.4s ease 0.35s forwards;
-    }
-    .csv-import-viz__success {
-      margin: 0.75rem 0 0;
-      font-size: 0.9375rem;
-      font-weight: 600;
-      color: var(--nhsuk-success);
-      opacity: 0;
-      animation: csv-viz-enter 0.4s ease 0.5s forwards;
-    }
-    .csv-import-viz__errors {
-      margin: 0.75rem 0 0;
-      padding: 0;
-      list-style: none;
-    }
-    .csv-import-viz__errors li {
-      font-size: 0.875rem;
-      color: var(--nhsuk-error);
-      margin: 0.35rem 0 0;
-      opacity: 0;
-      transform: translateX(-0.25rem);
-      animation: csv-error-in 0.35s ease forwards;
-    }
-    .csv-import-viz__errors li:nth-child(1) { animation-delay: 0.55s; }
-    .csv-import-viz__errors li:nth-child(2) { animation-delay: 0.62s; }
-    .csv-import-viz__errors li:nth-child(3) { animation-delay: 0.69s; }
-    .csv-import-viz__errors li:nth-child(4) { animation-delay: 0.76s; }
-    .csv-import-viz__errors li:nth-child(5) { animation-delay: 0.83s; }
-    @keyframes csv-error-in {
-      to { opacity: 1; transform: translateX(0); }
-    }
-    .csv-import-viz details {
-      margin-top: 0.75rem;
-      font-size: 0.875rem;
-      color: var(--nhsuk-secondary-text);
-    }
-    .csv-import-viz details summary {
-      cursor: pointer;
-      color: var(--nhsuk-link);
-      font-weight: 600;
-    }
-    .csv-import-viz details[open] .csv-import-skip-groups {
-      animation: csv-viz-enter 0.35s ease forwards;
-    }
-    .csv-import-skip-groups { margin: 0.5rem 0 0; padding: 0; list-style: none; }
-    .csv-import-skip-groups li { margin: 0.35rem 0 0; line-height: 1.4; }
-    @media (prefers-reduced-motion: reduce) {
-      .csv-import-loader__row { animation: none; background: #cce5d2; }
-      .csv-import-viz,
-      .csv-import-viz__note,
-      .csv-import-viz__success,
-      .csv-import-viz__errors li { animation: none; opacity: 1; transform: none; }
-      .csv-import-viz__seg { transition: none; }
-      .csv-import-viz.is-ready .csv-import-viz__seg--valid { width: var(--w-valid, 0%); }
-      .csv-import-viz.is-ready .csv-import-viz__seg--skipped { width: var(--w-skipped, 0%); }
-      .csv-import-viz.is-ready .csv-import-viz__seg--invalid { width: var(--w-invalid, 0%); }
-    }
-
     .nhsuk-card {
       background: var(--nhsuk-panel-bg);
       border: 1px solid var(--nhsuk-border);
@@ -746,6 +592,7 @@
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260521-2"></script>
+  <script src="/static/shared/import-result-viz.js?v=20260522-1"></script>
   <script src="/static/shared/ods-trust-suggest.js"></script>
   <script src="/static/shared/onboarding-nudge.js"></script>
   <script>
@@ -1308,126 +1155,18 @@
       updateCsvImportButtonState();
     });
 
-    function csvImportReducedMotion() {
-      return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    function csvResultViz() {
+      return window.NHSBatchResultViz;
     }
 
     function showCsvImportLoading(message) {
       var el = document.getElementById('csvImportResult');
-      if (!el) return;
-      el.innerHTML =
-        '<div class="csv-import-loader" role="status" aria-live="polite">' +
-        '<div class="csv-import-loader__track" aria-hidden="true">' +
-        '<span class="csv-import-loader__row"></span><span class="csv-import-loader__row"></span>' +
-        '<span class="csv-import-loader__row"></span><span class="csv-import-loader__row"></span>' +
-        '<span class="csv-import-loader__row"></span></div>' +
-        '<p class="csv-import-loader__text">' + escapeHtml(message || 'Reading your CSV…') + '</p></div>';
-    }
-
-    function groupCsvSkipped(skipped) {
-      var groups = {};
-      (skipped || []).forEach(function(row) {
-        var msg = row.message || 'Skipped';
-        if (!groups[msg]) groups[msg] = { message: msg, rows: [] };
-        groups[msg].rows.push(row.row);
-      });
-      return Object.keys(groups).map(function(k) {
-        var g = groups[k];
-        g.rows.sort(function(a, b) { return a - b; });
-        return g;
-      });
-    }
-
-    function animateCsvStatNumbers(root) {
-      if (!root || csvImportReducedMotion()) return;
-      root.querySelectorAll('[data-count]').forEach(function(node) {
-        var target = parseInt(node.getAttribute('data-count'), 10) || 0;
-        var start = performance.now();
-        var duration = 650;
-        function tick(now) {
-          var t = Math.min(1, (now - start) / duration);
-          var eased = 1 - Math.pow(1 - t, 3);
-          node.textContent = String(Math.round(target * eased));
-          if (t < 1) requestAnimationFrame(tick);
-        }
-        requestAnimationFrame(tick);
-      });
+      if (csvResultViz()) csvResultViz().showLoading(el, message || 'Reading your CSV…');
     }
 
     function renderCsvResult(data, opts) {
-      opts = opts || {};
       var el = document.getElementById('csvImportResult');
-      if (!el) return;
-      if (data.fatal_error) {
-        el.innerHTML = '<p class="nhsuk-body-s" style="color:var(--nhsuk-error); font-weight:600;">' + escapeHtml(data.fatal_error) + '</p>';
-        return;
-      }
-      var total = Math.max(0, Number(data.total_data_rows || 0));
-      var valid = Math.max(0, Number(data.valid_row_count || 0));
-      var skippedN = (data.skipped && data.skipped.length) || 0;
-      var invalidN = (data.invalid && data.invalid.length) || 0;
-      var skippedDup = Number(data.skipped_duplicate_count || 0);
-      var denom = total || (valid + skippedN + invalidN) || 1;
-      var wValid = Math.round((valid / denom) * 1000) / 10;
-      var wSkipped = Math.round((skippedN / denom) * 1000) / 10;
-      var wInvalid = Math.round((invalidN / denom) * 1000) / 10;
-      var parts = [];
-      parts.push(
-        '<div class="csv-import-viz" style="--w-valid:' + wValid + '%;--w-skipped:' + wSkipped + '%;--w-invalid:' + wInvalid + '%;" role="status">' +
-        '<div class="csv-import-viz__bar" aria-hidden="true" title="Breakdown of rows in your file">' +
-        (valid ? '<span class="csv-import-viz__seg csv-import-viz__seg--valid"></span>' : '') +
-        (skippedN ? '<span class="csv-import-viz__seg csv-import-viz__seg--skipped"></span>' : '') +
-        (invalidN ? '<span class="csv-import-viz__seg csv-import-viz__seg--invalid"></span>' : '') +
-        '</div>' +
-        '<div class="csv-import-viz__stats">' +
-        '<div class="csv-import-stat csv-import-stat--valid"><span class="csv-import-stat__num" data-count="' + valid + '">' + (csvImportReducedMotion() ? valid : '0') + '</span><span class="csv-import-stat__label">Ready to import</span></div>' +
-        '<div class="csv-import-stat"><span class="csv-import-stat__num" data-count="' + total + '">' + (csvImportReducedMotion() ? total : '0') + '</span><span class="csv-import-stat__label">Rows in file</span></div>' +
-        (skippedN ? '<div class="csv-import-stat"><span class="csv-import-stat__num" data-count="' + skippedN + '">' + (csvImportReducedMotion() ? skippedN : '0') + '</span><span class="csv-import-stat__label">Skipped</span></div>' : '') +
-        (invalidN ? '<div class="csv-import-stat csv-import-stat--invalid"><span class="csv-import-stat__num" data-count="' + invalidN + '">' + (csvImportReducedMotion() ? invalidN : '0') + '</span><span class="csv-import-stat__label">Need fixing</span></div>' : '') +
-        '</div>'
-      );
-      if (data.multi_person_export) {
-        parts.push('<p class="csv-import-viz__note">Team or trust-wide export — only <strong>your</strong> training is imported. Other people’s rows are skipped automatically.</p>');
-      } else if (skippedN && !invalidN) {
-        parts.push('<p class="csv-import-viz__note">Some rows were skipped because they don’t apply to your profile.</p>');
-      }
-      if (skippedN) {
-        var groups = groupCsvSkipped(data.skipped);
-        parts.push('<details><summary>Why were ' + skippedN + ' row' + (skippedN === 1 ? '' : 's') + ' skipped?</summary><ul class="csv-import-skip-groups">');
-        groups.forEach(function(g) {
-          var rowLabel = g.rows.length > 8 ? g.rows.slice(0, 8).join(', ') + '…' : g.rows.join(', ');
-          parts.push('<li><strong>' + g.rows.length + '</strong> — ' + escapeHtml(g.message) + (g.rows.length ? ' <span style="opacity:0.85;">(rows ' + escapeHtml(rowLabel) + ')</span>' : '') + '</li>');
-        });
-        parts.push('</ul></details>');
-      }
-      if (invalidN) {
-        parts.push('<ul class="csv-import-viz__errors" aria-label="Rows that need fixing">');
-        data.invalid.slice(0, 8).forEach(function(row) {
-          parts.push('<li>Row ' + row.row + ': ' + escapeHtml(row.message) + '</li>');
-        });
-        if (data.invalid.length > 8) {
-          parts.push('<li>… and ' + (data.invalid.length - 8) + ' more</li>');
-        }
-        parts.push('</ul>');
-      }
-      if (opts.imported) {
-        parts.push('<p class="csv-import-viz__success">Issued ' + opts.imported + ' training record(s). They appear in My training.</p>');
-      }
-      if (skippedDup > 0) {
-        parts.push('<p class="csv-import-viz__note">Skipped <strong>' + skippedDup + '</strong> duplicate row(s) already in your list.</p>');
-      }
-      if (opts.allDuplicates) {
-        parts.push('<p class="csv-import-viz__success">No new records were added; everything matched training you already have.</p>');
-      }
-      parts.push('</div>');
-      el.innerHTML = parts.join('');
-      var viz = el.querySelector('.csv-import-viz');
-      if (viz) {
-        requestAnimationFrame(function() {
-          viz.classList.add('is-ready');
-          animateCsvStatNumbers(viz);
-        });
-      }
+      if (csvResultViz()) csvResultViz().esrImport(el, data, opts || {});
     }
 
     function escapeHtml(s) {

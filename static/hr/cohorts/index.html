@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260521-5">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260522-1">
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
@@ -83,6 +83,7 @@
                   </div>
                   <span class="hr-roster-file-name" id="cohortEmailsFileName" aria-live="polite">No file chosen</span>
                   <p class="hr-roster-upload-status" id="cohortEmailsFileStatus" hidden role="status"></p>
+                  <div id="cohortEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
                 </div>
               </div>
               <p class="hr-cohort-inset" style="margin-bottom:1rem;" id="welcomePreview"></p>
@@ -92,7 +93,8 @@
               </div>
             </form>
           </div>
-          <p id="createStatus" class="hr-muted" style="min-height:1.25rem;margin-top:0.75rem;" aria-live="polite"></p>
+          <div id="createProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
+          <p id="createStatus" class="hr-muted" style="min-height:1.25rem;margin-top:0.75rem;" hidden aria-live="polite"></p>
           <div id="createResultsWrap" hidden>
             <h3 style="font-size:1rem;margin:1rem 0 0.5rem;">Results</h3>
             <div class="hr-table-wrap">
@@ -146,7 +148,8 @@
               <button type="submit" class="nhsuk-button" id="btnSendCohort">Send to clinicians</button>
             </div>
           </form>
-          <p id="msgStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite"></p>
+          <div id="msgProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
+          <p id="msgStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
         </div>
 
         <div id="panelCohortAdd" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortAdd" hidden>
@@ -174,18 +177,21 @@
                 </div>
                 <span class="hr-roster-file-name" id="addEmailsFileName" aria-live="polite">No file chosen</span>
                 <p class="hr-roster-upload-status" id="addEmailsFileStatus" hidden role="status"></p>
+                <div id="addEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
               </div>
             </div>
             <div class="hr-cohort-panel-actions">
               <button type="submit" class="nhsuk-button nhsuk-button--secondary">Add to cohort</button>
             </div>
           </form>
-          <p id="addStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite"></p>
+          <div id="addProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
+          <p id="addStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
         </div>
       </div>
     </div>
   </main>
 
+  <script src="/static/shared/import-result-viz.js?v=20260522-1"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260521-2"></script>
   <script>
@@ -229,6 +235,12 @@
 
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
       function show(el, on) { if (el) el.hidden = !on; }
+
+      function viz() { return window.NHSBatchResultViz; }
+
+      function clearProvisionResult(el) {
+        if (viz()) viz().clear(el);
+      }
 
       var EMAIL_LINE_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
@@ -395,6 +407,9 @@
               }
               msg += '. ' + out.total + ' total.';
               setRosterUploadStatus(opts.fileStatusId, msg, false);
+              if (opts.fileVizId && viz()) {
+                viz().fileMerge(document.getElementById(opts.fileVizId), out.added, out.total);
+              }
               fileInp.value = '';
               if (nameEl) nameEl.textContent = 'No file chosen';
             };
@@ -571,10 +586,12 @@
         show(document.getElementById('detailView'), false);
         show(document.getElementById('listView'), true);
         _activeCohortId = null;
+        clearProvisionResult(document.getElementById('addProvisionResult'));
         loadCohorts();
       }
 
-      async function openCohort(id) {
+      async function openCohort(id, opts) {
+        opts = opts || {};
         _activeCohortId = id;
         var data = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(id)));
         var c = data.cohort;
@@ -601,6 +618,10 @@
         show(document.getElementById('detailView'), true);
         setStatusEl(document.getElementById('msgStatus'), '', null);
         setStatusEl(document.getElementById('addStatus'), '', null);
+        clearProvisionResult(document.getElementById('msgProvisionResult'));
+        if (!opts.preserveAddViz) {
+          clearProvisionResult(document.getElementById('addProvisionResult'));
+        }
       }
 
       function updateWelcomePreview() {
@@ -615,23 +636,32 @@
       document.getElementById('btnShowCreate').addEventListener('click', function () {
         show(document.getElementById('createCard'), true);
         document.getElementById('createStatus').textContent = '';
+        show(document.getElementById('createStatus'), false);
+        clearProvisionResult(document.getElementById('createProvisionResult'));
         show(document.getElementById('createResultsWrap'), false);
         if (_createEmailRoster) _createEmailRoster.clear();
       });
       document.getElementById('btnCancelCreate').addEventListener('click', function () {
         show(document.getElementById('createCard'), false);
         if (_createEmailRoster) _createEmailRoster.clear();
+        clearProvisionResult(document.getElementById('createProvisionResult'));
       });
 
       document.getElementById('formCreateCohort').addEventListener('submit', async function (e) {
         e.preventDefault();
         var status = document.getElementById('createStatus');
+        var vizEl = document.getElementById('createProvisionResult');
+        var submitBtn = e.target.querySelector('button[type="submit"]');
         var emails = _createEmailRoster ? _createEmailRoster.getEmails() : [];
         if (!emails.length) {
+          show(status, true);
           status.textContent = 'Add at least one NHS work email.';
           return;
         }
-        status.textContent = 'Creating…';
+        show(status, false);
+        clearProvisionResult(vizEl);
+        if (viz()) viz().showLoading(vizEl, 'Creating cohort and provisioning accounts…');
+        if (submitBtn) submitBtn.disabled = true;
         try {
           var data = await apiJson('/api/hr/cohorts', {
             method: 'POST',
@@ -641,10 +671,8 @@
               emails: emails,
             }),
           });
-          var s = data.summary || {};
-          status.textContent = 'Done: ' + (s.created || 0) + ' created, ' + (s.existing || 0) + ' existing, ' + (s.failed || 0) + ' failed.'
-            + (s.welcome_sent ? ' Welcome sent to ' + s.welcome_sent + ' (profile already complete).' : '')
-            + (s.welcome_queued ? ' Welcome queued for ' + s.welcome_queued + ' after profile.' : '');
+          var cohortName = (data.cohort && data.cohort.name) || document.getElementById('cohortName').value.trim();
+          if (viz()) viz().cohortProvision(vizEl, data, { createdCohort: cohortName });
           var wrap = document.getElementById('createResultsWrap');
           var tb = document.getElementById('createResultsTbody');
           tb.innerHTML = (data.results || []).map(function (r) {
@@ -658,7 +686,11 @@
             setTimeout(function () { openCohort(data.cohort.id); }, 400);
           }
         } catch (err) {
+          clearProvisionResult(vizEl);
+          show(status, true);
           status.textContent = err.message || 'Failed';
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
         }
       });
 
@@ -704,21 +736,26 @@
         }
         if (!confirmCohortSend(_detailMembers.length, _detailMembers)) return;
         var st = document.getElementById('msgStatus');
-        setStatusEl(st, 'Sending…', null);
+        var msgViz = document.getElementById('msgProvisionResult');
+        var sendBtn = document.getElementById('btnSendCohort');
+        show(st, false);
+        clearProvisionResult(msgViz);
+        if (viz()) viz().showLoading(msgViz, 'Sending message to cohort…');
+        if (sendBtn) sendBtn.disabled = true;
         try {
           var out = await apiJson('/api/hr/cohorts/' + _activeCohortId + '/message', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ body: body }),
           });
-          var sent = out.sent || 0;
-          var failN = (out.failed && out.failed.length) || 0;
-          setStatusEl(st,
-            'Sent to ' + sent + ' clinician' + (sent === 1 ? '' : 's') + (failN ? '; ' + failN + ' could not be reached.' : '.'),
-            failN ? 'error' : 'ok');
+          if (viz()) viz().cohortMessage(msgViz, out);
           document.getElementById('cohortMsgBody').value = '';
         } catch (err) {
+          clearProvisionResult(msgViz);
+          show(st, true);
           setStatusEl(st, err.message || 'Send failed', 'error');
+        } finally {
+          if (sendBtn) sendBtn.disabled = false;
         }
       });
 
@@ -726,30 +763,35 @@
         e.preventDefault();
         if (!_activeCohortId) return;
         var st = document.getElementById('addStatus');
+        var vizEl = document.getElementById('addProvisionResult');
+        var submitBtn = e.target.querySelector('button[type="submit"]');
         var emails = _addEmailRoster ? _addEmailRoster.getEmails() : [];
         if (!emails.length) {
+          show(st, true);
           setStatusEl(st, 'Add at least one NHS work email.', 'error');
           return;
         }
-        setStatusEl(st, 'Adding…', null);
+        show(st, false);
+        clearProvisionResult(vizEl);
+        if (viz()) viz().showLoading(vizEl, 'Adding clinicians to cohort…');
+        if (submitBtn) submitBtn.disabled = true;
         try {
           var data = await apiJson('/api/hr/cohorts/' + _activeCohortId + '/members', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ emails: emails }),
           });
-          var s = data.summary || {};
-          setStatusEl(st,
-            'Added: ' + (s.created || 0) + ' new, ' + (s.existing || 0) + ' already in cohort.'
-            + (s.welcome_sent ? ' Welcome sent to ' + s.welcome_sent + '.' : '')
-            + (s.welcome_queued ? ' Welcome queued for ' + s.welcome_queued + ' after profile.' : ''),
-            'ok');
+          if (viz()) viz().cohortProvision(vizEl, data, {});
           if (_addEmailRoster) _addEmailRoster.clear();
           setCohortTab('add');
-          await openCohort(_activeCohortId);
+          await openCohort(_activeCohortId, { preserveAddViz: true });
           setCohortTab('add');
         } catch (err) {
+          clearProvisionResult(vizEl);
+          show(st, true);
           setStatusEl(st, err.message || 'Failed', 'error');
+        } finally {
+          if (submitBtn) submitBtn.disabled = false;
         }
       });
 
@@ -778,6 +820,7 @@
           fileInputId: 'cohortEmailsFile',
           fileNameId: 'cohortEmailsFileName',
           fileStatusId: 'cohortEmailsFileStatus',
+          fileVizId: 'cohortEmailsFileViz',
         });
         _addEmailRoster = wireEmailRoster({
           listId: 'addEmailsList',
@@ -788,6 +831,7 @@
           fileInputId: 'addEmailsFile',
           fileNameId: 'addEmailsFileName',
           fileStatusId: 'addEmailsFileStatus',
+          fileVizId: 'addEmailsFileViz',
         });
         wireComposeFocus('cohortMsgBody', 'cohortMsgGroup');
         await loadCohorts();

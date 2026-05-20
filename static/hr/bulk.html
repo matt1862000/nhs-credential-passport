@@ -8,7 +8,7 @@
 
   <title>Bulk add training &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260518-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260522-1">
 
 </head>
 <body>
@@ -119,7 +119,8 @@
         </form>
       </div>
       <div class="hr-bulk-status-wrap">
-        <p id="bulkStatus" class="hr-muted hr-bulk-status--muted" role="status" aria-live="polite"></p>
+        <div id="bulkProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
+        <p id="bulkStatus" class="hr-muted hr-bulk-status--muted" role="status" aria-live="polite" hidden></p>
       </div>
       <div id="bulkTableWrap" class="hr-table-wrap" hidden style="margin-top:1rem;">
         <table class="hr-table" aria-label="Bulk training results">
@@ -138,11 +139,12 @@
 
   </main>
 
+  <script src="/static/shared/import-result-viz.js?v=20260522-1"></script>
   <script src="/static/shared/ods-trust-suggest.js"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260521-2"></script>
   <script>window.__HR_PAGE__ = 'bulk';</script>
-  <script src="/static/hr/hr-app.js?v=20260519-1"></script>
+  <script src="/static/hr/hr-app.js?v=20260522-1"></script>
 </body>
 </html>
 

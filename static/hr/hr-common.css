@@ -1,3 +1,5 @@
+@import url('/static/shared/import-result-viz.css?v=20260522-1');
+
     .hr-wrap { max-width: 56rem; }
     .hr-card { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; box-shadow: 0 2px 8px rgba(33, 43, 50, 0.06); padding: 1.25rem 1.5rem; margin-top: 1.25rem; }
     .hr-inbox-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.75rem 1rem; margin: 0 0 0.75rem 0; }
