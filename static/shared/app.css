@@ -148,6 +148,17 @@ a:hover {
   gap: 0.65rem;
   min-width: 0;
 }
+.nhsuk-topnav__account-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+.nhsuk-topnav__verify-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
 .nhsuk-topnav__name {
   font-weight: 600;
   white-space: nowrap;
@@ -177,8 +188,19 @@ a:hover {
   background: rgba(255, 255, 255, 0.18) !important;
   box-shadow: 0 0 0 2px rgba(213, 40, 27, 0.55);
 }
-.nhsuk-topnav__messages--unread .nhsuk-topnav__envelope {
+.nhsuk-topnav__messages--unread .nhsuk-topnav__envelope,
+.nhsuk-topnav__messages--unread .nhsuk-topnav__bell {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
+}
+.nhsuk-topnav__bell {
+  display: block;
+  transition: transform 0.2s ease, filter 0.2s ease;
+}
+.nhsuk-topnav__bell-dot {
+  display: none;
+}
+.nhsuk-topnav__messages--unread .nhsuk-topnav__bell-dot {
+  display: block;
 }
 .nhsuk-topnav__messages--new {
   animation: nav-msg-attn 0.55s ease 3;

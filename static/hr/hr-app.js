@@ -736,6 +736,9 @@
               );
             }
             await refreshPayloadAfterAction(fixedSessionId);
+            if (window.NHSNavAccount && typeof NHSNavAccount.notifyVerifyInboxChanged === 'function') {
+              NHSNavAccount.notifyVerifyInboxChanged();
+            }
           } catch (err) {
             alert(err.message || err);
             await refreshPayloadAfterAction(fixedSessionId);

@@ -23,6 +23,28 @@ DEV_SEED_PASSWORD = "password"
 PROVISIONED_DEMO_PASSWORD = "password"
 DEV_SEED_TRUST_SHEFFIELD = "SHEFFIELD HEALTH PARTNERSHIP UNIVERSITY NHS FOUNDATION TRUST"
 DEV_SEED_TRUST_ROTHERHAM = "ROTHERHAM DONCASTER AND SOUTH HUMBER NHS FOUNDATION TRUST"
+DEV_SEED_DISPLAY_SHEFFIELD = "Sheffield HR"
+DEV_SEED_DISPLAY_ROTHERHAM = "Rotherham HR"
+
+
+def default_hr_display_name(email: str) -> Optional[str]:
+    """Demo HR account labels when profile full name is unset."""
+    e = (email or "").strip().lower()
+    if e == DEV_SEED_EMAIL.strip().lower():
+        return DEV_SEED_DISPLAY_SHEFFIELD
+    if e == DEV_SEED_EMAIL_ROTHERHAM.strip().lower():
+        return DEV_SEED_DISPLAY_ROTHERHAM
+    return None
+
+
+def user_effective_display_name(u: dict) -> Optional[str]:
+    """Preferred UI name: profile display_name, else known HR demo labels."""
+    dn = (u.get("display_name") or "").strip()
+    if dn:
+        return dn
+    if user_is_premium(u):
+        return default_hr_display_name(str(u.get("email") or ""))
+    return None
 
 
 def init_db():
@@ -1527,13 +1549,13 @@ def _ensure_seed_privileged_user(conn: sqlite3.Connection) -> None:
     existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
     if existing and existing[0]:
         conn.execute(
-            "UPDATE users SET password_hash = ?, premium = 1, current_trust = ? WHERE email = ?",
-            (h, trust, email),
+            "UPDATE users SET password_hash = ?, premium = 1, current_trust = ?, display_name = ? WHERE email = ?",
+            (h, trust, DEV_SEED_DISPLAY_SHEFFIELD, email),
         )
         return
     conn.execute(
         "INSERT INTO users (email, password_hash, created_at, premium, gmc_number, display_name, current_trust) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (email, h, datetime.utcnow().isoformat(), 1, None, None, trust),
+        (email, h, datetime.utcnow().isoformat(), 1, None, DEV_SEED_DISPLAY_SHEFFIELD, trust),
     )
 
 
@@ -1553,13 +1575,13 @@ def _ensure_seed_rotherham_user(conn: sqlite3.Connection) -> None:
     existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
     if existing and existing[0]:
         conn.execute(
-            "UPDATE users SET password_hash = ?, premium = 1, current_trust = ? WHERE email = ?",
-            (h, trust, email),
+            "UPDATE users SET password_hash = ?, premium = 1, current_trust = ?, display_name = ? WHERE email = ?",
+            (h, trust, DEV_SEED_DISPLAY_ROTHERHAM, email),
         )
         return
     conn.execute(
         "INSERT INTO users (email, password_hash, created_at, premium, gmc_number, display_name, current_trust) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (email, h, datetime.utcnow().isoformat(), 1, None, None, trust),
+        (email, h, datetime.utcnow().isoformat(), 1, None, DEV_SEED_DISPLAY_ROTHERHAM, trust),
     )
 
 

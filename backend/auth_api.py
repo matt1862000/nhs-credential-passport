@@ -612,7 +612,7 @@ def auth_me(request: Request):
         "email": u["email"],
         "premium": db.user_is_premium(u),
         "gmc_number": u.get("gmc_number"),
-        "display_name": u.get("display_name"),
+        "display_name": db.user_effective_display_name(u),
         "current_trust": u.get("current_trust"),
         "must_change_password": bool(u.get("must_change_password")),
     }

@@ -298,13 +298,18 @@
       return false;
     },
 
-    /** Preferred label for UI greetings (profile full name, else email local-part). */
+    /** Preferred label for UI greetings (profile full name, else HR demo label, else email local-part). */
     displayName(user) {
       var u = user || this.user;
       if (!u) return '';
       var name = String(u.display_name || '').trim();
       if (name) return name;
-      var email = String(u.email || '').trim();
+      var email = String(u.email || '').trim().toLowerCase();
+      if (u.premium && email) {
+        var local = email.indexOf('@') > 0 ? email.split('@')[0] : email;
+        if (local === 'sheffieldhr') return 'Sheffield HR';
+        if (local === 'rotherhamhr') return 'Rotherham HR';
+      }
       if (email && email.indexOf('@') > 0) return email.split('@')[0];
       return email;
     },
