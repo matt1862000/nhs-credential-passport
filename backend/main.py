@@ -386,7 +386,7 @@ def sign_in_redirect():
 
 @app.get("/register", response_class=RedirectResponse)
 def register_redirect():
-    return RedirectResponse(url="/static/auth/?mode=register", status_code=302)
+    return RedirectResponse(url="/static/auth/", status_code=302)
 
 
 @app.get("/plan-move", response_class=RedirectResponse)

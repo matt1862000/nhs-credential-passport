@@ -1,6 +1,6 @@
 /**
- * Home page: same optional account + server wallet sync as /static/staff/,
- * so clinicians can register without opening My training first.
+ * Home page: optional account + server wallet sync as /static/staff/.
+ * Accounts are HR-provisioned; sign-in only (no self-registration).
  */
 (function () {
   function getStored() {
@@ -180,37 +180,8 @@
   }
 
   function wireForms() {
-    var fr = document.getElementById('homeFormRegister');
     var fl = document.getElementById('homeFormLogin');
     var lo = document.getElementById('homeBtnLogout');
-    if (fr) {
-      fr.addEventListener('submit', async function (e) {
-        e.preventDefault();
-        showHomeAuthFeedback('');
-        var fd = new FormData(fr);
-        var email = (fd.get('email') || '').trim();
-        var password = fd.get('password') || '';
-        var out = await authJson('/api/auth/register', { email: email, password: password });
-        if (!out.ok) {
-          var det = out.data && out.data.detail;
-          showHomeAuthFeedback(typeof det === 'string' ? det : (out.text || 'Could not create account'));
-          return;
-        }
-        await refreshAuthState();
-        await syncWalletToServer([]);
-        if (window.NHSWallet && typeof NHSWallet.resetDeviceWalletCache === 'function') {
-          await NHSWallet.resetDeviceWalletCache();
-        }
-        await pullMergeFromServer();
-        fr.reset();
-        var esr = document.getElementById('home-step-esr');
-        if (esr) {
-          esr.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          esr.setAttribute('tabindex', '-1');
-          esr.focus();
-        }
-      });
-    }
     if (fl) {
       fl.addEventListener('submit', async function (e) {
         e.preventDefault();

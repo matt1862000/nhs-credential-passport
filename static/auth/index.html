@@ -9,15 +9,8 @@
   <title>Sign in &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260519-1">
   <style>
-    .auth-toggle { display: inline-flex; gap: 0; border: 2px solid var(--nhsuk-border); border-radius: 4px; overflow: hidden; margin-bottom: 1.25rem; }
-    .auth-toggle button {
-      background: #fff; border: none; padding: 0.55rem 1rem; font-family: inherit;
-      font-size: 1rem; font-weight: 600; color: var(--nhsuk-link); cursor: pointer;
-    }
-    .auth-toggle button[aria-selected="true"] { background: var(--nhsuk-link); color: #fff; }
-    .auth-toggle button:focus { outline: 3px solid var(--nhsuk-focus); outline-offset: 2px; }
     .auth-card { max-width: 28rem; }
-    .auth-card .nhsuk-hint { display: block; font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.35rem; }
+    .auth-card .nhsuk-hint { display: block; font-size: 0.875rem; color: var(--nhsuk-secondary-text); margin-top: 0.35rem; line-height: 1.45; }
   </style>
 </head>
 <body>
@@ -35,44 +28,24 @@
   </header>
 
   <main class="nhsuk-main" id="maincontent" role="main">
-    <h1 class="nhsuk-page-heading" id="authPageTitle">Sign in</h1>
-    <p class="nhsuk-lead" id="authPageLead">Use the same account on any device to keep your training list in sync.</p>
-
-    <div class="auth-toggle" role="tablist" aria-label="Choose sign in or create account">
-      <button type="button" id="tabSignIn" role="tab" aria-selected="true">Sign in</button>
-      <button type="button" id="tabRegister" role="tab" aria-selected="false">Create account</button>
-    </div>
+    <h1 class="nhsuk-page-heading">Sign in</h1>
+    <p class="nhsuk-lead">Your HR team creates your DocPass account. Sign in with your <strong>NHS work email</strong> and the password sent to your personal email.</p>
 
     <section class="nhsuk-card auth-card" id="signInCard">
       <h2>Sign in</h2>
       <form id="formSignIn" novalidate>
         <div class="nhsuk-form-group">
-          <label class="nhsuk-label" for="loginEmail">Email address</label>
-          <input class="nhsuk-input" type="email" id="loginEmail" name="email" autocomplete="email" required placeholder="you@nhs.net">
+          <label class="nhsuk-label" for="loginEmail">NHS work email</label>
+          <input class="nhsuk-input" type="email" id="loginEmail" name="email" autocomplete="email" required placeholder="firstname.surname123@nhs.net">
         </div>
         <div class="nhsuk-form-group">
           <label class="nhsuk-label" for="loginPassword">Password</label>
           <input class="nhsuk-input" type="password" id="loginPassword" name="password" autocomplete="current-password" required>
+          <span class="nhsuk-hint">Use the password HR sent to your personal email. You will be asked to change it on first sign-in.</span>
         </div>
         <button type="submit" class="nhsuk-button">Sign in</button>
       </form>
       <p class="nhsuk-error-msg" id="signInError" hidden role="alert"></p>
-    </section>
-
-    <section class="nhsuk-card auth-card" id="registerCard" hidden>
-      <h2>Create account</h2>
-      <form id="formRegister" novalidate>
-        <div class="nhsuk-form-group">
-          <label class="nhsuk-label" for="regEmail">Email address</label>
-          <input class="nhsuk-input" type="email" id="regEmail" name="email" autocomplete="email" required placeholder="you@nhs.net">
-        </div>
-        <div class="nhsuk-form-group">
-          <label class="nhsuk-label" for="regPassword">Password (8+ characters)</label>
-          <input class="nhsuk-input" type="password" id="regPassword" name="password" autocomplete="new-password" required minlength="8">
-        </div>
-        <button type="submit" class="nhsuk-button">Create account</button>
-      </form>
-      <p class="nhsuk-error-msg" id="registerError" hidden role="alert"></p>
     </section>
   </main>
 
@@ -80,33 +53,6 @@
   <script src="/static/shared/auth.js"></script>
   <script>
     (function () {
-      var p = new URLSearchParams(window.location.search);
-      var initialMode = p.get('mode') === 'register' ? 'register' : 'signin';
-      var tabSI = document.getElementById('tabSignIn');
-      var tabReg = document.getElementById('tabRegister');
-      var cardSI = document.getElementById('signInCard');
-      var cardReg = document.getElementById('registerCard');
-      var lead = document.getElementById('authPageLead');
-      var title = document.getElementById('authPageTitle');
-
-      function show(mode) {
-        var isReg = mode === 'register';
-        tabSI.setAttribute('aria-selected', isReg ? 'false' : 'true');
-        tabReg.setAttribute('aria-selected', isReg ? 'true' : 'false');
-        cardSI.hidden = isReg;
-        cardReg.hidden = !isReg;
-        title.textContent = isReg ? 'Create account' : 'Sign in';
-        lead.textContent = isReg
-          ? 'Use your email and choose a password to start.'
-          : 'Use the same account on any device to keep your training list in sync.';
-        var url = new URL(window.location.href);
-        url.searchParams.set('mode', isReg ? 'register' : 'signin');
-        window.history.replaceState({}, '', url.toString());
-      }
-      tabSI.addEventListener('click', function () { show('signin'); });
-      tabReg.addEventListener('click', function () { show('register'); });
-      show(initialMode);
-
       function showErr(id, msg) {
         var el = document.getElementById(id);
         if (!el) return;
@@ -158,26 +104,6 @@
         }
       });
 
-      document.getElementById('formRegister').addEventListener('submit', async function (e) {
-        e.preventDefault();
-        showErr('registerError', '');
-        setSubmitBusy('formRegister', true, 'Creating account…');
-        var fd = new FormData(this);
-        try {
-          await NHSAuth.register((fd.get('email') || '').trim(), fd.get('password') || '');
-          /* Do not merge an old browser list into a brand-new account (shared device / prior anonymous use). */
-          if (window.NHSWallet && typeof NHSWallet.resetDeviceWalletCache === 'function') {
-            await NHSWallet.resetDeviceWalletCache();
-          }
-          await NHSAuth.pullWalletMerge();
-          NHSAuth.redirectAfterAuth('/static/profile/?welcome=1');
-        } catch (err) {
-          showErr('registerError', err.message || 'Could not create account');
-          setSubmitBusy('formRegister', false);
-        }
-      });
-
-      /* If already signed in, skip auth page. */
       (async function () {
         await NHSAuth.refresh();
         if (!NHSAuth.user) return;

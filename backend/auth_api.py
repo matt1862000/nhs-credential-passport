@@ -572,24 +572,11 @@ def _session_response(data: dict, user_id: int, email: str, request: Request) ->
 
 @router.post("/auth/register")
 def auth_register(request: Request, body: dict):
-    email = _normalize_email(body.get("email") or "")
-    password = body.get("password") or ""
-    _reserved = {
-        db.DEV_SEED_EMAIL.strip().lower(),
-        db.DEV_SEED_EMAIL_ROTHERHAM.strip().lower(),
-    }
-    if email in _reserved:
-        raise HTTPException(status_code=403, detail="This email is reserved. Use sign in.")
-    if not EMAIL_RE.match(email):
-        raise HTTPException(status_code=400, detail="Invalid email")
-    if len(str(password)) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    h = bcrypt.hashpw(str(password).encode("utf-8"), bcrypt.gensalt()).decode("ascii")
-    try:
-        uid = db.user_create(email, h, None)
-    except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail="Email already registered")
-    return _session_response({"ok": True, "email": email}, uid, email, request)
+    """Self-service registration disabled; HR provisions accounts via cohorts."""
+    raise HTTPException(
+        status_code=403,
+        detail="Accounts are created by your HR team. Sign in with your NHS work email.",
+    )
 
 
 @router.post("/auth/login")
