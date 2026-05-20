@@ -19,6 +19,8 @@ DB_PATH = Path(__file__).resolve().parent.parent / "data" / "credentials.db"
 DEV_SEED_EMAIL = "sheffieldhr@nhs.net"
 DEV_SEED_EMAIL_ROTHERHAM = "rotherhamhr@nhs.net"
 DEV_SEED_PASSWORD = "password"
+# Demo-only: HR-provisioned clinicians start with this password; never returned via API.
+PROVISIONED_DEMO_PASSWORD = "password"
 DEV_SEED_TRUST_SHEFFIELD = "SHEFFIELD HEALTH PARTNERSHIP UNIVERSITY NHS FOUNDATION TRUST"
 DEV_SEED_TRUST_ROTHERHAM = "ROTHERHAM DONCASTER AND SOUTH HUMBER NHS FOUNDATION TRUST"
 
@@ -60,6 +62,8 @@ def init_db():
         _ensure_mandatory_topics_table(conn)
         _ensure_messaging_tables(conn)
         _ensure_hr_attestations_table(conn)
+        _ensure_users_provision_columns(conn)
+        _ensure_hr_cohorts_tables(conn)
         _ensure_seed_privileged_user(conn)
         _ensure_seed_rotherham_user(conn)
         conn.commit()
@@ -1582,6 +1586,48 @@ def _ensure_users_profile_extra_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN current_trust TEXT")
 
 
+def _ensure_users_provision_columns(conn: sqlite3.Connection) -> None:
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "must_change_password" not in cols:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0"
+        )
+    if "provisioned_by_hr" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN provisioned_by_hr INTEGER")
+
+
+def _ensure_hr_cohorts_tables(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hr_cohorts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hr_trust TEXT NOT NULL,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by_user_id INTEGER NOT NULL REFERENCES users(id)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hr_cohorts_trust ON hr_cohorts(hr_trust)"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS hr_cohort_members (
+            cohort_id INTEGER NOT NULL REFERENCES hr_cohorts(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (cohort_id, user_id)
+        )
+    """)
+
+
+def _provisioned_password_hash() -> str:
+    if bcrypt is None:
+        raise RuntimeError("bcrypt required for account provisioning")
+    return bcrypt.hashpw(
+        PROVISIONED_DEMO_PASSWORD.encode("utf-8"),
+        bcrypt.gensalt(),
+    ).decode("ascii")
+
+
 def register_credential(credential_id: str, expiry_date: str):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
@@ -1640,27 +1686,38 @@ def user_create(email: str, password_hash: str, gmc_number: Optional[str] = None
         return int(cur.lastrowid)
 
 
+def _user_public_dict(row: sqlite3.Row, include_password_hash: bool = False) -> dict:
+    out = {
+        "id": row["id"],
+        "email": row["email"],
+        "premium": bool(row["premium"]) if row["premium"] is not None else False,
+        "gmc_number": row["gmc_number"],
+        "display_name": row["display_name"],
+        "current_trust": row["current_trust"],
+        "must_change_password": bool(row["must_change_password"])
+        if "must_change_password" in row.keys() and row["must_change_password"] is not None
+        else False,
+    }
+    if include_password_hash:
+        out["password_hash"] = row["password_hash"]
+    return out
+
+
 def user_get_by_email(email: str):
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_premium_column(conn)
         _ensure_users_gmc_number_column(conn)
         _ensure_users_profile_extra_columns(conn)
+        _ensure_users_provision_columns(conn)
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT id, email, password_hash, premium, gmc_number, display_name, current_trust FROM users WHERE email = ?",
+            """SELECT id, email, password_hash, premium, gmc_number, display_name, current_trust,
+                      must_change_password FROM users WHERE email = ?""",
             (email,),
         ).fetchone()
     if not row:
         return None
-    return {
-        "id": row["id"],
-        "email": row["email"],
-        "password_hash": row["password_hash"],
-        "premium": bool(row["premium"]) if row["premium"] is not None else False,
-        "gmc_number": row["gmc_number"],
-        "display_name": row["display_name"],
-        "current_trust": row["current_trust"],
-    }
+    return _user_public_dict(row, include_password_hash=True)
 
 
 def user_get_by_id(user_id: int):
@@ -1668,21 +1725,63 @@ def user_get_by_id(user_id: int):
         _ensure_users_premium_column(conn)
         _ensure_users_gmc_number_column(conn)
         _ensure_users_profile_extra_columns(conn)
+        _ensure_users_provision_columns(conn)
         conn.row_factory = sqlite3.Row
         row = conn.execute(
-            "SELECT id, email, premium, gmc_number, display_name, current_trust FROM users WHERE id = ?",
+            """SELECT id, email, premium, gmc_number, display_name, current_trust,
+                      must_change_password FROM users WHERE id = ?""",
             (user_id,),
         ).fetchone()
     if not row:
         return None
-    return {
-        "id": row["id"],
-        "email": row["email"],
-        "premium": bool(row["premium"]) if row["premium"] is not None else False,
-        "gmc_number": row["gmc_number"],
-        "display_name": row["display_name"],
-        "current_trust": row["current_trust"],
-    }
+    return _user_public_dict(row)
+
+
+def user_must_change_password(user_id: int) -> bool:
+    u = user_get_by_id(user_id)
+    return bool(u and u.get("must_change_password"))
+
+
+def user_set_password(user_id: int, password_hash: str, clear_must_change: bool = False) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_provision_columns(conn)
+        if clear_must_change:
+            conn.execute(
+                "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+                (password_hash, int(user_id)),
+            )
+        else:
+            conn.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?",
+                (password_hash, int(user_id)),
+            )
+        conn.commit()
+
+
+def user_create_provisioned(email: str, provisioned_by_hr_user_id: int) -> int:
+    """Create non-premium clinician with demo password and must_change_password=1."""
+    email = (email or "").strip().lower()
+    h = _provisioned_password_hash()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_premium_column(conn)
+        _ensure_users_gmc_number_column(conn)
+        _ensure_users_profile_extra_columns(conn)
+        _ensure_users_provision_columns(conn)
+        cur = conn.execute(
+            """INSERT INTO users (
+                   email, password_hash, created_at, premium, gmc_number, display_name, current_trust,
+                   must_change_password, provisioned_by_hr
+               ) VALUES (?, ?, ?, 0, NULL, NULL, NULL, 1, ?)""",
+            (email, h, datetime.utcnow().isoformat(), int(provisioned_by_hr_user_id)),
+        )
+        uid = int(cur.lastrowid)
+        conn.execute(
+            """INSERT INTO user_wallets (user_id, wallet_json, updated_at) VALUES (?, '[]', ?)
+               ON CONFLICT(user_id) DO NOTHING""",
+            (uid, datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+        return uid
 
 
 def user_set_profile(
@@ -1742,3 +1841,185 @@ def user_wallet_put(user_id: int, wallet_json: str):
             (user_id, wallet_json, datetime.utcnow().isoformat()),
         )
         conn.commit()
+
+
+# ---------- HR cohorts (provision clinicians + group messaging) ----------
+
+
+def cohort_create(hr_trust: str, name: str, created_by_user_id: int) -> int:
+    hr_trust = (hr_trust or "").strip()
+    name = (name or "").strip()
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        cur = conn.execute(
+            "INSERT INTO hr_cohorts (hr_trust, name, created_at, created_by_user_id) VALUES (?, ?, ?, ?)",
+            (hr_trust, name, now, int(created_by_user_id)),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def cohort_list_for_trust(hr_trust: str) -> list[dict]:
+    hr_trust = (hr_trust or "").strip()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
+                   (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
+            FROM hr_cohorts c
+            WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
+            ORDER BY c.created_at DESC
+            """,
+            (hr_trust,),
+        ).fetchall()
+    return [
+        {
+            "id": int(r["id"]),
+            "hr_trust": r["hr_trust"],
+            "name": r["name"],
+            "created_at": r["created_at"],
+            "created_by_user_id": int(r["created_by_user_id"]),
+            "member_count": int(r["member_count"] or 0),
+        }
+        for r in rows
+    ]
+
+
+def cohort_get(cohort_id: int, hr_trust: str) -> Optional[dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
+                   (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
+            FROM hr_cohorts c
+            WHERE c.id = ? AND LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
+            """,
+            (int(cohort_id), (hr_trust or "").strip()),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": int(row["id"]),
+        "hr_trust": row["hr_trust"],
+        "name": row["name"],
+        "created_at": row["created_at"],
+        "created_by_user_id": int(row["created_by_user_id"]),
+        "member_count": int(row["member_count"] or 0),
+    }
+
+
+def cohort_members_list(cohort_id: int, hr_trust: str) -> list[dict]:
+    if not cohort_get(cohort_id, hr_trust):
+        return []
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        _ensure_users_provision_columns(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT u.id, u.email, u.display_name, u.gmc_number, u.current_trust,
+                   u.must_change_password, u.provisioned_by_hr, m.added_at
+            FROM hr_cohort_members m
+            JOIN users u ON u.id = m.user_id
+            WHERE m.cohort_id = ?
+            ORDER BY u.display_name, u.email
+            """,
+            (int(cohort_id),),
+        ).fetchall()
+    return [
+        {
+            "user_id": int(r["id"]),
+            "email": r["email"],
+            "display_name": r["display_name"],
+            "gmc_number": r["gmc_number"],
+            "current_trust": r["current_trust"],
+            "must_change_password": bool(r["must_change_password"]),
+            "provisioned_by_hr": r["provisioned_by_hr"],
+            "added_at": r["added_at"],
+        }
+        for r in rows
+    ]
+
+
+def cohort_member_user_ids(cohort_id: int, hr_trust: str) -> list[int]:
+    members = cohort_members_list(cohort_id, hr_trust)
+    return [int(m["user_id"]) for m in members]
+
+
+def cohort_add_member(cohort_id: int, user_id: int) -> None:
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        conn.execute(
+            """INSERT OR IGNORE INTO hr_cohort_members (cohort_id, user_id, added_at)
+               VALUES (?, ?, ?)""",
+            (int(cohort_id), int(user_id), now),
+        )
+        conn.commit()
+
+
+def cohort_add_members_from_emails(
+    cohort_id: int,
+    hr_trust: str,
+    emails: list[str],
+    hr_user_id: int,
+    reserved_emails: set[str],
+) -> list[dict]:
+    """
+    For each email: create provisioned user or link existing; add to cohort.
+    Returns per-row result dicts (email, status, user_id, error).
+    """
+    cohort = cohort_get(cohort_id, hr_trust)
+    if not cohort:
+        raise ValueError("cohort_not_found")
+    results: list[dict] = []
+    for raw in emails:
+        email = (raw or "").strip().lower()
+        if not email:
+            continue
+        if email in reserved_emails:
+            results.append(
+                {"email": email, "status": "failed", "user_id": None, "error": "reserved email"}
+            )
+            continue
+        existing = user_get_by_email(email)
+        if existing:
+            if user_is_premium(existing):
+                results.append(
+                    {
+                        "email": email,
+                        "status": "failed",
+                        "user_id": None,
+                        "error": "premium account",
+                    }
+                )
+                continue
+            uid = int(existing["id"])
+            cohort_add_member(cohort_id, uid)
+            results.append({"email": email, "status": "existing", "user_id": uid, "error": None})
+            continue
+        try:
+            uid = user_create_provisioned(email, hr_user_id)
+            cohort_add_member(cohort_id, uid)
+            results.append({"email": email, "status": "created", "user_id": uid, "error": None})
+        except sqlite3.IntegrityError:
+            existing = user_get_by_email(email)
+            if existing and not user_is_premium(existing):
+                uid = int(existing["id"])
+                cohort_add_member(cohort_id, uid)
+                results.append({"email": email, "status": "existing", "user_id": uid, "error": None})
+            else:
+                results.append(
+                    {
+                        "email": email,
+                        "status": "failed",
+                        "user_id": None,
+                        "error": "could not create account",
+                    }
+                )
+    return results

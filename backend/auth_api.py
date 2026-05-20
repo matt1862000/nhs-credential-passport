@@ -41,7 +41,13 @@ MAX_WALLET_BYTES = 4 * 1024 * 1024
 DEV_SEED_EMAIL = "sheffieldhr@nhs.net"
 MAX_HR_BULK_ROSTER_BYTES = 256 * 1024
 MAX_HR_BULK_LINES = 50
+MAX_HR_COHORT_LINES = 200
 MAX_HR_BULK_EVIDENCE_BYTES = 10 * 1024 * 1024
+
+COHORT_WELCOME_MESSAGE = (
+    "Your trust has set up DocPass for you. Sign in with your NHS email; "
+    "check the personal email HR used for login details. Change your password when prompted."
+)
 
 
 def _normalize_email(email: str) -> str:
@@ -571,7 +577,36 @@ def auth_me(request: Request):
         "gmc_number": u.get("gmc_number"),
         "display_name": u.get("display_name"),
         "current_trust": u.get("current_trust"),
+        "must_change_password": bool(u.get("must_change_password")),
     }
+
+
+@router.post("/auth/change-password")
+async def auth_change_password(request: Request):
+    uid = require_user_id(request)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    current = str(body.get("current_password") or "")
+    new_pw = str(body.get("new_password") or "")
+    if len(new_pw) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    brief = db.user_get_by_id(uid)
+    if not brief:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    u = db.user_get_by_email(brief.get("email") or "")
+    if not u or "password_hash" not in u:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    try:
+        ok = bcrypt.checkpw(current.encode("utf-8"), u["password_hash"].encode("utf-8"))
+    except ValueError:
+        ok = False
+    if not ok:
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    h = bcrypt.hashpw(new_pw.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
+    db.user_set_password(uid, h, clear_must_change=True)
+    return {"ok": True}
 
 
 @router.put("/me/profile")
@@ -1723,3 +1758,183 @@ async def hr_messages_send(request: Request, conv_id: int):
         raise HTTPException(status_code=400, detail="Message body cannot be empty")
     msg = db.message_send_body(int(conv_id), int(hr["id"]), text)
     return msg
+
+
+# ── HR cohorts (provision clinicians + group messaging) ─────────────────────
+
+
+def _cohort_reserved_emails() -> set[str]:
+    return {
+        db.DEV_SEED_EMAIL.strip().lower(),
+        db.DEV_SEED_EMAIL_ROTHERHAM.strip().lower(),
+    }
+
+
+def _parse_cohort_emails(raw_emails) -> list[str]:
+    if isinstance(raw_emails, list):
+        lines = [str(x).strip() for x in raw_emails if str(x).strip()]
+    elif isinstance(raw_emails, str):
+        lines = _parse_roster_lines(raw_emails)
+    else:
+        lines = []
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        email = _normalize_email(line.split(",")[0].strip())
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        out.append(email)
+    return out
+
+
+def _hr_broadcast_to_doctors(
+    hr_user_id: int,
+    hr_trust: str,
+    doctor_ids: list[int],
+    body: str,
+) -> dict:
+    sent = 0
+    failed: list[dict] = []
+    for did in doctor_ids:
+        try:
+            doc = db.user_get_by_id(int(did))
+            if not doc or db.user_is_premium(doc):
+                failed.append({"doctor_user_id": did, "error": "clinician not found"})
+                continue
+            conv = db.conversation_get_or_create(int(did), hr_trust)
+            db.message_send_body(int(conv["id"]), int(hr_user_id), body)
+            sent += 1
+        except Exception as e:
+            failed.append({"doctor_user_id": did, "error": str(e)})
+    return {"sent": sent, "failed": failed}
+
+
+@router.get("/hr/cohorts")
+def hr_cohorts_list(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    return {"cohorts": db.cohort_list_for_trust(trust)}
+
+
+@router.post("/hr/cohorts")
+async def hr_cohorts_create(request: Request):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Cohort name is required")
+    emails = _parse_cohort_emails(body.get("emails"))
+    if not emails:
+        raise HTTPException(status_code=400, detail="At least one NHS email is required")
+    if len(emails) > MAX_HR_COHORT_LINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many emails ({len(emails)}). Maximum is {MAX_HR_COHORT_LINES}.",
+        )
+    for email in emails:
+        if not EMAIL_RE.match(email):
+            raise HTTPException(status_code=400, detail=f"Invalid email: {email}")
+
+    cohort_id = db.cohort_create(trust, name, int(hr["id"]))
+    results = db.cohort_add_members_from_emails(
+        cohort_id, trust, emails, int(hr["id"]), _cohort_reserved_emails()
+    )
+    welcome_sent = 0
+    if body.get("send_welcome"):
+        user_ids = [r["user_id"] for r in results if r.get("user_id")]
+        out = _hr_broadcast_to_doctors(int(hr["id"]), trust, user_ids, COHORT_WELCOME_MESSAGE)
+        welcome_sent = out["sent"]
+
+    created = sum(1 for r in results if r.get("status") == "created")
+    existing = sum(1 for r in results if r.get("status") == "existing")
+    failed = sum(1 for r in results if r.get("status") == "failed")
+
+    return {
+        "cohort": db.cohort_get(cohort_id, trust),
+        "results": results,
+        "summary": {
+            "created": created,
+            "existing": existing,
+            "failed": failed,
+            "welcome_sent": welcome_sent,
+        },
+    }
+
+
+@router.get("/hr/cohorts/{cohort_id}")
+def hr_cohorts_detail(request: Request, cohort_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    cohort = db.cohort_get(int(cohort_id), trust)
+    if not cohort:
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    members = db.cohort_members_list(int(cohort_id), trust)
+    return {"cohort": cohort, "members": members}
+
+
+@router.post("/hr/cohorts/{cohort_id}/members")
+async def hr_cohorts_add_members(request: Request, cohort_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    if not db.cohort_get(int(cohort_id), trust):
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    emails = _parse_cohort_emails(body.get("emails"))
+    if not emails:
+        raise HTTPException(status_code=400, detail="At least one NHS email is required")
+    if len(emails) > MAX_HR_COHORT_LINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many emails ({len(emails)}). Maximum is {MAX_HR_COHORT_LINES}.",
+        )
+    for email in emails:
+        if not EMAIL_RE.match(email):
+            raise HTTPException(status_code=400, detail=f"Invalid email: {email}")
+
+    results = db.cohort_add_members_from_emails(
+        int(cohort_id), trust, emails, int(hr["id"]), _cohort_reserved_emails()
+    )
+    welcome_sent = 0
+    if body.get("send_welcome"):
+        user_ids = [r["user_id"] for r in results if r.get("user_id")]
+        out = _hr_broadcast_to_doctors(int(hr["id"]), trust, user_ids, COHORT_WELCOME_MESSAGE)
+        welcome_sent = out["sent"]
+
+    return {
+        "results": results,
+        "summary": {
+            "created": sum(1 for r in results if r.get("status") == "created"),
+            "existing": sum(1 for r in results if r.get("status") == "existing"),
+            "failed": sum(1 for r in results if r.get("status") == "failed"),
+            "welcome_sent": welcome_sent,
+        },
+    }
+
+
+@router.post("/hr/cohorts/{cohort_id}/message")
+async def hr_cohorts_message(request: Request, cohort_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    if not db.cohort_get(int(cohort_id), trust):
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    text = str(body.get("body") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message body cannot be empty")
+    doctor_ids = db.cohort_member_user_ids(int(cohort_id), trust)
+    if not doctor_ids:
+        raise HTTPException(status_code=400, detail="Cohort has no members")
+    if len(doctor_ids) > MAX_HR_COHORT_LINES:
+        raise HTTPException(status_code=400, detail="Cohort is too large to message in one request")
+    return _hr_broadcast_to_doctors(int(hr["id"]), trust, doctor_ids, text)

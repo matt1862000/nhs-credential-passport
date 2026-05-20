@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="application-name" content="DocPass">
+  <meta name="theme-color" content="#005eb8">
+  <title>Complete your profile &mdash; DocPass</title>
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260519-1">
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/" aria-label="DocPass home">
+          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260519-1" alt="DocPass" width="420" height="146">
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main class="nhsuk-main" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">Complete your profile</h1>
+    <p class="nhsuk-lead">Your trust set up DocPass for you. Add your details to finish.</p>
+
+    <section class="nhsuk-card" style="max-width: 32rem;">
+      <form id="formOnboarding" novalidate>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="displayName">Full name</label>
+          <input class="nhsuk-input" type="text" id="displayName" required maxlength="200" autocomplete="name">
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="gmcNumber">GMC number</label>
+          <input class="nhsuk-input" type="text" id="gmcNumber" required inputmode="numeric" maxlength="11" pattern="[0-9]{7}" title="Seven digits">
+          <span class="nhsuk-hint" style="display:block;margin-top:0.35rem;">Seven digits.</span>
+        </div>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="currentTrust">Current trust</label>
+          <input class="nhsuk-input" type="text" id="currentTrust" required maxlength="200" autocomplete="organization">
+        </div>
+        <button type="submit" class="nhsuk-button">Continue to dashboard</button>
+      </form>
+      <p class="nhsuk-error-msg" id="onboardError" hidden role="alert"></p>
+    </section>
+  </main>
+
+  <script src="/static/shared/auth.js"></script>
+  <script>
+    (function () {
+      function showErr(msg) {
+        var el = document.getElementById('onboardError');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.hidden = !msg;
+      }
+
+      document.getElementById('formOnboarding').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        showErr('');
+        var gmc = String(document.getElementById('gmcNumber').value || '').replace(/\D/g, '');
+        if (!/^\d{7}$/.test(gmc)) {
+          showErr('GMC number must be exactly 7 digits.');
+          return;
+        }
+        var btn = this.querySelector('button[type="submit"]');
+        btn.disabled = true;
+        try {
+          await NHSAuth.updateProfile({
+            display_name: document.getElementById('displayName').value.trim(),
+            gmc_number: gmc,
+            current_trust: document.getElementById('currentTrust').value.trim(),
+          });
+          await NHSAuth.pullWalletMerge();
+          window.location.replace('/static/dashboard/');
+        } catch (err) {
+          showErr(err.message || 'Could not save profile');
+          btn.disabled = false;
+        }
+      });
+
+      (async function () {
+        await NHSAuth.refresh();
+        if (!NHSAuth.requireAuth()) return;
+        if (NHSAuth.user.premium) {
+          window.location.replace('/static/dashboard/');
+          return;
+        }
+        if (!NHSAuth.requirePasswordChanged()) return;
+        if (NHSAuth.isProfileComplete()) {
+          window.location.replace('/static/dashboard/');
+          return;
+        }
+        var u = NHSAuth.user;
+        if (u.display_name) document.getElementById('displayName').value = u.display_name;
+        if (u.gmc_number) document.getElementById('gmcNumber').value = u.gmc_number;
+        if (u.current_trust) document.getElementById('currentTrust').value = u.current_trust;
+      })();
+    })();
+  </script>
+</body>
+</html>

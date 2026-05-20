@@ -151,11 +151,7 @@
             await NHSWallet.resetDeviceWalletCache();
           }
           await NHSAuth.pullWalletMerge();
-          if (!NHSAuth.user.premium && !NHSAuth.isProfileComplete()) {
-            NHSAuth.redirectAfterAuth('/static/profile/?required=1');
-          } else {
-            NHSAuth.redirectAfterAuth('/static/dashboard/');
-          }
+          NHSAuth.redirectPostLogin('/static/dashboard/');
         } catch (err) {
           showErr('signInError', err.message || 'Could not sign in');
           setSubmitBusy('formSignIn', false);
@@ -185,11 +181,7 @@
       (async function () {
         await NHSAuth.refresh();
         if (!NHSAuth.user) return;
-        if (!NHSAuth.user.premium && !NHSAuth.isProfileComplete()) {
-          window.location.replace('/static/profile/?required=1');
-          return;
-        }
-        NHSAuth.redirectAfterAuth('/static/dashboard/');
+        window.location.replace(NHSAuth.postLoginPath('/static/dashboard/'));
       })();
     })();
   </script>

@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="application-name" content="DocPass">
+  <meta name="theme-color" content="#005eb8">
+  <title>Cohorts &mdash; DocPass</title>
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260519-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260518-1">
+</head>
+<body>
+  <header class="nhsuk-header" role="banner">
+    <div class="nhsuk-header__container">
+      <div class="nhsuk-header__service">
+        <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/static/dashboard/" aria-label="Dashboard">
+          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260519-1" alt="DocPass" width="420" height="146">
+        </a>
+      </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <div class="nhsuk-topnav__account" id="navAccount">
+          <span class="nhsuk-topnav__name" id="navUserName">&nbsp;</span>
+          <a href="/static/hr/messages/" class="nhsuk-topnav__messages" id="navMessagesLink" aria-label="Messages">
+            <svg class="nhsuk-topnav__envelope" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+            <span class="nhsuk-topnav__msg-badge" id="navMsgBadge" hidden aria-live="polite"></span>
+          </a>
+        </div>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/dashboard/" role="menuitem">Dashboard</a>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
+    <h1 class="nhsuk-page-heading">Cohorts</h1>
+    <p class="nhsuk-lead">Create clinician accounts from NHS work emails, group them into cohorts, and send the same message to everyone (each replies in their own thread).</p>
+    <p class="hr-muted" style="margin:0 0 1rem 0;font-size:0.875rem;">HR never sees passwords here. Send login details to each person&rsquo;s <strong>personal email</strong> outside DocPass. Demo accounts use a standard initial password; clinicians must change it on first sign-in.</p>
+
+    <div id="notPremium" class="hr-card" hidden>
+      <p style="margin:0;font-weight:700;">This page is only for HR accounts.</p>
+    </div>
+
+    <div id="mainContent" hidden>
+      <div id="listView">
+        <div class="hr-card">
+          <div class="hr-inbox-head">
+            <h2>Your cohorts</h2>
+            <button type="button" class="nhsuk-button hr-btn-small" id="btnShowCreate">Create cohort</button>
+          </div>
+          <div id="cohortList"><p class="hr-muted">Loading…</p></div>
+        </div>
+
+        <div class="hr-card" id="createCard" hidden>
+          <h2>Create cohort</h2>
+          <form id="formCreateCohort" novalidate>
+            <div class="nhsuk-form-group">
+              <label class="nhsuk-label" for="cohortName">Cohort name</label>
+              <input class="nhsuk-input" type="text" id="cohortName" required placeholder="e.g. February 2026" maxlength="120">
+            </div>
+            <div class="nhsuk-form-group">
+              <label class="nhsuk-label" for="cohortEmails">NHS work emails</label>
+              <textarea class="nhsuk-textarea" id="cohortEmails" rows="8" required placeholder="one@nhs.net&#10;two@nhs.net"></textarea>
+              <span class="hr-muted" style="display:block;margin-top:0.35rem;font-size:0.875rem;">One email per line. HR-generated addresses such as firstname.surname123@nhs.net</span>
+            </div>
+            <div class="nhsuk-form-group">
+              <label class="nhsuk-label nhsuk-label--s">
+                <input type="checkbox" id="sendWelcome" checked>
+                Send welcome message in DocPass
+              </label>
+              <p class="hr-muted" style="margin:0.35rem 0 0;font-size:0.8125rem;" id="welcomePreview"></p>
+            </div>
+            <button type="submit" class="nhsuk-button">Create cohort</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCancelCreate">Cancel</button>
+          </form>
+          <p id="createStatus" class="hr-muted" style="min-height:1.25rem;margin-top:0.75rem;" aria-live="polite"></p>
+          <div id="createResultsWrap" hidden>
+            <h3 style="font-size:1rem;margin:1rem 0 0.5rem;">Results</h3>
+            <div class="hr-table-wrap">
+              <table class="hr-table" aria-label="Provisioning results">
+                <thead><tr><th>Email</th><th>Status</th><th>Note</th></tr></thead>
+                <tbody id="createResultsTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="detailView" class="hr-card" hidden>
+        <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">&larr; All cohorts</button>
+        <h2 id="detailTitle" style="margin:1rem 0 0.5rem;"></h2>
+        <p class="hr-muted" id="detailMeta"></p>
+
+        <h3 style="font-size:1rem;margin:1.25rem 0 0.5rem;">Members</h3>
+        <div class="hr-table-wrap">
+          <table class="hr-table" aria-label="Cohort members">
+            <thead><tr><th>Name</th><th>NHS email</th><th>GMC</th><th>Status</th></tr></thead>
+            <tbody id="membersTbody"></tbody>
+          </table>
+        </div>
+
+        <h3 style="font-size:1rem;margin:1.5rem 0 0.5rem;">Message entire cohort</h3>
+        <p class="hr-muted" style="font-size:0.875rem;">The same message is sent to each member in a separate private conversation.</p>
+        <form id="formCohortMessage" novalidate>
+          <div class="nhsuk-form-group">
+            <label class="nhsuk-label" for="cohortMsgBody">Message</label>
+            <textarea class="nhsuk-textarea" id="cohortMsgBody" rows="4" required></textarea>
+          </div>
+          <button type="submit" class="nhsuk-button">Send to cohort</button>
+        </form>
+        <p id="msgStatus" class="hr-muted" style="min-height:1.25rem;margin-top:0.5rem;" aria-live="polite"></p>
+
+        <h3 style="font-size:1rem;margin:1.5rem 0 0.5rem;">Add more members</h3>
+        <form id="formAddMembers" novalidate>
+          <textarea class="nhsuk-textarea" id="addEmails" rows="4" placeholder="More NHS emails, one per line"></textarea>
+          <label class="nhsuk-label nhsuk-label--s" style="margin-top:0.5rem;">
+            <input type="checkbox" id="addSendWelcome">
+            Send welcome message to new members
+          </label>
+          <button type="submit" class="nhsuk-button nhsuk-button--secondary" style="margin-top:0.5rem;">Add emails</button>
+        </form>
+        <p id="addStatus" class="hr-muted" style="min-height:1.25rem;" aria-live="polite"></p>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/nav-account.js"></script>
+  <script>
+    (function () {
+      var WELCOME = 'Your trust has set up DocPass for you. Sign in with your NHS email; check the personal email HR used for login details. Change your password when prompted.';
+      var _activeCohortId = null;
+
+      function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+      function show(el, on) { if (el) el.hidden = !on; }
+
+      function wireMenu() {
+        var btn = document.getElementById('btnMenu'), panel = document.getElementById('menuPanel');
+        if (!btn || !panel) return;
+        function close() { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+        btn.addEventListener('click', function (e) { e.preventDefault(); panel.hidden ? (panel.hidden = false, btn.setAttribute('aria-expanded', 'true')) : close(); });
+        document.addEventListener('click', function (e) { if (!panel.hidden && !btn.contains(e.target) && !panel.contains(e.target)) close(); }, true);
+      }
+
+      async function apiJson(url, opts) {
+        opts = opts || {};
+        opts.credentials = 'include';
+        var res = await fetch(url, opts);
+        var text = await res.text();
+        var data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (e) {}
+        if (!res.ok) throw new Error((data && data.detail) || text || res.statusText);
+        return data;
+      }
+
+      function renderCohortList(cohorts) {
+        var el = document.getElementById('cohortList');
+        if (!cohorts.length) {
+          el.innerHTML = '<p class="hr-muted">No cohorts yet. Create one to provision clinicians.</p>';
+          return;
+        }
+        el.innerHTML = cohorts.map(function (c) {
+          return (
+            '<div class="hr-search-result-row" style="cursor:pointer;" data-cohort-id="' + c.id + '" tabindex="0" role="button">' +
+              '<div><div class="hr-search-result-name">' + esc(c.name) + '</div>' +
+              '<div class="hr-search-result-meta">' + esc(String(c.member_count)) + ' member' + (c.member_count === 1 ? '' : 's') + '</div></div>' +
+              '<span class="nhsuk-button nhsuk-button--secondary hr-btn-small">Open</span>' +
+            '</div>'
+          );
+        }).join('');
+      }
+
+      async function loadCohorts() {
+        var data = await apiJson('/api/hr/cohorts');
+        renderCohortList(data.cohorts || []);
+      }
+
+      function showList() {
+        show(document.getElementById('detailView'), false);
+        show(document.getElementById('listView'), true);
+        _activeCohortId = null;
+        loadCohorts();
+      }
+
+      async function openCohort(id) {
+        _activeCohortId = id;
+        var data = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(id)));
+        var c = data.cohort;
+        var members = data.members || [];
+        document.getElementById('detailTitle').textContent = c.name;
+        document.getElementById('detailMeta').textContent = members.length + ' member' + (members.length === 1 ? '' : 's');
+        var tb = document.getElementById('membersTbody');
+        if (!members.length) {
+          tb.innerHTML = '<tr><td colspan="4" class="hr-muted">No members yet.</td></tr>';
+        } else {
+          tb.innerHTML = members.map(function (m) {
+            var st = m.must_change_password ? 'Awaiting first sign-in' : 'Active';
+            return '<tr><td>' + esc(m.display_name || '—') + '</td><td>' + esc(m.email) + '</td><td>' + esc(m.gmc_number || '—') + '</td><td>' + esc(st) + '</td></tr>';
+          }).join('');
+        }
+        show(document.getElementById('listView'), false);
+        show(document.getElementById('detailView'), true);
+        document.getElementById('msgStatus').textContent = '';
+        document.getElementById('addStatus').textContent = '';
+      }
+
+      document.getElementById('welcomePreview').textContent = WELCOME;
+
+      document.getElementById('btnShowCreate').addEventListener('click', function () {
+        show(document.getElementById('createCard'), true);
+        document.getElementById('createStatus').textContent = '';
+        show(document.getElementById('createResultsWrap'), false);
+      });
+      document.getElementById('btnCancelCreate').addEventListener('click', function () {
+        show(document.getElementById('createCard'), false);
+      });
+
+      document.getElementById('formCreateCohort').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        var status = document.getElementById('createStatus');
+        status.textContent = 'Creating…';
+        var emails = document.getElementById('cohortEmails').value;
+        try {
+          var data = await apiJson('/api/hr/cohorts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: document.getElementById('cohortName').value.trim(),
+              emails: emails,
+              send_welcome: document.getElementById('sendWelcome').checked,
+            }),
+          });
+          var s = data.summary || {};
+          status.textContent = 'Done: ' + (s.created || 0) + ' created, ' + (s.existing || 0) + ' existing, ' + (s.failed || 0) + ' failed.'
+            + (s.welcome_sent ? ' Welcome sent to ' + s.welcome_sent + '.' : '');
+          var wrap = document.getElementById('createResultsWrap');
+          var tb = document.getElementById('createResultsTbody');
+          tb.innerHTML = (data.results || []).map(function (r) {
+            return '<tr><td>' + esc(r.email) + '</td><td>' + esc(r.status) + '</td><td>' + esc(r.error || '') + '</td></tr>';
+          }).join('');
+          show(wrap, true);
+          await loadCohorts();
+          if (data.cohort && data.cohort.id) {
+            setTimeout(function () { openCohort(data.cohort.id); }, 400);
+          }
+        } catch (err) {
+          status.textContent = err.message || 'Failed';
+        }
+      });
+
+      document.getElementById('cohortList').addEventListener('click', function (e) {
+        var row = e.target.closest('[data-cohort-id]');
+        if (row) openCohort(parseInt(row.getAttribute('data-cohort-id'), 10));
+      });
+
+      document.getElementById('btnBackList').addEventListener('click', showList);
+
+      document.getElementById('formCohortMessage').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        if (!_activeCohortId) return;
+        var body = document.getElementById('cohortMsgBody').value.trim();
+        if (!body) return;
+        if (!confirm('Send this message to everyone in this cohort? Each person gets their own private thread.')) return;
+        var st = document.getElementById('msgStatus');
+        st.textContent = 'Sending…';
+        try {
+          var out = await apiJson('/api/hr/cohorts/' + _activeCohortId + '/message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ body: body }),
+          });
+          st.textContent = 'Sent to ' + (out.sent || 0) + ' clinician' + ((out.sent || 0) === 1 ? '' : 's')
+            + ((out.failed && out.failed.length) ? '; ' + out.failed.length + ' failed.' : '.');
+          document.getElementById('cohortMsgBody').value = '';
+        } catch (err) {
+          st.textContent = err.message || 'Send failed';
+        }
+      });
+
+      document.getElementById('formAddMembers').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        if (!_activeCohortId) return;
+        var st = document.getElementById('addStatus');
+        st.textContent = 'Adding…';
+        try {
+          var data = await apiJson('/api/hr/cohorts/' + _activeCohortId + '/members', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              emails: document.getElementById('addEmails').value,
+              send_welcome: document.getElementById('addSendWelcome').checked,
+            }),
+          });
+          var s = data.summary || {};
+          st.textContent = 'Added: ' + (s.created || 0) + ' created, ' + (s.existing || 0) + ' existing.';
+          document.getElementById('addEmails').value = '';
+          await openCohort(_activeCohortId);
+        } catch (err) {
+          st.textContent = err.message || 'Failed';
+        }
+      });
+
+      document.getElementById('btnSignOut').addEventListener('click', async function () {
+        await NHSAuth.signOut();
+        window.location.replace('/');
+      });
+
+      (async function boot() {
+        await NHSAuth.refresh();
+        if (!NHSAuth.requireAuth()) return;
+        wireMenu();
+        if (window.NHSNavAccount) void NHSNavAccount.refresh();
+        if (!NHSAuth.user.premium) {
+          show(document.getElementById('notPremium'), true);
+          return;
+        }
+        show(document.getElementById('mainContent'), true);
+        document.getElementById('welcomePreview').textContent = 'Welcome text: “' + WELCOME + '”';
+        await loadCohorts();
+      })();
+    })();
+  </script>
+</body>
+</html>

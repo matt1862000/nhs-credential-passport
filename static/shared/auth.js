@@ -194,6 +194,82 @@
       }
     },
 
+    async changePassword(currentPassword, newPassword) {
+      if (!this.user) return;
+      var r = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+      });
+      var parsed = await readJsonOrText(r);
+      if (!r.ok) {
+        var d = parsed.data && parsed.data.detail;
+        throw new Error(typeof d === 'string' ? d : 'Could not change password');
+      }
+      await this.refresh();
+    },
+
+    mustChangePassword() {
+      return !!(this.user && this.user.must_change_password);
+    },
+
+    /**
+     * After sign-in or on protected pages: password change, then profile onboarding.
+     */
+    postLoginPath(fallback) {
+      if (!this.user) return (fallback || '/static/dashboard/');
+      if (this.user.premium) return (fallback || '/static/dashboard/');
+      if (this.mustChangePassword()) return '/static/auth/change-password.html';
+      if (!this.isProfileComplete()) return '/static/auth/onboarding.html';
+      return (fallback || '/static/dashboard/');
+    },
+
+    redirectPostLogin(fallback) {
+      var p = new URLSearchParams(window.location.search);
+      var next = p.get('next');
+      var dest = this.postLoginPath(fallback);
+      if (
+        next &&
+        /^\/(static\/)?[a-zA-Z0-9_\-/?=&%.#]*$/.test(next) &&
+        !this.mustChangePassword() &&
+        (this.user.premium || this.isProfileComplete())
+      ) {
+        window.location.replace(next);
+        return;
+      }
+      window.location.replace(dest);
+    },
+
+    requirePasswordChanged(loginUrl) {
+      if (!this.user) {
+        this.requireAuth(loginUrl);
+        return false;
+      }
+      if (this.user.premium || !this.mustChangePassword()) return true;
+      var path = window.location.pathname || '';
+      if (path.indexOf('/static/auth/change-password') >= 0) return true;
+      window.location.replace('/static/auth/change-password.html');
+      return false;
+    },
+
+    requireOnboardingComplete(loginUrl) {
+      if (!this.requirePasswordChanged(loginUrl)) return false;
+      if (!this.user || this.user.premium || this.isProfileComplete()) return true;
+      var path = window.location.pathname || '';
+      if (
+        path.indexOf('/static/auth/onboarding') >= 0 ||
+        path.indexOf('/static/profile/') === 0
+      ) {
+        return true;
+      }
+      window.location.replace('/static/auth/onboarding.html');
+      return false;
+    },
+
     async updateProfile(payload) {
       if (!this.user) return;
       var r = await fetch('/api/me/profile', {
@@ -249,11 +325,12 @@
      * Premium (e.g. HR) accounts are exempt. Profile and auth pages are exempt.
      */
     requireProfileComplete() {
+      if (!this.requireOnboardingComplete()) return false;
       if (!this.user || this.user.premium) return true;
       if (this.isProfileComplete()) return true;
       var path = window.location.pathname || '';
       if (path.indexOf('/static/profile/') === 0 || path.indexOf('/static/auth/') === 0) return true;
-      window.location.replace('/static/profile/?required=1');
+      window.location.replace('/static/auth/onboarding.html');
       return false;
     },
 
