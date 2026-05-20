@@ -114,7 +114,13 @@
         </a>
       </div>
       <nav class="nhsuk-topnav" aria-label="Account">
-        <span class="nhsuk-topnav__email" id="navEmail">&nbsp;</span>
+                <div class="nhsuk-topnav__account" id="navAccount">
+          <span class="nhsuk-topnav__name" id="navUserName">&nbsp;</span>
+          <a href="/static/messages/" class="nhsuk-topnav__messages" id="navMessagesLink" aria-label="Messages">
+            <svg class="nhsuk-topnav__envelope" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+            <span class="nhsuk-topnav__msg-badge" id="navMsgBadge" hidden aria-live="polite"></span>
+          </a>
+        </div>
         <div class="nhsuk-menu">
           <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
           <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
@@ -176,6 +182,7 @@
 
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/nav-account.js"></script>
   <script src="/static/shared/ods-trust-suggest.js"></script>
   <script src="/static/moving/trust-mover.js"></script>
   <script>
@@ -183,7 +190,7 @@
       await NHSAuth.refresh();
       if (!NHSAuth.requireAuth()) return;
       if (!NHSAuth.requireProfileComplete()) return;
-      document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
+      if (window.NHSNavAccount) void NHSNavAccount.refresh();
       /* populate leaving trust from profile */
       var currentTrust = (NHSAuth.user && NHSAuth.user.current_trust) || '';
       var leaveDisplay = document.getElementById('leaveTrustDisplay');

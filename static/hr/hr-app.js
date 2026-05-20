@@ -773,7 +773,7 @@
       (async function boot() {
         await NHSAuth.refresh();
         if (!NHSAuth.requireAuth()) return;
-        document.getElementById('navEmail').textContent = NHSAuth.user.email || '';
+        if (window.NHSNavAccount) void NHSNavAccount.refresh();
         wireHamburgerMenu();
 
         document.getElementById('btnSignOut').addEventListener('click', async function () {

@@ -140,6 +140,50 @@ a:hover {
   font-weight: 600;
   white-space: nowrap;
 }
+.nhsuk-topnav__account {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+.nhsuk-topnav__name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: min(14rem, 42vw);
+}
+.nhsuk-topnav__messages {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 0.55rem !important;
+  border: 1px solid rgba(255, 255, 255, 0.4) !important;
+  line-height: 0;
+}
+.nhsuk-topnav__messages:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.nhsuk-topnav__envelope {
+  display: block;
+}
+.nhsuk-topnav__msg-badge {
+  position: absolute;
+  top: -0.4rem;
+  right: -0.45rem;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.3rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.15rem;
+  text-align: center;
+  color: #fff;
+  background: #d5281b;
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px #005eb8;
+}
 
 /* Ensure [hidden] is always respected even when child rules set display */
 [hidden] {
