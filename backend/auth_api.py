@@ -12,7 +12,7 @@ import sqlite3
 from typing import Optional
 
 import bcrypt
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from . import crypto, db, session_auth
@@ -248,9 +248,11 @@ def _hr_resolve_issuing_trust(
     return ods, name
 
 
-def _hr_issuing_defaults_payload(hr: dict) -> dict:
-    """Suggested ODS + display name for HR forms (same source as server-side resolution when overrides are blank)."""
-    profile_trust = (hr.get("current_trust") or "").strip()
+def _resolve_issuing_trust_from_name(trust_name: str) -> dict:
+    """ODS + canonical display name from profile trust string and static trust packs."""
+    from . import trust_packs
+
+    profile_trust = (trust_name or "").strip()
     if not profile_trust:
         return {
             "profile_trust": "",
@@ -266,6 +268,15 @@ def _hr_issuing_defaults_payload(hr: dict) -> dict:
             "profile_trust": profile_trust,
             "issuing_trust_ods_code": ods,
             "issuing_trust_name": name,
+            "matched_trust_config": bool(ods),
+        }
+    ods = trust_packs.ods_for_trust_name(profile_trust)
+    if ods:
+        display = trust_packs.trust_display_name(profile_trust) or profile_trust
+        return {
+            "profile_trust": profile_trust,
+            "issuing_trust_ods_code": ods,
+            "issuing_trust_name": display,
             "matched_trust_config": True,
         }
     return {
@@ -274,6 +285,11 @@ def _hr_issuing_defaults_payload(hr: dict) -> dict:
         "issuing_trust_name": profile_trust,
         "matched_trust_config": False,
     }
+
+
+def _hr_issuing_defaults_payload(hr: dict) -> dict:
+    """Suggested ODS + display name for HR forms (same source as server-side resolution when overrides are blank)."""
+    return _resolve_issuing_trust_from_name((hr.get("current_trust") or "").strip())
 
 
 def _staff_identifier_for_issue(doc: dict) -> str:
@@ -916,6 +932,27 @@ def hr_doctors_search(request: Request, q: str = "", limit: int = 30):
         raise HTTPException(status_code=400, detail="Your HR account must have a current trust set to search for doctors.")
     results = db.hr_doctor_search(q=q, hr_trust=trust, limit=limit)
     return {"results": results}
+
+
+@router.get("/me/issuing-trust-defaults")
+def me_issuing_trust_defaults(request: Request):
+    """Suggested issuing-trust ODS and display name from the signed-in user's current trust."""
+    uid = require_user_id(request)
+    u = db.user_get_by_id(uid)
+    if not u:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    return _resolve_issuing_trust_from_name((u.get("current_trust") or "").strip())
+
+
+@router.get("/trust/resolve-ods")
+def trust_resolve_ods(request: Request, name: str = Query("")):
+    """Resolve ODS from a trust name string (pack config first, for client auto-fill)."""
+    require_user_id(request)
+    resolved = _resolve_issuing_trust_from_name(name)
+    return {
+        "ods": resolved.get("issuing_trust_ods_code") or "",
+        "name": resolved.get("issuing_trust_name") or (name or "").strip(),
+    }
 
 
 @router.get("/hr/issuing-defaults")

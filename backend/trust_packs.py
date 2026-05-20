@@ -54,6 +54,29 @@ def pack_id_for_ods(ods: str) -> Optional[str]:
     return ODS_TO_PACK_ID.get((ods or "").strip().upper())
 
 
+def ods_for_trust_name(trust_name: str) -> Optional[str]:
+    """ODS code when trust_name matches a static pack (display name or alias)."""
+    raw = (trust_name or "").strip()
+    if not raw:
+        return None
+    candidates = [raw]
+    if raw == raw.upper() and len(raw) > 3:
+        candidates.append(trust_display_name(raw))
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = (candidate or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        pack_id = pack_id_for_trust_name(candidate)
+        if not pack_id:
+            continue
+        for ods, pid in ODS_TO_PACK_ID.items():
+            if pid == pack_id:
+                return ods
+    return None
+
+
 def mandatory_examples_to_rows(pack: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert pack mandatory_examples to DB insert dicts."""
     shared_esr = (pack.get("esr_resource_url") or "").strip()

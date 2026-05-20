@@ -150,9 +150,28 @@
      * @param {{ minLength?: number }} [opts]
      * @returns {Promise<object|null>} raw ORD org or null
      */
+    resolveFromServer: async function (nameQuery) {
+      var t = (nameQuery || '').trim();
+      if (t.length < 2) return null;
+      try {
+        var res = await fetch(
+          '/api/trust/resolve-ods?name=' + encodeURIComponent(t),
+          { credentials: 'include', headers: { Accept: 'application/json' } }
+        );
+        if (!res.ok) return null;
+        var data = await res.json();
+        if (data && data.ods) {
+          return { OrgId: String(data.ods).trim(), Name: data.name || t };
+        }
+      } catch (e) {}
+      return null;
+    },
+
     pickBestOrg: async function (nameQuery, opts) {
       opts = opts || {};
       var minLen = typeof opts.minLength === 'number' ? opts.minLength : 3;
+      var local = await w.NHSOdsTrustSuggest.resolveFromServer(nameQuery);
+      if (local && local.OrgId) return local;
       var orgs = await fetchOrgMatches(nameQuery, minLen);
       var q = normQuery(nameQuery);
       if (!orgs.length) return null;

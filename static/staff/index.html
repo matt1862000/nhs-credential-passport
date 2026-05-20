@@ -479,6 +479,13 @@
         </div>
         <button type="button" class="nhsuk-button" id="btnVerifyAllHrList" disabled title="Add training first">Verify all with HR</button>
       </div>
+      <div id="sendAllCurrentTrustBanner" class="staff-verify-all-banner" hidden>
+        <div class="staff-verify-all-banner__text">
+          <p class="staff-verify-all-banner__title">Send all to HR at your current trust</p>
+          <p class="staff-verify-all-banner__desc">Sends every record still pending at another trust to HR at your current trust in one go — the same as tapping &ldquo;Send to HR at my current trust&rdquo; on each card.</p>
+        </div>
+        <button type="button" class="nhsuk-button" id="btnSendAllCurrentTrustHr" disabled title="Complete your profile first">Send All to HR at the current trust</button>
+      </div>
       <div id="credentialList"></div>
     </section>
 
@@ -897,29 +904,58 @@
       var odsEl = document.getElementById('issuing_trust_ods_code');
       if (!nameEl || !odsEl) return;
       var t = nameEl.value.trim();
-      if (t.length < 3) return;
+      if (t.length < 2) return;
       var curOds = odsEl.value.trim();
       var shouldReplace = !curOds || curOds === lastAutoOdsSuggested.ods;
       if (!shouldReplace) return;
       try {
         if (!window.NHSOdsTrustSuggest) return;
-        var org = await NHSOdsTrustSuggest.pickBestOrg(t, { minLength: 3 });
+        var org = await NHSOdsTrustSuggest.resolveFromServer(t);
+        if (!org || !org.OrgId) {
+          org = await NHSOdsTrustSuggest.pickBestOrg(t, { minLength: 3 });
+        }
         if (!org || !org.OrgId) return;
         lastAutoOdsSuggested = { name: t, ods: org.OrgId };
         odsEl.value = org.OrgId;
+        if (org.Name && nameEl.value.trim() === t) {
+          nameEl.value = org.Name;
+          lastAutoOdsSuggested.name = org.Name;
+        }
       } catch (e) {
         console.warn('Trust ODS lookup failed', e);
       }
     }
 
-    function applyProfileToAddForm() {
+    async function applyProfileToAddForm() {
       const u = window.NHSAuth && NHSAuth.user;
       if (!u) return;
       const fn = document.getElementById('staff_full_name');
       const sid = document.getElementById('staff_identifier');
       const tn = document.getElementById('issuing_trust_name');
+      const odsEl = document.getElementById('issuing_trust_ods_code');
       if (fn && u.display_name && !String(fn.value || '').trim()) fn.value = u.display_name;
       if (sid && u.gmc_number && !String(sid.value || '').trim()) sid.value = u.gmc_number;
+      try {
+        var r = await fetch('/api/me/issuing-trust-defaults', { credentials: 'include' });
+        if (r.ok) {
+          var d = await r.json();
+          if (tn && d.issuing_trust_name && !String(tn.value || '').trim()) {
+            tn.value = d.issuing_trust_name;
+          } else if (tn && u.current_trust && !String(tn.value || '').trim()) {
+            tn.value = u.current_trust;
+          } else if (tn && u.current_trust && d.issuing_trust_name) {
+            tn.value = d.issuing_trust_name;
+          }
+          if (odsEl && d.issuing_trust_ods_code && !String(odsEl.value || '').trim()) {
+            odsEl.value = d.issuing_trust_ods_code;
+            lastAutoOdsSuggested = {
+              name: String(tn && tn.value ? tn.value : '').trim(),
+              ods: d.issuing_trust_ods_code,
+            };
+            return;
+          }
+        }
+      } catch (e) {}
       if (tn && u.current_trust && !String(tn.value || '').trim()) tn.value = u.current_trust;
       scheduleTrustNameOdsLookup();
     }
@@ -1041,7 +1077,7 @@
         if (btn.dataset.tab === 'add') {
           void (async function () {
             if (window.NHSAuth) await NHSAuth.refresh();
-            applyProfileToAddForm();
+            void applyProfileToAddForm();
           })();
         }
         if (btn.dataset.tab === 'bulk') {
@@ -1065,6 +1101,8 @@
     if (btnExport) btnExport.addEventListener('click', function () { closeBulkActionsMenu(); exportSelectedAsZip(); });
     var btnVerifyAllHrList = document.getElementById('btnVerifyAllHrList');
     if (btnVerifyAllHrList) btnVerifyAllHrList.addEventListener('click', function () { verifyAllWithHr(); });
+    var btnSendAllCurrentTrustHr = document.getElementById('btnSendAllCurrentTrustHr');
+    if (btnSendAllCurrentTrustHr) btnSendAllCurrentTrustHr.addEventListener('click', function () { sendAllToCurrentTrustHr(); });
     document.getElementById('btnBulkSelectAll').addEventListener('click', function() {
       document.querySelectorAll('.credential-export-cb').forEach(function(cb) { cb.checked = true; });
       updateBulkExportState();
@@ -1127,6 +1165,48 @@
       } finally {
         if (btnList) btnList.textContent = 'Verify all with HR';
         updateVerifyAllHrControls();
+        updateSendAllCurrentTrustControls();
+      }
+    }
+
+    async function sendAllToCurrentTrustHr() {
+      if (!canRequestHrVerification()) return;
+      var candidates = listSendToCurrentTrustCandidates();
+      var ids = candidates.map(function (c) { return c.credential_id; });
+      if (!ids.length) {
+        alert('No training records to send to HR at your current trust.');
+        return;
+      }
+      var btn = document.getElementById('btnSendAllCurrentTrustHr');
+      function setBusy(busy) {
+        if (btn) {
+          btn.disabled = busy || !isProfileComplete() || ids.length === 0;
+          btn.textContent = busy ? 'Sending…' : 'Send All to HR at the current trust';
+        }
+      }
+      try {
+        setBusy(true);
+        var res = await fetch('/api/me/shares', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ credential_ids: ids }),
+        });
+        var parsed = await res.text();
+        var data = null;
+        try { data = parsed ? JSON.parse(parsed) : null; } catch (e) { data = null; }
+        if (!res.ok) {
+          var d = data && data.detail;
+          throw new Error(typeof d === 'string' ? d : 'Could not send to HR at your current trust');
+        }
+        await refreshVerifiedMap();
+        renderList();
+      } catch (e) {
+        alert(e.message || e);
+        renderList();
+      } finally {
+        if (btn) btn.textContent = 'Send All to HR at the current trust';
+        updateSendAllCurrentTrustControls();
       }
     }
     document.getElementById('certificate_upload').addEventListener('change', function() {
@@ -1499,6 +1579,7 @@
       if (bulkActions) bulkActions.style.display = (filtered.length > 0 && bulkFiltered.length === 0) ? 'none' : '';
       updateBulkExportState();
       updateVerifyAllHrControls();
+      updateSendAllCurrentTrustControls();
       syncStaffOnboardingNudge();
     }
 
@@ -1680,7 +1761,7 @@
         renderList();
         e.target.reset();
         lastAutoOdsSuggested = { name: '', ods: '' };
-        applyProfileToAddForm();
+        void applyProfileToAddForm();
         document.querySelector('.nhsuk-tabs button[data-tab="list"]').click();
       } catch (err) {
         alert(err.message);
@@ -1692,6 +1773,19 @@
     function isProfileComplete(u) {
       u = u || (window.NHSAuth && NHSAuth.user) || null;
       return !!(u && (u.display_name || '').trim() && (u.gmc_number || '').trim() && (u.current_trust || '').trim());
+    }
+
+    function listSendToCurrentTrustCandidates() {
+      var myTrust = (window.NHSAuth && NHSAuth.user && NHSAuth.user.current_trust || '').trim().toLowerCase();
+      if (!myTrust || !isProfileComplete()) return [];
+      return getStored().filter(function (c) {
+        if (!c || !c.credential_id || c.revoked) return false;
+        var v = (verifiedMap && verifiedMap[String(c.credential_id).trim()]) || null;
+        var st = v && v.status ? String(v.status).toUpperCase().trim() : '';
+        if (!(v && v.shared && st === 'PENDING')) return false;
+        var pendingTarget = v.pending_target_trust ? String(v.pending_target_trust).trim().toLowerCase() : '';
+        return pendingTarget && pendingTarget !== myTrust;
+      });
     }
 
     function updateVerifyAllHrControls() {
@@ -1713,12 +1807,31 @@
       }
     }
 
+    function updateSendAllCurrentTrustControls() {
+      var candidates = listSendToCurrentTrustCandidates();
+      var count = candidates.length;
+      var ok = isProfileComplete();
+      var btn = document.getElementById('btnSendAllCurrentTrustHr');
+      var banner = document.getElementById('sendAllCurrentTrustBanner');
+      if (banner) banner.hidden = count <= 1;
+      var disable = !ok || count <= 1;
+      if (btn) {
+        btn.disabled = disable;
+        btn.title = !ok
+          ? 'Complete your profile first'
+          : (count <= 1
+            ? 'Use “Send to HR at my current trust” on individual records'
+            : 'Send all records pending at another trust to HR at your current trust');
+      }
+    }
+
     function applyProfileGateUi() {
       var ok = isProfileComplete();
       var n = document.getElementById('profileGateNotice');
       if (n) n.hidden = ok;
       updateBulkExportState();
       updateVerifyAllHrControls();
+      updateSendAllCurrentTrustControls();
     }
 
     function openProfileForVerification() {
@@ -1744,7 +1857,7 @@
 
       var summaryStrip = document.getElementById('staffTrainingSummaryStrip');
       if (summaryStrip) summaryStrip.hidden = !!(NHSAuth.user && NHSAuth.user.premium);
-      applyProfileToAddForm();
+      await applyProfileToAddForm();
       applyProfileGateUi();
       renderList();
 
