@@ -255,14 +255,118 @@
     .hr-cohort-legend { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin: 0 0 0.75rem 0; max-width: 42rem; }
     .hr-cohort-actions-title { margin: 1.75rem 0 0.75rem 0; font-size: 1.125rem; }
     .hr-cohort-panel { margin-top: 0; }
-    .hr-cohort-panel .nhsuk-textarea,
-    .hr-cohort-create-emails {
+    .hr-cohort-panel .nhsuk-form-group:last-of-type { margin-bottom: 0; }
+
+    /* Roster paste (email lists) and message compose */
+    .hr-bulk-form .nhsuk-textarea,
+    .hr-roster-paste__input,
+    .hr-compose-area__input {
       width: 100%;
       max-width: none;
-      min-height: 8rem;
+      margin: 0;
+      padding: 0.85rem 1rem;
+      border: 2px solid var(--nhsuk-border);
+      border-radius: 4px;
+      font-size: 1rem;
+      line-height: 1.5;
+      font-family: inherit;
+      background: #fff;
+      color: var(--nhsuk-text);
       box-sizing: border-box;
+      resize: vertical;
     }
-    .hr-cohort-panel .nhsuk-form-group:last-of-type { margin-bottom: 0; }
+    .hr-roster-paste {
+      border: 2px dashed var(--nhsuk-border);
+      border-radius: 4px;
+      background: rgba(240, 244, 245, 0.75);
+      padding: 0.35rem;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .hr-roster-paste:hover { border-color: #aeb7bd; }
+    .hr-roster-paste:focus-within {
+      border-style: solid;
+      border-color: var(--nhsuk-link);
+      background: #fff;
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 0;
+    }
+    .hr-roster-paste__input {
+      min-height: 10rem;
+      border: none !important;
+      background: transparent !important;
+      outline: none !important;
+      box-shadow: none !important;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.9375rem;
+    }
+    .hr-roster-paste__input:focus {
+      outline: none !important;
+      border: none !important;
+    }
+    .hr-roster-paste__input::placeholder { color: #768692; opacity: 1; }
+    .hr-roster-paste-tip {
+      display: block;
+      margin: 0.2rem 0 0.5rem 0;
+      font-size: 0.8125rem;
+      color: var(--nhsuk-secondary-text);
+      line-height: 1.45;
+    }
+    .hr-roster-line-count {
+      display: block;
+      margin-top: 0.5rem;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: var(--nhsuk-link);
+    }
+    .hr-roster-line-count--empty {
+      color: var(--nhsuk-secondary-text);
+      font-weight: 400;
+    }
+    .hr-compose-area {
+      border: 2px solid var(--nhsuk-border);
+      border-radius: 4px;
+      background: #fff;
+      padding: 0.35rem;
+      transition: border-color 0.15s ease;
+    }
+    .hr-compose-area:hover { border-color: #aeb7bd; }
+    .hr-compose-area:focus-within {
+      outline: 3px solid var(--nhsuk-focus);
+      outline-offset: 0;
+      border-color: var(--nhsuk-text);
+    }
+    .hr-compose-area__input {
+      min-height: 8rem;
+      border: none !important;
+      outline: none !important;
+      background: transparent !important;
+      box-shadow: none !important;
+    }
+    .hr-compose-area__input:focus {
+      outline: none !important;
+      border: none !important;
+    }
+    .hr-compose-area__input::placeholder { color: #768692; opacity: 1; }
+    .nhsuk-form-group--focused .nhsuk-hint--secondary {
+      opacity: 0.85;
+    }
+    .hr-cohort-welcome-details { margin: 0 0 1rem 0; }
+    .hr-cohort-welcome-details summary {
+      cursor: pointer;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      color: var(--nhsuk-link);
+      list-style: none;
+      padding: 0.15rem 0;
+    }
+    .hr-cohort-welcome-details summary::-webkit-details-marker { display: none; }
+    .hr-cohort-welcome-details summary::before {
+      content: "▸ ";
+      display: inline-block;
+      transition: transform 0.15s ease;
+    }
+    .hr-cohort-welcome-details[open] summary::before { transform: rotate(90deg); }
+    .hr-cohort-welcome-details .hr-cohort-inset { margin: 0.65rem 0 0 0; }
     .hr-cohort-panel-actions { margin-top: 1.25rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
     .hr-cohort-inset {
       margin: 0 0 1rem 0;
