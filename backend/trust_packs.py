@@ -84,3 +84,34 @@ def mandatory_examples_to_rows(pack: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+def _title_case_trust_name(name: str) -> str:
+    """Turn ODS-style ALL CAPS trust names into readable title case (keep NHS, etc.)."""
+    acronyms = {"nhs", "uk", "gp", "ods", "icu", "it"}
+    small = {"and", "of", "the", "for", "in", "at"}
+    parts = name.lower().split()
+    out: list[str] = []
+    for i, p in enumerate(parts):
+        if p in acronyms:
+            out.append(p.upper())
+        elif p in small and i > 0:
+            out.append(p)
+        else:
+            out.append(p.capitalize())
+    return " ".join(out)
+
+
+def trust_display_name(trust_name: str) -> str:
+    """Human-readable trust label (pack display name or title-cased ODS text)."""
+    raw = (trust_name or "").strip()
+    if not raw:
+        return raw
+    pack_id = pack_id_for_trust_name(raw)
+    if pack_id:
+        pack = load_trust_pack(pack_id)
+        if pack and (pack.get("display_name") or "").strip():
+            return str(pack["display_name"]).strip()
+    if raw == raw.upper() and len(raw) > 3:
+        return _title_case_trust_name(raw)
+    return raw

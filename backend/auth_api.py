@@ -64,40 +64,11 @@ def _cohort_welcome_name(doc: dict) -> str:
     return _first_name_from_nhs_email(doc.get("email") or "")
 
 
-def _title_case_trust_name(name: str) -> str:
-    """Turn ODS-style ALL CAPS trust names into readable title case (keep NHS, etc.)."""
-    acronyms = {"nhs", "uk", "gp", "ods", "icu", "it"}
-    small = {"and", "of", "the", "for", "in", "at"}
-    parts = name.lower().split()
-    out: list[str] = []
-    for i, p in enumerate(parts):
-        if p in acronyms:
-            out.append(p.upper())
-        elif p in small and i > 0:
-            out.append(p)
-        else:
-            out.append(p.capitalize())
-    return " ".join(out)
-
-
 def trust_display_name(trust_name: str) -> str:
     """Human-readable trust label for messages and UI (not raw all-caps HR profile text)."""
-    raw = (trust_name or "").strip()
-    if not raw:
-        return raw
-    try:
-        from . import trust_packs
+    from .trust_packs import trust_display_name as _display
 
-        pack_id = trust_packs.pack_id_for_trust_name(raw)
-        if pack_id:
-            pack = trust_packs.load_trust_pack(pack_id)
-            if pack and (pack.get("display_name") or "").strip():
-                return str(pack["display_name"]).strip()
-    except Exception:
-        pass
-    if raw == raw.upper() and len(raw) > 3:
-        return _title_case_trust_name(raw)
-    return raw
+    return _display(trust_name)
 
 
 def _cohort_welcome_message(doc: dict, hr_trust: str) -> str:

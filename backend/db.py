@@ -1769,9 +1769,29 @@ def user_set_password(user_id: int, password_hash: str, clear_must_change: bool 
         conn.commit()
 
 
-def user_create_provisioned(email: str, provisioned_by_hr_user_id: int) -> int:
+def user_set_current_trust_if_empty(user_id: int, trust: str) -> None:
+    """Set current_trust only when the clinician has not chosen one yet."""
+    trust = (trust or "").strip() or None
+    if not trust:
+        return
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_profile_extra_columns(conn)
+        conn.execute(
+            """UPDATE users SET current_trust = ?
+               WHERE id = ? AND (current_trust IS NULL OR TRIM(current_trust) = '')""",
+            (trust, int(user_id)),
+        )
+        conn.commit()
+
+
+def user_create_provisioned(
+    email: str,
+    provisioned_by_hr_user_id: int,
+    default_trust: Optional[str] = None,
+) -> int:
     """Create non-premium clinician with demo password and must_change_password=1."""
     email = (email or "").strip().lower()
+    trust = (default_trust or "").strip() or None
     h = _provisioned_password_hash()
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_premium_column(conn)
@@ -1782,8 +1802,8 @@ def user_create_provisioned(email: str, provisioned_by_hr_user_id: int) -> int:
             """INSERT INTO users (
                    email, password_hash, created_at, premium, gmc_number, display_name, current_trust,
                    must_change_password, provisioned_by_hr
-               ) VALUES (?, ?, ?, 0, NULL, NULL, NULL, 1, ?)""",
-            (email, h, datetime.utcnow().isoformat(), int(provisioned_by_hr_user_id)),
+               ) VALUES (?, ?, ?, 0, NULL, NULL, ?, 1, ?)""",
+            (email, h, datetime.utcnow().isoformat(), trust, int(provisioned_by_hr_user_id)),
         )
         uid = int(cur.lastrowid)
         conn.execute(
@@ -2077,9 +2097,12 @@ def cohort_add_members_from_emails(
     For each email: create provisioned user or link existing; add to cohort.
     Returns per-row result dicts (email, status, user_id, error).
     """
+    from . import trust_packs
+
     cohort = cohort_get(cohort_id, hr_trust)
     if not cohort:
         raise ValueError("cohort_not_found")
+    default_trust = trust_packs.trust_display_name(hr_trust) or None
     results: list[dict] = []
     for raw in emails:
         email = (raw or "").strip().lower()
@@ -2103,17 +2126,19 @@ def cohort_add_members_from_emails(
                 )
                 continue
             uid = int(existing["id"])
+            user_set_current_trust_if_empty(uid, default_trust or "")
             cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
             results.append({"email": email, "status": "existing", "user_id": uid, "error": None})
             continue
         try:
-            uid = user_create_provisioned(email, hr_user_id)
+            uid = user_create_provisioned(email, hr_user_id, default_trust=default_trust)
             cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
             results.append({"email": email, "status": "created", "user_id": uid, "error": None})
         except sqlite3.IntegrityError:
             existing = user_get_by_email(email)
             if existing and not user_is_premium(existing):
                 uid = int(existing["id"])
+                user_set_current_trust_if_empty(uid, default_trust or "")
                 cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
                 results.append({"email": email, "status": "existing", "user_id": uid, "error": None})
             else:
