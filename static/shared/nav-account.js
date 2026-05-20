@@ -1,19 +1,28 @@
 /**
- * Header account strip: display name + messages link with unread badge and hover preview.
- * Include after auth.js on signed-in pages. Replaces legacy #navEmail when present.
+ * Header account strip: display name + messages link with unread badge, hover preview,
+ * and background polling for new messages.
  */
 (function (global) {
   var ENVELOPE_SVG =
     '<svg class="nhsuk-topnav__envelope" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
-    '<path fill="currentColor" d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>' +
-    '</svg>';
+    '<path fill="currentColor" d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>';
+
+  var ENVELOPE_SVG_UNREAD =
+    '<svg class="nhsuk-topnav__envelope" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+    '<path fill="currentColor" d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-1.2 4.2l-6.8 4.25L5.2 8.2V6l6.8 4.25L18.8 6v2.2z"/>' +
+    '<circle class="nhsuk-topnav__envelope-dot" cx="18.5" cy="7" r="3.25" fill="#d5281b" stroke="#fff" stroke-width="1.25"/></svg>';
 
   var PREVIEW_LIMIT = 5;
   var PREVIEW_CACHE_MS = 20000;
+  var UNREAD_POLL_MS = 15000;
   var _previewCache = { at: 0, key: '', conversations: [] };
   var _previewHideTimer = null;
   var _previewShowTimer = null;
   var _previewWired = false;
+  var _unreadPollTimer = null;
+  var _unreadPollWired = false;
+  var _lastUnreadCount = 0;
+  var _newMsgFlashTimer = null;
 
   function esc(s) {
     var d = document.createElement('div');
@@ -69,6 +78,47 @@
       '<div class="nhsuk-topnav__msg-preview-body" id="navMessagesPreviewBody"></div>' +
       '<a class="nhsuk-topnav__msg-preview-foot" id="navMessagesPreviewAll" href="/static/messages/">View all messages</a>';
     wrap.appendChild(pop);
+  }
+
+  function setEnvelopeGraphic(link, hasUnread) {
+    if (!link) return;
+    var badge = link.querySelector('#navMsgBadge') || link.querySelector('.nhsuk-topnav__msg-badge');
+    var badgeHtml = badge ? badge.outerHTML : '';
+    link.innerHTML = (hasUnread ? ENVELOPE_SVG_UNREAD : ENVELOPE_SVG) + badgeHtml;
+  }
+
+  function applyUnreadVisual(link, count) {
+    if (!link) return;
+    var n = Number(count || 0);
+    var hadUnread = link.classList.contains('nhsuk-topnav__messages--unread');
+    if ((n > 0) !== hadUnread) {
+      setEnvelopeGraphic(link, n > 0);
+    }
+    var badge = link.querySelector('.nhsuk-topnav__msg-badge');
+    if (n > 0) {
+      link.classList.add('nhsuk-topnav__messages--unread');
+      if (n > _lastUnreadCount || (!hadUnread && n > 0)) {
+        link.classList.add('nhsuk-topnav__messages--new');
+        if (_newMsgFlashTimer) clearTimeout(_newMsgFlashTimer);
+        _newMsgFlashTimer = setTimeout(function () {
+          link.classList.remove('nhsuk-topnav__messages--new');
+          _newMsgFlashTimer = null;
+        }, 2800);
+      }
+      if (badge) {
+        badge.textContent = n > 99 ? '99+' : String(n);
+        badge.hidden = false;
+      }
+      link.setAttribute('aria-label', 'Messages, ' + n + ' unread message' + (n === 1 ? '' : 's'));
+    } else {
+      link.classList.remove('nhsuk-topnav__messages--unread', 'nhsuk-topnav__messages--new');
+      if (badge) {
+        badge.textContent = '';
+        badge.hidden = true;
+      }
+      link.setAttribute('aria-label', 'Messages');
+    }
+    _lastUnreadCount = n;
   }
 
   function previewSnippet(body, max) {
@@ -247,6 +297,57 @@
     }
   }
 
+  async function refreshUnreadBadge() {
+    if (!global.NHSAuth || !NHSAuth.user) return;
+    var link = document.getElementById('navMessagesLink');
+    if (!link) return;
+
+    var isHr = !!NHSAuth.user.premium;
+    var url = isHr ? '/api/hr/messages/unread-count' : '/api/me/messages/unread-count';
+    try {
+      var res = await fetch(url, { credentials: 'include' });
+      if (!res.ok) {
+        applyUnreadVisual(link, 0);
+        return;
+      }
+      var data = await res.json();
+      applyUnreadVisual(link, Number(data.unread || 0));
+    } catch (e) {
+      applyUnreadVisual(link, 0);
+    }
+  }
+
+  function notifyMessagesChanged() {
+    _previewCache.at = 0;
+    void refreshUnreadBadge();
+    try {
+      document.dispatchEvent(new CustomEvent('nhs-messages-changed'));
+    } catch (e) {}
+  }
+
+  function wireUnreadPolling() {
+    if (_unreadPollWired) return;
+    _unreadPollWired = true;
+
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) void refreshUnreadBadge();
+    });
+    window.addEventListener('focus', function () {
+      void refreshUnreadBadge();
+    });
+    document.addEventListener('nhs-messages-changed', function () {
+      _previewCache.at = 0;
+      void refreshUnreadBadge();
+    });
+
+    if (_unreadPollTimer) clearInterval(_unreadPollTimer);
+    _unreadPollTimer = setInterval(function () {
+      if (document.hidden) return;
+      if (!global.NHSAuth || !NHSAuth.user) return;
+      void refreshUnreadBadge();
+    }, UNREAD_POLL_MS);
+  }
+
   async function refreshNavAccount() {
     if (!global.NHSAuth) return;
     await NHSAuth.refresh();
@@ -255,10 +356,10 @@
     upgradeLegacyNavEmail();
     ensureMessagesPreviewUi();
     wireMessagesPreview();
+    wireUnreadPolling();
 
     var nameEl = document.getElementById('navUserName');
     var link = document.getElementById('navMessagesLink');
-    var badge = document.getElementById('navMsgBadge');
     if (!nameEl) return;
 
     var label = typeof NHSAuth.displayName === 'function' ? NHSAuth.displayName() : '';
@@ -285,40 +386,14 @@
       profileLink.title = NHSAuth.user.email;
     }
 
-    if (!badge || !link) return;
-    var url = isHr ? '/api/hr/messages/unread-count' : '/api/me/messages/unread-count';
-    try {
-      var res = await fetch(url, { credentials: 'include' });
-      if (!res.ok) {
-        badge.hidden = true;
-        link.setAttribute('aria-label', 'Messages');
-        return;
-      }
-      var data = await res.json();
-      var n = Number(data.unread || 0);
-      if (n > 0) {
-        badge.textContent = n > 99 ? '99+' : String(n);
-        badge.hidden = false;
-        link.setAttribute(
-          'aria-label',
-          'Messages, ' + n + ' unread message' + (n === 1 ? '' : 's')
-        );
-      } else {
-        badge.textContent = '';
-        badge.hidden = true;
-        link.setAttribute('aria-label', 'Messages');
-      }
-      _previewCache.at = 0;
-    } catch (e) {
-      badge.hidden = true;
-      link.setAttribute('aria-label', 'Messages');
-    }
+    await refreshUnreadBadge();
   }
 
   function init() {
     upgradeLegacyNavEmail();
     ensureMessagesPreviewUi();
     wireMessagesPreview();
+    wireUnreadPolling();
     void refreshNavAccount();
   }
 
@@ -328,5 +403,9 @@
     init();
   }
 
-  global.NHSNavAccount = { refresh: refreshNavAccount };
+  global.NHSNavAccount = {
+    refresh: refreshNavAccount,
+    refreshUnreadBadge: refreshUnreadBadge,
+    notifyMessagesChanged: notifyMessagesChanged,
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

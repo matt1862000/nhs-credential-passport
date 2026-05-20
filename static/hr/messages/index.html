@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
 
   <title>HR Messages &mdash; DocPass</title>
-  <link rel="stylesheet" href="/static/shared/app.css?v=20260520-2">
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
   <style>
     .msg-wrap { max-width: 60rem; }
     .msg-layout { display: flex; gap: 1rem; align-items: flex-start; }
@@ -122,7 +122,7 @@
   </main>
 
   <script src="/static/shared/auth.js"></script>
-  <script src="/static/shared/nav-account.js?v=20260520-1"></script>
+  <script src="/static/shared/nav-account.js?v=20260521-2"></script>
   <script>
     (function () {
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -161,6 +161,13 @@
       var _activeConv = null;
       var _convs = [];
       var _pollTimer = null;
+      var _inboxPollTimer = null;
+
+      function notifyNavMessages() {
+        if (window.NHSNavAccount && typeof NHSNavAccount.notifyMessagesChanged === 'function') {
+          NHSNavAccount.notifyMessagesChanged();
+        }
+      }
 
       function renderBubbles(messages) {
         var container = document.getElementById('bubbles');
@@ -290,6 +297,7 @@
           var data = await apiJson('/api/hr/messages/' + encodeURIComponent(String(_activeConvId)));
           renderBubbles(data.messages || []);
           await loadConversations(false);
+          notifyNavMessages();
         } catch (err) {
           alert(err.message || 'Could not send');
         } finally {
@@ -449,6 +457,8 @@
         } else if (_convs.length) {
           await loadThread(_convs[0].id);
         }
+        startInboxPolling();
+        notifyNavMessages();
       })();
     })();
   </script>
