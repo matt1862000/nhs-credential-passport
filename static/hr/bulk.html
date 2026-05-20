@@ -57,13 +57,13 @@
         <form id="bulkForm" class="hr-bulk-form" novalidate>
           <div class="nhsuk-form-group">
             <label class="nhsuk-label" for="bulkCohort">Recipients</label>
-            <span class="nhsuk-hint" id="bulkCohortHint">Select a cohort to use all its members, or leave blank and upload a roster file below.</span>
+            <span class="nhsuk-hint" id="bulkCohortHint">Select a cohort to use all its members, or leave blank and upload a roster file.</span>
             <select class="nhsuk-select" id="bulkCohort" name="cohort_id" aria-describedby="bulkCohortHint">
               <option value="">— Upload a roster file instead —</option>
             </select>
           </div>
-          <div class="nhsuk-form-group">
-            <label class="nhsuk-label" for="bulkRoster">Roster file <span class="hr-muted" style="font-weight:400;">(optional if cohort selected)</span></label>
+          <div class="nhsuk-form-group" id="bulkRosterGroup">
+            <label class="nhsuk-label" for="bulkRoster">Roster file</label>
             <span class="nhsuk-hint" id="bulkRosterHint">Plain text or CSV — one GMC number or work email per line, or CSV with the identifier in the first column. Maximum 50 people per upload.</span>
             <div class="hr-bulk-file">
               <input class="nhsuk-input" type="file" id="bulkRoster" name="roster" accept=".txt,.csv,text/plain,text/csv" aria-describedby="bulkRosterHint">

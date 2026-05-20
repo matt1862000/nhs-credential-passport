@@ -244,3 +244,66 @@
     .nhs-suggest-list li:hover,
     .nhs-suggest-list li[aria-selected="true"] { background: rgba(240, 244, 245, 0.9); }
     .nhs-suggest-meta { display: block; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; }
+
+    /* Cohort detail — actions panels */
+    .hr-cohort-detail-top { margin-bottom: 1.25rem; }
+    .hr-cohort-detail-top .hr-inbox-head { margin-bottom: 0; }
+    .hr-cohort-stats { margin: 0.35rem 0 0 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); line-height: 1.5; }
+    .hr-cohort-stats strong { color: var(--nhsuk-text); font-weight: 700; }
+    .hr-cohort-members-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.5rem; margin: 1.5rem 0 0.5rem 0; }
+    .hr-cohort-members-head h3 { margin: 0; font-size: 1.125rem; }
+    .hr-cohort-legend { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin: 0 0 0.75rem 0; max-width: 42rem; }
+    .hr-cohort-actions-title { margin: 1.75rem 0 0.75rem 0; font-size: 1.125rem; }
+    .hr-cohort-panel { margin-top: 0; }
+    .hr-cohort-panel .nhsuk-textarea,
+    .hr-cohort-create-emails {
+      width: 100%;
+      max-width: none;
+      min-height: 8rem;
+      box-sizing: border-box;
+    }
+    .hr-cohort-panel .nhsuk-form-group:last-of-type { margin-bottom: 0; }
+    .hr-cohort-panel-actions { margin-top: 1.25rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+    .hr-cohort-inset {
+      margin: 0 0 1rem 0;
+      padding: 0.85rem 1rem;
+      border-left: 4px solid var(--nhsuk-link);
+      background: var(--nhsuk-panel);
+      font-size: 0.875rem;
+      color: var(--nhsuk-secondary-text);
+      line-height: 1.5;
+    }
+    .hr-cohort-inset strong { color: var(--nhsuk-text); }
+    .hr-cohort-recipient-toggle {
+      margin: 0 0 0.75rem 0;
+      padding: 0;
+      border: none;
+      background: none;
+      color: var(--nhsuk-link);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      text-decoration: underline;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .hr-cohort-recipient-toggle:hover { color: #003d78; }
+    .hr-cohort-recipient-list {
+      margin: 0 0 1rem 0;
+      padding: 0.65rem 0.85rem;
+      max-height: 10rem;
+      overflow-y: auto;
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 4px;
+      background: #fff;
+      font-size: 0.875rem;
+      line-height: 1.45;
+    }
+    .hr-cohort-recipient-list[hidden] { display: none !important; }
+    .hr-cohort-recipient-list li { margin: 0.2rem 0; }
+    .hr-cohort-status-msg { min-height: 1.25rem; margin-top: 0.75rem; font-size: 0.9375rem; }
+    .hr-cohort-status-msg--ok { color: var(--nhsuk-success); font-weight: 600; }
+    .hr-cohort-status-msg--error { color: var(--nhsuk-error); font-weight: 600; }
+    .hr-table .hr-status-pill { display: inline-block; padding: 0.15rem 0.45rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
+    .hr-status-pill--pending { background: #fff7e6; color: #8a5b00; }
+    .hr-status-pill--queued { background: #e8f4fb; color: #005eb8; }
+    .hr-status-pill--active { background: #e6f5e6; color: #00703c; }

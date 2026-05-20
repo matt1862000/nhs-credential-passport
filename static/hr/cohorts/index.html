@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260519-1">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260518-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260519-2">
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
@@ -58,20 +58,24 @@
 
         <div class="hr-card" id="createCard" hidden>
           <h2>Create cohort</h2>
-          <form id="formCreateCohort" novalidate>
-            <div class="nhsuk-form-group">
-              <label class="nhsuk-label" for="cohortName">Cohort name</label>
-              <input class="nhsuk-input" type="text" id="cohortName" required placeholder="e.g. February 2026" maxlength="120">
-            </div>
-            <div class="nhsuk-form-group">
-              <label class="nhsuk-label" for="cohortEmails">NHS work emails</label>
-              <textarea class="nhsuk-textarea" id="cohortEmails" rows="8" required placeholder="one@nhs.net&#10;two@nhs.net"></textarea>
-              <span class="hr-muted" style="display:block;margin-top:0.35rem;font-size:0.875rem;">One email per line. HR-generated addresses such as firstname.surname123@nhs.net</span>
-            </div>
-            <p class="hr-muted" style="margin:0;font-size:0.875rem;" id="welcomePreview"></p>
-            <button type="submit" class="nhsuk-button">Create cohort</button>
-            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCancelCreate">Cancel</button>
-          </form>
+          <div class="hr-bulk-panel">
+            <form id="formCreateCohort" class="hr-bulk-form" novalidate>
+              <div class="nhsuk-form-group">
+                <label class="nhsuk-label" for="cohortName">Cohort name</label>
+                <input class="nhsuk-input" type="text" id="cohortName" required placeholder="e.g. February 2026" maxlength="120">
+              </div>
+              <div class="nhsuk-form-group">
+                <label class="nhsuk-label" for="cohortEmails">NHS work emails</label>
+                <span class="nhsuk-hint">One per line (e.g. firstname.surname123@nhs.net).</span>
+                <textarea class="nhsuk-textarea hr-cohort-create-emails" id="cohortEmails" rows="8" required placeholder="one@nhs.net&#10;two@nhs.net"></textarea>
+              </div>
+              <p class="hr-cohort-inset" style="margin-bottom:1rem;" id="welcomePreview"></p>
+              <div class="hr-cohort-panel-actions">
+                <button type="submit" class="nhsuk-button">Create cohort</button>
+                <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCancelCreate">Cancel</button>
+              </div>
+            </form>
+          </div>
           <p id="createStatus" class="hr-muted" style="min-height:1.25rem;margin-top:0.75rem;" aria-live="polite"></p>
           <div id="createResultsWrap" hidden>
             <h3 style="font-size:1rem;margin:1rem 0 0.5rem;">Results</h3>
@@ -86,11 +90,18 @@
       </div>
 
       <div id="detailView" class="hr-card" hidden>
-        <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">&larr; All cohorts</button>
-        <h2 id="detailTitle" style="margin:1rem 0 0.5rem;"></h2>
-        <p class="hr-muted" id="detailMeta"></p>
+        <div class="hr-cohort-detail-top">
+          <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">&larr; All cohorts</button>
+          <div class="hr-inbox-head" style="margin-top:0.75rem;">
+            <h2 id="detailTitle" style="margin:0;">Cohort</h2>
+          </div>
+          <p class="hr-cohort-stats" id="detailMeta" aria-live="polite"></p>
+        </div>
 
-        <h3 style="font-size:1rem;margin:1.25rem 0 0.5rem;">Members</h3>
+        <div class="hr-cohort-members-head">
+          <h3>Members</h3>
+        </div>
+        <p class="hr-cohort-legend">Status shows whether they can sign in and whether an automatic welcome will be sent after they complete their profile.</p>
         <div class="hr-table-wrap">
           <table class="hr-table" aria-label="Cohort members">
             <thead><tr><th>Name</th><th>NHS email</th><th>GMC</th><th>Status</th></tr></thead>
@@ -98,24 +109,42 @@
           </table>
         </div>
 
-        <h3 style="font-size:1rem;margin:1.5rem 0 0.5rem;">Message entire cohort</h3>
-        <p class="hr-muted" style="font-size:0.875rem;">The same message is sent to each member in a separate private conversation.</p>
-        <form id="formCohortMessage" novalidate>
-          <div class="nhsuk-form-group">
-            <label class="nhsuk-label" for="cohortMsgBody">Message</label>
-            <textarea class="nhsuk-textarea" id="cohortMsgBody" rows="4" required></textarea>
-          </div>
-          <button type="submit" class="nhsuk-button">Send to cohort</button>
-        </form>
-        <p id="msgStatus" class="hr-muted" style="min-height:1.25rem;margin-top:0.5rem;" aria-live="polite"></p>
+        <h3 class="hr-cohort-actions-title">Actions</h3>
+        <div class="hr-segment" role="tablist" aria-label="Cohort actions">
+          <button type="button" class="active" id="tabCohortMessage" role="tab" aria-selected="true" aria-controls="panelCohortMessage" data-tab="message">Message cohort</button>
+          <button type="button" id="tabCohortAdd" role="tab" aria-selected="false" aria-controls="panelCohortAdd" data-tab="add">Add clinicians</button>
+        </div>
 
-        <h3 style="font-size:1rem;margin:1.5rem 0 0.5rem;">Add more members</h3>
-        <form id="formAddMembers" novalidate>
-          <textarea class="nhsuk-textarea" id="addEmails" rows="4" placeholder="More NHS emails, one per line"></textarea>
-          <p class="hr-muted" style="margin:0.5rem 0 0;font-size:0.8125rem;">A welcome message is sent automatically when each new member completes their profile.</p>
-          <button type="submit" class="nhsuk-button nhsuk-button--secondary" style="margin-top:0.5rem;">Add emails</button>
-        </form>
-        <p id="addStatus" class="hr-muted" style="min-height:1.25rem;" aria-live="polite"></p>
+        <div id="panelCohortMessage" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMessage">
+          <p class="nhsuk-hint" style="margin-top:0;max-width:none;" id="messageHint">Each person receives the same text in a <strong>separate private</strong> conversation.</p>
+          <button type="button" class="hr-cohort-recipient-toggle" id="btnToggleRecipients" aria-expanded="false" aria-controls="recipientList">View recipients</button>
+          <ul id="recipientList" class="hr-cohort-recipient-list" hidden aria-label="Recipients"></ul>
+          <form id="formCohortMessage" class="hr-bulk-form" novalidate>
+            <div class="nhsuk-form-group">
+              <label class="nhsuk-label" for="cohortMsgBody">Your message</label>
+              <textarea class="nhsuk-textarea" id="cohortMsgBody" rows="6" required placeholder="Write your message to everyone in this cohort…"></textarea>
+            </div>
+            <div class="hr-cohort-panel-actions">
+              <button type="submit" class="nhsuk-button" id="btnSendCohort">Send to clinicians</button>
+            </div>
+          </form>
+          <p id="msgStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite"></p>
+        </div>
+
+        <div id="panelCohortAdd" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortAdd" hidden>
+          <div class="hr-cohort-inset" id="addWelcomeInset"></div>
+          <form id="formAddMembers" class="hr-bulk-form" novalidate>
+            <div class="nhsuk-form-group">
+              <label class="nhsuk-label" for="addEmails">NHS work emails</label>
+              <span class="nhsuk-hint">One email per line (e.g. firstname.surname123@nhs.net).</span>
+              <textarea class="nhsuk-textarea" id="addEmails" rows="6" required placeholder="one@nhs.net&#10;two@nhs.net"></textarea>
+            </div>
+            <div class="hr-cohort-panel-actions">
+              <button type="submit" class="nhsuk-button nhsuk-button--secondary">Add to cohort</button>
+            </div>
+          </form>
+          <p id="addStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite"></p>
+        </div>
       </div>
     </div>
   </main>
@@ -125,6 +154,7 @@
   <script>
     (function () {
       var _activeCohortId = null;
+      var _detailMembers = [];
 
       function firstNameFromEmail(email) {
         var local = String(email || '').split('@')[0].toLowerCase();
@@ -134,14 +164,130 @@
         return part.charAt(0).toUpperCase() + part.slice(1);
       }
 
+      function trustDisplayName(trust) {
+        var raw = (trust || '').trim();
+        if (!raw) return 'your trust';
+        if (raw !== raw.toUpperCase() || raw.length <= 3) return raw;
+        var acronyms = { nhs: 1, uk: 1, gp: 1, ods: 1, icu: 1, it: 1 };
+        var small = { and: 1, of: 1, the: 1, for: 1, in: 1, at: 1 };
+        return raw.toLowerCase().split(/\s+/).map(function (w, i) {
+          if (acronyms[w]) return w.toUpperCase();
+          if (small[w] && i > 0) return w;
+          return w.charAt(0).toUpperCase() + w.slice(1);
+        }).join(' ');
+      }
+
       function welcomePreviewText(trust) {
-        var t = (trust || '').trim() || 'your trust';
+        var t = trustDisplayName(trust);
         return 'Each clinician automatically receives a welcome message when they complete their profile, e.g. “Welcome Bill Smith to '
           + t + '. Please reply if you have any queries or concerns.”';
       }
 
+      function welcomeExampleSnippet(trust) {
+        var t = trustDisplayName(trust);
+        return '“Welcome [name] to ' + t + '. Please reply if you have any queries or concerns.”';
+      }
+
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
       function show(el, on) { if (el) el.hidden = !on; }
+
+      function memberStatusMeta(m) {
+        if (m.welcome_sent_at) return { key: 'active', label: 'Welcome sent', sort: 3 };
+        if (m.welcome_pending) return { key: 'queued', label: 'Welcome queued', sort: 2 };
+        if (m.must_change_password) return { key: 'pending', label: 'Awaiting first sign-in', sort: 0 };
+        return { key: 'active', label: 'Active', sort: 1 };
+      }
+
+      function memberStatusPill(m) {
+        var meta = memberStatusMeta(m);
+        return '<span class="hr-status-pill hr-status-pill--' + meta.key + '">' + esc(meta.label) + '</span>';
+      }
+
+      function sortMembers(members) {
+        return members.slice().sort(function (a, b) {
+          var sa = memberStatusMeta(a).sort;
+          var sb = memberStatusMeta(b).sort;
+          if (sa !== sb) return sa - sb;
+          var na = (a.display_name || a.email || '').toLowerCase();
+          var nb = (b.display_name || b.email || '').toLowerCase();
+          return na.localeCompare(nb);
+        });
+      }
+
+      function setStatusEl(el, text, kind) {
+        if (!el) return;
+        el.textContent = text || '';
+        el.classList.remove('hr-cohort-status-msg--ok', 'hr-cohort-status-msg--error');
+        if (kind === 'ok') el.classList.add('hr-cohort-status-msg--ok');
+        if (kind === 'error') el.classList.add('hr-cohort-status-msg--error');
+      }
+
+      function setCohortTab(tab) {
+        var isMsg = tab !== 'add';
+        var tabMsg = document.getElementById('tabCohortMessage');
+        var tabAdd = document.getElementById('tabCohortAdd');
+        var panelMsg = document.getElementById('panelCohortMessage');
+        var panelAdd = document.getElementById('panelCohortAdd');
+        if (tabMsg) {
+          tabMsg.classList.toggle('active', isMsg);
+          tabMsg.setAttribute('aria-selected', isMsg ? 'true' : 'false');
+        }
+        if (tabAdd) {
+          tabAdd.classList.toggle('active', !isMsg);
+          tabAdd.setAttribute('aria-selected', !isMsg ? 'true' : 'false');
+        }
+        show(panelMsg, isMsg);
+        show(panelAdd, !isMsg);
+      }
+
+      function updateCohortActionUI() {
+        var n = _detailMembers.length;
+        var queued = _detailMembers.filter(function (m) { return m.welcome_pending && !m.welcome_sent_at; }).length;
+        var awaiting = _detailMembers.filter(function (m) { return m.must_change_password; }).length;
+        var parts = ['<strong>' + n + '</strong> clinician' + (n === 1 ? '' : 's')];
+        if (awaiting) parts.push('<strong>' + awaiting + '</strong> awaiting first sign-in');
+        if (queued) parts.push('<strong>' + queued + '</strong> welcome' + (queued === 1 ? '' : 's') + ' queued');
+        document.getElementById('detailMeta').innerHTML = parts.join(' · ');
+
+        var btn = document.getElementById('btnSendCohort');
+        if (btn) btn.textContent = n ? ('Send to ' + n + ' clinician' + (n === 1 ? '' : 's')) : 'Send message';
+
+        var list = document.getElementById('recipientList');
+        var toggle = document.getElementById('btnToggleRecipients');
+        if (list && toggle) {
+          if (!n) {
+            list.innerHTML = '<li class="hr-muted">No members yet.</li>';
+            toggle.hidden = true;
+            list.hidden = true;
+            toggle.setAttribute('aria-expanded', 'false');
+          } else {
+            toggle.hidden = false;
+            list.innerHTML = _detailMembers.map(function (m) {
+              var label = (m.display_name && m.display_name.trim()) ? m.display_name.trim() : m.email;
+              return '<li>' + esc(label) + (label !== m.email ? ' <span class="hr-muted">(' + esc(m.email) + ')</span>' : '') + '</li>';
+            }).join('');
+          }
+        }
+
+        var trust = (NHSAuth.user && NHSAuth.user.current_trust) || '';
+        var inset = document.getElementById('addWelcomeInset');
+        if (inset) {
+          inset.innerHTML = '<strong>Automatic welcome</strong> — after profile completion, each new member receives: '
+            + esc(welcomeExampleSnippet(trust));
+        }
+      }
+
+      function confirmCohortSend(count, members) {
+        var preview = members.slice(0, 5).map(function (m) {
+          return (m.display_name && m.display_name.trim()) ? m.display_name.trim() : m.email;
+        });
+        var extra = count > 5 ? '\n…and ' + (count - 5) + ' more.' : '';
+        return confirm(
+          'Send this message to ' + count + ' clinician' + (count === 1 ? '' : 's') + '?\n\n'
+          + 'Each person gets their own private thread.\n\n'
+          + preview.join('\n') + extra
+        );
+      }
 
       function wireMenu() {
         var btn = document.getElementById('btnMenu'), panel = document.getElementById('menuPanel');
@@ -195,31 +341,38 @@
         _activeCohortId = id;
         var data = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(id)));
         var c = data.cohort;
-        var members = data.members || [];
+        _detailMembers = sortMembers(data.members || []);
         document.getElementById('detailTitle').textContent = c.name;
-        document.getElementById('detailMeta').textContent = members.length + ' member' + (members.length === 1 ? '' : 's');
         var tb = document.getElementById('membersTbody');
-        if (!members.length) {
-          tb.innerHTML = '<tr><td colspan="4" class="hr-muted">No members yet.</td></tr>';
+        if (!_detailMembers.length) {
+          tb.innerHTML = '<tr><td colspan="4" class="hr-muted">No members yet. Use <strong>Add clinicians</strong> to provision NHS work emails.</td></tr>';
         } else {
-          tb.innerHTML = members.map(function (m) {
-            var st;
-            if (m.welcome_sent_at) st = 'Welcome sent';
-            else if (m.welcome_pending) st = 'Welcome queued (after profile)';
-            else if (m.must_change_password) st = 'Awaiting first sign-in';
-            else st = 'Active';
-            return '<tr><td>' + esc(m.display_name || '—') + '</td><td>' + esc(m.email) + '</td><td>' + esc(m.gmc_number || '—') + '</td><td>' + esc(st) + '</td></tr>';
+          tb.innerHTML = _detailMembers.map(function (m) {
+            return '<tr><td>' + esc(m.display_name || '—') + '</td><td>' + esc(m.email) + '</td><td>' + esc(m.gmc_number || '—') + '</td><td>' + memberStatusPill(m) + '</td></tr>';
           }).join('');
+        }
+        updateCohortActionUI();
+        setCohortTab('message');
+        var recipList = document.getElementById('recipientList');
+        var recipToggle = document.getElementById('btnToggleRecipients');
+        if (recipList) recipList.hidden = true;
+        if (recipToggle) {
+          recipToggle.setAttribute('aria-expanded', 'false');
+          recipToggle.textContent = 'View recipients (' + _detailMembers.length + ')';
         }
         show(document.getElementById('listView'), false);
         show(document.getElementById('detailView'), true);
-        document.getElementById('msgStatus').textContent = '';
-        document.getElementById('addStatus').textContent = '';
+        setStatusEl(document.getElementById('msgStatus'), '', null);
+        setStatusEl(document.getElementById('addStatus'), '', null);
       }
 
       function updateWelcomePreview() {
         var trust = (NHSAuth.user && NHSAuth.user.current_trust) || '';
-        document.getElementById('welcomePreview').textContent = welcomePreviewText(trust);
+        var el = document.getElementById('welcomePreview');
+        if (el) {
+          el.innerHTML = '<strong>Automatic welcome</strong> — after profile completion, each member receives: '
+            + esc(welcomeExampleSnippet(trust));
+        }
       }
 
       document.getElementById('btnShowCreate').addEventListener('click', function () {
@@ -264,32 +417,63 @@
         }
       });
 
+      function openCohortFromRow(row) {
+        if (!row) return;
+        openCohort(parseInt(row.getAttribute('data-cohort-id'), 10));
+      }
       document.getElementById('cohortList').addEventListener('click', function (e) {
+        openCohortFromRow(e.target.closest('[data-cohort-id]'));
+      });
+      document.getElementById('cohortList').addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
         var row = e.target.closest('[data-cohort-id]');
-        if (row) openCohort(parseInt(row.getAttribute('data-cohort-id'), 10));
+        if (!row) return;
+        e.preventDefault();
+        openCohortFromRow(row);
       });
 
       document.getElementById('btnBackList').addEventListener('click', showList);
+
+      document.querySelectorAll('.hr-segment [data-tab]').forEach(function (btn) {
+        btn.addEventListener('click', function () { setCohortTab(btn.getAttribute('data-tab')); });
+      });
+
+      document.getElementById('btnToggleRecipients').addEventListener('click', function () {
+        var list = document.getElementById('recipientList');
+        var btn = document.getElementById('btnToggleRecipients');
+        if (!list || !btn) return;
+        var open = list.hidden;
+        list.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        btn.textContent = (open ? 'Hide' : 'View') + ' recipients (' + _detailMembers.length + ')';
+      });
 
       document.getElementById('formCohortMessage').addEventListener('submit', async function (e) {
         e.preventDefault();
         if (!_activeCohortId) return;
         var body = document.getElementById('cohortMsgBody').value.trim();
         if (!body) return;
-        if (!confirm('Send this message to everyone in this cohort? Each person gets their own private thread.')) return;
+        if (!_detailMembers.length) {
+          setStatusEl(document.getElementById('msgStatus'), 'Add clinicians to this cohort before sending a message.', 'error');
+          return;
+        }
+        if (!confirmCohortSend(_detailMembers.length, _detailMembers)) return;
         var st = document.getElementById('msgStatus');
-        st.textContent = 'Sending…';
+        setStatusEl(st, 'Sending…', null);
         try {
           var out = await apiJson('/api/hr/cohorts/' + _activeCohortId + '/message', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ body: body }),
           });
-          st.textContent = 'Sent to ' + (out.sent || 0) + ' clinician' + ((out.sent || 0) === 1 ? '' : 's')
-            + ((out.failed && out.failed.length) ? '; ' + out.failed.length + ' failed.' : '.');
+          var sent = out.sent || 0;
+          var failN = (out.failed && out.failed.length) || 0;
+          setStatusEl(st,
+            'Sent to ' + sent + ' clinician' + (sent === 1 ? '' : 's') + (failN ? '; ' + failN + ' could not be reached.' : '.'),
+            failN ? 'error' : 'ok');
           document.getElementById('cohortMsgBody').value = '';
         } catch (err) {
-          st.textContent = err.message || 'Send failed';
+          setStatusEl(st, err.message || 'Send failed', 'error');
         }
       });
 
@@ -297,7 +481,7 @@
         e.preventDefault();
         if (!_activeCohortId) return;
         var st = document.getElementById('addStatus');
-        st.textContent = 'Adding…';
+        setStatusEl(st, 'Adding…', null);
         try {
           var data = await apiJson('/api/hr/cohorts/' + _activeCohortId + '/members', {
             method: 'POST',
@@ -307,13 +491,17 @@
             }),
           });
           var s = data.summary || {};
-          st.textContent = 'Added: ' + (s.created || 0) + ' created, ' + (s.existing || 0) + ' existing.'
+          setStatusEl(st,
+            'Added: ' + (s.created || 0) + ' new, ' + (s.existing || 0) + ' already in cohort.'
             + (s.welcome_sent ? ' Welcome sent to ' + s.welcome_sent + '.' : '')
-            + (s.welcome_queued ? ' Welcome queued for ' + s.welcome_queued + '.' : '');
+            + (s.welcome_queued ? ' Welcome queued for ' + s.welcome_queued + ' after profile.' : ''),
+            'ok');
           document.getElementById('addEmails').value = '';
+          setCohortTab('add');
           await openCohort(_activeCohortId);
+          setCohortTab('add');
         } catch (err) {
-          st.textContent = err.message || 'Failed';
+          setStatusEl(st, err.message || 'Failed', 'error');
         }
       });
 

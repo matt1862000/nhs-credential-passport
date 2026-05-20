@@ -905,13 +905,28 @@
         function updateBulkRecipientsUi() {
           var cohortSel = document.getElementById('bulkCohort');
           var rosterEl = document.getElementById('bulkRoster');
+          var rosterGroup = document.getElementById('bulkRosterGroup');
+          var cohortHint = document.getElementById('bulkCohortHint');
           var rosterHint = document.getElementById('bulkRosterHint');
           var usingCohort = cohortSel && cohortSel.value;
-          if (rosterEl) rosterEl.required = !usingCohort;
-          if (rosterHint && usingCohort) {
-            var opt = cohortSel.options[cohortSel.selectedIndex];
-            rosterHint.textContent = 'Cohort selected: ' + (opt ? opt.textContent : '') + '. Roster file is ignored if you upload one.';
-          } else if (rosterHint) {
+          if (rosterGroup) rosterGroup.hidden = !!usingCohort;
+          if (rosterEl) {
+            rosterEl.required = !usingCohort;
+            if (usingCohort) {
+              rosterEl.value = '';
+              var rosterName = document.getElementById('bulkRosterName');
+              if (rosterName) rosterName.textContent = 'No file chosen';
+            }
+          }
+          if (cohortHint) {
+            if (usingCohort) {
+              var opt = cohortSel.options[cohortSel.selectedIndex];
+              cohortHint.textContent = 'Training will be issued to all eligible members of ' + (opt ? opt.textContent : 'this cohort') + '.';
+            } else {
+              cohortHint.textContent = 'Select a cohort to use all its members, or leave blank and upload a roster file.';
+            }
+          }
+          if (rosterHint && !usingCohort) {
             rosterHint.textContent =
               'Plain text or CSV — one GMC number or work email per line, or CSV with the identifier in the first column. Maximum 50 people per upload.';
           }
@@ -920,7 +935,10 @@
         var bulkCohortEl = document.getElementById('bulkCohort');
         if (bulkCohortEl) {
           bulkCohortEl.addEventListener('change', updateBulkRecipientsUi);
-          void fillBulkCohortSelect();
+          void (async function () {
+            await fillBulkCohortSelect();
+            updateBulkRecipientsUi();
+          })();
         }
         fillHrModuleSelect(document.getElementById('addTrainingModule'));
         initHrIssuingTrustAutocomplete();
