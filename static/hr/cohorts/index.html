@@ -6,8 +6,8 @@
   <meta name="application-name" content="DocPass">
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
-  <link rel="stylesheet" href="/static/shared/app.css?v=20260519-1">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260520-1">
+  <link rel="stylesheet" href="/static/shared/app.css?v=20260520-2">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260521-1">
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
@@ -147,6 +147,16 @@
               <label class="nhsuk-label" for="addEmails">NHS work emails</label>
               <span class="nhsuk-hint nhsuk-hint--secondary">One email per line (e.g. firstname.surname123@nhs.net).</span>
               <span class="hr-roster-paste-tip">Paste from Excel or Outlook — one address per line.</span>
+              <div class="hr-roster-upload">
+                <label class="nhsuk-label nhsuk-label--s" for="addEmailsFile">Or upload CSV or plain text</label>
+                <span class="nhsuk-hint">One email per line, or first column of a spreadsheet export (.csv or .txt).</span>
+                <div class="hr-bulk-file">
+                  <input class="nhsuk-input" type="file" id="addEmailsFile" accept=".txt,.csv,text/plain,text/csv" aria-describedby="addEmailsFileStatus">
+                </div>
+                <span class="hr-roster-file-name" id="addEmailsFileName" aria-live="polite">No file chosen</span>
+                <p class="hr-roster-upload-status" id="addEmailsFileStatus" hidden role="status"></p>
+              </div>
+              <p class="hr-roster-or" aria-hidden="true">or type / paste below</p>
               <div class="hr-roster-paste">
                 <textarea class="nhsuk-textarea hr-roster-paste__input" id="addEmails" rows="8" required placeholder="one@nhs.net&#10;two@nhs.net" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
               </div>
@@ -163,7 +173,7 @@
   </main>
 
   <script src="/static/shared/auth.js"></script>
-  <script src="/static/shared/nav-account.js"></script>
+  <script src="/static/shared/nav-account.js?v=20260520-1"></script>
   <script>
     (function () {
       var _activeCohortId = null;
@@ -204,8 +214,102 @@
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
       function show(el, on) { if (el) el.hidden = !on; }
 
+      var EMAIL_LINE_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+      function parseRosterLines(text) {
+        var out = [];
+        String(text || '').split(/\r?\n/).forEach(function (rawLine) {
+          var line = rawLine.trim();
+          if (!line || line.charAt(0) === '#') return;
+          if (line.indexOf(',') >= 0) {
+            line = line.split(',')[0].trim().replace(/^["']|["']$/g, '');
+          }
+          if (line) out.push(line);
+        });
+        return out;
+      }
+
+      function rosterEmailsFromText(text) {
+        return parseRosterLines(text).filter(function (line) {
+          return EMAIL_LINE_RE.test(line);
+        });
+      }
+
+      function mergeRosterIntoTextarea(ta, newLines, replace) {
+        var existing = replace ? [] : parseRosterLines(ta.value);
+        var seen = {};
+        var merged = [];
+        existing.concat(newLines).forEach(function (line) {
+          var key = line.toLowerCase();
+          if (seen[key]) return;
+          seen[key] = true;
+          merged.push(line);
+        });
+        ta.value = merged.join('\n');
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        return merged.length;
+      }
+
+      function setRosterUploadStatus(statusId, msg, isError) {
+        var el = document.getElementById(statusId);
+        if (!el) return;
+        if (!msg) {
+          el.textContent = '';
+          el.hidden = true;
+          el.classList.remove('hr-roster-upload-status--error');
+          return;
+        }
+        el.textContent = msg;
+        el.hidden = false;
+        el.classList.toggle('hr-roster-upload-status--error', !!isError);
+      }
+
+      function wireRosterCsvUpload(fileInputId, fileNameId, textareaId, statusId) {
+        var inp = document.getElementById(fileInputId);
+        var nameEl = document.getElementById(fileNameId);
+        var ta = document.getElementById(textareaId);
+        if (!inp || !ta) return;
+        inp.addEventListener('change', function () {
+          setRosterUploadStatus(statusId, '', false);
+          var file = inp.files && inp.files[0];
+          if (nameEl) nameEl.textContent = file ? file.name : 'No file chosen';
+          if (!file) return;
+          var reader = new FileReader();
+          reader.onload = function () {
+            var text = String(reader.result || '');
+            var emails = rosterEmailsFromText(text);
+            var skipped = parseRosterLines(text).length - emails.length;
+            if (!emails.length) {
+              setRosterUploadStatus(
+                statusId,
+                'No email addresses found. Use one per line or in the first CSV column.',
+                true
+              );
+              inp.value = '';
+              if (nameEl) nameEl.textContent = 'No file chosen';
+              return;
+            }
+            var total = mergeRosterIntoTextarea(ta, emails, false);
+            var msg = 'Added ' + emails.length + ' address' + (emails.length === 1 ? '' : 'es') + ' from file';
+            if (skipped > 0) msg += ' (' + skipped + ' row' + (skipped === 1 ? '' : 's') + ' skipped)';
+            msg += '. ' + total + ' total.';
+            setRosterUploadStatus(statusId, msg, false);
+            inp.value = '';
+            if (nameEl) nameEl.textContent = 'No file chosen';
+          };
+          reader.onerror = function () {
+            setRosterUploadStatus(statusId, 'Could not read that file.', true);
+            inp.value = '';
+            if (nameEl) nameEl.textContent = 'No file chosen';
+          };
+          reader.readAsText(file);
+        });
+      }
+
       function countRosterLines(text) {
-        return String(text || '').split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean).length;
+        return parseRosterLines(text).filter(function (line) {
+          return EMAIL_LINE_RE.test(line);
+        }).length;
       }
 
       function wireRosterLineCount(textareaId, countId) {
@@ -581,6 +685,8 @@
         updateWelcomePreview();
         wireRosterLineCount('cohortEmails', 'cohortEmailsCount');
         wireRosterLineCount('addEmails', 'addEmailsCount');
+        wireRosterCsvUpload('cohortEmailsFile', 'cohortEmailsFileName', 'cohortEmails', 'cohortEmailsFileStatus');
+        wireRosterCsvUpload('addEmailsFile', 'addEmailsFileName', 'addEmails', 'addEmailsFileStatus');
         wireComposeFocus('cohortMsgBody', 'cohortMsgGroup');
         await loadCohorts();
       })();

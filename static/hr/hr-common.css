@@ -311,6 +311,34 @@
       color: var(--nhsuk-secondary-text);
       line-height: 1.45;
     }
+    .hr-roster-upload {
+      margin: 0.65rem 0 0.5rem 0;
+      max-width: 36rem;
+    }
+    .hr-roster-upload .nhsuk-label--s { margin-bottom: 0.25rem; }
+    .hr-roster-upload .nhsuk-hint { margin: 0.2rem 0 0.45rem 0; max-width: none; }
+    .hr-roster-upload .hr-bulk-file { max-width: none; }
+    .hr-roster-file-name {
+      display: block;
+      font-size: 0.875rem;
+      color: var(--nhsuk-secondary-text);
+      margin-top: 0.45rem;
+    }
+    .hr-roster-upload-status {
+      margin: 0.4rem 0 0 0;
+      font-size: 0.875rem;
+      color: var(--nhsuk-success);
+      font-weight: 600;
+    }
+    .hr-roster-upload-status--error { color: var(--nhsuk-error); }
+    .hr-roster-or {
+      margin: 0.65rem 0 0.5rem 0;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: var(--nhsuk-secondary-text);
+      text-align: center;
+      max-width: 36rem;
+    }
     .hr-roster-line-count {
       display: block;
       margin-top: 0.5rem;
