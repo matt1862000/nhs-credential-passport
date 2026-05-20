@@ -68,13 +68,7 @@
               <textarea class="nhsuk-textarea" id="cohortEmails" rows="8" required placeholder="one@nhs.net&#10;two@nhs.net"></textarea>
               <span class="hr-muted" style="display:block;margin-top:0.35rem;font-size:0.875rem;">One email per line. HR-generated addresses such as firstname.surname123@nhs.net</span>
             </div>
-            <div class="nhsuk-form-group">
-              <label class="nhsuk-label nhsuk-label--s">
-                <input type="checkbox" id="sendWelcome" checked>
-                Send welcome message in DocPass
-              </label>
-              <p class="hr-muted" style="margin:0.35rem 0 0;font-size:0.8125rem;" id="welcomePreview"></p>
-            </div>
+            <p class="hr-muted" style="margin:0;font-size:0.875rem;" id="welcomePreview"></p>
             <button type="submit" class="nhsuk-button">Create cohort</button>
             <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCancelCreate">Cancel</button>
           </form>
@@ -118,10 +112,7 @@
         <h3 style="font-size:1rem;margin:1.5rem 0 0.5rem;">Add more members</h3>
         <form id="formAddMembers" novalidate>
           <textarea class="nhsuk-textarea" id="addEmails" rows="4" placeholder="More NHS emails, one per line"></textarea>
-          <label class="nhsuk-label nhsuk-label--s" style="margin-top:0.5rem;">
-            <input type="checkbox" id="addSendWelcome">
-            Send welcome message to new members
-          </label>
+          <p class="hr-muted" style="margin:0.5rem 0 0;font-size:0.8125rem;">A welcome message is sent automatically when each new member completes their profile.</p>
           <button type="submit" class="nhsuk-button nhsuk-button--secondary" style="margin-top:0.5rem;">Add emails</button>
         </form>
         <p id="addStatus" class="hr-muted" style="min-height:1.25rem;" aria-live="polite"></p>
@@ -133,8 +124,21 @@
   <script src="/static/shared/nav-account.js"></script>
   <script>
     (function () {
-      var WELCOME = 'Your trust has set up DocPass for you. Sign in with your NHS email; check the personal email HR used for login details. Change your password when prompted.';
       var _activeCohortId = null;
+
+      function firstNameFromEmail(email) {
+        var local = String(email || '').split('@')[0].toLowerCase();
+        if (!local) return 'Colleague';
+        var part = local.split('.')[0].replace(/\d+$/, '');
+        if (!part) return 'Colleague';
+        return part.charAt(0).toUpperCase() + part.slice(1);
+      }
+
+      function welcomePreviewText(trust) {
+        var t = (trust || '').trim() || 'your trust';
+        return 'Each clinician automatically receives a welcome message when they complete their profile, e.g. “Welcome Bill Smith to '
+          + t + '. Please reply if you have any queries or concerns.”';
+      }
 
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
       function show(el, on) { if (el) el.hidden = !on; }
@@ -199,7 +203,11 @@
           tb.innerHTML = '<tr><td colspan="4" class="hr-muted">No members yet.</td></tr>';
         } else {
           tb.innerHTML = members.map(function (m) {
-            var st = m.must_change_password ? 'Awaiting first sign-in' : 'Active';
+            var st;
+            if (m.welcome_sent_at) st = 'Welcome sent';
+            else if (m.welcome_pending) st = 'Welcome queued (after profile)';
+            else if (m.must_change_password) st = 'Awaiting first sign-in';
+            else st = 'Active';
             return '<tr><td>' + esc(m.display_name || '—') + '</td><td>' + esc(m.email) + '</td><td>' + esc(m.gmc_number || '—') + '</td><td>' + esc(st) + '</td></tr>';
           }).join('');
         }
@@ -209,7 +217,10 @@
         document.getElementById('addStatus').textContent = '';
       }
 
-      document.getElementById('welcomePreview').textContent = WELCOME;
+      function updateWelcomePreview() {
+        var trust = (NHSAuth.user && NHSAuth.user.current_trust) || '';
+        document.getElementById('welcomePreview').textContent = welcomePreviewText(trust);
+      }
 
       document.getElementById('btnShowCreate').addEventListener('click', function () {
         show(document.getElementById('createCard'), true);
@@ -232,12 +243,12 @@
             body: JSON.stringify({
               name: document.getElementById('cohortName').value.trim(),
               emails: emails,
-              send_welcome: document.getElementById('sendWelcome').checked,
             }),
           });
           var s = data.summary || {};
           status.textContent = 'Done: ' + (s.created || 0) + ' created, ' + (s.existing || 0) + ' existing, ' + (s.failed || 0) + ' failed.'
-            + (s.welcome_sent ? ' Welcome sent to ' + s.welcome_sent + '.' : '');
+            + (s.welcome_sent ? ' Welcome sent to ' + s.welcome_sent + ' (profile already complete).' : '')
+            + (s.welcome_queued ? ' Welcome queued for ' + s.welcome_queued + ' after profile.' : '');
           var wrap = document.getElementById('createResultsWrap');
           var tb = document.getElementById('createResultsTbody');
           tb.innerHTML = (data.results || []).map(function (r) {
@@ -293,11 +304,12 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               emails: document.getElementById('addEmails').value,
-              send_welcome: document.getElementById('addSendWelcome').checked,
             }),
           });
           var s = data.summary || {};
-          st.textContent = 'Added: ' + (s.created || 0) + ' created, ' + (s.existing || 0) + ' existing.';
+          st.textContent = 'Added: ' + (s.created || 0) + ' created, ' + (s.existing || 0) + ' existing.'
+            + (s.welcome_sent ? ' Welcome sent to ' + s.welcome_sent + '.' : '')
+            + (s.welcome_queued ? ' Welcome queued for ' + s.welcome_queued + '.' : '');
           document.getElementById('addEmails').value = '';
           await openCohort(_activeCohortId);
         } catch (err) {
@@ -320,7 +332,7 @@
           return;
         }
         show(document.getElementById('mainContent'), true);
-        document.getElementById('welcomePreview').textContent = 'Welcome text: “' + WELCOME + '”';
+        updateWelcomePreview();
         await loadCohorts();
       })();
     })();

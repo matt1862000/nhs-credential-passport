@@ -881,6 +881,47 @@
 
         var bulkMod = document.getElementById('bulkModule');
         if (bulkMod) fillHrModuleSelect(bulkMod);
+
+        async function fillBulkCohortSelect() {
+          var sel = document.getElementById('bulkCohort');
+          if (!sel || HR_PAGE !== 'bulk') return;
+          try {
+            var data = await apiJson('/api/hr/cohorts');
+            var cohorts = data.cohorts || [];
+            sel.innerHTML = '<option value="">— Upload a roster file instead —</option>';
+            cohorts.forEach(function (c) {
+              var opt = document.createElement('option');
+              opt.value = String(c.id);
+              var n = (c.name || 'Cohort').trim();
+              var cnt = c.member_count != null ? c.member_count : 0;
+              opt.textContent = n + ' (' + cnt + ' member' + (cnt === 1 ? '' : 's') + ')';
+              sel.appendChild(opt);
+            });
+          } catch (e) {
+            /* keep default option */
+          }
+        }
+
+        function updateBulkRecipientsUi() {
+          var cohortSel = document.getElementById('bulkCohort');
+          var rosterEl = document.getElementById('bulkRoster');
+          var rosterHint = document.getElementById('bulkRosterHint');
+          var usingCohort = cohortSel && cohortSel.value;
+          if (rosterEl) rosterEl.required = !usingCohort;
+          if (rosterHint && usingCohort) {
+            var opt = cohortSel.options[cohortSel.selectedIndex];
+            rosterHint.textContent = 'Cohort selected: ' + (opt ? opt.textContent : '') + '. Roster file is ignored if you upload one.';
+          } else if (rosterHint) {
+            rosterHint.textContent =
+              'Plain text or CSV — one GMC number or work email per line, or CSV with the identifier in the first column. Maximum 50 people per upload.';
+          }
+        }
+
+        var bulkCohortEl = document.getElementById('bulkCohort');
+        if (bulkCohortEl) {
+          bulkCohortEl.addEventListener('change', updateBulkRecipientsUi);
+          void fillBulkCohortSelect();
+        }
         fillHrModuleSelect(document.getElementById('addTrainingModule'));
         initHrIssuingTrustAutocomplete();
 
@@ -1006,6 +1047,9 @@
         if (bulkForm) {
           bulkForm.addEventListener('reset', function () {
             window.setTimeout(function () {
+              var bc = document.getElementById('bulkCohort');
+              if (bc) bc.value = '';
+              updateBulkRecipientsUi();
               var rn = document.getElementById('bulkRosterName');
               var en = document.getElementById('bulkEvidenceName');
               if (rn) rn.textContent = 'No file chosen';
@@ -1047,8 +1091,11 @@
             var rosterEl = document.getElementById('bulkRoster');
             var evEl = document.getElementById('bulkEvidence');
             if (!bulkFormEl.reportValidity()) return;
-            if (!rosterEl || !rosterEl.files || !rosterEl.files[0]) {
-              setBulkStatusMessage('Choose a roster file.', 'error');
+            var cohortSel = document.getElementById('bulkCohort');
+            var cohortId = cohortSel ? String(cohortSel.value || '').trim() : '';
+            var hasRoster = rosterEl && rosterEl.files && rosterEl.files[0];
+            if (!cohortId && !hasRoster) {
+              setBulkStatusMessage('Select a cohort or choose a roster file.', 'error');
               return;
             }
             bulkSubmitBusy = true;
@@ -1058,7 +1105,11 @@
             if (tbody) tbody.innerHTML = '';
             try {
               var fd = new FormData();
-              fd.append('roster', rosterEl.files[0]);
+              if (cohortId) {
+                fd.append('cohort_id', cohortId);
+              } else if (hasRoster) {
+                fd.append('roster', rosterEl.files[0]);
+              }
               if (evEl && evEl.files && evEl.files[0]) fd.append('evidence', evEl.files[0]);
               fd.append('module_code', (bulkMod && bulkMod.value) ? bulkMod.value : 'fire_safety');
               fd.append('completion_date', (document.getElementById('bulkCompletion') || {}).value || '');

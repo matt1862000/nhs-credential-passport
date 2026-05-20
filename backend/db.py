@@ -1617,6 +1617,17 @@ def _ensure_hr_cohorts_tables(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (cohort_id, user_id)
         )
     """)
+    _ensure_hr_cohort_members_welcome_columns(conn)
+
+
+def _ensure_hr_cohort_members_welcome_columns(conn: sqlite3.Connection) -> None:
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(hr_cohort_members)").fetchall()]
+    if "welcome_pending" not in cols:
+        conn.execute(
+            "ALTER TABLE hr_cohort_members ADD COLUMN welcome_pending INTEGER NOT NULL DEFAULT 0"
+        )
+    if "welcome_sent_at" not in cols:
+        conn.execute("ALTER TABLE hr_cohort_members ADD COLUMN welcome_sent_at TEXT")
 
 
 def _provisioned_password_hash() -> str:
@@ -1923,7 +1934,8 @@ def cohort_members_list(cohort_id: int, hr_trust: str) -> list[dict]:
         rows = conn.execute(
             """
             SELECT u.id, u.email, u.display_name, u.gmc_number, u.current_trust,
-                   u.must_change_password, u.provisioned_by_hr, m.added_at
+                   u.must_change_password, u.provisioned_by_hr, m.added_at,
+                   m.welcome_pending, m.welcome_sent_at
             FROM hr_cohort_members m
             JOIN users u ON u.id = m.user_id
             WHERE m.cohort_id = ?
@@ -1941,6 +1953,10 @@ def cohort_members_list(cohort_id: int, hr_trust: str) -> list[dict]:
             "must_change_password": bool(r["must_change_password"]),
             "provisioned_by_hr": r["provisioned_by_hr"],
             "added_at": r["added_at"],
+            "welcome_pending": bool(r["welcome_pending"])
+            if r["welcome_pending"] is not None
+            else False,
+            "welcome_sent_at": r["welcome_sent_at"],
         }
         for r in rows
     ]
@@ -1951,15 +1967,101 @@ def cohort_member_user_ids(cohort_id: int, hr_trust: str) -> list[int]:
     return [int(m["user_id"]) for m in members]
 
 
-def cohort_add_member(cohort_id: int, user_id: int) -> None:
+def cohort_roster_lines(cohort_id: int, hr_trust: str) -> list[str]:
+    """Roster identifiers for bulk training: work email, else GMC number."""
+    lines: list[str] = []
+    for m in cohort_members_list(cohort_id, hr_trust):
+        email = (m.get("email") or "").strip()
+        gmc = (m.get("gmc_number") or "").strip()
+        if email:
+            lines.append(email)
+        elif gmc:
+            lines.append(gmc)
+    return lines
+
+
+def cohort_add_member(
+    cohort_id: int, user_id: int, welcome_pending: bool = False
+) -> None:
     now = datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_hr_cohorts_tables(conn)
+        _ensure_hr_cohort_members_welcome_columns(conn)
         conn.execute(
-            """INSERT OR IGNORE INTO hr_cohort_members (cohort_id, user_id, added_at)
-               VALUES (?, ?, ?)""",
-            (int(cohort_id), int(user_id), now),
+            """INSERT OR IGNORE INTO hr_cohort_members
+               (cohort_id, user_id, added_at, welcome_pending, welcome_sent_at)
+               VALUES (?, ?, ?, ?, NULL)""",
+            (int(cohort_id), int(user_id), now, 1 if welcome_pending else 0),
         )
+        if welcome_pending:
+            conn.execute(
+                """UPDATE hr_cohort_members SET welcome_pending = 1
+                   WHERE cohort_id = ? AND user_id = ? AND welcome_sent_at IS NULL""",
+                (int(cohort_id), int(user_id)),
+            )
+        conn.commit()
+
+
+def cohort_set_welcome_pending(cohort_id: int, user_id: int) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        _ensure_hr_cohort_members_welcome_columns(conn)
+        conn.execute(
+            """UPDATE hr_cohort_members SET welcome_pending = 1
+               WHERE cohort_id = ? AND user_id = ? AND welcome_sent_at IS NULL""",
+            (int(cohort_id), int(user_id)),
+        )
+        conn.commit()
+
+
+def cohort_pending_welcomes_for_user(user_id: int) -> list[dict]:
+    """Pending welcome rows for a user (one row per cohort membership)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        _ensure_hr_cohort_members_welcome_columns(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT m.cohort_id, m.user_id, c.hr_trust, c.created_by_user_id
+            FROM hr_cohort_members m
+            JOIN hr_cohorts c ON c.id = m.cohort_id
+            WHERE m.user_id = ?
+              AND m.welcome_pending = 1
+              AND m.welcome_sent_at IS NULL
+            """,
+            (int(user_id),),
+        ).fetchall()
+    return [
+        {
+            "cohort_id": int(r["cohort_id"]),
+            "user_id": int(r["user_id"]),
+            "hr_trust": r["hr_trust"],
+            "created_by_user_id": int(r["created_by_user_id"]),
+        }
+        for r in rows
+    ]
+
+
+def cohort_mark_welcome_sent_for_user(user_id: int, cohort_ids: Optional[list[int]] = None) -> None:
+    now = datetime.utcnow().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        _ensure_hr_cohort_members_welcome_columns(conn)
+        if cohort_ids:
+            for cid in cohort_ids:
+                conn.execute(
+                    """UPDATE hr_cohort_members
+                       SET welcome_pending = 0, welcome_sent_at = ?
+                       WHERE user_id = ? AND cohort_id = ?""",
+                    (now, int(user_id), int(cid)),
+                )
+        else:
+            conn.execute(
+                """UPDATE hr_cohort_members
+                   SET welcome_pending = 0, welcome_sent_at = ?
+                   WHERE user_id = ? AND welcome_pending = 1 AND welcome_sent_at IS NULL""",
+                (now, int(user_id)),
+            )
         conn.commit()
 
 
@@ -1969,6 +2071,7 @@ def cohort_add_members_from_emails(
     emails: list[str],
     hr_user_id: int,
     reserved_emails: set[str],
+    queue_welcome: bool = False,
 ) -> list[dict]:
     """
     For each email: create provisioned user or link existing; add to cohort.
@@ -2000,18 +2103,18 @@ def cohort_add_members_from_emails(
                 )
                 continue
             uid = int(existing["id"])
-            cohort_add_member(cohort_id, uid)
+            cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
             results.append({"email": email, "status": "existing", "user_id": uid, "error": None})
             continue
         try:
             uid = user_create_provisioned(email, hr_user_id)
-            cohort_add_member(cohort_id, uid)
+            cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
             results.append({"email": email, "status": "created", "user_id": uid, "error": None})
         except sqlite3.IntegrityError:
             existing = user_get_by_email(email)
             if existing and not user_is_premium(existing):
                 uid = int(existing["id"])
-                cohort_add_member(cohort_id, uid)
+                cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
                 results.append({"email": email, "status": "existing", "user_id": uid, "error": None})
             else:
                 results.append(

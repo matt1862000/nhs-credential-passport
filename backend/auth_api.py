@@ -44,10 +44,33 @@ MAX_HR_BULK_LINES = 50
 MAX_HR_COHORT_LINES = 200
 MAX_HR_BULK_EVIDENCE_BYTES = 10 * 1024 * 1024
 
-COHORT_WELCOME_MESSAGE = (
-    "Your trust has set up DocPass for you. Sign in with your NHS email; "
-    "check the personal email HR used for login details. Change your password when prompted."
-)
+def _first_name_from_nhs_email(email: str) -> str:
+    """Derive a greeting name from NHS work email (e.g. william.smith@nhs.net → William)."""
+    local = (email or "").split("@")[0].strip().lower()
+    if not local:
+        return "Colleague"
+    part = local.split(".")[0]
+    part = re.sub(r"\d+$", "", part)
+    if not part:
+        return "Colleague"
+    return part[0].upper() + part[1:] if len(part) > 1 else part.upper()
+
+
+def _cohort_welcome_name(doc: dict) -> str:
+    """Prefer profile display name; fall back to first name from NHS email."""
+    display = (doc.get("display_name") or "").strip()
+    if display:
+        return display
+    return _first_name_from_nhs_email(doc.get("email") or "")
+
+
+def _cohort_welcome_message(doc: dict, hr_trust: str) -> str:
+    name = _cohort_welcome_name(doc)
+    trust = (hr_trust or "").strip() or "your trust"
+    return (
+        f"Welcome {name} to {trust}. "
+        "Please reply if you have any queries or concerns."
+    )
 
 
 def _normalize_email(email: str) -> str:
@@ -83,6 +106,10 @@ def require_premium_user(request: Request) -> dict:
     if not db.user_is_premium(u):
         raise HTTPException(status_code=403, detail="Premium account required")
     return u
+
+
+def _profile_is_complete(u: dict) -> bool:
+    return not _profile_missing_fields(u)
 
 
 def _profile_missing_fields(u: dict) -> list[str]:
@@ -659,7 +686,16 @@ async def me_profile_put(request: Request):
         if not gn or not GMC_RE.match(gn):
             raise HTTPException(status_code=400, detail="GMC number must be exactly 7 digits")
 
+    was_complete = _profile_is_complete(
+        {
+            "display_name": u.get("display_name"),
+            "gmc_number": u.get("gmc_number"),
+            "current_trust": u.get("current_trust"),
+        }
+    )
     db.user_set_profile(uid, display_name, gmc, current_trust)
+    if not db.user_is_premium(u) and _profile_is_complete(merged) and not was_complete:
+        _hr_process_pending_welcomes(uid)
     return {"ok": True}
 
 
@@ -1081,7 +1117,8 @@ async def hr_doctor_add_training(
 @router.post("/hr/bulk-training", response_model=HrBulkTrainingResponse)
 async def hr_bulk_training(
     request: Request,
-    roster: UploadFile = File(...),
+    roster: Optional[UploadFile] = File(None),
+    cohort_id: Optional[str] = Form(None),
     evidence: Optional[UploadFile] = File(None),
     module_code: str = Form(...),
     completion_date: str = Form(...),
@@ -1091,7 +1128,7 @@ async def hr_bulk_training(
 ):
     """
     Premium HR: issue one CSTF-style module completion to many clinicians from a roster file
-    (one GMC or email per line, or CSV with identifier in the first column) plus shared evidence.
+    or a cohort (one GMC or email per line, or CSV with identifier in the first column) plus shared evidence.
 
     All-or-nothing on roster validation: every line is checked first; if any line fails
     (unknown clinician, visibility, premium account, or wallet size guard), nothing is issued.
@@ -1103,15 +1140,36 @@ async def hr_bulk_training(
     if not trust:
         raise HTTPException(status_code=400, detail="Your HR account must have a current trust set.")
 
-    raw_roster = await roster.read()
-    if len(raw_roster) > MAX_HR_BULK_ROSTER_BYTES:
-        raise HTTPException(status_code=413, detail="Roster file too large")
-    text = _decode_roster_text(raw_roster)
-    if text is None:
-        raise HTTPException(status_code=400, detail="Roster encoding not recognised (try UTF-8).")
-    lines = _parse_roster_lines(text)
-    if not lines:
-        raise HTTPException(status_code=400, detail="Roster is empty.")
+    lines: list[str] = []
+    cohort_label = ""
+    raw_cohort = (cohort_id or "").strip()
+    if raw_cohort:
+        try:
+            cid = int(raw_cohort)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid cohort_id")
+        cohort = db.cohort_get(cid, trust)
+        if not cohort:
+            raise HTTPException(status_code=404, detail="Cohort not found")
+        cohort_label = cohort.get("name") or f"Cohort {cid}"
+        lines = db.cohort_roster_lines(cid, trust)
+        if not lines:
+            raise HTTPException(status_code=400, detail="Selected cohort has no members with email or GMC.")
+    elif roster and (roster.filename or "").strip():
+        raw_roster = await roster.read()
+        if len(raw_roster) > MAX_HR_BULK_ROSTER_BYTES:
+            raise HTTPException(status_code=413, detail="Roster file too large")
+        text = _decode_roster_text(raw_roster)
+        if text is None:
+            raise HTTPException(status_code=400, detail="Roster encoding not recognised (try UTF-8).")
+        lines = _parse_roster_lines(text)
+        if not lines:
+            raise HTTPException(status_code=400, detail="Roster is empty.")
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Select a cohort or upload a roster file.",
+        )
     if len(lines) > MAX_HR_BULK_LINES:
         raise HTTPException(
             status_code=400,
@@ -1810,6 +1868,61 @@ def _hr_broadcast_to_doctors(
     return {"sent": sent, "failed": failed}
 
 
+def _hr_process_pending_welcomes(user_id: int) -> int:
+    """
+    Send queued cohort welcome message(s) once the clinician profile is complete.
+    One message per HR trust; uses profile display name when set.
+    Returns number of trust-level welcomes sent.
+    """
+    doc = db.user_get_by_id(int(user_id))
+    if not doc or db.user_is_premium(doc) or not _profile_is_complete(doc):
+        return 0
+    pending = db.cohort_pending_welcomes_for_user(int(user_id))
+    if not pending:
+        return 0
+    by_trust: dict[str, dict] = {}
+    for row in pending:
+        key = (row.get("hr_trust") or "").strip().lower()
+        if key and key not in by_trust:
+            by_trust[key] = row
+    sent = 0
+    cohort_ids: list[int] = []
+    for row in pending:
+        cohort_ids.append(int(row["cohort_id"]))
+    for row in by_trust.values():
+        trust = row["hr_trust"]
+        try:
+            text = _cohort_welcome_message(doc, trust)
+            conv = db.conversation_get_or_create(int(user_id), trust)
+            db.message_send_body(
+                int(conv["id"]), int(row["created_by_user_id"]), text
+            )
+            sent += 1
+        except Exception:
+            pass
+    if cohort_ids:
+        db.cohort_mark_welcome_sent_for_user(int(user_id), cohort_ids)
+    return sent
+
+
+def _hr_after_cohort_welcome_queue(user_ids: list[int]) -> dict:
+    """Try to send queued welcomes immediately; count those still waiting on profile."""
+    welcome_sent = 0
+    welcome_queued = 0
+    seen: set[int] = set()
+    for raw_id in user_ids:
+        if raw_id is None:
+            continue
+        uid = int(raw_id)
+        if uid in seen:
+            continue
+        seen.add(uid)
+        welcome_sent += _hr_process_pending_welcomes(uid)
+        if db.cohort_pending_welcomes_for_user(uid):
+            welcome_queued += 1
+    return {"welcome_sent": welcome_sent, "welcome_queued": welcome_queued}
+
+
 @router.get("/hr/cohorts")
 def hr_cohorts_list(request: Request):
     hr = require_premium_user(request)
@@ -1842,13 +1955,15 @@ async def hr_cohorts_create(request: Request):
 
     cohort_id = db.cohort_create(trust, name, int(hr["id"]))
     results = db.cohort_add_members_from_emails(
-        cohort_id, trust, emails, int(hr["id"]), _cohort_reserved_emails()
+        cohort_id,
+        trust,
+        emails,
+        int(hr["id"]),
+        _cohort_reserved_emails(),
+        queue_welcome=True,
     )
-    welcome_sent = 0
-    if body.get("send_welcome"):
-        user_ids = [r["user_id"] for r in results if r.get("user_id")]
-        out = _hr_broadcast_to_doctors(int(hr["id"]), trust, user_ids, COHORT_WELCOME_MESSAGE)
-        welcome_sent = out["sent"]
+    user_ids = [r["user_id"] for r in results if r.get("user_id")]
+    welcome_summary = _hr_after_cohort_welcome_queue(user_ids)
 
     created = sum(1 for r in results if r.get("status") == "created")
     existing = sum(1 for r in results if r.get("status") == "existing")
@@ -1861,7 +1976,7 @@ async def hr_cohorts_create(request: Request):
             "created": created,
             "existing": existing,
             "failed": failed,
-            "welcome_sent": welcome_sent,
+            **welcome_summary,
         },
     }
 
@@ -1900,13 +2015,15 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
             raise HTTPException(status_code=400, detail=f"Invalid email: {email}")
 
     results = db.cohort_add_members_from_emails(
-        int(cohort_id), trust, emails, int(hr["id"]), _cohort_reserved_emails()
+        int(cohort_id),
+        trust,
+        emails,
+        int(hr["id"]),
+        _cohort_reserved_emails(),
+        queue_welcome=True,
     )
-    welcome_sent = 0
-    if body.get("send_welcome"):
-        user_ids = [r["user_id"] for r in results if r.get("user_id")]
-        out = _hr_broadcast_to_doctors(int(hr["id"]), trust, user_ids, COHORT_WELCOME_MESSAGE)
-        welcome_sent = out["sent"]
+    user_ids = [r["user_id"] for r in results if r.get("user_id")]
+    welcome_summary = _hr_after_cohort_welcome_queue(user_ids)
 
     return {
         "results": results,
@@ -1914,7 +2031,7 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
             "created": sum(1 for r in results if r.get("status") == "created"),
             "existing": sum(1 for r in results if r.get("status") == "existing"),
             "failed": sum(1 for r in results if r.get("status") == "failed"),
-            "welcome_sent": welcome_sent,
+            **welcome_summary,
         },
     }
 

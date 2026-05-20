@@ -41,7 +41,7 @@
 
   <main class="nhsuk-main hr-wrap" id="maincontent" role="main">
     <h1 class="nhsuk-page-heading">Bulk add training</h1>
-    <p class="nhsuk-lead">Issue the same module completion to many clinicians using one roster file and shared class evidence.</p>
+    <p class="nhsuk-lead">Issue the same module completion to many clinicians using a cohort or roster file, plus shared class evidence.</p>
 
     <div id="notPremium" class="hr-card" hidden>
       <p style="margin:0; font-weight:700;">This page is only for HR accounts.</p>
@@ -56,10 +56,17 @@
       <div class="hr-bulk-panel">
         <form id="bulkForm" class="hr-bulk-form" novalidate>
           <div class="nhsuk-form-group">
-            <label class="nhsuk-label" for="bulkRoster">Roster file</label>
+            <label class="nhsuk-label" for="bulkCohort">Recipients</label>
+            <span class="nhsuk-hint" id="bulkCohortHint">Select a cohort to use all its members, or leave blank and upload a roster file below.</span>
+            <select class="nhsuk-select" id="bulkCohort" name="cohort_id" aria-describedby="bulkCohortHint">
+              <option value="">— Upload a roster file instead —</option>
+            </select>
+          </div>
+          <div class="nhsuk-form-group">
+            <label class="nhsuk-label" for="bulkRoster">Roster file <span class="hr-muted" style="font-weight:400;">(optional if cohort selected)</span></label>
             <span class="nhsuk-hint" id="bulkRosterHint">Plain text or CSV — one GMC number or work email per line, or CSV with the identifier in the first column. Maximum 50 people per upload.</span>
             <div class="hr-bulk-file">
-              <input class="nhsuk-input" type="file" id="bulkRoster" name="roster" accept=".txt,.csv,text/plain,text/csv" required aria-describedby="bulkRosterHint">
+              <input class="nhsuk-input" type="file" id="bulkRoster" name="roster" accept=".txt,.csv,text/plain,text/csv" aria-describedby="bulkRosterHint">
             </div>
             <span class="hr-bulk-file-name" id="bulkRosterName" aria-live="polite">No file chosen</span>
           </div>
@@ -135,7 +142,7 @@
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js"></script>
   <script>window.__HR_PAGE__ = 'bulk';</script>
-  <script src="/static/hr/hr-app.js?v=20260518-2"></script>
+  <script src="/static/hr/hr-app.js?v=20260519-1"></script>
 </body>
 </html>
 
