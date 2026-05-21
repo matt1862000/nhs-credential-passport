@@ -397,7 +397,7 @@
     </div>
   </div>
 
-  <script src="/static/shared/import-result-viz.js?v=20260524-5"></script>
+  <script src="/static/shared/import-result-viz.js?v=20260525-2"></script>
   <script src="/static/shared/vendor/xlsx.full.min.js?v=20260522-1"></script>
   <script src="/static/shared/cohort-roster-parse.js?v=20260524-5"></script>
   <script src="/static/shared/auth.js"></script>
@@ -560,13 +560,14 @@
         try {
           var payload = { doctor_user_ids: _welcomeReviewState.userIds };
           if (tmpl) payload.welcome_message_template = tmpl;
-          var out = await apiJson(
+          var out = await apiJsonWithProgress(
             '/api/hr/cohorts/' + encodeURIComponent(String(_welcomeReviewState.cohortId)) + '/welcome/send',
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),
-            }
+            },
+            resultEl
           );
           if (out.cohort) _activeCohortMeta = out.cohort;
           if (viz()) {
@@ -1214,6 +1215,19 @@
         return data;
       }
 
+      async function apiJsonWithProgress(url, opts, progressEl) {
+        opts = opts || {};
+        if (progressEl && viz() && viz().postNdjsonStream && opts.body) {
+          var body = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body;
+          return viz().postNdjsonStream(
+            url,
+            { method: opts.method || 'POST', json: body },
+            progressEl
+          );
+        }
+        return apiJson(url, opts);
+      }
+
       function cohortEmptyHtml() {
         return (
           '<p class="hr-muted" style="margin:0;">You haven&rsquo;t created a cohort yet. Use <strong>Create cohort</strong> above to add your first one.</p>'
@@ -1527,11 +1541,15 @@
         if (viz()) viz().showLoading(vizEl, 'Creating cohort and provisioning accounts…');
         if (submitBtn) submitBtn.disabled = true;
         try {
-          var data = await apiJson('/api/hr/cohorts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: cohortNameValue(), members: members }),
-          });
+          var data = await apiJsonWithProgress(
+            '/api/hr/cohorts',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: cohortNameValue(), members: members }),
+            },
+            vizEl
+          );
           var cohortName = (data.cohort && data.cohort.name) || cohortNameValue();
           if (data.cohort) upsertCohortInCache(data.cohort);
           resetCreateWizard();
@@ -1729,7 +1747,8 @@
             out = await NHSMessages.sendMessage(
               '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/message',
               body,
-              files
+              files,
+              msgViz
             );
           } else {
             out = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/message', {
@@ -1801,11 +1820,15 @@
         if (viz()) viz().showLoading(vizEl, 'Adding clinicians to cohort…');
         if (submitBtn) submitBtn.disabled = true;
         try {
-          var data = await apiJson('/api/hr/cohorts/' + _activeCohortId + '/members', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ members: members }),
-          });
+          var data = await apiJsonWithProgress(
+            '/api/hr/cohorts/' + _activeCohortId + '/members',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ members: members }),
+            },
+            vizEl
+          );
           if (viz()) viz().cohortProvision(vizEl, data, {});
           if (data.cohort) _activeCohortMeta = data.cohort;
           if (_addEmailRoster) _addEmailRoster.clear();

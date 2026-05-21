@@ -5,10 +5,10 @@ Issuing service, verification endpoint, revoke, and did:web public key.
 import os
 import re
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Iterator, Optional
 
 from fastapi import FastAPI, Request, HTTPException, File, UploadFile, Query
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -40,7 +40,14 @@ from .csv_import import (
     MAX_CSV_BYTES,
     MAX_CSV_EVIDENCE_BYTES,
 )
-from .auth_api import router as auth_router, require_user_id
+from .auth_api import (
+    NDJSON_STREAM_HEADERS,
+    _ndjson_complete_line,
+    _ndjson_progress_line,
+    _ndjson_stream_wrap,
+    router as auth_router,
+    require_user_id,
+)
 
 # Base URL for verification links (default for local dev)
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
@@ -167,12 +174,85 @@ def api_csv_template(request: Request):
     )
 
 
-@app.post("/api/credentials/import-csv", response_model=CsvImportResponse)
+def _csv_import_issue_stream(
+    *,
+    uid: int,
+    valid: list,
+    base: str,
+    include_pdf: bool,
+    existing_keys: set,
+    ev_bytes: Optional[bytes],
+    ev_name: str,
+    ev_ct: str,
+    response_fields: dict,
+) -> Iterator[str]:
+    total = len(valid)
+    yield _ndjson_progress_line(
+        "prepare",
+        f"Importing {total} training record{'s' if total != 1 else ''}…",
+        0,
+        total,
+    )
+    credentials_out: list[IssuedCredentialInfo] = []
+    skipped_dups = 0
+    for idx, p in enumerate(valid):
+        yield _ndjson_progress_line(
+            "import",
+            f"Issuing training record {idx + 1} of {total}…",
+            idx + 1,
+            total,
+        )
+        rec = p.record
+        assert rec is not None
+        row_keys = wallet_dedupe_keys(db.user_wallet_get(uid))
+        results, sub_skip = issue_credentials(
+            [rec],
+            base,
+            include_pdf=include_pdf and total <= 1,
+            skip_duplicate_keys=row_keys,
+        )
+        skipped_dups += sub_skip
+        r0 = results[0] if results else None
+        if r0 is None:
+            continue
+        credentials_out.append(
+            IssuedCredentialInfo(
+                credential_id=r0["credential_id"],
+                verification_url=r0["verification_url"],
+                jwt=r0["jwt"],
+                pdf_base64=r0.get("pdf_base64"),
+                module_name=rec.module_name,
+                expiry_date=rec.expiry_date.isoformat(),
+            )
+        )
+    issued_count = len(credentials_out)
+    if ev_bytes is not None:
+        try:
+            db.csv_import_evidence_save(
+                uid,
+                ev_name,
+                ev_ct,
+                ev_bytes,
+                credentials_issued=issued_count,
+            )
+        except Exception:
+            pass
+    payload = dict(response_fields)
+    payload.update(
+        dry_run=False,
+        credentials=[c.model_dump() for c in credentials_out],
+        skipped_duplicate_count=skipped_dups,
+    )
+    yield _ndjson_complete_line(payload)
+
+
+@app.post("/api/credentials/import-csv")
 async def api_import_csv(
     request: Request,
     file: UploadFile = File(...),
     evidence: Optional[UploadFile] = File(None),
     dry_run: bool = Query(False),
+    stream: bool = Query(False),
 ):
     """
     Upload UTF-8 CSV: validate rows, optionally issue all valid rows (dry_run=false).
@@ -267,10 +347,37 @@ async def api_import_csv(
         if p.record and not (p.record.issuing_trust_name or "").strip() and doctor_trust:
             p.record.issuing_trust_name = doctor_trust
 
-    # One JSON with dozens of PDFs exceeds typical proxy timeouts; skip PDFs for multi-row CSV.
     include_pdf = len(valid) <= 1
     wallet_raw = db.user_wallet_get(uid)
     existing_keys = wallet_dedupe_keys(wallet_raw)
+    response_fields = dict(
+        total_data_rows=len(parsed),
+        valid_row_count=len(valid),
+        invalid=[r.model_dump() for r in invalid_rows],
+        skipped=[r.model_dump() for r in skipped_rows],
+        skipped_other_person_count=skipped_other,
+        multi_person_export=multi_person,
+    )
+
+    if stream:
+        return StreamingResponse(
+            _ndjson_stream_wrap(
+                _csv_import_issue_stream(
+                    uid=uid,
+                    valid=valid,
+                    base=base,
+                    include_pdf=include_pdf,
+                    existing_keys=existing_keys,
+                    ev_bytes=ev_bytes,
+                    ev_name=ev_name,
+                    ev_ct=ev_ct,
+                    response_fields=response_fields,
+                )
+            ),
+            media_type="application/x-ndjson",
+            headers=NDJSON_STREAM_HEADERS,
+        )
+
     results, skipped_dups = issue_credentials(
         [p.record for p in valid],
         base,
@@ -305,7 +412,6 @@ async def api_import_csv(
                 credentials_issued=issued_count,
             )
         except Exception:
-            # Do not fail the import if audit storage fails
             pass
 
     return _csv_response(

@@ -9,7 +9,7 @@ import base64
 from datetime import datetime, date
 from pathlib import Path
 import sqlite3
-from typing import Iterator, Optional
+from typing import Callable, Iterator, Optional
 
 import bcrypt
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
@@ -1227,7 +1227,10 @@ async def hr_doctor_add_training(
     )
 
 
-def _bulk_training_progress_line(
+NDJSON_STREAM_HEADERS = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
+
+
+def _ndjson_progress_line(
     phase: str, message: str, current: int = 0, total: int = 0
 ) -> str:
     return (
@@ -1244,8 +1247,27 @@ def _bulk_training_progress_line(
     )
 
 
+def _ndjson_complete_line(data: dict) -> str:
+    return json.dumps({"event": "complete", "data": data}) + "\n"
+
+
+def _ndjson_stream_wrap(gen: Iterator[str]) -> Iterator[str]:
+    try:
+        yield from gen
+    except HTTPException as exc:
+        detail = exc.detail
+        msg = detail if isinstance(detail, str) else str(detail)
+        yield json.dumps({"event": "error", "message": msg}) + "\n"
+
+
+def _bulk_training_progress_line(
+    phase: str, message: str, current: int = 0, total: int = 0
+) -> str:
+    return _ndjson_progress_line(phase, message, current, total)
+
+
 def _bulk_training_complete_line(resp: HrBulkTrainingResponse) -> str:
-    return json.dumps({"event": "complete", "data": resp.model_dump()}) + "\n"
+    return _ndjson_complete_line(resp.model_dump())
 
 
 def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[str]:
@@ -2210,13 +2232,18 @@ def _parse_doctor_user_ids(raw) -> list[int]:
 
 
 @router.post("/hr/messages/broadcast")
-async def hr_messages_broadcast(request: Request):
+async def hr_messages_broadcast(
+    request: Request,
+    stream: bool = Query(False),
+):
     """Send the same message to multiple clinicians (separate private threads each)."""
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     ct = (request.headers.get("content-type") or "").lower()
     if "multipart/form-data" in ct:
         form = await request.form()
+        if not stream:
+            stream = str(form.get("stream") or "").strip().lower() in ("1", "true", "yes")
         doctor_ids = _parse_doctor_user_ids(form.get("doctor_user_ids"))
         text = str(form.get("body") or "").strip()
         attachments: list[tuple[str, str, bytes]] = []
@@ -2252,6 +2279,8 @@ async def hr_messages_broadcast(request: Request):
         doctor_ids = _parse_doctor_user_ids(body.get("doctor_user_ids"))
         text = str(body.get("body") or "").strip()
         attachments = []
+        if not stream:
+            stream = bool(body.get("stream"))
     if not doctor_ids:
         raise HTTPException(status_code=400, detail="Select at least one clinician")
     if len(doctor_ids) > MAX_HR_COHORT_LINES:
@@ -2262,6 +2291,20 @@ async def hr_messages_broadcast(request: Request):
     _require_message_content(text, attachments)
     if int(hr["id"]) in doctor_ids:
         raise HTTPException(status_code=400, detail="Cannot message yourself")
+    if stream:
+        return StreamingResponse(
+            _ndjson_stream_wrap(
+                _hr_broadcast_stream(
+                    int(hr["id"]),
+                    trust,
+                    doctor_ids,
+                    text,
+                    attachments=attachments or None,
+                )
+            ),
+            media_type="application/x-ndjson",
+            headers=NDJSON_STREAM_HEADERS,
+        )
     return _hr_broadcast_to_doctors(
         int(hr["id"]), trust, doctor_ids, text, attachments=attachments or None
     )
@@ -2414,11 +2457,21 @@ def _hr_broadcast_to_doctors(
     doctor_ids: list[int],
     body: str,
     attachments: Optional[list[tuple[str, str, bytes]]] = None,
+    *,
+    on_progress: Optional[Callable[[str, str, int, int], None]] = None,
 ) -> dict:
     sent = 0
     failed: list[dict] = []
     att = attachments or None
-    for did in doctor_ids:
+    total = len(doctor_ids)
+    for idx, did in enumerate(doctor_ids):
+        if on_progress:
+            on_progress(
+                "send",
+                f"Sending message {idx + 1} of {total}…",
+                idx + 1,
+                total,
+            )
         try:
             doc = db.user_get_by_id(int(did))
             if not doc or db.user_is_premium(doc):
@@ -2430,6 +2483,43 @@ def _hr_broadcast_to_doctors(
         except Exception as e:
             failed.append({"doctor_user_id": did, "error": str(e)})
     return {"sent": sent, "failed": failed}
+
+
+def _hr_broadcast_stream(
+    hr_user_id: int,
+    hr_trust: str,
+    doctor_ids: list[int],
+    body: str,
+    attachments: Optional[list[tuple[str, str, bytes]]] = None,
+) -> Iterator[str]:
+    total = len(doctor_ids)
+    yield _ndjson_progress_line(
+        "prepare",
+        f"Preparing to message {total} clinician{'s' if total != 1 else ''}…",
+        0,
+        total,
+    )
+    sent = 0
+    failed: list[dict] = []
+    att = attachments or None
+    for idx, did in enumerate(doctor_ids):
+        yield _ndjson_progress_line(
+            "send",
+            f"Sending message {idx + 1} of {total}…",
+            idx + 1,
+            total,
+        )
+        try:
+            doc = db.user_get_by_id(int(did))
+            if not doc or db.user_is_premium(doc):
+                failed.append({"doctor_user_id": did, "error": "clinician not found"})
+                continue
+            conv = db.conversation_get_or_create(int(did), hr_trust)
+            db.message_send_body(int(conv["id"]), int(hr_user_id), body, attachments=att)
+            sent += 1
+        except Exception as e:
+            failed.append({"doctor_user_id": did, "error": str(e)})
+    yield _ndjson_complete_line({"sent": sent, "failed": failed})
 
 
 def _hr_process_pending_welcomes(user_id: int) -> int:
@@ -2487,6 +2577,126 @@ def _hr_after_cohort_welcome_queue(user_ids: list[int]) -> dict:
     return {"welcome_sent": welcome_sent, "welcome_queued": welcome_queued}
 
 
+def _hr_welcome_send_stream(
+    cohort_id: int,
+    trust: str,
+    hr: dict,
+    user_ids: list[int],
+) -> Iterator[str]:
+    unique: list[int] = []
+    seen: set[int] = set()
+    for raw_id in user_ids:
+        if raw_id is None:
+            continue
+        uid = int(raw_id)
+        if uid in seen:
+            continue
+        seen.add(uid)
+        unique.append(uid)
+    total = len(unique)
+    yield _ndjson_progress_line(
+        "prepare",
+        f"Preparing welcome message{'s' if total != 1 else ''} for {total} clinician{'s' if total != 1 else ''}…",
+        0,
+        total,
+    )
+    welcome_sent = 0
+    welcome_queued = 0
+    for idx, uid in enumerate(unique):
+        yield _ndjson_progress_line(
+            "welcome",
+            f"Sending welcome {idx + 1} of {total}…",
+            idx + 1,
+            total,
+        )
+        welcome_sent += _hr_process_pending_welcomes(uid)
+        if db.cohort_pending_welcomes_for_user(uid):
+            welcome_queued += 1
+    cohort = db.cohort_get(cohort_id, trust)
+    meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
+    yield _ndjson_complete_line(
+        {
+            "cohort": {**cohort, **meta} if cohort else None,
+            "welcome_sent": welcome_sent,
+            "welcome_queued": welcome_queued,
+        }
+    )
+
+
+def _cohort_provision_stream(
+    cohort_id: int,
+    trust: str,
+    members: list[dict],
+    hr: dict,
+    reserved: set[str],
+    *,
+    queue_welcome: bool,
+    prepare_message: str,
+) -> Iterator[str]:
+    from . import trust_packs
+
+    if not db.cohort_get(cohort_id, trust):
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    processable = db.cohort_processable_members(members)
+    total = len(processable)
+    default_trust = trust_packs.trust_display_name(trust) or None
+    yield _ndjson_progress_line("prepare", prepare_message, 0, total)
+    results: list[dict] = []
+    hr_user_id = int(hr["id"])
+    for idx, row in enumerate(processable):
+        yield _ndjson_progress_line(
+            "provision",
+            f"Adding clinician {idx + 1} of {total}…",
+            idx + 1,
+            total,
+        )
+        results.append(
+            db.cohort_add_single_member(
+                cohort_id,
+                row,
+                hr_user_id=hr_user_id,
+                reserved_emails=reserved,
+                queue_welcome=queue_welcome,
+                default_trust=default_trust,
+            )
+        )
+    user_ids = _cohort_member_user_ids_from_results(results)
+    welcome_summary = _welcome_review_summary(user_ids)
+    cohort = db.cohort_get(cohort_id, trust)
+    meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
+    payload = {
+        "results": results,
+        "cohort": {**cohort, **meta} if cohort else None,
+        "summary": {
+            "created": sum(1 for r in results if r.get("status") == "created"),
+            "existing": sum(1 for r in results if r.get("status") == "existing"),
+            "failed": sum(1 for r in results if r.get("status") == "failed"),
+            **welcome_summary,
+        },
+    }
+    yield _ndjson_complete_line(payload)
+
+
+def _cohort_create_stream(
+    trust: str,
+    name: str,
+    members: list[dict],
+    hr: dict,
+    reserved: set[str],
+) -> Iterator[str]:
+    yield _ndjson_progress_line("prepare", f'Creating cohort “{name}”…', 0, 1)
+    cohort_id = db.cohort_create(trust, name, int(hr["id"]))
+    yield from _cohort_provision_stream(
+        cohort_id,
+        trust,
+        members,
+        hr,
+        reserved,
+        queue_welcome=True,
+        prepare_message=f"Provisioning accounts for “{name}”…",
+    )
+
+
 def _cohort_member_user_ids_from_results(results: list[dict]) -> list[int]:
     ids: list[int] = []
     seen: set[int] = set()
@@ -2526,11 +2736,24 @@ async def hr_cohorts_create(request: Request):
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
     name = str(body.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Cohort name is required")
     members = _parse_cohort_members(body)
     _validate_cohort_members(members)
+    stream = bool(body.get("stream"))
+    reserved = _cohort_reserved_emails()
+
+    if stream:
+        return StreamingResponse(
+            _ndjson_stream_wrap(
+                _cohort_create_stream(trust, name, members, hr, reserved)
+            ),
+            media_type="application/x-ndjson",
+            headers=NDJSON_STREAM_HEADERS,
+        )
 
     cohort_id = db.cohort_create(trust, name, int(hr["id"]))
     results = db.cohort_add_members(
@@ -2538,7 +2761,7 @@ async def hr_cohorts_create(request: Request):
         trust,
         members,
         int(hr["id"]),
-        _cohort_reserved_emails(),
+        reserved,
         queue_welcome=True,
     )
     user_ids = _cohort_member_user_ids_from_results(results)
@@ -2660,21 +2883,45 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
     members = _parse_cohort_members(body)
     _validate_cohort_members(members)
+    stream = bool(body.get("stream"))
+    reserved = _cohort_reserved_emails()
+    cid = int(cohort_id)
+
+    if stream:
+        cohort = db.cohort_get(cid, trust) or {}
+        cname = cohort.get("name") or f"Cohort {cid}"
+        return StreamingResponse(
+            _ndjson_stream_wrap(
+                _cohort_provision_stream(
+                    cid,
+                    trust,
+                    members,
+                    hr,
+                    reserved,
+                    queue_welcome=True,
+                    prepare_message=f'Adding clinicians to “{cname}”…',
+                )
+            ),
+            media_type="application/x-ndjson",
+            headers=NDJSON_STREAM_HEADERS,
+        )
 
     results = db.cohort_add_members(
-        int(cohort_id),
+        cid,
         trust,
         members,
         int(hr["id"]),
-        _cohort_reserved_emails(),
+        reserved,
         queue_welcome=True,
     )
     user_ids = _cohort_member_user_ids_from_results(results)
     welcome_summary = _welcome_review_summary(user_ids)
 
-    cohort = db.cohort_get(int(cohort_id), trust)
+    cohort = db.cohort_get(cid, trust)
     meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
 
     return {
@@ -2713,8 +2960,16 @@ async def hr_cohorts_welcome_send(request: Request, cohort_id: int):
     if "welcome_message_template" in body:
         tmpl = _normalize_welcome_template(body.get("welcome_message_template"))
         db.cohort_set_welcome_template(int(cohort_id), trust, tmpl)
+    stream = bool(body.get("stream"))
+    cid = int(cohort_id)
+    if stream:
+        return StreamingResponse(
+            _ndjson_stream_wrap(_hr_welcome_send_stream(cid, trust, hr, user_ids)),
+            media_type="application/x-ndjson",
+            headers=NDJSON_STREAM_HEADERS,
+        )
     welcome_summary = _hr_after_cohort_welcome_queue(user_ids)
-    cohort = db.cohort_get(int(cohort_id), trust)
+    cohort = db.cohort_get(cid, trust)
     meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
     return {
         "cohort": {**cohort, **meta} if cohort else None,
@@ -2743,7 +2998,11 @@ async def hr_cohorts_welcome_skip(request: Request, cohort_id: int):
 
 
 @router.post("/hr/cohorts/{cohort_id}/message")
-async def hr_cohorts_message(request: Request, cohort_id: int):
+async def hr_cohorts_message(
+    request: Request,
+    cohort_id: int,
+    stream: bool = Query(False),
+):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     if not db.cohort_get(int(cohort_id), trust):
@@ -2755,6 +3014,20 @@ async def hr_cohorts_message(request: Request, cohort_id: int):
         raise HTTPException(status_code=400, detail="Cohort has no members")
     if len(doctor_ids) > MAX_HR_COHORT_LINES:
         raise HTTPException(status_code=400, detail="Cohort is too large to message in one request")
+    if stream:
+        return StreamingResponse(
+            _ndjson_stream_wrap(
+                _hr_broadcast_stream(
+                    int(hr["id"]),
+                    trust,
+                    doctor_ids,
+                    text,
+                    attachments=attachments or None,
+                )
+            ),
+            media_type="application/x-ndjson",
+            headers=NDJSON_STREAM_HEADERS,
+        )
     return _hr_broadcast_to_doctors(
         int(hr["id"]), trust, doctor_ids, text, attachments=attachments or None
     )

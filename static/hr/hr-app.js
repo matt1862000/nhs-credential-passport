@@ -1355,10 +1355,10 @@
               if (ods && String(ods).trim()) fd.append('issuing_trust_ods_code', String(ods).trim());
               if (iname && String(iname).trim()) fd.append('issuing_trust_name', String(iname).trim());
               var data;
-              if (batchViz() && batchViz().postBulkTrainingStream) {
-                data = await batchViz().postBulkTrainingStream(
+              if (batchViz() && batchViz().postNdjsonStream) {
+                data = await batchViz().postNdjsonStream(
                   '/api/hr/bulk-training',
-                  fd,
+                  { formData: fd },
                   bulkVizEl
                 );
               } else {

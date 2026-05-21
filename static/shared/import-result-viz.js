@@ -84,13 +84,21 @@
     scrollToFeedback(el);
   }
 
-  /**
-   * POST multipart form with stream=true; reads application/x-ndjson progress lines.
-   * Returns the final HrBulkTrainingResponse object from the complete event.
-   */
-  async function postBulkTrainingStream(url, formData, el, onProgress) {
-    formData.append('stream', '1');
-    var res = await fetch(url, { method: 'POST', body: formData, credentials: 'include' });
+  var PROGRESS_BAR_PHASES = {
+    validate: true,
+    wallet: true,
+    issue: true,
+    provision: true,
+    send: true,
+    welcome: true,
+    import: true,
+  };
+
+  function progressShowsBar(phase) {
+    return !!(phase && PROGRESS_BAR_PHASES[phase]);
+  }
+
+  async function readNdjsonStream(res, el, onProgress) {
     var ct = (res.headers.get('content-type') || '').toLowerCase();
     if (!res.ok) {
       var errText = await res.text();
@@ -104,8 +112,7 @@
       throw new Error(typeof detail === 'string' ? detail : errText || res.statusText || 'Request failed');
     }
     if (ct.indexOf('ndjson') < 0 && ct.indexOf('json') >= 0) {
-      var plain = await res.json();
-      return plain;
+      return res.json();
     }
     if (!res.body || !res.body.getReader) {
       throw new Error('Progress streaming is not supported in this browser.');
@@ -123,13 +130,13 @@
             message: ev.message,
             current: ev.current,
             total: ev.total,
-            showBar: ev.total > 0 && (ev.phase === 'validate' || ev.phase === 'wallet' || ev.phase === 'issue'),
+            showBar: ev.total > 0 && progressShowsBar(ev.phase),
           });
         }
       } else if (ev.event === 'complete') {
         result = ev.data;
       } else if (ev.event === 'error') {
-        throw new Error(ev.message || 'Bulk training failed.');
+        throw new Error(ev.message || 'Request failed.');
       }
     }
     while (true) {
@@ -148,9 +155,36 @@
       handleEvent(JSON.parse(buf.trim()));
     }
     if (!result) {
-      throw new Error('Bulk training finished without a result.');
+      throw new Error('Request finished without a result.');
     }
     return result;
+  }
+
+  /**
+   * POST with stream=true (JSON body or FormData). Reads application/x-ndjson progress lines.
+   */
+  async function postNdjsonStream(url, options, el, onProgress) {
+    options = options || {};
+    var init = { method: options.method || 'POST', credentials: 'include' };
+    if (options.json != null) {
+      var payload = Object.assign({}, options.json);
+      payload.stream = true;
+      init.headers = Object.assign({}, options.headers || {}, {
+        'Content-Type': 'application/json',
+      });
+      init.body = JSON.stringify(payload);
+    } else if (options.formData) {
+      options.formData.append('stream', '1');
+      init.body = options.formData;
+    } else {
+      throw new Error('postNdjsonStream requires json or formData');
+    }
+    var res = await fetch(options.fetchUrl || url, init);
+    return readNdjsonStream(res, el, onProgress);
+  }
+
+  async function postBulkTrainingStream(url, formData, el, onProgress) {
+    return postNdjsonStream(url, { formData: formData }, el, onProgress);
   }
 
   function animateStatNumbers(root) {
@@ -565,6 +599,9 @@
     clear: clear,
     showLoading: showLoading,
     updateLoadingProgress: updateLoadingProgress,
+    progressShowsBar: progressShowsBar,
+    readNdjsonStream: readNdjsonStream,
+    postNdjsonStream: postNdjsonStream,
     postBulkTrainingStream: postBulkTrainingStream,
     scrollToFeedback: scrollToFeedback,
     render: render,

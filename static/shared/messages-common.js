@@ -153,17 +153,47 @@
     };
   }
 
-  async function sendBroadcast(sendUrl, doctorUserIds, text, files) {
+  function streamUrl(baseUrl) {
+    return baseUrl + (baseUrl.indexOf('?') >= 0 ? '&' : '?') + 'stream=1';
+  }
+
+  function canNdjsonStream(progressEl) {
+    return !!(
+      progressEl &&
+      global.NHSBatchResultViz &&
+      typeof global.NHSBatchResultViz.postNdjsonStream === 'function'
+    );
+  }
+
+  async function sendBroadcast(sendUrl, doctorUserIds, text, files, progressEl) {
     var ids = (doctorUserIds || []).map(function (id) { return parseInt(id, 10); }).filter(function (id) {
       return !isNaN(id);
     });
+    if (canNdjsonStream(progressEl)) {
+      if (files && files.length) {
+        var fd = new FormData();
+        fd.append('doctor_user_ids', JSON.stringify(ids));
+        fd.append('body', text || '');
+        files.forEach(function (f) { fd.append('files', f, f.name); });
+        return global.NHSBatchResultViz.postNdjsonStream(
+          sendUrl,
+          { formData: fd, fetchUrl: streamUrl(sendUrl) },
+          progressEl
+        );
+      }
+      return global.NHSBatchResultViz.postNdjsonStream(
+        sendUrl,
+        { json: { doctor_user_ids: ids, body: text } },
+        progressEl
+      );
+    }
     var res;
     if (files && files.length) {
-      var fd = new FormData();
-      fd.append('doctor_user_ids', JSON.stringify(ids));
-      fd.append('body', text || '');
-      files.forEach(function (f) { fd.append('files', f, f.name); });
-      res = await fetch(sendUrl, { method: 'POST', credentials: 'include', body: fd });
+      var fdPlain = new FormData();
+      fdPlain.append('doctor_user_ids', JSON.stringify(ids));
+      fdPlain.append('body', text || '');
+      files.forEach(function (f) { fdPlain.append('files', f, f.name); });
+      res = await fetch(sendUrl, { method: 'POST', credentials: 'include', body: fdPlain });
     } else {
       res = await fetch(sendUrl, {
         method: 'POST',
@@ -185,7 +215,17 @@
     return data;
   }
 
-  async function sendMessage(sendUrl, text, files) {
+  async function sendMessage(sendUrl, text, files, progressEl) {
+    if (canNdjsonStream(progressEl)) {
+      var fdMsg = new FormData();
+      fdMsg.append('body', text || '');
+      (files || []).forEach(function (f) { fdMsg.append('files', f, f.name); });
+      return global.NHSBatchResultViz.postNdjsonStream(
+        sendUrl,
+        { formData: fdMsg, fetchUrl: streamUrl(sendUrl) },
+        progressEl
+      );
+    }
     var res;
     if (files && files.length) {
       var fd = new FormData();

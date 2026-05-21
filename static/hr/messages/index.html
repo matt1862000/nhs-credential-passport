@@ -243,7 +243,7 @@
 
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
-  <script src="/static/shared/import-result-viz.js?v=20260524-4"></script>
+  <script src="/static/shared/import-result-viz.js?v=20260525-2"></script>
   <script src="/static/shared/messages-common.js?v=20260524-3"></script>
   <script>
     (function () {
@@ -805,7 +805,7 @@
         if (viz()) viz().showLoading(resultEl, 'Sending to ' + members.length + ' clinician' + (members.length === 1 ? '' : 's') + '…');
         try {
           var ids = members.map(function (m) { return m.id; });
-          var out = await NHSMessages.sendBroadcast('/api/hr/messages/broadcast', ids, body, files);
+          var out = await NHSMessages.sendBroadcast('/api/hr/messages/broadcast', ids, body, files, resultEl);
           if (viz()) viz().cohortMessage(resultEl, out);
           document.getElementById('broadcastBody').value = '';
           if (_broadcastCompose) _broadcastCompose.clear();

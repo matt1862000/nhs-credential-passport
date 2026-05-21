@@ -8,7 +8,7 @@ import re
 import sqlite3
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 import secrets
 
 try:
@@ -2834,73 +2834,104 @@ def cohort_add_members_from_emails(
     )
 
 
-def cohort_add_members(
-    cohort_id: int,
-    hr_trust: str,
-    members: list[dict],
-    hr_user_id: int,
-    reserved_emails: set[str],
-    queue_welcome: bool = False,
-) -> list[dict]:
-    """
-    For each roster row: create provisioned user or link existing; add to cohort.
-    Each member dict must include personal_email (login); optional display_name, gmc_number.
-    Returns per-row result dicts (email = personal login, status, user_id, error, prefilled).
-    """
-    from . import trust_packs
-
-    cohort = cohort_get(cohort_id, hr_trust)
-    if not cohort:
-        raise ValueError("cohort_not_found")
-    default_trust = trust_packs.trust_display_name(hr_trust) or None
-    results: list[dict] = []
+def cohort_processable_members(members: list[dict]) -> list[dict]:
+    out: list[dict] = []
     for row in members:
         if not isinstance(row, dict):
             continue
         personal = (
             row.get("personal_email") or row.get("email") or ""
         ).strip().lower()
-        if not personal:
-            continue
-        dn = (row.get("display_name") or "").strip() or None
-        gmc_raw = row.get("gmc_number")
-        prefilled: list[str] = []
-        if dn:
-            prefilled.append("name")
-        if _normalize_provision_gmc(str(gmc_raw or "")):
-            prefilled.append("GMC")
-        if default_trust:
-            prefilled.append("trust")
+        if personal:
+            out.append(row)
+    return out
 
-        if personal in reserved_emails:
-            results.append(
-                {
-                    "email": personal,
-                    "status": "failed",
-                    "user_id": None,
-                    "error": "reserved email",
-                    "prefilled": prefilled,
-                }
-            )
-            continue
+
+def cohort_add_single_member(
+    cohort_id: int,
+    row: dict,
+    *,
+    hr_user_id: int,
+    reserved_emails: set[str],
+    queue_welcome: bool,
+    default_trust: Optional[str],
+) -> dict:
+    personal = (
+        row.get("personal_email") or row.get("email") or ""
+    ).strip().lower()
+    dn = (row.get("display_name") or "").strip() or None
+    gmc_raw = row.get("gmc_number")
+    prefilled: list[str] = []
+    if dn:
+        prefilled.append("name")
+    if _normalize_provision_gmc(str(gmc_raw or "")):
+        prefilled.append("GMC")
+    if default_trust:
+        prefilled.append("trust")
+
+    if personal in reserved_emails:
+        return {
+            "email": personal,
+            "status": "failed",
+            "user_id": None,
+            "error": "reserved email",
+            "prefilled": prefilled,
+        }
+    existing = user_get_by_email(personal)
+    if existing:
+        if user_is_premium(existing):
+            return {
+                "email": personal,
+                "status": "failed",
+                "user_id": None,
+                "error": "premium account",
+                "prefilled": prefilled,
+            }
+        uid = int(existing["id"])
+        user_apply_hr_roster_row(
+            uid,
+            display_name=dn,
+            gmc_number=gmc_raw,
+            default_trust=default_trust,
+        )
+        cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
+        row_out = {
+            "email": personal,
+            "status": "existing",
+            "user_id": uid,
+            "error": None,
+            "prefilled": prefilled,
+        }
+        if dn:
+            row_out["display_name"] = dn
+        return row_out
+    try:
+        uid = user_create_provisioned(
+            personal,
+            hr_user_id,
+            default_trust=default_trust,
+            display_name=dn,
+            gmc_number=str(gmc_raw or ""),
+        )
+        cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
+        row_out = {
+            "email": personal,
+            "status": "created",
+            "user_id": uid,
+            "error": None,
+            "prefilled": prefilled,
+        }
+        if dn:
+            row_out["display_name"] = dn
+        return row_out
+    except sqlite3.IntegrityError:
         existing = user_get_by_email(personal)
-        if existing:
-            if user_is_premium(existing):
-                results.append(
-                    {
-                        "email": personal,
-                        "status": "failed",
-                        "user_id": None,
-                        "error": "premium account",
-                        "prefilled": prefilled,
-                    }
-                )
-                continue
+        if existing and not user_is_premium(existing):
             uid = int(existing["id"])
-            user_apply_hr_roster_row(
+            user_apply_provisioned_profile(
                 uid,
                 display_name=dn,
-                gmc_number=gmc_raw,
+                gmc_number=str(gmc_raw or ""),
                 default_trust=default_trust,
             )
             cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
@@ -2913,56 +2944,55 @@ def cohort_add_members(
             }
             if dn:
                 row_out["display_name"] = dn
-            results.append(row_out)
-            continue
-        try:
-            uid = user_create_provisioned(
-                personal,
-                hr_user_id,
-                default_trust=default_trust,
-                display_name=dn,
-                gmc_number=str(gmc_raw or ""),
+            return row_out
+        return {
+            "email": personal,
+            "status": "failed",
+            "user_id": None,
+            "error": "could not create account",
+            "prefilled": prefilled,
+        }
+
+
+def cohort_add_members(
+    cohort_id: int,
+    hr_trust: str,
+    members: list[dict],
+    hr_user_id: int,
+    reserved_emails: set[str],
+    queue_welcome: bool = False,
+    on_progress: Optional[Callable[[str, str, int, int], None]] = None,
+) -> list[dict]:
+    """
+    For each roster row: create provisioned user or link existing; add to cohort.
+    Each member dict must include personal_email (login); optional display_name, gmc_number.
+    Returns per-row result dicts (email = personal login, status, user_id, error, prefilled).
+    """
+    from . import trust_packs
+
+    cohort = cohort_get(cohort_id, hr_trust)
+    if not cohort:
+        raise ValueError("cohort_not_found")
+    default_trust = trust_packs.trust_display_name(hr_trust) or None
+    processable = cohort_processable_members(members)
+    total = len(processable)
+    results: list[dict] = []
+    for idx, row in enumerate(processable):
+        if on_progress:
+            on_progress(
+                "provision",
+                f"Adding clinician {idx + 1} of {total}…",
+                idx + 1,
+                total,
             )
-            cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
-            row_out = {
-                "email": personal,
-                "status": "created",
-                "user_id": uid,
-                "error": None,
-                "prefilled": prefilled,
-            }
-            if dn:
-                row_out["display_name"] = dn
-            results.append(row_out)
-        except sqlite3.IntegrityError:
-            existing = user_get_by_email(personal)
-            if existing and not user_is_premium(existing):
-                uid = int(existing["id"])
-                user_apply_provisioned_profile(
-                    uid,
-                    display_name=dn,
-                    gmc_number=str(gmc_raw or ""),
-                    default_trust=default_trust,
-                )
-                cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
-                row_out = {
-                    "email": personal,
-                    "status": "existing",
-                    "user_id": uid,
-                    "error": None,
-                    "prefilled": prefilled,
-                }
-                if dn:
-                    row_out["display_name"] = dn
-                results.append(row_out)
-            else:
-                results.append(
-                    {
-                        "email": personal,
-                        "status": "failed",
-                        "user_id": None,
-                        "error": "could not create account",
-                        "prefilled": prefilled,
-                    }
-                )
+        results.append(
+            cohort_add_single_member(
+                cohort_id,
+                row,
+                hr_user_id=hr_user_id,
+                reserved_emails=reserved_emails,
+                queue_welcome=queue_welcome,
+                default_trust=default_trust,
+            )
+        )
     return results

@@ -599,7 +599,7 @@
   <script src="/static/wallet/wallet-store.js"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
-  <script src="/static/shared/import-result-viz.js?v=20260524-4"></script>
+  <script src="/static/shared/import-result-viz.js?v=20260525-2"></script>
   <script src="/static/shared/ods-trust-suggest.js"></script>
   <script src="/static/shared/onboarding-nudge.js"></script>
   <script>
@@ -1272,7 +1272,16 @@
       if (!dryRun && evInput.files && evInput.files[0]) {
         fd.append('evidence', evInput.files[0], evInput.files[0].name || 'evidence');
       }
-      var res = await fetch('/api/credentials/import-csv?dry_run=' + (dryRun ? 'true' : 'false'), {
+      var url = '/api/credentials/import-csv?dry_run=' + (dryRun ? 'true' : 'false');
+      var resultEl = document.getElementById('csvImportResult');
+      if (!dryRun && csvResultViz() && csvResultViz().postNdjsonStream) {
+        return csvResultViz().postNdjsonStream(
+          url,
+          { formData: fd, fetchUrl: url + '&stream=1' },
+          resultEl
+        );
+      }
+      var res = await fetch(url, {
         method: 'POST',
         body: fd,
         credentials: 'include',
