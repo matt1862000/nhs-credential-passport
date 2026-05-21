@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-9">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-11">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260524-2">
 </head>
 <body>
@@ -112,7 +112,6 @@
                           <label class="nhsuk-label" for="cohortPersonalEmailInput">Personal email</label>
                           <input class="nhsuk-input" type="email" id="cohortPersonalEmailInput" name="cohort_personal_email" placeholder="jane.smith@gmail.com" spellcheck="false" autocapitalize="off" autocomplete="email" inputmode="email" aria-describedby="cohortEmailError cohortEmailsCount cohortAddOptionalHint">
                         </div>
-                        <button type="button" class="nhsuk-button cohort-add-card__btn" id="btnCohortEmailAdd">Add</button>
                       </div>
                       <p class="cohort-add-card__optional-hint" id="cohortAddOptionalHint">Optional — pre-fills their profile when they first sign in</p>
                       <div class="cohort-add-card__grid">
@@ -125,6 +124,9 @@
                           <input class="nhsuk-input" type="text" id="cohortGmcInput" name="cohort_gmc" placeholder="1234567" inputmode="numeric" maxlength="11" aria-describedby="cohortGmcHint">
                           <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortGmcHint">Seven digits</span>
                         </div>
+                      </div>
+                      <div class="cohort-add-card__actions">
+                        <button type="button" class="nhsuk-button cohort-add-card__btn" id="btnCohortEmailAdd">Add</button>
                       </div>
                     </div>
                     <p class="cohort-email-error" id="cohortEmailError" hidden role="alert"></p>
@@ -274,7 +276,6 @@
                         <label class="nhsuk-label" for="addPersonalEmailInput">Personal email</label>
                         <input class="nhsuk-input" type="email" id="addPersonalEmailInput" name="add_personal_email" placeholder="jane.smith@gmail.com" spellcheck="false" autocapitalize="off" autocomplete="email" inputmode="email" aria-describedby="addEmailError addEmailsCount addAddOptionalHint">
                       </div>
-                      <button type="button" class="nhsuk-button cohort-add-card__btn" id="btnAddEmailAdd">Add</button>
                     </div>
                     <p class="cohort-add-card__optional-hint" id="addAddOptionalHint">Optional — pre-fills their profile when they first sign in</p>
                     <div class="cohort-add-card__grid">
@@ -287,6 +288,9 @@
                         <input class="nhsuk-input" type="text" id="addGmcInput" name="add_gmc" placeholder="1234567" inputmode="numeric" maxlength="11" aria-describedby="addGmcHint">
                         <span class="nhsuk-hint nhsuk-hint--secondary" id="addGmcHint">Seven digits</span>
                       </div>
+                    </div>
+                    <div class="cohort-add-card__actions">
+                      <button type="button" class="nhsuk-button cohort-add-card__btn" id="btnAddEmailAdd">Add</button>
                     </div>
                   </div>
                   <p class="cohort-email-error" id="addEmailError" hidden role="alert"></p>
@@ -1481,12 +1485,8 @@
             setAddWizardStep(2);
             return;
           }
-          if (flushedAdd && flushedAdd.gmcWarning) {
-            var gmcWarnAdd = document.getElementById('addEmailError');
-            if (gmcWarnAdd) {
-              gmcWarnAdd.textContent = flushedAdd.gmcWarning;
-              gmcWarnAdd.hidden = false;
-            }
+          if (flushedAdd && flushedAdd.gmcWarning && _addEmailRoster) {
+            _addEmailRoster.setFieldError(flushedAdd.gmcWarning, 'gmc');
           }
         }
         var members = _addEmailRoster ? _addEmailRoster.getMembers() : [];

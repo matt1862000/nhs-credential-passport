@@ -519,11 +519,15 @@
       color: var(--nhsuk-text);
     }
     .cohort-add-card__primary {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: flex-end;
-      gap: 0.65rem 0.75rem;
+      display: block;
       margin-bottom: 0.65rem;
+    }
+    .cohort-add-card__actions {
+      display: flex;
+      justify-content: flex-start;
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px dashed var(--nhsuk-border);
     }
     .cohort-add-card__btn {
       margin-bottom: 0;
@@ -545,7 +549,7 @@
     }
     @media (max-width: 520px) {
       .cohort-add-card__grid { grid-template-columns: 1fr; }
-      .cohort-add-card__primary { flex-direction: column; align-items: stretch; }
+      .cohort-add-card__actions { justify-content: stretch; }
       .cohort-add-card__btn { width: 100%; }
     }
     .cohort-add-field { margin-bottom: 0; min-width: 0; }
