@@ -153,6 +153,38 @@
     };
   }
 
+  async function sendBroadcast(sendUrl, doctorUserIds, text, files) {
+    var ids = (doctorUserIds || []).map(function (id) { return parseInt(id, 10); }).filter(function (id) {
+      return !isNaN(id);
+    });
+    var res;
+    if (files && files.length) {
+      var fd = new FormData();
+      fd.append('doctor_user_ids', JSON.stringify(ids));
+      fd.append('body', text || '');
+      files.forEach(function (f) { fd.append('files', f, f.name); });
+      res = await fetch(sendUrl, { method: 'POST', credentials: 'include', body: fd });
+    } else {
+      res = await fetch(sendUrl, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ doctor_user_ids: ids, body: text }),
+      });
+    }
+    var payload = await res.text();
+    var data = null;
+    try { data = payload ? JSON.parse(payload) : null; } catch (e) {}
+    if (!res.ok) {
+      var detail = data && data.detail;
+      if (Array.isArray(detail)) {
+        detail = detail.map(function (d) { return d.msg || d; }).join('; ');
+      }
+      throw new Error(detail || payload || res.statusText);
+    }
+    return data;
+  }
+
   async function sendMessage(sendUrl, text, files) {
     var res;
     if (files && files.length) {
@@ -192,6 +224,7 @@
     renderBubbles: renderBubbles,
     bindCompose: bindCompose,
     sendMessage: sendMessage,
+    sendBroadcast: sendBroadcast,
     canSend: canSend,
     attachIconSvg: ATTACH_ICON_SVG,
     MAX_FILES: MAX_FILES,

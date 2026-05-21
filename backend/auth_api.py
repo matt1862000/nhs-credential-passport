@@ -1955,6 +1955,94 @@ async def hr_messages_start(request: Request):
     return conv
 
 
+def _parse_doctor_user_ids(raw) -> list[int]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+            items = parsed if isinstance(parsed, list) else [parsed]
+        except json.JSONDecodeError:
+            items = [p for p in raw.replace(",", " ").split() if p.strip()]
+    else:
+        items = [raw]
+    out: list[int] = []
+    seen: set[int] = set()
+    for item in items:
+        try:
+            uid = int(item)
+        except (TypeError, ValueError):
+            continue
+        if uid in seen:
+            continue
+        seen.add(uid)
+        out.append(uid)
+    return out
+
+
+@router.post("/hr/messages/broadcast")
+async def hr_messages_broadcast(request: Request):
+    """Send the same message to multiple clinicians (separate private threads each)."""
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    ct = (request.headers.get("content-type") or "").lower()
+    if "multipart/form-data" in ct:
+        form = await request.form()
+        doctor_ids = _parse_doctor_user_ids(form.get("doctor_user_ids"))
+        text = str(form.get("body") or "").strip()
+        attachments: list[tuple[str, str, bytes]] = []
+        for uf in form.getlist("files"):
+            if not hasattr(uf, "read"):
+                continue
+            raw = await uf.read()
+            name = (getattr(uf, "filename", None) or "attachment").strip()
+            mime = _hr_evidence_content_type(getattr(uf, "content_type", None), name)
+            if not mime:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file type for {name}. Use PDF or image (JPEG, PNG, WebP).",
+                )
+            if len(raw) > MAX_MESSAGE_ATTACHMENT_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large (max 5 MB): {name}",
+                )
+            attachments.append((name, mime, raw))
+        if len(attachments) > MAX_MESSAGE_ATTACHMENTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Maximum {MAX_MESSAGE_ATTACHMENTS} attachments per message.",
+            )
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="Invalid JSON")
+        doctor_ids = _parse_doctor_user_ids(body.get("doctor_user_ids"))
+        text = str(body.get("body") or "").strip()
+        attachments = []
+    if not doctor_ids:
+        raise HTTPException(status_code=400, detail="Select at least one clinician")
+    if len(doctor_ids) > MAX_HR_COHORT_LINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many recipients (maximum {MAX_HR_COHORT_LINES})",
+        )
+    _require_message_content(text, attachments)
+    if int(hr["id"]) in doctor_ids:
+        raise HTTPException(status_code=400, detail="Cannot message yourself")
+    return _hr_broadcast_to_doctors(
+        int(hr["id"]), trust, doctor_ids, text, attachments=attachments or None
+    )
+
+
 @router.get("/hr/messages")
 def hr_messages_list(request: Request):
     hr = require_premium_user(request)

@@ -52,6 +52,30 @@
     .msg-doctor-results-primary { display: block; font-weight: 600; line-height: 1.3; }
     .msg-doctor-results-meta { display: block; font-size: 0.78rem; color: var(--nhsuk-secondary-text); margin-top: 0.15rem; }
     .msg-search-status { min-height: 1.1rem; font-size: 0.8125rem; margin-top: 0.35rem; color: var(--nhsuk-secondary-text); }
+    .msg-search-toolbar { display: flex; flex-wrap: wrap; gap: 0.35rem 0.5rem; margin-top: 0.35rem; }
+    .msg-search-toolbar .nhsuk-button { margin-bottom: 0; font-size: 0.8125rem; padding: 0.35rem 0.65rem; min-height: 2rem; }
+    .msg-doctor-results li.msg-search-person { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.45rem 0.5rem 0.45rem 0.65rem; cursor: default; }
+    .msg-doctor-results li.msg-search-person:hover { background: #f8fafb; }
+    .msg-doctor-results li.msg-search-person.is-selected { background: #e8f4fd; }
+    .msg-search-person__check { flex-shrink: 0; margin-top: 0.35rem; }
+    .msg-search-person__body { flex: 1; min-width: 0; cursor: pointer; }
+    .msg-search-open-one { flex-shrink: 0; margin: 0.2rem 0 0 0; font-size: 0.75rem; padding: 0.2rem 0.45rem; min-height: auto; background: transparent; border: 1px solid var(--nhsuk-border); color: var(--nhsuk-link); border-radius: 3px; cursor: pointer; font-family: inherit; }
+    .msg-search-open-one:hover { background: var(--nhsuk-panel); }
+    .msg-selected-panel { padding: 0.65rem 1rem; border-bottom: 1px solid var(--nhsuk-border); background: #fff; }
+    .msg-selected-panel[hidden] { display: none !important; }
+    .msg-selected-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; font-size: 0.8125rem; font-weight: 700; }
+    .msg-selected-clear { background: none; border: none; color: var(--nhsuk-link); cursor: pointer; font-size: 0.8125rem; padding: 0; font-family: inherit; text-decoration: underline; }
+    .msg-selected-list { list-style: none; margin: 0 0 0.5rem 0; padding: 0; max-height: 6.5rem; overflow-y: auto; }
+    .msg-selected-list li { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.35rem; padding: 0.3rem 0; font-size: 0.8125rem; border-bottom: 1px solid var(--nhsuk-border); }
+    .msg-selected-list li:last-child { border-bottom: none; }
+    .msg-selected-remove { background: none; border: none; color: var(--nhsuk-error); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.15rem; }
+    .msg-selected-actions .nhsuk-button { width: 100%; margin-bottom: 0; font-size: 0.875rem; }
+    .msg-broadcast-panel { display: flex; flex-direction: column; flex: 1; min-height: 24rem; }
+    .msg-broadcast-panel[hidden] { display: none !important; }
+    .msg-broadcast-compose { padding: 0.75rem 1rem 1rem; border-top: 1px solid var(--nhsuk-border); }
+    .msg-broadcast-compose .nhsuk-textarea { min-height: 5rem; margin-bottom: 0.5rem; }
+    .msg-broadcast-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.5rem; }
+    .msg-thread-view[hidden] { display: none !important; }
   </style>
 </head>
 <body>
@@ -98,7 +122,20 @@
               <span class="nhsuk-hint nhsuk-hint--secondary" style="display:block;margin:0 0 0.35rem 0;font-size:0.8125rem;">Name, email, GMC number, or cohort name</span>
               <input type="text" class="nhsuk-input" id="msgDoctorSearchInput" placeholder="e.g. jane.smith@gmail.com or February 2026…" autocomplete="off" aria-autocomplete="list" aria-controls="msgDoctorSearchResults">
               <p id="msgSearchStatus" class="msg-search-status" role="status" aria-live="polite">Search to message a clinician, open a cohort, or view read history.</p>
+              <div class="msg-search-toolbar" id="msgSearchToolbar" hidden>
+                <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnSelectAllResults">Add all to selection</button>
+              </div>
               <ul id="msgDoctorSearchResults" class="msg-doctor-results" role="listbox" hidden aria-label="Search results"></ul>
+            </div>
+            <div class="msg-selected-panel" id="msgSelectedPanel" hidden>
+              <div class="msg-selected-head">
+                <span id="msgSelectedCount" aria-live="polite">0 selected</span>
+                <button type="button" class="msg-selected-clear" id="btnClearSelected">Clear all</button>
+              </div>
+              <ul class="msg-selected-list" id="msgSelectedList" aria-label="Selected clinicians"></ul>
+              <div class="msg-selected-actions">
+                <button type="button" class="nhsuk-button" id="btnOpenBroadcast" disabled>Message selected</button>
+              </div>
             </div>
             <div class="msg-sidebar-header">Unread messages</div>
             <div id="convItems"><p class="msg-no-conv">No conversations yet.</p></div>
@@ -106,22 +143,48 @@
         </div>
         <div class="msg-thread" id="threadPanel">
           <div class="msg-thread-card">
-            <div class="msg-thread-header" id="threadHeader">
-              <div class="msg-thread-header-name" id="threadName">Select a conversation</div>
-              <div class="msg-thread-header-meta" id="threadMeta"></div>
-            </div>
-            <div class="msg-bubbles" id="bubbles"><p class="msg-empty">Choose a conversation on the left, or message a clinician.</p></div>
-            <div class="msg-compose" id="composeArea" hidden>
-              <div class="msg-compose-row">
-                <input type="file" id="msgFileInput" multiple hidden
-                  accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
-                <button type="button" class="msg-attach-btn" id="btnAttach" aria-label="Attach file" title="Attach file"></button>
-                <div class="msg-compose-field">
-                  <textarea id="msgInput" placeholder="Type a message…" rows="1" aria-label="Message"></textarea>
-                </div>
-                <button type="button" class="nhsuk-button msg-send-btn" id="btnSend">Send</button>
+            <div class="msg-thread-view" id="threadView">
+              <div class="msg-thread-header" id="threadHeader">
+                <div class="msg-thread-header-name" id="threadName">Select a conversation</div>
+                <div class="msg-thread-header-meta" id="threadMeta"></div>
               </div>
-              <ul class="msg-pending-files" id="msgPendingFiles" hidden aria-label="Files to send"></ul>
+              <div class="msg-bubbles" id="bubbles"><p class="msg-empty">Choose a conversation on the left, tick clinicians to message several at once, or search above.</p></div>
+              <div class="msg-compose" id="composeArea" hidden>
+                <div class="msg-compose-row">
+                  <input type="file" id="msgFileInput" multiple hidden
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
+                  <button type="button" class="msg-attach-btn" id="btnAttach" aria-label="Attach file" title="Attach file"></button>
+                  <div class="msg-compose-field">
+                    <textarea id="msgInput" placeholder="Type a message…" rows="1" aria-label="Message"></textarea>
+                  </div>
+                  <button type="button" class="nhsuk-button msg-send-btn" id="btnSend">Send</button>
+                </div>
+                <ul class="msg-pending-files" id="msgPendingFiles" hidden aria-label="Files to send"></ul>
+              </div>
+            </div>
+            <div class="msg-broadcast-panel" id="broadcastPanel" hidden>
+              <div class="msg-thread-header">
+                <div class="msg-thread-header-name" id="broadcastTitle">Message selected clinicians</div>
+                <div class="msg-thread-header-meta" id="broadcastMeta">Each person receives the same text in a separate private thread.</div>
+              </div>
+              <div class="msg-broadcast-compose">
+                <label class="nhsuk-label" for="broadcastBody">Your message</label>
+                <textarea class="nhsuk-textarea" id="broadcastBody" rows="4" placeholder="Write your message…"></textarea>
+                <div class="msg-compose msg-compose--broadcast">
+                  <div class="msg-compose-row">
+                    <input type="file" id="broadcastFileInput" multiple hidden
+                      accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
+                    <button type="button" class="msg-attach-btn" id="btnBroadcastAttach" aria-label="Attach file" title="Attach file"></button>
+                    <span class="nhsuk-hint nhsuk-hint--secondary" style="margin:0;">Optional attachments (PDF or images).</span>
+                  </div>
+                  <ul class="msg-pending-files" id="broadcastPendingFiles" hidden aria-label="Files to send"></ul>
+                </div>
+                <div class="msg-broadcast-actions">
+                  <button type="button" class="nhsuk-button" id="btnBroadcastSend">Send to selected</button>
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnBroadcastCancel">Cancel</button>
+                </div>
+                <div id="broadcastResult" class="hr-provision-viz-wrap" style="margin-top:0.75rem;" aria-live="polite"></div>
+              </div>
             </div>
           </div>
         </div>
@@ -131,7 +194,8 @@
 
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
-  <script src="/static/shared/messages-common.js?v=20260524-1"></script>
+  <script src="/static/shared/import-result-viz.js?v=20260524-4"></script>
+  <script src="/static/shared/messages-common.js?v=20260524-3"></script>
   <script>
     (function () {
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -199,6 +263,7 @@
       }
 
       async function loadThread(convId) {
+        showThreadView();
         _activeConvId = convId;
         _activeConv = _allConvs.find(function (c) { return c.id === convId; }) || null;
         var threadName = document.getElementById('threadName');
@@ -330,16 +395,136 @@
       var _lastDoctorSearch = [];
       var _lastCohortSearch = [];
       var _searchCohortContext = null;
+      var _lastSearchStatus = '';
+      var MAX_BROADCAST_RECIPIENTS = 200;
+      var _selectedDoctors = {};
+      var _broadcastCompose = null;
+
+      function viz() { return window.NHSBatchResultViz; }
+
+      function clearBroadcastResult() {
+        var el = document.getElementById('broadcastResult');
+        if (el) el.innerHTML = '';
+      }
 
       function setDoctorSearchStatus(msg) {
+        _lastSearchStatus = msg || '';
         var el = document.getElementById('msgSearchStatus');
-        if (el) el.textContent = msg || '';
+        if (el) el.textContent = _lastSearchStatus;
+      }
+
+      function selectedCount() {
+        return Object.keys(_selectedDoctors).length;
+      }
+
+      function doctorLabel(doc) {
+        return (doc.display_name || doc.email || 'Clinician').trim();
+      }
+
+      function isDoctorSelected(id) {
+        return !!_selectedDoctors[String(id)];
+      }
+
+      function addSelectedDoctor(doc) {
+        if (!doc || doc.id == null) return false;
+        var key = String(doc.id);
+        if (_selectedDoctors[key]) return true;
+        if (selectedCount() >= MAX_BROADCAST_RECIPIENTS) {
+          alert('You can message at most ' + MAX_BROADCAST_RECIPIENTS + ' clinicians at once.');
+          return false;
+        }
+        _selectedDoctors[key] = {
+          id: doc.id,
+          display_name: doc.display_name,
+          email: doc.email,
+          gmc_number: doc.gmc_number,
+        };
+        renderSelectedPanel();
+        return true;
+      }
+
+      function removeSelectedDoctor(id) {
+        delete _selectedDoctors[String(id)];
+        renderSelectedPanel();
+        if (_lastDoctorSearch.length || _lastCohortSearch.length) {
+          renderSearchResults(_lastDoctorSearch, _lastCohortSearch, _lastSearchStatus);
+        }
+      }
+
+      function clearSelectedDoctors() {
+        _selectedDoctors = {};
+        renderSelectedPanel();
+        if (_lastDoctorSearch.length || _lastCohortSearch.length) {
+          renderSearchResults(_lastDoctorSearch, _lastCohortSearch, _lastSearchStatus);
+        }
+      }
+
+      function addAllDoctorsToSelection(docs) {
+        (docs || []).forEach(function (doc) { addSelectedDoctor(doc); });
+        if (_lastDoctorSearch.length || _lastCohortSearch.length) {
+          renderSearchResults(_lastDoctorSearch, _lastCohortSearch, _lastSearchStatus);
+        }
+      }
+
+      function renderSelectedPanel() {
+        var panel = document.getElementById('msgSelectedPanel');
+        var countEl = document.getElementById('msgSelectedCount');
+        var listEl = document.getElementById('msgSelectedList');
+        var btn = document.getElementById('btnOpenBroadcast');
+        var n = selectedCount();
+        show(panel, n > 0);
+        if (countEl) {
+          countEl.textContent = n + ' selected' + (n === MAX_BROADCAST_RECIPIENTS ? ' (maximum)' : '');
+        }
+        if (btn) btn.disabled = n === 0;
+        if (!listEl) return;
+        var items = Object.keys(_selectedDoctors).map(function (k) { return _selectedDoctors[k]; });
+        items.sort(function (a, b) {
+          return doctorLabel(a).localeCompare(doctorLabel(b));
+        });
+        listEl.innerHTML = items.map(function (doc) {
+          return (
+            '<li><span>' + esc(doctorLabel(doc)) + '</span>' +
+            '<button type="button" class="msg-selected-remove" data-remove-id="' + esc(String(doc.id)) + '" aria-label="Remove ' + esc(doctorLabel(doc)) + '">×</button></li>'
+          );
+        }).join('');
+      }
+
+      function showThreadView() {
+        show(document.getElementById('threadView'), true);
+        show(document.getElementById('broadcastPanel'), false);
+      }
+
+      function showBroadcastView() {
+        var n = selectedCount();
+        if (!n) return;
+        show(document.getElementById('threadView'), false);
+        show(document.getElementById('broadcastPanel'), true);
+        var title = document.getElementById('broadcastTitle');
+        var meta = document.getElementById('broadcastMeta');
+        if (title) title.textContent = 'Message ' + n + ' clinician' + (n === 1 ? '' : 's');
+        if (meta) meta.textContent = 'Each person receives the same text in a separate private thread.';
+        clearBroadcastResult();
+      }
+
+      function confirmBroadcastSend(members) {
+        var preview = members.slice(0, 5).map(doctorLabel);
+        var extra = members.length > 5 ? '\n…and ' + (members.length - 5) + ' more.' : '';
+        return confirm(
+          'Send this message to ' + members.length + ' clinician' + (members.length === 1 ? '' : 's') + '?\n\n'
+          + 'Each person gets their own private thread.\n\n'
+          + preview.join('\n') + extra
+        );
       }
 
       function renderSearchResults(doctors, cohorts, statusMsg) {
         var listEl = document.getElementById('msgDoctorSearchResults');
+        var toolbar = document.getElementById('msgSearchToolbar');
         if (!listEl) return;
+        setDoctorSearchStatus(statusMsg);
         var html = '';
+        var hasDoctors = doctors && doctors.length;
+        show(toolbar, !!hasDoctors);
         if (_searchCohortContext) {
           html += (
             '<li role="option" tabindex="0" class="msg-search-back" data-search-back="1">' +
@@ -357,21 +542,27 @@
           );
         });
         (doctors || []).forEach(function (doc, i) {
-          var name = esc((doc.display_name || doc.email || 'Clinician').trim());
+          var id = doc.id;
+          var sel = isDoctorSelected(id);
+          var name = esc(doctorLabel(doc));
           var meta = [];
           if (doc.gmc_number) meta.push('GMC ' + esc(doc.gmc_number));
           if (doc.email) meta.push(esc(doc.email));
           if (doc.current_trust) meta.push(esc(doc.current_trust));
           html += (
-            '<li role="option" tabindex="0" data-doctor-idx="' + i + '">' +
-              '<span class="msg-doctor-results-primary">' + name + '</span>' +
-              (meta.length ? '<span class="msg-doctor-results-meta">' + meta.join(' · ') + '</span>' : '') +
+            '<li class="msg-search-person' + (sel ? ' is-selected' : '') + '" data-doctor-idx="' + i + '">' +
+              '<input type="checkbox" class="msg-search-person__check" data-doctor-check="' + i + '"' +
+                (sel ? ' checked' : '') + ' aria-label="Select ' + name + '">' +
+              '<div class="msg-search-person__body" data-doctor-toggle="' + i + '" role="button" tabindex="0">' +
+                '<span class="msg-doctor-results-primary">' + name + '</span>' +
+                (meta.length ? '<span class="msg-doctor-results-meta">' + meta.join(' · ') + '</span>' : '') +
+              '</div>' +
+              '<button type="button" class="msg-search-open-one" data-doctor-open="' + i + '">Open</button>' +
             '</li>'
           );
         });
         listEl.innerHTML = html;
         listEl.hidden = !html;
-        setDoctorSearchStatus(statusMsg);
       }
 
       async function openConversationWithDoctor(doctorId) {
@@ -413,7 +604,7 @@
           renderSearchResults(
             members,
             [],
-            members.length + ' in “' + (_searchCohortContext.name) + '” — click to open chat.'
+            members.length + ' in “' + (_searchCohortContext.name) + '” — tick to select, Open for one-to-one.'
           );
         } catch (e) {
           setDoctorSearchStatus(e.message || 'Could not load cohort');
@@ -455,7 +646,7 @@
           if (results.length) {
             parts.push(results.length + ' clinician' + (results.length === 1 ? '' : 's'));
           }
-          renderSearchResults(results, cohorts, parts.join(', ') + ' — click to open chat or list a cohort.');
+          renderSearchResults(results, cohorts, parts.join(', ') + ' — tick to select, Open for one-to-one, or list a cohort.');
         } catch (e) {
           listEl.hidden = true;
           setDoctorSearchStatus(e.message || 'Search failed.');
@@ -481,23 +672,101 @@
           if (cohort) await loadCohortMembersForSearch(cohort);
           return;
         }
-        var li = e.target.closest('[data-doctor-idx]');
-        if (!li) return;
-        var idx = parseInt(li.getAttribute('data-doctor-idx'), 10);
-        var doc = _lastDoctorSearch[idx];
-        if (!doc || !doc.id) return;
+        if (e.target.closest('[data-doctor-check]')) return;
+        var openBtn = e.target.closest('[data-doctor-open]');
+        if (openBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          var oi = parseInt(openBtn.getAttribute('data-doctor-open'), 10);
+          var odoc = _lastDoctorSearch[oi];
+          if (!odoc || !odoc.id) return;
+          try {
+            setDoctorSearchStatus('Opening conversation…');
+            await openConversationWithDoctor(odoc.id);
+          } catch (err) {
+            alert(err.message || 'Could not start conversation');
+          }
+          return;
+        }
+        var check = e.target.closest('[data-doctor-check]');
+        var toggle = e.target.closest('[data-doctor-toggle]');
+        if (check || toggle) {
+          var ti = parseInt((check || toggle).getAttribute(check ? 'data-doctor-check' : 'data-doctor-toggle'), 10);
+          var tdoc = _lastDoctorSearch[ti];
+          if (!tdoc) return;
+          if (isDoctorSelected(tdoc.id)) removeSelectedDoctor(tdoc.id);
+          else addSelectedDoctor(tdoc);
+          renderSearchResults(_lastDoctorSearch, _lastCohortSearch, _lastSearchStatus);
+          return;
+        }
+      });
+
+      document.getElementById('msgDoctorSearchResults').addEventListener('change', function (e) {
+        var check = e.target.closest('[data-doctor-check]');
+        if (!check) return;
+        var ti = parseInt(check.getAttribute('data-doctor-check'), 10);
+        var tdoc = _lastDoctorSearch[ti];
+        if (!tdoc) return;
+        if (check.checked) addSelectedDoctor(tdoc);
+        else removeSelectedDoctor(tdoc.id);
+        renderSearchResults(_lastDoctorSearch, _lastCohortSearch, _lastSearchStatus);
+      });
+
+      document.getElementById('msgDoctorSearchResults').addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var toggle = e.target.closest('[data-doctor-toggle]');
+        if (!toggle) return;
+        e.preventDefault();
+        toggle.click();
+      });
+
+      document.getElementById('btnSelectAllResults').addEventListener('click', function () {
+        addAllDoctorsToSelection(_lastDoctorSearch);
+      });
+
+      document.getElementById('btnClearSelected').addEventListener('click', clearSelectedDoctors);
+
+      document.getElementById('msgSelectedList').addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-remove-id]');
+        if (!btn) return;
+        removeSelectedDoctor(btn.getAttribute('data-remove-id'));
+      });
+
+      document.getElementById('btnOpenBroadcast').addEventListener('click', showBroadcastView);
+
+      document.getElementById('btnBroadcastCancel').addEventListener('click', function () {
+        showThreadView();
+        clearBroadcastResult();
+      });
+
+      document.getElementById('btnBroadcastSend').addEventListener('click', async function () {
+        var members = Object.keys(_selectedDoctors).map(function (k) { return _selectedDoctors[k]; });
+        if (!members.length) return;
+        var body = String(document.getElementById('broadcastBody').value || '').trim();
+        var files = _broadcastCompose ? _broadcastCompose.getPending() : [];
+        if (!NHSMessages.canSend(body, files)) {
+          alert('Enter a message or attach a file.');
+          return;
+        }
+        if (!confirmBroadcastSend(members)) return;
+        var btn = document.getElementById('btnBroadcastSend');
+        var resultEl = document.getElementById('broadcastResult');
+        if (btn) btn.disabled = true;
+        clearBroadcastResult();
+        if (viz()) viz().showLoading(resultEl, 'Sending to ' + members.length + ' clinician' + (members.length === 1 ? '' : 's') + '…');
         try {
-          setDoctorSearchStatus('Opening conversation…');
-          await openConversationWithDoctor(doc.id);
-          var inp = document.getElementById('msgDoctorSearchInput');
-          if (inp) inp.value = '';
-          _searchCohortContext = null;
-          setDoctorSearchStatus('Search to message a clinician, open a cohort, or view read history.');
-          var lr = document.getElementById('msgDoctorSearchResults');
-          if (lr) { lr.hidden = true; lr.innerHTML = ''; }
+          var ids = members.map(function (m) { return m.id; });
+          var out = await NHSMessages.sendBroadcast('/api/hr/messages/broadcast', ids, body, files);
+          if (viz()) viz().cohortMessage(resultEl, out);
+          document.getElementById('broadcastBody').value = '';
+          if (_broadcastCompose) _broadcastCompose.clear();
+          await loadConversations(false);
+          notifyNavMessages();
         } catch (err) {
-          alert(err.message || 'Could not start conversation');
-          setDoctorSearchStatus('');
+          clearBroadcastResult();
+          alert(err.message || 'Send failed');
+        } finally {
+          if (btn) btn.disabled = false;
         }
       });
 
@@ -515,6 +784,14 @@
           return;
         }
         show(document.getElementById('mainContent'), true);
+        if (window.NHSMessages && typeof NHSMessages.bindCompose === 'function') {
+          _broadcastCompose = NHSMessages.bindCompose(
+            'broadcastFileInput',
+            'btnBroadcastAttach',
+            'broadcastPendingFiles'
+          );
+        }
+        renderSelectedPanel();
         await loadConversations(false);
         var params = new URLSearchParams(window.location.search);
         var doctorParam = params.get('doctor');
