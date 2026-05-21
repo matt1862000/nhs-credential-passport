@@ -252,8 +252,8 @@
   }
 
   function mergeMember(into, from) {
-    if (from.display_name && !into.display_name) into.display_name = from.display_name;
-    if (from.gmc_number && !into.gmc_number) into.gmc_number = from.gmc_number;
+    if ((from.display_name || '').trim()) into.display_name = String(from.display_name).trim();
+    if (from.gmc_number) into.gmc_number = from.gmc_number;
   }
 
   global.NHSCohortRosterParse = {

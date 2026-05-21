@@ -104,7 +104,7 @@
                 <p class="cohort-wizard-roster-title" id="createRosterTitle">Add clinicians</p>
                 <div class="nhsuk-form-group" id="cohortEmailsGroup">
                   <div id="createPanelManual" hidden>
-                    <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required — this is how they sign in. Name and GMC are optional and pre-fill their profile.</span>
+                    <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required. Add name and GMC below, then click <strong>Add</strong> — or fill every field and submit; we include anything still in the form.</span>
                     <div class="cohort-add-card" id="cohortAddCard" role="group" aria-labelledby="cohortAddCardTitle">
                       <p id="cohortAddCardTitle" class="cohort-add-card__title">Add one clinician</p>
                       <div class="cohort-add-card__primary">
@@ -266,7 +266,7 @@
               <p class="cohort-wizard-roster-title" id="addRosterTitle">Add clinicians</p>
               <div class="nhsuk-form-group" id="addEmailsGroup">
                 <div id="addPanelManual" hidden>
-                  <span class="nhsuk-hint nhsuk-hint--secondary">Personal email is required — this is how they sign in. Name and GMC are optional and pre-fill their profile.</span>
+                  <span class="nhsuk-hint nhsuk-hint--secondary">Personal email is required. Add name and GMC below, then click <strong>Add</strong> — or fill every field and submit; we include anything still in the form.</span>
                   <div class="cohort-add-card" id="addAddCard" role="group" aria-labelledby="addAddCardTitle">
                     <p id="addAddCardTitle" class="cohort-add-card__title">Add one clinician</p>
                     <div class="cohort-add-card__primary">
@@ -361,7 +361,7 @@
 
   <script src="/static/shared/import-result-viz.js?v=20260524-4"></script>
   <script src="/static/shared/vendor/xlsx.full.min.js?v=20260522-1"></script>
-  <script src="/static/shared/cohort-roster-parse.js?v=20260522-3"></script>
+  <script src="/static/shared/cohort-roster-parse.js?v=20260524-5"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
   <script src="/static/shared/messages-common.js?v=20260524-2"></script>
@@ -410,9 +410,6 @@
 
       function memberMetaTags(m) {
         var tags = [];
-        if (m.display_name) {
-          tags.push('<span class="cohort-email-row__tag">' + esc(m.display_name) + '</span>');
-        }
         if (m.gmc_number) {
           tags.push('<span class="cohort-email-row__tag">GMC ' + esc(m.gmc_number) + '</span>');
         }
@@ -498,9 +495,15 @@
           }
           listEl.innerHTML = members.map(function (m, i) {
             var tags = memberMetaTags(m);
+            var hasName = !!(m.display_name && m.display_name.trim());
+            var primary = hasName ? esc(m.display_name.trim()) : esc(m.personal_email);
+            var sub = hasName
+              ? '<span class="cohort-email-row__sub">' + esc(m.personal_email) + '</span>'
+              : '';
             return '<div class="cohort-email-row">'
               + '<div class="cohort-email-row__body">'
-              + '<span class="cohort-email-row__addr">' + esc(m.personal_email) + '</span>'
+              + '<span class="cohort-email-row__addr">' + primary + '</span>'
+              + sub
               + tags
               + '</div>'
               + '<button type="button" class="cohort-email-row__remove" data-remove="' + i + '" aria-label="Remove ' + esc(m.personal_email) + '">&times;</button>'
@@ -543,7 +546,11 @@
           }
           m.personal_email = personal;
           if (byPersonal[personal]) {
-            if (parseApi.mergeMember) parseApi.mergeMember(byPersonal[personal], m);
+            if (parseApi && parseApi.mergeMember) parseApi.mergeMember(byPersonal[personal], m);
+            else {
+              if ((m.display_name || '').trim()) byPersonal[personal].display_name = m.display_name.trim();
+              if (m.gmc_number) byPersonal[personal].gmc_number = m.gmc_number;
+            }
             if (!silent) setError('Already in the list — details updated if provided.');
             render();
             return false;
@@ -553,6 +560,14 @@
           members.push(m);
           render();
           return true;
+        }
+
+        function flushPendingForm() {
+          var collected = collectMemberFromForm();
+          if (collected.error) return { ok: false, error: collected.error };
+          if (!collected.member.personal_email) return { ok: true };
+          upsertMember(collected.member, true);
+          return { ok: true };
         }
 
         function addFromForm() {
@@ -679,6 +694,7 @@
           },
           syncUploadPicker: syncUploadPicker,
           syncSubmitState: syncSubmitState,
+          flushPendingForm: flushPendingForm,
         };
       }
 
@@ -1418,6 +1434,18 @@
         var st = document.getElementById('addStatus');
         var vizEl = document.getElementById('addProvisionResult');
         var submitBtn = document.getElementById('btnAddSubmit');
+        if (_addEmailRoster) {
+          var flushedAdd = _addEmailRoster.flushPendingForm();
+          if (flushedAdd && !flushedAdd.ok) {
+            var manualErrAdd = document.getElementById('addEmailError');
+            if (manualErrAdd) {
+              manualErrAdd.textContent = flushedAdd.error;
+              manualErrAdd.hidden = false;
+            }
+            setAddWizardStep(2);
+            return;
+          }
+        }
         var members = _addEmailRoster ? _addEmailRoster.getMembers() : [];
         if (!members.length) {
           var uploadErr = document.getElementById('addUploadError');

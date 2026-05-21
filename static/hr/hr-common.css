@@ -464,6 +464,17 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      font-weight: 700;
+    }
+    .cohort-email-row__sub {
+      display: block;
+      margin-top: 0.15rem;
+      font-size: 0.8125rem;
+      font-weight: 400;
+      color: var(--nhsuk-secondary-text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .cohort-email-row__meta {
       display: block;

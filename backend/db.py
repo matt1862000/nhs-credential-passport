@@ -2084,6 +2084,41 @@ def _normalize_provision_gmc(raw: Optional[str]) -> Optional[str]:
     return gmc if len(gmc) == 7 else None
 
 
+def user_apply_hr_roster_row(
+    user_id: int,
+    *,
+    display_name: Optional[str] = None,
+    gmc_number: Optional[str] = None,
+    default_trust: Optional[str] = None,
+) -> None:
+    """Apply name/GMC from an HR cohort roster row (non-premium clinicians only)."""
+    u = user_get_by_id(int(user_id))
+    if not u or user_is_premium(u):
+        return
+    dn = (display_name or "").strip() or None
+    gmc = _normalize_provision_gmc(str(gmc_number or "")) if gmc_number is not None else None
+    trust = (default_trust or "").strip() or None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_gmc_number_column(conn)
+        _ensure_users_profile_extra_columns(conn)
+        if dn:
+            conn.execute(
+                "UPDATE users SET display_name = ? WHERE id = ?",
+                (dn, int(user_id)),
+            )
+        if gmc_number is not None and str(gmc_number).strip():
+            conn.execute(
+                "UPDATE users SET gmc_number = ? WHERE id = ?",
+                (gmc, int(user_id)),
+            )
+        if trust and not (u.get("current_trust") or "").strip():
+            conn.execute(
+                "UPDATE users SET current_trust = ? WHERE id = ?",
+                (trust, int(user_id)),
+            )
+        conn.commit()
+
+
 def user_apply_provisioned_profile(
     user_id: int,
     *,
@@ -2593,10 +2628,10 @@ def cohort_add_members(
                 )
                 continue
             uid = int(existing["id"])
-            user_apply_provisioned_profile(
+            user_apply_hr_roster_row(
                 uid,
                 display_name=dn,
-                gmc_number=str(gmc_raw or ""),
+                gmc_number=gmc_raw,
                 default_trust=default_trust,
             )
             cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
