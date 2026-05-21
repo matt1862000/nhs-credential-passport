@@ -45,7 +45,7 @@ MAX_HR_COHORT_LINES = 200
 MAX_HR_BULK_EVIDENCE_BYTES = 10 * 1024 * 1024
 
 def _first_name_from_nhs_email(email: str) -> str:
-    """Derive a greeting name from NHS work email (e.g. william.smith@nhs.net → William)."""
+    """Derive a greeting name from email local part (e.g. william.smith@gmail.com → William)."""
     local = (email or "").split("@")[0].strip().lower()
     if not local:
         return "Colleague"
@@ -562,7 +562,7 @@ def auth_register(request: Request, body: dict):
     """Self-service registration disabled; HR provisions accounts via cohorts."""
     raise HTTPException(
         status_code=403,
-        detail="Accounts are created by your HR team. Sign in with your NHS work email.",
+        detail="Accounts are created by your HR team. Sign in with your personal email address.",
     )
 
 
@@ -571,6 +571,8 @@ def auth_login(request: Request, body: dict):
     email = _normalize_email(body.get("email") or "")
     password = body.get("password") or ""
     u = db.user_get_by_email(email)
+    if not u:
+        u = db.user_get_by_nhs_work_email(email)
     if not u:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     try:
@@ -614,7 +616,8 @@ def auth_me(request: Request):
         "gmc_number": u.get("gmc_number"),
         "display_name": db.user_effective_display_name(u),
         "current_trust": u.get("current_trust"),
-        "personal_email": u.get("personal_email"),
+        "personal_email": u.get("email"),
+        "nhs_work_email": u.get("nhs_work_email"),
         "must_change_password": bool(u.get("must_change_password")),
     }
 
@@ -679,13 +682,13 @@ async def me_profile_put(request: Request):
     else:
         current_trust = u.get("current_trust")
 
-    if "personal_email" in body:
-        personal_email = _normalize_email(str(body.get("personal_email") or ""))
-        if personal_email and not EMAIL_RE.match(personal_email):
-            raise HTTPException(status_code=400, detail="Invalid personal email address")
-        personal_email = personal_email or None
+    if "nhs_work_email" in body:
+        nhs_work_email = _normalize_email(str(body.get("nhs_work_email") or ""))
+        if nhs_work_email and not EMAIL_RE.match(nhs_work_email):
+            raise HTTPException(status_code=400, detail="Invalid NHS work email address")
+        nhs_work_email = nhs_work_email or None
     else:
-        personal_email = u.get("personal_email")
+        nhs_work_email = u.get("nhs_work_email")
 
     merged = {
         "display_name": display_name,
@@ -713,8 +716,8 @@ async def me_profile_put(request: Request):
         }
     )
     db.user_set_profile(uid, display_name, gmc, current_trust)
-    if "personal_email" in body:
-        db.user_set_personal_email(uid, personal_email)
+    if "nhs_work_email" in body:
+        db.user_set_nhs_work_email(uid, nhs_work_email)
     if not db.user_is_premium(u) and _profile_is_complete(merged) and not was_complete:
         _hr_process_pending_welcomes(uid)
     return {"ok": True}
@@ -868,7 +871,7 @@ async def me_shares_post(request: Request):
 
     created = db.share_session_create(
         doctor_user_id=uid,
-        doctor_email=u.get("email") or "",
+        doctor_email=u.get("nhs_work_email") or u.get("email") or "",
         items=items,
         share_kind="portfolio" if portfolio else "review",
         target_trust=u.get("current_trust") or None,
@@ -1888,42 +1891,68 @@ def _parse_cohort_emails(raw_emails) -> list[str]:
     return out
 
 
+def _looks_nhs_work_email(email: str) -> bool:
+    e = (email or "").strip().lower()
+    return e.endswith("@nhs.net") or e.endswith("@nhs.uk") or e.endswith("@nhs.scot")
+
+
 def _cohort_member_from_item(item) -> Optional[dict]:
-    """Normalize one roster row from JSON (spreadsheet import or legacy email string)."""
+    """Normalize one roster row: personal_email (login) required; nhs_work_email optional."""
     if isinstance(item, str):
-        email = _normalize_email(item)
-        return {"email": email} if email else None
+        personal = _normalize_email(item)
+        return {"personal_email": personal} if personal else None
     if not isinstance(item, dict):
         return None
-    email = _normalize_email(
+    personal = _normalize_email(
         str(
-            item.get("email")
-            or item.get("nhs_email")
-            or item.get("work_email")
-            or item.get("nhs_work_email")
+            item.get("personal_email")
+            or item.get("personal")
+            or item.get("login_email")
             or ""
         )
     )
-    if not email:
+    nhs = _normalize_email(
+        str(
+            item.get("nhs_work_email")
+            or item.get("nhs_email")
+            or item.get("work_email")
+            or ""
+        )
+    )
+    legacy = _normalize_email(str(item.get("email") or ""))
+    if legacy and not personal and not nhs:
+        if _looks_nhs_work_email(legacy):
+            nhs = legacy
+        else:
+            personal = legacy
+    elif legacy and personal and legacy != personal and not nhs and _looks_nhs_work_email(legacy):
+        nhs = legacy
+    elif legacy and not personal:
+        if _looks_nhs_work_email(legacy):
+            nhs = legacy
+        else:
+            personal = legacy
+    if personal and not EMAIL_RE.match(personal):
+        personal = ""
+    if nhs and not EMAIL_RE.match(nhs):
+        nhs = ""
+    if not personal:
         return None
     dn = str(item.get("display_name") or item.get("full_name") or item.get("name") or "").strip()
     gmc_raw = str(item.get("gmc_number") or item.get("gmc") or "").strip()
-    pe = _normalize_email(str(item.get("personal_email") or item.get("personal") or ""))
-    if pe and not EMAIL_RE.match(pe):
-        pe = ""
-    out: dict = {"email": email}
+    out: dict = {"personal_email": personal}
+    if nhs:
+        out["nhs_work_email"] = nhs
     if dn:
         out["display_name"] = dn
     if gmc_raw:
         out["gmc_number"] = gmc_raw
-    if pe:
-        out["personal_email"] = pe
     return out
 
 
 def _parse_cohort_members(body: dict) -> list[dict]:
     """
-    Accept members: [{email, display_name?, gmc_number?, personal_email?}, ...]
+    Accept members: [{personal_email, nhs_work_email?, display_name?, gmc_number?}, ...]
     or legacy emails: [string, ...].
     """
     raw_members = body.get("members")
@@ -1934,38 +1963,39 @@ def _parse_cohort_members(body: dict) -> list[dict]:
         out: list[dict] = []
         for item in raw_members:
             row = _cohort_member_from_item(item)
-            if not row or row["email"] in seen:
+            key = row.get("personal_email") if row else ""
+            if not row or key in seen:
                 continue
-            seen.add(row["email"])
+            seen.add(key)
             out.append(row)
         return out
     emails = _parse_cohort_emails(body.get("emails"))
-    return [{"email": e} for e in emails]
+    return [{"personal_email": e} for e in emails]
 
 
 def _validate_cohort_members(members: list[dict]) -> None:
     if not members:
-        raise HTTPException(status_code=400, detail="At least one NHS work email is required")
+        raise HTTPException(status_code=400, detail="At least one personal email address is required")
     if len(members) > MAX_HR_COHORT_LINES:
         raise HTTPException(
             status_code=400,
             detail=f"Too many rows ({len(members)}). Maximum is {MAX_HR_COHORT_LINES}.",
         )
     for row in members:
-        email = row.get("email") or ""
-        if not EMAIL_RE.match(email):
-            raise HTTPException(status_code=400, detail=f"Invalid NHS work email: {email}")
-        pe = row.get("personal_email")
-        if pe and not EMAIL_RE.match(pe):
+        personal = row.get("personal_email") or ""
+        if not EMAIL_RE.match(personal):
+            raise HTTPException(status_code=400, detail=f"Invalid personal email: {personal}")
+        nhs = row.get("nhs_work_email")
+        if nhs and not EMAIL_RE.match(nhs):
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid personal email for {email}: {pe}",
+                detail=f"Invalid NHS work email for {personal}: {nhs}",
             )
         gmc = _normalize_gmc(str(row.get("gmc_number") or ""))
         if row.get("gmc_number") and gmc and not GMC_RE.match(gmc):
             raise HTTPException(
                 status_code=400,
-                detail=f"GMC number for {email} must be exactly 7 digits",
+                detail=f"GMC number for {personal} must be exactly 7 digits",
             )
 
 

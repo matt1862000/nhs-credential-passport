@@ -1,27 +1,29 @@
 /**
  * Parse HR cohort roster from CSV, plain text, or Excel (.xlsx / .xls).
- * Columns: NHS work email (required), full name, GMC number, personal email.
- * Header row is detected when a column looks like "email" / "nhs email" etc.
+ * Columns: personal email (required), full name, GMC number, NHS work email.
+ * Header row is detected when a column looks like "personal email" / "email" etc.
  */
 (function (global) {
   var EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  var NHS_SUFFIX_RE = /@nhs\.(net|uk|scot)$/i;
 
   var FIELD_ALIASES = {
-    email: [
-      'email',
-      'nhs_email',
-      'nhs_work_email',
-      'work_email',
-      'workemail',
-      'nhs_email_address',
-      'e_mail',
-    ],
     personal_email: [
       'personal_email',
       'personal',
       'personal_e_mail',
+      'login_email',
       'home_email',
       'private_email',
+      'email_address',
+    ],
+    nhs_work_email: [
+      'nhs_work_email',
+      'nhs_email',
+      'work_email',
+      'workemail',
+      'nhs_email_address',
+      'nhs_work_email_address',
     ],
     display_name: [
       'display_name',
@@ -78,33 +80,34 @@
 
   function fieldIndexForHeader(normHeader, field) {
     var aliases = FIELD_ALIASES[field] || [];
-    for (var i = 0; i < aliases.length; i++) {
+    var i;
+    for (i = 0; i < aliases.length; i++) {
       if (normHeader === aliases[i]) return true;
     }
-    if (field === 'email' && normHeader.indexOf('email') >= 0 && normHeader.indexOf('personal') < 0) {
-      return true;
+    if (field === 'personal_email') {
+      if (normHeader === 'email' || normHeader === 'e_mail') return true;
+      if (normHeader.indexOf('personal') >= 0 && normHeader.indexOf('email') >= 0) return true;
+      if (normHeader.indexOf('login') >= 0 && normHeader.indexOf('email') >= 0) return true;
     }
-    if (field === 'personal_email' && normHeader.indexOf('personal') >= 0 && normHeader.indexOf('email') >= 0) {
-      return true;
+    if (field === 'nhs_work_email') {
+      if (normHeader.indexOf('nhs') >= 0 && normHeader.indexOf('email') >= 0) return true;
+      if (normHeader.indexOf('work') >= 0 && normHeader.indexOf('email') >= 0) return true;
     }
     return false;
   }
 
   function mapHeaders(cols) {
-    var map = { email: -1, display_name: -1, gmc_number: -1, personal_email: -1 };
-    var emailHits = 0;
+    var map = { personal_email: -1, nhs_work_email: -1, display_name: -1, gmc_number: -1 };
     cols.forEach(function (cell, idx) {
       var h = normalizeHeader(cell);
       if (!h) return;
       Object.keys(map).forEach(function (field) {
         if (fieldIndexForHeader(h, field)) {
-          if (field === 'email' && map.email >= 0) return;
           map[field] = idx;
-          if (field === 'email') emailHits += 1;
         }
       });
     });
-    return map.email >= 0 ? map : null;
+    return map.personal_email >= 0 ? map : null;
   }
 
   function looksLikeHeader(cols) {
@@ -121,34 +124,43 @@
     return g.length === 7 ? g : '';
   }
 
+  function isNhsWorkEmail(addr) {
+    return NHS_SUFFIX_RE.test(String(addr || '').trim().toLowerCase());
+  }
+
   function rowToMember(cols, headerMap) {
-    var email = '';
+    var personal = '';
+    var nhs = '';
     var dn = '';
     var gmc = '';
-    var pe = '';
 
     if (headerMap) {
-      email = cellAt(cols, headerMap.email).toLowerCase();
+      personal = cellAt(cols, headerMap.personal_email).toLowerCase();
+      nhs = cellAt(cols, headerMap.nhs_work_email).toLowerCase();
       dn = cellAt(cols, headerMap.display_name);
       gmc = normalizeGmc(cellAt(cols, headerMap.gmc_number));
-      pe = cellAt(cols, headerMap.personal_email).toLowerCase();
-    } else if (cols.length >= 2 && EMAIL_RE.test(cellAt(cols, 0))) {
-      email = cellAt(cols, 0).toLowerCase();
+    } else if (cols.length >= 1 && EMAIL_RE.test(cellAt(cols, 0))) {
+      personal = cellAt(cols, 0).toLowerCase();
       dn = cellAt(cols, 1);
       gmc = normalizeGmc(cellAt(cols, 2));
-      pe = cellAt(cols, 3).toLowerCase();
-    } else if (cols.length === 1 || (cols.length >= 1 && !headerMap)) {
+      var col3 = cellAt(cols, 3).toLowerCase();
+      if (col3 && EMAIL_RE.test(col3)) {
+        if (isNhsWorkEmail(col3)) nhs = col3;
+        else if (!personal) personal = col3;
+      }
+    } else if (cols.length === 1) {
       var first = cellAt(cols, 0);
       if (EMAIL_RE.test(first)) {
-        email = first.toLowerCase();
+        if (isNhsWorkEmail(first)) nhs = first.toLowerCase();
+        else personal = first.toLowerCase();
       }
     }
 
-    if (!EMAIL_RE.test(email)) return null;
-    var member = { email: email };
+    if (!EMAIL_RE.test(personal)) return null;
+    var member = { personal_email: personal };
     if (dn) member.display_name = dn;
     if (gmc) member.gmc_number = gmc;
-    if (pe && EMAIL_RE.test(pe)) member.personal_email = pe;
+    if (nhs && EMAIL_RE.test(nhs)) member.nhs_work_email = nhs;
     return member;
   }
 
@@ -177,8 +189,8 @@
         return;
       }
       var m = rowToMember(cols, headerMap);
-      if (!m || seen[m.email]) return;
-      seen[m.email] = true;
+      if (!m || seen[m.personal_email]) return;
+      seen[m.personal_email] = true;
       members.push(m);
     });
     return members;
@@ -262,7 +274,7 @@
   function mergeMember(into, from) {
     if (from.display_name && !into.display_name) into.display_name = from.display_name;
     if (from.gmc_number && !into.gmc_number) into.gmc_number = from.gmc_number;
-    if (from.personal_email && !into.personal_email) into.personal_email = from.personal_email;
+    if (from.nhs_work_email && !into.nhs_work_email) into.nhs_work_email = from.nhs_work_email;
   }
 
   global.NHSCohortRosterParse = {
