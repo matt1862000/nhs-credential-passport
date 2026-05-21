@@ -2783,15 +2783,16 @@ def cohort_add_members(
                 default_trust=default_trust,
             )
             cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
-            results.append(
-                {
-                    "email": personal,
-                    "status": "existing",
-                    "user_id": uid,
-                    "error": None,
-                    "prefilled": prefilled,
-                }
-            )
+            row_out = {
+                "email": personal,
+                "status": "existing",
+                "user_id": uid,
+                "error": None,
+                "prefilled": prefilled,
+            }
+            if dn:
+                row_out["display_name"] = dn
+            results.append(row_out)
             continue
         try:
             uid = user_create_provisioned(
@@ -2802,15 +2803,16 @@ def cohort_add_members(
                 gmc_number=str(gmc_raw or ""),
             )
             cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
-            results.append(
-                {
-                    "email": personal,
-                    "status": "created",
-                    "user_id": uid,
-                    "error": None,
-                    "prefilled": prefilled,
-                }
-            )
+            row_out = {
+                "email": personal,
+                "status": "created",
+                "user_id": uid,
+                "error": None,
+                "prefilled": prefilled,
+            }
+            if dn:
+                row_out["display_name"] = dn
+            results.append(row_out)
         except sqlite3.IntegrityError:
             existing = user_get_by_email(personal)
             if existing and not user_is_premium(existing):
@@ -2822,15 +2824,16 @@ def cohort_add_members(
                     default_trust=default_trust,
                 )
                 cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
-                results.append(
-                    {
-                        "email": personal,
-                        "status": "existing",
-                        "user_id": uid,
-                        "error": None,
-                        "prefilled": prefilled,
-                    }
-                )
+                row_out = {
+                    "email": personal,
+                    "status": "existing",
+                    "user_id": uid,
+                    "error": None,
+                    "prefilled": prefilled,
+                }
+                if dn:
+                    row_out["display_name"] = dn
+                results.append(row_out)
             else:
                 results.append(
                     {
