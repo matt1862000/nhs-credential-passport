@@ -193,6 +193,13 @@
     var existing = Math.max(0, Number(s.existing || 0));
     var failed = Math.max(0, Number(s.failed || 0));
     var notes = [];
+    if (s.welcome_awaiting_review) {
+      notes.push(
+        'Review the <strong>welcome message</strong> before it is sent to '
+        + '<strong>' + s.welcome_awaiting_review + '</strong> clinician'
+        + (s.welcome_awaiting_review === 1 ? '' : 's') + '.'
+      );
+    }
     if (s.welcome_sent) {
       notes.push(
         'Welcome message sent to <strong>' + s.welcome_sent + '</strong> who already completed their profile.'

@@ -2263,6 +2263,30 @@ def _hr_after_cohort_welcome_queue(user_ids: list[int]) -> dict:
     return {"welcome_sent": welcome_sent, "welcome_queued": welcome_queued}
 
 
+def _cohort_member_user_ids_from_results(results: list[dict]) -> list[int]:
+    ids: list[int] = []
+    seen: set[int] = set()
+    for row in results:
+        if row.get("status") not in ("created", "existing"):
+            continue
+        raw = row.get("user_id")
+        if raw is None:
+            continue
+        uid = int(raw)
+        if uid in seen:
+            continue
+        seen.add(uid)
+        ids.append(uid)
+    return ids
+
+
+def _welcome_review_summary(user_ids: list[int]) -> dict:
+    n = len(user_ids)
+    if not n:
+        return {"welcome_awaiting_review": 0}
+    return {"welcome_awaiting_review": n}
+
+
 @router.get("/hr/cohorts")
 def hr_cohorts_list(request: Request):
     hr = require_premium_user(request)
@@ -2284,12 +2308,7 @@ async def hr_cohorts_create(request: Request):
     members = _parse_cohort_members(body)
     _validate_cohort_members(members)
 
-    welcome_tmpl = None
-    if "welcome_message_template" in body:
-        welcome_tmpl = _normalize_welcome_template(body.get("welcome_message_template"))
-    cohort_id = db.cohort_create(
-        trust, name, int(hr["id"]), welcome_message_template=welcome_tmpl
-    )
+    cohort_id = db.cohort_create(trust, name, int(hr["id"]))
     results = db.cohort_add_members(
         cohort_id,
         trust,
@@ -2298,8 +2317,8 @@ async def hr_cohorts_create(request: Request):
         _cohort_reserved_emails(),
         queue_welcome=True,
     )
-    user_ids = [r["user_id"] for r in results if r.get("user_id")]
-    welcome_summary = _hr_after_cohort_welcome_queue(user_ids)
+    user_ids = _cohort_member_user_ids_from_results(results)
+    welcome_summary = _welcome_review_summary(user_ids)
 
     created = sum(1 for r in results if r.get("status") == "created")
     existing = sum(1 for r in results if r.get("status") == "existing")
@@ -2420,10 +2439,6 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
     members = _parse_cohort_members(body)
     _validate_cohort_members(members)
 
-    if "welcome_message_template" in body:
-        tmpl = _normalize_welcome_template(body.get("welcome_message_template"))
-        db.cohort_set_welcome_template(int(cohort_id), trust, tmpl)
-
     results = db.cohort_add_members(
         int(cohort_id),
         trust,
@@ -2432,8 +2447,8 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
         _cohort_reserved_emails(),
         queue_welcome=True,
     )
-    user_ids = [r["user_id"] for r in results if r.get("user_id")]
-    welcome_summary = _hr_after_cohort_welcome_queue(user_ids)
+    user_ids = _cohort_member_user_ids_from_results(results)
+    welcome_summary = _welcome_review_summary(user_ids)
 
     cohort = db.cohort_get(int(cohort_id), trust)
     meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
@@ -2448,6 +2463,59 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
             **welcome_summary,
         },
     }
+
+
+@router.post("/hr/cohorts/{cohort_id}/welcome/send")
+async def hr_cohorts_welcome_send(request: Request, cohort_id: int):
+    """Send welcome message(s) after HR review (profile-complete now; others stay queued)."""
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    if not db.cohort_get(int(cohort_id), trust):
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    user_ids = _parse_doctor_user_ids(body.get("doctor_user_ids"))
+    if not user_ids:
+        raise HTTPException(status_code=400, detail="doctor_user_ids is required")
+    if len(user_ids) > MAX_HR_COHORT_LINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many recipients (maximum {MAX_HR_COHORT_LINES})",
+        )
+    if "welcome_message_template" in body:
+        tmpl = _normalize_welcome_template(body.get("welcome_message_template"))
+        db.cohort_set_welcome_template(int(cohort_id), trust, tmpl)
+    welcome_summary = _hr_after_cohort_welcome_queue(user_ids)
+    cohort = db.cohort_get(int(cohort_id), trust)
+    meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
+    return {
+        "cohort": {**cohort, **meta} if cohort else None,
+        **welcome_summary,
+    }
+
+
+@router.post("/hr/cohorts/{cohort_id}/welcome/skip")
+async def hr_cohorts_welcome_skip(request: Request, cohort_id: int):
+    """Do not send a welcome message to these newly added members."""
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    if not db.cohort_get(int(cohort_id), trust):
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    user_ids = _parse_doctor_user_ids(body.get("doctor_user_ids"))
+    if not user_ids:
+        raise HTTPException(status_code=400, detail="doctor_user_ids is required")
+    skipped = db.cohort_skip_welcome_for_users(int(cohort_id), trust, user_ids)
+    return {"skipped": skipped, "doctor_user_ids": user_ids}
 
 
 @router.post("/hr/cohorts/{cohort_id}/message")

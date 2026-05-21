@@ -2647,6 +2647,29 @@ def cohort_pending_welcomes_for_user(user_id: int) -> list[dict]:
     ]
 
 
+def cohort_skip_welcome_for_users(
+    cohort_id: int, hr_trust: str, user_ids: list[int]
+) -> int:
+    """Clear welcome_pending without sending (HR chose to skip welcome)."""
+    if not cohort_get(cohort_id, hr_trust) or not user_ids:
+        return 0
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        _ensure_hr_cohort_members_welcome_columns(conn)
+        n = 0
+        for uid in user_ids:
+            cur = conn.execute(
+                """UPDATE hr_cohort_members
+                   SET welcome_pending = 0
+                   WHERE cohort_id = ? AND user_id = ?
+                     AND welcome_sent_at IS NULL AND welcome_pending = 1""",
+                (int(cohort_id), int(uid)),
+            )
+            n += cur.rowcount
+        conn.commit()
+        return n
+
+
 def cohort_mark_welcome_sent_for_user(user_id: int, cohort_ids: Optional[list[int]] = None) -> None:
     now = datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:

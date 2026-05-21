@@ -8,10 +8,10 @@
 
   <title>HR Messages &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260524-2">
+  <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260524-3">
   <style>
     .msg-wrap { max-width: 60rem; }
-    .msg-layout { display: flex; gap: 1rem; align-items: flex-start; }
+    .msg-layout { display: flex; gap: 1rem; align-items: stretch; min-height: calc(100vh - 11rem); }
     .msg-sidebar { width: 20rem; flex-shrink: 0; }
     .msg-thread { flex: 1; min-width: 0; }
     @media (max-width: 700px) { .msg-layout { flex-direction: column; } .msg-sidebar { width: 100%; } }
@@ -24,7 +24,8 @@
     .msg-conv-preview { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .msg-unread-dot { display: inline-block; width: 0.55rem; height: 0.55rem; background: #d4380d; border-radius: 50%; margin-left: 0.4rem; vertical-align: middle; }
     .msg-sidebar-header { padding: 0.75rem 1rem; background: #005eb8; color: #fff; font-weight: 700; font-size: 0.9375rem; border-radius: 6px 6px 0 0; }
-    .msg-thread-card { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; display: flex; flex-direction: column; min-height: 24rem; }
+    .msg-thread { display: flex; flex-direction: column; }
+    .msg-thread-card { background: #fff; border: 1px solid var(--nhsuk-border); border-radius: 6px; display: flex; flex-direction: column; flex: 1; min-height: 28rem; }
     .msg-thread-header { padding: 0.85rem 1rem; border-bottom: 1px solid var(--nhsuk-border); }
     .msg-thread-header-name { font-weight: 700; font-size: 1rem; }
     .msg-thread-header-meta { font-size: 0.8125rem; color: var(--nhsuk-secondary-text); margin-top: 0.15rem; }
@@ -70,11 +71,57 @@
     .msg-selected-list li:last-child { border-bottom: none; }
     .msg-selected-remove { background: none; border: none; color: var(--nhsuk-error); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.15rem; }
     .msg-selected-actions .nhsuk-button { width: 100%; margin-bottom: 0; font-size: 0.875rem; }
-    .msg-broadcast-panel { display: flex; flex-direction: column; flex: 1; min-height: 24rem; }
+    .msg-broadcast-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
     .msg-broadcast-panel[hidden] { display: none !important; }
-    .msg-broadcast-compose { padding: 0.75rem 1rem 1rem; border-top: 1px solid var(--nhsuk-border); }
-    .msg-broadcast-compose .nhsuk-textarea { min-height: 5rem; margin-bottom: 0.5rem; }
-    .msg-broadcast-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.5rem; }
+    .msg-broadcast-compose {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 1rem;
+      min-height: 0;
+      gap: 0.75rem;
+    }
+    .msg-broadcast-compose .nhsuk-label { margin-bottom: 0.35rem; }
+    .msg-broadcast-compose .msg-compose--broadcast {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      border-top: none;
+      padding: 0;
+    }
+    .msg-broadcast-compose .msg-compose--broadcast .msg-compose-row {
+      flex: 1;
+      align-items: stretch;
+      min-height: 12rem;
+      grid-template-columns: 2.75rem minmax(0, 1fr);
+    }
+    .msg-broadcast-compose .msg-compose--broadcast .msg-attach-btn { margin-top: 0.45rem; align-self: start; }
+    .msg-broadcast-compose .msg-compose--broadcast .msg-compose-field {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      height: 100%;
+    }
+    .msg-broadcast-compose .msg-compose--broadcast .msg-compose-field textarea {
+      width: 100%;
+      max-width: none;
+      flex: 1;
+      min-height: 12rem;
+      height: 100%;
+      resize: vertical;
+      margin: 0;
+      box-sizing: border-box;
+    }
+    .msg-broadcast-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      flex-shrink: 0;
+      padding-top: 0.25rem;
+      border-top: 1px solid var(--nhsuk-border);
+    }
     .msg-thread-view[hidden] { display: none !important; }
   </style>
 </head>
@@ -169,13 +216,15 @@
               </div>
               <div class="msg-broadcast-compose">
                 <label class="nhsuk-label" for="broadcastBody">Your message</label>
-                <textarea class="nhsuk-textarea" id="broadcastBody" rows="4" placeholder="Write your message…"></textarea>
+                <span class="nhsuk-hint nhsuk-hint--secondary" style="margin:0;">Optional attachments (PDF or images) — use the paperclip.</span>
                 <div class="msg-compose msg-compose--broadcast">
                   <div class="msg-compose-row">
                     <input type="file" id="broadcastFileInput" multiple hidden
                       accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
                     <button type="button" class="msg-attach-btn" id="btnBroadcastAttach" aria-label="Attach file" title="Attach file"></button>
-                    <span class="nhsuk-hint nhsuk-hint--secondary" style="margin:0;">Optional attachments (PDF or images).</span>
+                    <div class="msg-compose-field">
+                      <textarea id="broadcastBody" rows="8" placeholder="Write your message…" aria-label="Message to selected clinicians"></textarea>
+                    </div>
                   </div>
                   <ul class="msg-pending-files" id="broadcastPendingFiles" hidden aria-label="Files to send"></ul>
                 </div>
@@ -183,7 +232,7 @@
                   <button type="button" class="nhsuk-button" id="btnBroadcastSend">Send to selected</button>
                   <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnBroadcastCancel">Cancel</button>
                 </div>
-                <div id="broadcastResult" class="hr-provision-viz-wrap" style="margin-top:0.75rem;" aria-live="polite"></div>
+                <div id="broadcastResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
               </div>
             </div>
           </div>
