@@ -211,7 +211,11 @@
                 <div class="msg-compose-row">
                   <input type="file" id="cohortMsgFileInput" multiple hidden
                     accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
-                  <button type="button" class="msg-attach-btn" id="btnCohortAttach" aria-label="Attach file" title="Attach file"></button>
+                  <button type="button" class="msg-attach-btn" id="btnCohortAttach" aria-label="Attach file" title="Attach file">
+                    <svg class="msg-attach-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                  </button>
                   <div class="msg-compose-field">
                     <textarea class="nhsuk-textarea" id="cohortMsgBody" rows="5" placeholder="Write your message to everyone in this cohort…" aria-label="Message to cohort"></textarea>
                   </div>
@@ -290,6 +294,7 @@
   <script src="/static/shared/cohort-roster-parse.js?v=20260522-3"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
+  <script src="/static/shared/messages-common.js?v=20260524-2"></script>
   <script>
     (function () {
       var _activeCohortId = null;
@@ -1036,7 +1041,10 @@
         if (!_activeCohortId) return;
         var body = document.getElementById('cohortMsgBody').value.trim();
         var files = _cohortMsgCompose ? _cohortMsgCompose.getPending() : [];
-        if (!NHSMessages.canSend(body, files)) return;
+        var canSend = window.NHSMessages && NHSMessages.canSend
+          ? NHSMessages.canSend(body, files)
+          : !!body.trim();
+        if (!canSend) return;
         if (!_detailMembers.length) {
           setStatusEl(document.getElementById('msgStatus'), 'Add clinicians to this cohort before sending a message.', 'error');
           return;
@@ -1050,11 +1058,20 @@
         if (viz()) viz().showLoading(msgViz, 'Sending message to cohort…');
         if (sendBtn) sendBtn.disabled = true;
         try {
-          var out = await NHSMessages.sendMessage(
-            '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/message',
-            body,
-            files
-          );
+          var out;
+          if (window.NHSMessages && typeof NHSMessages.sendMessage === 'function') {
+            out = await NHSMessages.sendMessage(
+              '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/message',
+              body,
+              files
+            );
+          } else {
+            out = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/message', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ body: body }),
+            });
+          }
           if (viz()) viz().cohortMessage(msgViz, out);
           document.getElementById('cohortMsgBody').value = '';
           if (_cohortMsgCompose) _cohortMsgCompose.clear();
@@ -1154,11 +1171,13 @@
           fileVizId: 'addEmailsFileViz',
         });
         wireComposeFocus('cohortMsgBody', 'cohortMsgGroup');
-        _cohortMsgCompose = NHSMessages.bindCompose(
-          'cohortMsgFileInput',
-          'btnCohortAttach',
-          'cohortMsgPendingFiles'
-        );
+        if (window.NHSMessages && typeof NHSMessages.bindCompose === 'function') {
+          _cohortMsgCompose = NHSMessages.bindCompose(
+            'cohortMsgFileInput',
+            'btnCohortAttach',
+            'cohortMsgPendingFiles'
+          );
+        }
         await loadCohorts();
       })();
     })();
