@@ -32,10 +32,22 @@
     .msg-bubble--mine { align-self: flex-end; background: #005eb8; color: #fff; border-bottom-right-radius: 3px; }
     .msg-bubble--theirs { align-self: flex-start; background: #f0f4f5; color: var(--nhsuk-text); border-bottom-left-radius: 3px; }
     .msg-bubble-meta { font-size: 0.75rem; margin-top: 0.2rem; opacity: 0.7; }
-    .msg-compose { display: flex; gap: 0.5rem; padding: 0.85rem 1rem; border-top: 1px solid var(--nhsuk-border); }
-    .msg-compose textarea { flex: 1; resize: none; border: 2px solid var(--nhsuk-border); border-radius: 4px; padding: 0.5rem 0.65rem; font-size: 0.9375rem; font-family: inherit; min-height: 2.75rem; max-height: 8rem; }
+    .msg-compose { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0.85rem 1rem; border-top: 1px solid var(--nhsuk-border); align-items: flex-end; }
+    .msg-compose-main { flex: 1 1 12rem; min-width: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+    .msg-compose textarea { width: 100%; box-sizing: border-box; resize: none; border: 2px solid var(--nhsuk-border); border-radius: 4px; padding: 0.5rem 0.65rem; font-size: 0.9375rem; font-family: inherit; min-height: 2.75rem; max-height: 8rem; }
     .msg-compose textarea:focus { outline: 3px solid #ffbf47; border-color: var(--nhsuk-text); }
-    .msg-send-btn { align-self: flex-end; white-space: nowrap; }
+    .msg-compose-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+    .msg-attach-btn { background: none; border: none; padding: 0; font-size: 0.875rem; color: #005eb8; text-decoration: underline; cursor: pointer; font-family: inherit; }
+    .msg-attach-btn:hover { color: #003087; }
+    .msg-pending-files { list-style: none; margin: 0; padding: 0; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); }
+    .msg-pending-item { display: inline-flex; align-items: center; gap: 0.25rem; margin-right: 0.75rem; margin-bottom: 0.15rem; }
+    .msg-pending-remove { background: none; border: none; font-size: 1.1rem; line-height: 1; cursor: pointer; color: var(--nhsuk-error); padding: 0 0.15rem; }
+    .msg-bubble-attachments { margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.35rem; }
+    .msg-bubble--mine .msg-attach-link { color: #fff; }
+    .msg-attach-link { text-decoration: underline; }
+    .msg-attach-size { font-size: 0.8125rem; opacity: 0.85; }
+    .msg-attach-thumb { max-width: 14rem; max-height: 10rem; border-radius: 6px; display: block; }
+    .msg-send-btn { white-space: nowrap; flex-shrink: 0; }
     .msg-empty { color: var(--nhsuk-secondary-text); font-style: italic; font-size: 0.9375rem; text-align: center; padding: 2rem 1rem; }
     .msg-no-conv { padding: 1rem; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); text-align: center; }
     .msg-new-btn { display: block; width: 100%; text-align: left; padding: 0.75rem 1rem; background: #005eb8; color: #fff; border: none; cursor: pointer; font-size: 0.9375rem; font-weight: 600; border-radius: 6px 6px 0 0; touch-action: manipulation; font-family: inherit; }
@@ -112,7 +124,15 @@
             </div>
             <div class="msg-bubbles" id="bubbles"><p class="msg-empty">Choose a conversation on the left, or message a clinician.</p></div>
             <div class="msg-compose" id="composeArea" hidden>
-              <textarea id="msgInput" placeholder="Type a message…" rows="2" aria-label="Message"></textarea>
+              <div class="msg-compose-main">
+                <textarea id="msgInput" placeholder="Type a message…" rows="2" aria-label="Message"></textarea>
+                <div class="msg-compose-toolbar">
+                  <input type="file" id="msgFileInput" multiple hidden
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
+                  <button type="button" class="msg-attach-btn" id="btnAttach">Attach file</button>
+                  <ul class="msg-pending-files" id="msgPendingFiles" hidden aria-label="Files to send"></ul>
+                </div>
+              </div>
               <button type="button" class="nhsuk-button msg-send-btn" id="btnSend">Send</button>
             </div>
           </div>
@@ -123,6 +143,7 @@
 
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
+  <script src="/static/shared/messages-common.js?v=20260519-1"></script>
   <script>
     (function () {
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -169,25 +190,15 @@
         }
       }
 
+      var _compose = NHSMessages.bindCompose('msgFileInput', 'btnAttach', 'msgPendingFiles');
+
       function renderBubbles(messages) {
-        var container = document.getElementById('bubbles');
-        if (!container) return;
-        if (!messages || !messages.length) {
-          container.innerHTML = '<p class="msg-empty">No messages yet.</p>';
-          return;
-        }
-        container.innerHTML = messages.map(function (m) {
-          var mine = String(m.sender_user_id) === String(_myId);
-          var cls = mine ? 'msg-bubble--mine' : 'msg-bubble--theirs';
-          var name = mine ? 'You' : esc(m.sender_name || m.sender_email || 'Clinician');
-          return (
-            '<div class="msg-bubble ' + cls + '">' +
-              esc(m.body) +
-              '<div class="msg-bubble-meta">' + esc(name) + ' · ' + esc(fmtTime(m.sent_at)) + '</div>' +
-            '</div>'
-          );
-        }).join('');
-        container.scrollTop = container.scrollHeight;
+        NHSMessages.renderBubbles(
+          document.getElementById('bubbles'),
+          messages,
+          _myId,
+          'Clinician'
+        );
       }
 
       async function loadThread(convId) {
@@ -278,7 +289,8 @@
       async function sendMessage() {
         var inp = document.getElementById('msgInput');
         var text = (inp ? inp.value : '').trim();
-        if (!text || _activeConvId === null) return;
+        var files = _compose.getPending();
+        if (!NHSMessages.canSend(text, files) || _activeConvId === null) return;
         var btn = document.getElementById('btnSend');
         if (btn) {
           if (!btn.dataset.defaultLabel) btn.dataset.defaultLabel = btn.textContent;
@@ -288,12 +300,13 @@
           btn.textContent = 'Sending…';
         }
         try {
-          await apiJson('/api/hr/messages/' + encodeURIComponent(String(_activeConvId)) + '/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ body: text }),
-          });
+          await NHSMessages.sendMessage(
+            '/api/hr/messages/' + encodeURIComponent(String(_activeConvId)) + '/send',
+            text,
+            files
+          );
           if (inp) inp.value = '';
+          _compose.clear();
           var data = await apiJson('/api/hr/messages/' + encodeURIComponent(String(_activeConvId)));
           renderBubbles(data.messages || []);
           await loadConversations(false);

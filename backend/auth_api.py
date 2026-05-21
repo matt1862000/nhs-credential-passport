@@ -13,7 +13,7 @@ from typing import Optional
 
 import bcrypt
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from . import crypto, db, session_auth
 from .credential_service import (
@@ -43,6 +43,8 @@ MAX_HR_BULK_ROSTER_BYTES = 256 * 1024
 MAX_HR_BULK_LINES = 50
 MAX_HR_COHORT_LINES = 200
 MAX_HR_BULK_EVIDENCE_BYTES = 10 * 1024 * 1024
+MAX_MESSAGE_ATTACHMENT_BYTES = 5 * 1024 * 1024
+MAX_MESSAGE_ATTACHMENTS = 5
 
 def _first_name_from_nhs_email(email: str) -> str:
     """Derive a greeting name from email local part (e.g. william.smith@gmail.com → William)."""
@@ -1704,6 +1706,68 @@ def _get_conversation_assert_hr(conv_id: int, hr_trust: str):
     return conv
 
 
+async def _message_send_payload(request: Request) -> tuple[str, list[tuple[str, str, bytes]]]:
+    """Parse JSON or multipart message send (body + optional files)."""
+    ct = (request.headers.get("content-type") or "").lower()
+    if "multipart/form-data" in ct:
+        form = await request.form()
+        text = str(form.get("body") or "").strip()
+        attachments: list[tuple[str, str, bytes]] = []
+        for uf in form.getlist("files"):
+            if not hasattr(uf, "read"):
+                continue
+            raw = await uf.read()
+            name = (getattr(uf, "filename", None) or "attachment").strip()
+            mime = _hr_evidence_content_type(getattr(uf, "content_type", None), name)
+            if not mime:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file type for {name}. Use PDF or image (JPEG, PNG, WebP).",
+                )
+            if len(raw) > MAX_MESSAGE_ATTACHMENT_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large (max 5 MB): {name}",
+                )
+            attachments.append((name, mime, raw))
+        if len(attachments) > MAX_MESSAGE_ATTACHMENTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Maximum {MAX_MESSAGE_ATTACHMENTS} attachments per message.",
+            )
+        return text, attachments
+    try:
+        raw = await request.json()
+    except Exception:
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    return str(raw.get("body") or "").strip(), []
+
+
+def _require_message_content(text: str, attachments: list) -> None:
+    if not (text or "").strip() and not attachments:
+        raise HTTPException(
+            status_code=400,
+            detail="Message must include text or at least one attachment",
+        )
+
+
+@router.get("/messages/attachments/{attachment_id}")
+def message_attachment_download(request: Request, attachment_id: int):
+    uid = require_user_id(request)
+    result = db.message_attachment_get_for_viewer(int(attachment_id), uid)
+    if not result:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    meta, data = result
+    fn = (meta.get("filename") or "attachment").replace('"', "")
+    return Response(
+        content=data,
+        media_type=meta.get("content_type") or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{fn}"'},
+    )
+
+
 # Doctor endpoints
 @router.get("/me/messages")
 def me_messages_list(request: Request):
@@ -1768,14 +1832,12 @@ async def me_messages_start(request: Request):
 async def me_messages_send(request: Request, conv_id: int):
     uid = require_user_id(request)
     _get_conversation_assert_doctor(conv_id, uid)
+    text, attachments = await _message_send_payload(request)
+    _require_message_content(text, attachments)
     try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    text = str(body.get("body") or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Message body cannot be empty")
-    msg = db.message_send_body(int(conv_id), uid, text)
+        msg = db.message_send_body(int(conv_id), uid, text, attachments=attachments or None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return msg
 
 
@@ -1842,14 +1904,14 @@ async def hr_messages_send(request: Request, conv_id: int):
     hr = require_premium_user(request)
     trust = _hr_trust_required(hr)
     _get_conversation_assert_hr(conv_id, trust)
+    text, attachments = await _message_send_payload(request)
+    _require_message_content(text, attachments)
     try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    text = str(body.get("body") or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Message body cannot be empty")
-    msg = db.message_send_body(int(conv_id), int(hr["id"]), text)
+        msg = db.message_send_body(
+            int(conv_id), int(hr["id"]), text, attachments=attachments or None
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return msg
 
 

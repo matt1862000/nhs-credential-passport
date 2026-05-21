@@ -707,9 +707,37 @@ def _ensure_messaging_tables(conn: sqlite3.Connection) -> None:
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, sent_at)")
+    _ensure_message_attachments_table(conn)
+
+
+def _ensure_message_attachments_table(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS message_attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+            filename TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            data BLOB NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_msg_attach_message ON message_attachments(message_id)"
+    )
 
 
 # ── Messaging helpers ────────────────────────────────────────────────────────
+
+_CONV_LAST_BODY_SQL = """(
+    SELECT COALESCE(
+        NULLIF(TRIM(m2.body), ''),
+        (SELECT '📎 ' || filename FROM message_attachments ma
+         WHERE ma.message_id = m2.id ORDER BY ma.id ASC LIMIT 1)
+    )
+    FROM messages m2 WHERE m2.conversation_id = c.id ORDER BY m2.sent_at DESC LIMIT 1
+) as last_body"""
+
 
 def _conv_row(r) -> dict:
     return {
@@ -726,7 +754,7 @@ def _conv_row(r) -> dict:
     }
 
 
-def _msg_row(r) -> dict:
+def _msg_row(r, attachments: Optional[list[dict]] = None) -> dict:
     return {
         "id": int(r["id"]),
         "conversation_id": int(r["conversation_id"]),
@@ -736,7 +764,98 @@ def _msg_row(r) -> dict:
         "body": r["body"],
         "sent_at": r["sent_at"],
         "read_at": r["read_at"],
+        "attachments": attachments or [],
     }
+
+
+def _attachment_meta_row(r: sqlite3.Row) -> dict:
+    return {
+        "id": int(r["id"]),
+        "filename": r["filename"],
+        "content_type": r["content_type"],
+        "size_bytes": int(r["size_bytes"]),
+    }
+
+
+def message_attachments_meta_for_messages(message_ids: list[int]) -> dict[int, list[dict]]:
+    if not message_ids:
+        return {}
+    ids = [int(x) for x in message_ids]
+    placeholders = ",".join("?" * len(ids))
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_message_attachments_table(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"""
+            SELECT id, message_id, filename, content_type, size_bytes
+            FROM message_attachments
+            WHERE message_id IN ({placeholders})
+            ORDER BY id ASC
+            """,
+            ids,
+        ).fetchall()
+    out: dict[int, list[dict]] = {}
+    for r in rows:
+        mid = int(r["message_id"])
+        out.setdefault(mid, []).append(_attachment_meta_row(r))
+    return out
+
+
+def conversation_assert_participant(
+    conversation_id: int,
+    *,
+    doctor_user_id: Optional[int] = None,
+    hr_trust: Optional[str] = None,
+) -> bool:
+    """True if the doctor or HR trust may access this conversation."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_messaging_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT doctor_user_id, hr_trust FROM conversations WHERE id = ?",
+            (int(conversation_id),),
+        ).fetchone()
+    if not row:
+        return False
+    if doctor_user_id is not None and int(row["doctor_user_id"]) == int(doctor_user_id):
+        return True
+    if hr_trust is not None and (row["hr_trust"] or "").strip() == (hr_trust or "").strip():
+        return True
+    return False
+
+
+def message_attachment_get_for_viewer(attachment_id: int, viewer_user_id: int) -> Optional[tuple[dict, bytes]]:
+    """Return attachment metadata and bytes if viewer is in the conversation."""
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_message_attachments_table(conn)
+        _ensure_messaging_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT a.id, a.message_id, a.filename, a.content_type, a.size_bytes, a.data,
+                   c.doctor_user_id, c.hr_trust, m.conversation_id
+            FROM message_attachments a
+            JOIN messages m ON m.id = a.message_id
+            JOIN conversations c ON c.id = m.conversation_id
+            WHERE a.id = ?
+            """,
+            (int(attachment_id),),
+        ).fetchone()
+    if not row:
+        return None
+    u = user_get_by_id(int(viewer_user_id))
+    if not u:
+        return None
+    conv_id = int(row["conversation_id"])
+    if user_is_premium(u):
+        trust = (u.get("current_trust") or "").strip()
+        if not conversation_assert_participant(conv_id, hr_trust=trust):
+            return None
+    else:
+        if not conversation_assert_participant(conv_id, doctor_user_id=int(viewer_user_id)):
+            return None
+    meta = _attachment_meta_row(row)
+    return meta, bytes(row["data"])
 
 
 def hr_messageable_trusts_search(query: str, limit: int = 40) -> list[dict]:
@@ -840,11 +959,11 @@ def conversation_get_or_create(doctor_user_id: int, hr_trust: str) -> dict:
         )
         conn.commit()
         row = conn.execute(
-            """
+            f"""
             SELECT c.id, c.doctor_user_id, c.hr_trust, c.created_at, c.last_message_at,
                    u.display_name as doctor_name, u.email as doctor_email, u.gmc_number as doctor_gmc,
                    0 as unread_count,
-                   (SELECT body FROM messages WHERE conversation_id = c.id ORDER BY sent_at DESC LIMIT 1) as last_body
+                   {_CONV_LAST_BODY_SQL}
             FROM conversations c JOIN users u ON u.id = c.doctor_user_id
             WHERE c.doctor_user_id = ? AND c.hr_trust = ?
             """,
@@ -859,12 +978,12 @@ def conversations_for_doctor(doctor_user_id: int) -> list[dict]:
         _ensure_messaging_tables(conn)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            """
+            f"""
             SELECT c.id, c.doctor_user_id, c.hr_trust, c.created_at, c.last_message_at,
                    u.display_name as doctor_name, u.email as doctor_email, u.gmc_number as doctor_gmc,
                    (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id
                     AND m.sender_user_id != ? AND m.read_at IS NULL) as unread_count,
-                   (SELECT body FROM messages WHERE conversation_id = c.id ORDER BY sent_at DESC LIMIT 1) as last_body
+                   {_CONV_LAST_BODY_SQL}
             FROM conversations c JOIN users u ON u.id = c.doctor_user_id
             WHERE c.doctor_user_id = ?
             ORDER BY c.last_message_at DESC
@@ -881,13 +1000,13 @@ def conversations_for_hr_trust(hr_trust: str) -> list[dict]:
         _ensure_messaging_tables(conn)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            """
+            f"""
             SELECT c.id, c.doctor_user_id, c.hr_trust, c.created_at, c.last_message_at,
                    u.display_name as doctor_name, u.email as doctor_email, u.gmc_number as doctor_gmc,
                    (SELECT COUNT(*) FROM messages m
                     JOIN users su ON su.id = m.sender_user_id
                     WHERE m.conversation_id = c.id AND su.premium = 0 AND m.read_at IS NULL) as unread_count,
-                   (SELECT body FROM messages WHERE conversation_id = c.id ORDER BY sent_at DESC LIMIT 1) as last_body
+                   {_CONV_LAST_BODY_SQL}
             FROM conversations c JOIN users u ON u.id = c.doctor_user_id
             WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
             ORDER BY c.last_message_at DESC
@@ -928,7 +1047,9 @@ def messages_list(conversation_id: int, viewer_user_id: int, viewer_is_hr: bool)
             """,
             (int(conversation_id),),
         ).fetchall()
-    return [_msg_row(r) for r in rows]
+    msg_ids = [int(r["id"]) for r in rows]
+    meta_by_id = message_attachments_meta_for_messages(msg_ids)
+    return [_msg_row(r, meta_by_id.get(int(r["id"]), [])) for r in rows]
 
 
 def message_send(conversation_id: int, sender_user_id: int) -> dict:
@@ -937,10 +1058,16 @@ def message_send(conversation_id: int, sender_user_id: int) -> dict:
     raise NotImplementedError("Use message_send_body instead")
 
 
-def message_send_body(conversation_id: int, sender_user_id: int, body: str) -> dict:
+def message_send_body(
+    conversation_id: int,
+    sender_user_id: int,
+    body: str,
+    attachments: Optional[list[tuple[str, str, bytes]]] = None,
+) -> dict:
     body = (body or "").strip()
-    if not body:
-        raise ValueError("Message body cannot be empty")
+    att_list = list(attachments or [])
+    if not body and not att_list:
+        raise ValueError("Message must include text or at least one attachment")
     now = datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_messaging_tables(conn)
@@ -949,6 +1076,15 @@ def message_send_body(conversation_id: int, sender_user_id: int, body: str) -> d
             "INSERT INTO messages (conversation_id, sender_user_id, body, sent_at) VALUES (?, ?, ?, ?)",
             (int(conversation_id), int(sender_user_id), body, now),
         )
+        msg_id = int(cursor.lastrowid)
+        for filename, content_type, data in att_list:
+            conn.execute(
+                """
+                INSERT INTO message_attachments (message_id, filename, content_type, size_bytes, data)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (msg_id, filename, content_type, len(data), data),
+            )
         conn.execute(
             "UPDATE conversations SET last_message_at = ? WHERE id = ?",
             (now, int(conversation_id)),
@@ -959,9 +1095,10 @@ def message_send_body(conversation_id: int, sender_user_id: int, body: str) -> d
                       u.display_name as sender_name, u.email as sender_email
                FROM messages m JOIN users u ON u.id = m.sender_user_id
                WHERE m.id = ?""",
-            (cursor.lastrowid,),
+            (msg_id,),
         ).fetchone()
-    return _msg_row(row)
+    meta = message_attachments_meta_for_messages([msg_id]).get(msg_id, [])
+    return _msg_row(row, meta)
 
 
 def messages_unread_count_for_doctor(doctor_user_id: int) -> int:
