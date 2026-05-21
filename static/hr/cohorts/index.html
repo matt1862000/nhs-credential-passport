@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-11">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-12">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260524-2">
 </head>
 <body>
@@ -102,6 +102,13 @@
 
               <div id="createStepRoster" class="cohort-wizard-step-panel" hidden>
                 <p class="cohort-wizard-roster-title" id="createRosterTitle">Add clinicians</p>
+                <div class="cohort-welcome-block" id="createWelcomeBlock">
+                  <p class="cohort-welcome-block__title">Welcome message</p>
+                  <span class="nhsuk-hint nhsuk-hint--secondary">Sent automatically in DocPass when each clinician completes their profile. Use <strong>{name}</strong> and <strong>{trust}</strong> — they are replaced with each person&rsquo;s name and your trust.</span>
+                  <label class="nhsuk-label nhsuk-label--s" for="createWelcomeTemplate" style="margin-top:0.5rem;">Message text</label>
+                  <textarea class="nhsuk-textarea" id="createWelcomeTemplate" rows="4" maxlength="4000" aria-describedby="createWelcomePreview"></textarea>
+                  <p class="cohort-welcome-block__preview" id="createWelcomePreview" aria-live="polite"></p>
+                </div>
                 <div class="nhsuk-form-group" id="cohortEmailsGroup">
                   <div id="createPanelManual" hidden>
                     <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required. Fill in the fields, then click <strong>Add</strong>. When you submit the cohort, anything still in the form is included automatically.</span>
@@ -202,11 +209,30 @@
 
         <h3 class="hr-cohort-actions-title">Actions</h3>
         <div class="hr-segment" role="tablist" aria-label="Cohort actions">
-          <button type="button" class="active" id="tabCohortMessage" role="tab" aria-selected="true" aria-controls="panelCohortMessage" data-tab="message">Message cohort</button>
+          <button type="button" class="active" id="tabCohortWelcome" role="tab" aria-selected="true" aria-controls="panelCohortWelcome" data-tab="welcome">Welcome message</button>
+          <button type="button" id="tabCohortMessage" role="tab" aria-selected="false" aria-controls="panelCohortMessage" data-tab="message">Message cohort</button>
           <button type="button" id="tabCohortAdd" role="tab" aria-selected="false" aria-controls="panelCohortAdd" data-tab="add">Add clinicians</button>
         </div>
 
-        <div id="panelCohortMessage" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMessage">
+        <div id="panelCohortWelcome" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortWelcome">
+          <p class="nhsuk-hint" style="margin-top:0;max-width:none;">This message is sent <strong>automatically</strong> in a private DocPass conversation when someone you add finishes their profile (or immediately if their profile is already complete). It is not the same as <strong>Message cohort</strong>, which you send manually.</p>
+          <form id="formCohortWelcome" class="hr-bulk-form" novalidate>
+            <div class="nhsuk-form-group">
+              <label class="nhsuk-label" for="cohortWelcomeTemplate">Message text</label>
+              <span class="nhsuk-hint nhsuk-hint--secondary">Use <strong>{name}</strong> and <strong>{trust}</strong>. Save here to override this cohort only; use <a href="/static/profile/">Profile</a> for your trust-wide default.</span>
+              <textarea class="nhsuk-textarea" id="cohortWelcomeTemplate" rows="5" maxlength="4000" aria-describedby="cohortWelcomePreview cohortWelcomeSource"></textarea>
+              <p class="nhsuk-hint nhsuk-hint--secondary" id="cohortWelcomeSource" aria-live="polite"></p>
+              <p class="cohort-welcome-block__preview" id="cohortWelcomePreview" aria-live="polite"></p>
+            </div>
+            <div class="cohort-welcome-actions">
+              <button type="submit" class="nhsuk-button" id="btnSaveCohortWelcome">Save for this cohort</button>
+              <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnResetCohortWelcome">Use profile default</button>
+            </div>
+          </form>
+          <p id="cohortWelcomeStatus" class="hr-cohort-status-msg hr-muted" role="status" aria-live="polite" hidden></p>
+        </div>
+
+        <div id="panelCohortMessage" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortMessage" hidden>
           <p class="nhsuk-hint" style="margin-top:0;max-width:none;" id="messageHint">Each person receives the same text in a <strong>separate private</strong> conversation.</p>
           <button type="button" class="hr-cohort-recipient-toggle" id="btnToggleRecipients" aria-expanded="false" aria-controls="recipientList">View recipients</button>
           <ul id="recipientList" class="hr-cohort-recipient-list" hidden aria-label="Recipients"></ul>
@@ -266,6 +292,13 @@
 
             <div id="addStepRoster" class="cohort-wizard-step-panel" hidden>
               <p class="cohort-wizard-roster-title" id="addRosterTitle">Add clinicians</p>
+              <div class="cohort-welcome-block" id="addWelcomeBlock">
+                <p class="cohort-welcome-block__title">Welcome message</p>
+                <span class="nhsuk-hint nhsuk-hint--secondary">Updates the message for this cohort (including people you add now). Use <strong>{name}</strong> and <strong>{trust}</strong>.</span>
+                <label class="nhsuk-label nhsuk-label--s" for="addWelcomeTemplate" style="margin-top:0.5rem;">Message text</label>
+                <textarea class="nhsuk-textarea" id="addWelcomeTemplate" rows="4" maxlength="4000" aria-describedby="addWelcomePreview"></textarea>
+                <p class="cohort-welcome-block__preview" id="addWelcomePreview" aria-live="polite"></p>
+              </div>
               <div class="nhsuk-form-group" id="addEmailsGroup">
                 <div id="addPanelManual" hidden>
                   <span class="nhsuk-hint nhsuk-hint--secondary">Personal email is required. Fill in the fields, then click <strong>Add</strong>. When you submit, anything still in the form is included automatically.</span>
@@ -383,6 +416,74 @@
       var _addWizardStep = 1;
       var _addMethod = null;
       var _editingMemberId = null;
+      var _activeCohortMeta = null;
+      var SYSTEM_WELCOME_DEFAULT = 'Welcome {name} to {trust}. Please reply if you have any queries or concerns.';
+
+      function hrWelcomeDefault() {
+        var u = NHSAuth.user;
+        return (u && u.hr_welcome_message_template) ? u.hr_welcome_message_template : SYSTEM_WELCOME_DEFAULT;
+      }
+
+      function trustLabelForWelcome() {
+        return (NHSAuth.user && NHSAuth.user.current_trust) ? NHSAuth.user.current_trust : 'your trust';
+      }
+
+      function renderWelcomeTemplate(tmpl, name, trust) {
+        return String(tmpl || SYSTEM_WELCOME_DEFAULT)
+          .replace(/\{name\}/g, name)
+          .replace(/\{trust\}/g, trust);
+      }
+
+      function renderWelcomePreview(template, previewElId) {
+        var el = document.getElementById(previewElId);
+        if (!el) return;
+        var sample = renderWelcomeTemplate(template, 'Jane Smith', trustLabelForWelcome());
+        el.innerHTML = '<strong>Preview:</strong> ' + esc(sample);
+      }
+
+      function effectiveWelcomeFromCohort(c) {
+        if (!c) return hrWelcomeDefault();
+        if (c.welcome_message_effective) return c.welcome_message_effective;
+        if (c.welcome_message_template) return c.welcome_message_template;
+        return hrWelcomeDefault();
+      }
+
+      function loadCohortWelcomePanel(c) {
+        var ta = document.getElementById('cohortWelcomeTemplate');
+        var src = document.getElementById('cohortWelcomeSource');
+        if (ta) ta.value = effectiveWelcomeFromCohort(c);
+        if (src) {
+          if (c && c.welcome_message_template) {
+            src.textContent = 'This cohort has its own saved message (overrides your profile default).';
+          } else if (c && c.welcome_message_hr_default) {
+            src.textContent = 'No cohort override — using your profile default. Save here to override for this cohort only.';
+          } else {
+            src.textContent = 'No cohort or profile default — using the built-in message. Set a default on Profile.';
+          }
+        }
+        renderWelcomePreview(ta ? ta.value : '', 'cohortWelcomePreview');
+      }
+
+      function prefillWizardWelcome(textareaId, previewId, cohort) {
+        var ta = document.getElementById(textareaId);
+        if (!ta) return;
+        ta.value = cohort ? effectiveWelcomeFromCohort(cohort) : hrWelcomeDefault();
+        renderWelcomePreview(ta.value, previewId);
+      }
+
+      function wireWelcomePreview(textareaId, previewId) {
+        var ta = document.getElementById(textareaId);
+        if (!ta) return;
+        ta.addEventListener('input', function () {
+          renderWelcomePreview(ta.value, previewId);
+        });
+      }
+
+      function welcomeTemplatePayload(textareaId) {
+        var ta = document.getElementById(textareaId);
+        var v = ta ? String(ta.value || '').trim() : '';
+        return v || null;
+      }
 
       function firstNameFromEmail(email) {
         var local = String(email || '').split('@')[0].toLowerCase();
@@ -825,24 +926,31 @@
       }
 
       function setCohortTab(tab) {
-        var isMsg = tab !== 'add';
+        var tabWelcome = document.getElementById('tabCohortWelcome');
         var tabMsg = document.getElementById('tabCohortMessage');
         var tabAdd = document.getElementById('tabCohortAdd');
+        var panelWelcome = document.getElementById('panelCohortWelcome');
         var panelMsg = document.getElementById('panelCohortMessage');
         var panelAdd = document.getElementById('panelCohortAdd');
+        if (tabWelcome) {
+          tabWelcome.classList.toggle('active', tab === 'welcome');
+          tabWelcome.setAttribute('aria-selected', tab === 'welcome' ? 'true' : 'false');
+        }
         if (tabMsg) {
-          tabMsg.classList.toggle('active', isMsg);
-          tabMsg.setAttribute('aria-selected', isMsg ? 'true' : 'false');
+          tabMsg.classList.toggle('active', tab === 'message');
+          tabMsg.setAttribute('aria-selected', tab === 'message' ? 'true' : 'false');
         }
         if (tabAdd) {
-          tabAdd.classList.toggle('active', !isMsg);
-          tabAdd.setAttribute('aria-selected', !isMsg ? 'true' : 'false');
+          tabAdd.classList.toggle('active', tab === 'add');
+          tabAdd.setAttribute('aria-selected', tab === 'add' ? 'true' : 'false');
         }
-        show(panelMsg, isMsg);
-        show(panelAdd, !isMsg);
-        if (!isMsg) {
+        show(panelWelcome, tab === 'welcome');
+        show(panelMsg, tab === 'message');
+        show(panelAdd, tab === 'add');
+        if (tab === 'add') {
           updateAddCohortNamePreviews();
           resetAddWizard();
+          prefillWizardWelcome('addWelcomeTemplate', 'addWelcomePreview', _activeCohortMeta);
         }
       }
 
@@ -880,6 +988,7 @@
         show(document.getElementById('addPanelUpload'), step === 2 && _addMethod === 'upload');
         if (step === 2) {
           updateAddCohortNamePreviews();
+          prefillWizardWelcome('addWelcomeTemplate', 'addWelcomePreview', _activeCohortMeta);
           if (_addMethod === 'upload' && _addEmailRoster && _addEmailRoster.syncUploadPicker) {
             _addEmailRoster.syncUploadPicker();
           }
@@ -1070,6 +1179,7 @@
         show(document.getElementById('detailView'), false);
         show(document.getElementById('listView'), true);
         _activeCohortId = null;
+        _activeCohortMeta = null;
         clearProvisionResult(document.getElementById('addProvisionResult'));
         if (_cohortsCache.length) renderCohortList(_cohortsCache);
         loadCohorts();
@@ -1084,11 +1194,14 @@
           _cohortsCache.push(c);
         }
         _detailMembers = sortMembers(data.members || []);
+        _activeCohortMeta = c;
         document.getElementById('detailTitle').textContent = c.name;
         renderMembersTable();
         updateCohortActionUI();
         updateAddCohortNamePreviews();
-        setCohortTab('message');
+        loadCohortWelcomePanel(c);
+        prefillWizardWelcome('addWelcomeTemplate', 'addWelcomePreview', c);
+        setCohortTab('welcome');
         var recipList = document.getElementById('recipientList');
         var recipToggle = document.getElementById('btnToggleRecipients');
         if (recipList) recipList.hidden = true;
@@ -1151,6 +1264,7 @@
         show(document.getElementById('createPanelUpload'), step === 3 && _createMethod === 'upload');
         if (step === 3) {
           updateCreateCohortNamePreviews();
+          prefillWizardWelcome('createWelcomeTemplate', 'createWelcomePreview', null);
           if (_createMethod === 'upload' && _createEmailRoster && _createEmailRoster.syncUploadPicker) {
             _createEmailRoster.syncUploadPicker();
           }
@@ -1267,10 +1381,12 @@
           var data = await apiJson('/api/hr/cohorts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: cohortNameValue(),
-              members: members,
-            }),
+            body: JSON.stringify((function () {
+              var b = { name: cohortNameValue(), members: members };
+              var wt = welcomeTemplatePayload('createWelcomeTemplate');
+              if (wt && wt !== hrWelcomeDefault()) b.welcome_message_template = wt;
+              return b;
+            })()),
           });
           var cohortName = (data.cohort && data.cohort.name) || cohortNameValue();
           if (data.cohort) upsertCohortInCache(data.cohort);
@@ -1393,6 +1509,65 @@
 
       document.querySelectorAll('.hr-segment [data-tab]').forEach(function (btn) {
         btn.addEventListener('click', function () { setCohortTab(btn.getAttribute('data-tab')); });
+      });
+
+      document.getElementById('formCohortWelcome').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        if (_activeCohortId == null) return;
+        var st = document.getElementById('cohortWelcomeStatus');
+        var btn = document.getElementById('btnSaveCohortWelcome');
+        var tmpl = welcomeTemplatePayload('cohortWelcomeTemplate');
+        if (btn) btn.disabled = true;
+        setStatusEl(st, 'Saving…', null);
+        show(st, true);
+        try {
+          var data = await apiJson(
+            '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)),
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ welcome_message_template: tmpl }),
+            }
+          );
+          if (data.cohort) {
+            _activeCohortMeta = data.cohort;
+            loadCohortWelcomePanel(data.cohort);
+          }
+          setStatusEl(st, 'Welcome message saved for this cohort.', 'ok');
+        } catch (err) {
+          setStatusEl(st, err.message || 'Could not save', 'error');
+        } finally {
+          if (btn) btn.disabled = false;
+        }
+      });
+
+      document.getElementById('btnResetCohortWelcome').addEventListener('click', async function () {
+        if (_activeCohortId == null) return;
+        var st = document.getElementById('cohortWelcomeStatus');
+        var btn = document.getElementById('btnResetCohortWelcome');
+        if (btn) btn.disabled = true;
+        setStatusEl(st, 'Saving…', null);
+        show(st, true);
+        try {
+          var data = await apiJson(
+            '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)),
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ welcome_message_template: null }),
+            }
+          );
+          if (data.cohort) {
+            _activeCohortMeta = data.cohort;
+            loadCohortWelcomePanel(data.cohort);
+            prefillWizardWelcome('addWelcomeTemplate', 'addWelcomePreview', data.cohort);
+          }
+          setStatusEl(st, 'This cohort now uses your profile default.', 'ok');
+        } catch (err) {
+          setStatusEl(st, err.message || 'Could not reset', 'error');
+        } finally {
+          if (btn) btn.disabled = false;
+        }
       });
 
       document.querySelectorAll('[data-add-method]').forEach(function (btn) {
@@ -1518,9 +1693,16 @@
           var data = await apiJson('/api/hr/cohorts/' + _activeCohortId + '/members', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ members: members }),
+            body: JSON.stringify((function () {
+              var b = { members: members };
+              var wt = welcomeTemplatePayload('addWelcomeTemplate');
+              var eff = effectiveWelcomeFromCohort(_activeCohortMeta);
+              if (wt && wt !== eff) b.welcome_message_template = wt;
+              return b;
+            })()),
           });
           if (viz()) viz().cohortProvision(vizEl, data, {});
+          if (data.cohort) _activeCohortMeta = data.cohort;
           if (_addEmailRoster) _addEmailRoster.clear();
           resetAddWizard();
           await openCohort(_activeCohortId, { preserveAddViz: true });
@@ -1589,6 +1771,9 @@
           submitBtnId: 'btnAddSubmit',
         });
         wireComposeFocus('cohortMsgBody', 'cohortMsgGroup');
+        wireWelcomePreview('createWelcomeTemplate', 'createWelcomePreview');
+        wireWelcomePreview('addWelcomeTemplate', 'addWelcomePreview');
+        wireWelcomePreview('cohortWelcomeTemplate', 'cohortWelcomePreview');
         if (window.NHSMessages && typeof NHSMessages.bindCompose === 'function') {
           _cohortMsgCompose = NHSMessages.bindCompose(
             'cohortMsgFileInput',

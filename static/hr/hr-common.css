@@ -562,6 +562,38 @@
       border-color: var(--nhsuk-error);
       box-shadow: 0 0 0 2px rgba(218, 41, 28, 0.12);
     }
+    .cohort-welcome-block {
+      margin: 0 0 1rem 0;
+      padding: 0.85rem 1rem;
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 4px;
+      background: var(--nhsuk-panel);
+    }
+    .cohort-welcome-block__title {
+      margin: 0 0 0.35rem 0;
+      font-size: 0.9375rem;
+      font-weight: 700;
+      color: var(--nhsuk-text);
+    }
+    .cohort-welcome-block .nhsuk-textarea { margin-bottom: 0.35rem; }
+    .cohort-welcome-block__preview {
+      margin: 0.5rem 0 0 0;
+      padding: 0.55rem 0.65rem;
+      font-size: 0.8125rem;
+      line-height: 1.45;
+      color: var(--nhsuk-secondary-text);
+      background: #fff;
+      border: 1px dashed var(--nhsuk-border);
+      border-radius: 4px;
+    }
+    .cohort-welcome-block__preview strong { color: var(--nhsuk-text); font-weight: 600; }
+    .cohort-welcome-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 0.65rem;
+      align-items: center;
+      margin-top: 0.75rem;
+    }
     .cohort-email-row__body {
       flex: 1;
       min-width: 0;

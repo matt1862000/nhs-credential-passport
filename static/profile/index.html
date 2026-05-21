@@ -117,6 +117,12 @@
           </div>
           <span class="profile-hint">Start typing a few letters (even with typos). Suggestions use the NHS Organisation Directory; pick one or keep your own text.</span>
         </div>
+        <div class="nhsuk-form-group" id="hrWelcomeFormGroup" hidden>
+          <label class="nhsuk-label" for="hrWelcomeTemplate">Default welcome message for new cohort members</label>
+          <span class="profile-hint">Sent automatically in DocPass when clinicians you add complete their profile. Use <strong>{name}</strong> and <strong>{trust}</strong>. Individual cohorts can override this on the Cohorts page.</span>
+          <textarea class="nhsuk-input" id="hrWelcomeTemplate" name="hr_welcome_message_template" rows="4" maxlength="4000" style="min-height:5rem;resize:vertical;" placeholder="Welcome {name} to {trust}. Please reply if you have any queries or concerns."></textarea>
+          <p class="profile-hint" id="hrWelcomePreview" aria-live="polite" style="margin-top:0.5rem;"></p>
+        </div>
       </form>
       <p id="profileStatus" role="status" aria-live="polite"></p>
 
@@ -288,19 +294,38 @@
         }
       }
 
+      var SYSTEM_WELCOME_DEFAULT = 'Welcome {name} to {trust}. Please reply if you have any queries or concerns.';
+
       function fillFromUser(u) {
         if (!u) return;
         document.getElementById('displayName').value = u.display_name || '';
         document.getElementById('gmcNumber').value = u.gmc_number || '';
         document.getElementById('currentTrust').value = u.current_trust || '';
+        var hrWelcome = document.getElementById('hrWelcomeTemplate');
+        if (hrWelcome) {
+          hrWelcome.value = u.hr_welcome_message_template || '';
+          updateHrWelcomePreview();
+        }
         hideTrustSuggest();
+      }
+
+      function updateHrWelcomePreview() {
+        var prev = document.getElementById('hrWelcomePreview');
+        var ta = document.getElementById('hrWelcomeTemplate');
+        if (!prev || !ta) return;
+        var tmpl = String(ta.value || '').trim() || SYSTEM_WELCOME_DEFAULT;
+        var trust = (document.getElementById('currentTrust').value || '').trim() || 'your trust';
+        var text = tmpl.replace(/\{name\}/g, 'Jane Smith').replace(/\{trust\}/g, trust);
+        prev.textContent = 'Preview: ' + text;
       }
 
       function applyPremiumProfileUi() {
         var gmcGrp = document.getElementById('gmcFormGroup');
         var gmcInp = document.getElementById('gmcNumber');
+        var hrWelcomeGrp = document.getElementById('hrWelcomeFormGroup');
         var prem = NHSAuth.user && NHSAuth.user.premium;
         if (gmcGrp) gmcGrp.style.display = prem ? 'none' : '';
+        if (hrWelcomeGrp) hrWelcomeGrp.hidden = !prem;
         if (!gmcInp) return;
         if (prem) {
           gmcInp.removeAttribute('required');
@@ -320,6 +345,8 @@
         if (window.NHSNavAccount) void NHSNavAccount.refresh();
         fillFromUser(NHSAuth.user);
         applyPremiumProfileUi();
+        var hrWelcomeInp = document.getElementById('hrWelcomeTemplate');
+        if (hrWelcomeInp) hrWelcomeInp.addEventListener('input', updateHrWelcomePreview);
         wireVisibilityPanel();
         await loadVisibility();
         var lead = document.getElementById('profileLead');
@@ -365,7 +392,10 @@
             applyTrustSuggestIndex(parseInt(li.dataset.index, 10));
           });
         }
-        inp.addEventListener('input', scheduleTrustSuggest);
+        inp.addEventListener('input', function () {
+          scheduleTrustSuggest();
+          updateHrWelcomePreview();
+        });
         inp.addEventListener('keydown', function (e) {
           var list = document.getElementById('trustSuggestList');
           if (!list || list.hidden || !trustSuggestItems.length) return;
@@ -445,6 +475,10 @@
             return;
           }
           payload.gmc_number = '';
+          var hrTa = document.getElementById('hrWelcomeTemplate');
+          payload.hr_welcome_message_template = hrTa
+            ? String(hrTa.value || '').trim() || null
+            : null;
         }
         try {
           await NHSAuth.updateProfile(payload);

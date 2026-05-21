@@ -46,6 +46,9 @@
     .msg-doctor-results li { padding: 0.55rem 0.75rem; cursor: pointer; font-size: 0.875rem; border-bottom: 1px solid var(--nhsuk-border); }
     .msg-doctor-results li:last-child { border-bottom: none; }
     .msg-doctor-results li:hover { background: #e8f0fe; }
+    .msg-doctor-results li.msg-search-cohort { background: #f0f4f8; }
+    .msg-doctor-results li.msg-search-cohort:hover { background: #dce8f5; }
+    .msg-doctor-results li.msg-search-back { font-weight: 600; color: var(--nhsuk-link); }
     .msg-doctor-results-primary { display: block; font-weight: 600; line-height: 1.3; }
     .msg-doctor-results-meta { display: block; font-size: 0.78rem; color: var(--nhsuk-secondary-text); margin-top: 0.15rem; }
     .msg-search-status { min-height: 1.1rem; font-size: 0.8125rem; margin-top: 0.35rem; color: var(--nhsuk-secondary-text); }
@@ -91,10 +94,11 @@
         <div class="msg-sidebar">
           <div class="msg-conv-list">
             <div class="msg-search-panel" id="msgDoctorSearchPanel">
-              <label class="nhsuk-label" for="msgDoctorSearchInput">Search clinicians (name, email, or GMC)</label>
-              <input type="text" class="nhsuk-input" id="msgDoctorSearchInput" placeholder="Find unread or open a past conversation…" autocomplete="off" aria-autocomplete="list" aria-controls="msgDoctorSearchResults">
-              <p id="msgSearchStatus" class="msg-search-status" role="status" aria-live="polite">Search to message a clinician or open read history.</p>
-              <ul id="msgDoctorSearchResults" class="msg-doctor-results" role="listbox" hidden aria-label="Matching clinicians"></ul>
+              <label class="nhsuk-label" for="msgDoctorSearchInput">Search clinicians or cohorts</label>
+              <span class="nhsuk-hint nhsuk-hint--secondary" style="display:block;margin:0 0 0.35rem 0;font-size:0.8125rem;">Name, email, GMC number, or cohort name</span>
+              <input type="text" class="nhsuk-input" id="msgDoctorSearchInput" placeholder="e.g. jane.smith@gmail.com or February 2026…" autocomplete="off" aria-autocomplete="list" aria-controls="msgDoctorSearchResults">
+              <p id="msgSearchStatus" class="msg-search-status" role="status" aria-live="polite">Search to message a clinician, open a cohort, or view read history.</p>
+              <ul id="msgDoctorSearchResults" class="msg-doctor-results" role="listbox" hidden aria-label="Search results"></ul>
             </div>
             <div class="msg-sidebar-header">Unread messages</div>
             <div id="convItems"><p class="msg-no-conv">No conversations yet.</p></div>
@@ -324,10 +328,50 @@
 
       var _doctorSearchTimer = null;
       var _lastDoctorSearch = [];
+      var _lastCohortSearch = [];
+      var _searchCohortContext = null;
 
       function setDoctorSearchStatus(msg) {
         var el = document.getElementById('msgSearchStatus');
         if (el) el.textContent = msg || '';
+      }
+
+      function renderSearchResults(doctors, cohorts, statusMsg) {
+        var listEl = document.getElementById('msgDoctorSearchResults');
+        if (!listEl) return;
+        var html = '';
+        if (_searchCohortContext) {
+          html += (
+            '<li role="option" tabindex="0" class="msg-search-back" data-search-back="1">' +
+              '← Back to search results</li>'
+          );
+        }
+        (cohorts || []).forEach(function (c, i) {
+          var n = (c.name || 'Cohort').trim();
+          var mc = Number(c.member_count || 0);
+          html += (
+            '<li role="option" tabindex="0" class="msg-search-cohort" data-cohort-idx="' + i + '">' +
+              '<span class="msg-doctor-results-primary">Cohort: ' + esc(n) + '</span>' +
+              '<span class="msg-doctor-results-meta">' + mc + ' clinician' + (mc === 1 ? '' : 's') +
+              ' — click to list</span></li>'
+          );
+        });
+        (doctors || []).forEach(function (doc, i) {
+          var name = esc((doc.display_name || doc.email || 'Clinician').trim());
+          var meta = [];
+          if (doc.gmc_number) meta.push('GMC ' + esc(doc.gmc_number));
+          if (doc.email) meta.push(esc(doc.email));
+          if (doc.current_trust) meta.push(esc(doc.current_trust));
+          html += (
+            '<li role="option" tabindex="0" data-doctor-idx="' + i + '">' +
+              '<span class="msg-doctor-results-primary">' + name + '</span>' +
+              (meta.length ? '<span class="msg-doctor-results-meta">' + meta.join(' · ') + '</span>' : '') +
+            '</li>'
+          );
+        });
+        listEl.innerHTML = html;
+        listEl.hidden = !html;
+        setDoctorSearchStatus(statusMsg);
       }
 
       async function openConversationWithDoctor(doctorId) {
@@ -345,6 +389,37 @@
         await loadThread(conv.id);
       }
 
+      async function loadCohortMembersForSearch(cohort) {
+        if (!cohort || !cohort.id) return;
+        setDoctorSearchStatus('Loading clinicians…');
+        try {
+          var data = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(cohort.id)));
+          var members = (data.members || []).map(function (m) {
+            return {
+              id: m.user_id,
+              display_name: m.display_name,
+              email: m.personal_email || m.email,
+              gmc_number: m.gmc_number,
+              current_trust: m.current_trust,
+            };
+          });
+          _searchCohortContext = { id: cohort.id, name: cohort.name || 'Cohort' };
+          _lastCohortSearch = [];
+          _lastDoctorSearch = members;
+          if (!members.length) {
+            renderSearchResults([], [], 'No clinicians in this cohort yet.');
+            return;
+          }
+          renderSearchResults(
+            members,
+            [],
+            members.length + ' in “' + (_searchCohortContext.name) + '” — click to open chat.'
+          );
+        } catch (e) {
+          setDoctorSearchStatus(e.message || 'Could not load cohort');
+        }
+      }
+
       async function runDoctorSearch() {
         var inp = document.getElementById('msgDoctorSearchInput');
         var listEl = document.getElementById('msgDoctorSearchResults');
@@ -354,35 +429,33 @@
           listEl.hidden = true;
           listEl.innerHTML = '';
           _lastDoctorSearch = [];
-          setDoctorSearchStatus('Search to message a clinician or open read history.');
+          _lastCohortSearch = [];
+          _searchCohortContext = null;
+          setDoctorSearchStatus('Search to message a clinician, open a cohort, or view read history.');
           return;
         }
+        _searchCohortContext = null;
         setDoctorSearchStatus('Searching…');
         try {
           var data = await apiJson('/api/hr/messages/doctors/search?q=' + encodeURIComponent(q));
           var results = data.results || [];
+          var cohorts = data.cohorts || [];
           _lastDoctorSearch = results;
-          if (!results.length) {
+          _lastCohortSearch = cohorts;
+          if (!results.length && !cohorts.length) {
             listEl.hidden = true;
             listEl.innerHTML = '';
-            setDoctorSearchStatus('No matching clinicians found.');
+            setDoctorSearchStatus('No matching clinicians or cohorts found.');
             return;
           }
-          listEl.innerHTML = results.map(function (doc, i) {
-            var name = esc((doc.display_name || doc.email || 'Clinician').trim());
-            var meta = [];
-            if (doc.gmc_number) meta.push('GMC ' + esc(doc.gmc_number));
-            if (doc.email) meta.push(esc(doc.email));
-            if (doc.current_trust) meta.push(esc(doc.current_trust));
-            return (
-              '<li role="option" tabindex="0" data-doctor-idx="' + i + '">' +
-                '<span class="msg-doctor-results-primary">' + name + '</span>' +
-                (meta.length ? '<span class="msg-doctor-results-meta">' + meta.join(' · ') + '</span>' : '') +
-              '</li>'
-            );
-          }).join('');
-          listEl.hidden = false;
-          setDoctorSearchStatus(results.length + ' result' + (results.length === 1 ? '' : 's') + ' — click to open chat.');
+          var parts = [];
+          if (cohorts.length) {
+            parts.push(cohorts.length + ' cohort' + (cohorts.length === 1 ? '' : 's'));
+          }
+          if (results.length) {
+            parts.push(results.length + ' clinician' + (results.length === 1 ? '' : 's'));
+          }
+          renderSearchResults(results, cohorts, parts.join(', ') + ' — click to open chat or list a cohort.');
         } catch (e) {
           listEl.hidden = true;
           setDoctorSearchStatus(e.message || 'Search failed.');
@@ -395,6 +468,19 @@
       });
 
       document.getElementById('msgDoctorSearchResults').addEventListener('click', async function (e) {
+        var backLi = e.target.closest('[data-search-back]');
+        if (backLi) {
+          _searchCohortContext = null;
+          runDoctorSearch();
+          return;
+        }
+        var cohortLi = e.target.closest('[data-cohort-idx]');
+        if (cohortLi) {
+          var ci = parseInt(cohortLi.getAttribute('data-cohort-idx'), 10);
+          var cohort = _lastCohortSearch[ci];
+          if (cohort) await loadCohortMembersForSearch(cohort);
+          return;
+        }
         var li = e.target.closest('[data-doctor-idx]');
         if (!li) return;
         var idx = parseInt(li.getAttribute('data-doctor-idx'), 10);
@@ -405,7 +491,8 @@
           await openConversationWithDoctor(doc.id);
           var inp = document.getElementById('msgDoctorSearchInput');
           if (inp) inp.value = '';
-          setDoctorSearchStatus('Search to message a clinician or open read history.');
+          _searchCohortContext = null;
+          setDoctorSearchStatus('Search to message a clinician, open a cohort, or view read history.');
           var lr = document.getElementById('msgDoctorSearchResults');
           if (lr) { lr.hidden = true; lr.innerHTML = ''; }
         } catch (err) {

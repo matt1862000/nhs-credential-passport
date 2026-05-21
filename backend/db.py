@@ -239,6 +239,38 @@ def hr_doctor_search(q: str, hr_trust: str, limit: int = 30) -> list[dict]:
         return out
 
 
+def hr_cohort_search_by_name(hr_trust: str, q: str, limit: int = 10) -> list[dict]:
+    """Match cohorts by name for the HR user's trust (messages / search UI)."""
+    q = (q or "").strip()
+    hr_trust = (hr_trust or "").strip()
+    if not q or not hr_trust:
+        return []
+    pat = "%" + q.lower() + "%"
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT c.id, c.name,
+                   (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
+            FROM hr_cohorts c
+            WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
+              AND LOWER(c.name) LIKE ?
+            ORDER BY c.name
+            LIMIT ?
+            """,
+            (hr_trust, pat, max(1, min(int(limit), 30))),
+        ).fetchall()
+    return [
+        {
+            "id": int(r["id"]),
+            "name": r["name"],
+            "member_count": int(r["member_count"] or 0),
+        }
+        for r in rows
+    ]
+
+
 def hr_doctors_search_messaging(q: str, limit: int = 30) -> list[dict]:
     """
     Search any non-premium DocPass account by name / email / GMC (no visibility filter).
@@ -1808,6 +1840,14 @@ def _ensure_users_profile_extra_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN current_trust TEXT")
     if "personal_email" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN personal_email TEXT")
+    _ensure_users_hr_welcome_template_column(conn)
+
+
+def _ensure_users_hr_welcome_template_column(conn: sqlite3.Connection) -> None:
+    """HR accounts: default welcome message template for new cohort members."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "hr_welcome_message_template" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN hr_welcome_message_template TEXT")
 
 
 def _ensure_users_nhs_work_email_column(conn: sqlite3.Connection) -> None:
@@ -1906,6 +1946,13 @@ def _ensure_hr_cohorts_tables(conn: sqlite3.Connection) -> None:
         )
     """)
     _ensure_hr_cohort_members_welcome_columns(conn)
+    _ensure_hr_cohorts_welcome_template_column(conn)
+
+
+def _ensure_hr_cohorts_welcome_template_column(conn: sqlite3.Connection) -> None:
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(hr_cohorts)").fetchall()]
+    if "welcome_message_template" not in cols:
+        conn.execute("ALTER TABLE hr_cohorts ADD COLUMN welcome_message_template TEXT")
 
 
 def _ensure_hr_cohort_members_welcome_columns(conn: sqlite3.Connection) -> None:
@@ -2001,6 +2048,9 @@ def _user_public_dict(row: sqlite3.Row, include_password_hash: bool = False) -> 
         "onboarding_completed": bool(row["onboarding_completed"])
         if "onboarding_completed" in keys and row["onboarding_completed"] is not None
         else False,
+        "hr_welcome_message_template": row["hr_welcome_message_template"]
+        if "hr_welcome_message_template" in keys
+        else None,
     }
     if include_password_hash:
         out["password_hash"] = row["password_hash"]
@@ -2032,9 +2082,11 @@ def user_get_by_id(user_id: int):
         _ensure_users_profile_extra_columns(conn)
         _ensure_users_provision_columns(conn)
         conn.row_factory = sqlite3.Row
+        _ensure_users_hr_welcome_template_column(conn)
         row = conn.execute(
             """SELECT id, email, premium, gmc_number, display_name, current_trust,
-                      personal_email, must_change_password, onboarding_completed
+                      personal_email, must_change_password, onboarding_completed,
+                      hr_welcome_message_template
                FROM users WHERE id = ?""",
             (user_id,),
         ).fetchone()
@@ -2224,14 +2276,41 @@ def user_set_profile(
     display_name: Optional[str],
     gmc_number: Optional[str],
     current_trust: Optional[str],
+    hr_welcome_message_template: Optional[str] = None,
+    *,
+    update_hr_welcome_template: bool = False,
 ) -> None:
     """Replace optional profile fields (None clears)."""
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_gmc_number_column(conn)
         _ensure_users_profile_extra_columns(conn)
+        _ensure_users_hr_welcome_template_column(conn)
+        if update_hr_welcome_template:
+            conn.execute(
+                """UPDATE users SET display_name = ?, gmc_number = ?, current_trust = ?,
+                          hr_welcome_message_template = ? WHERE id = ?""",
+                (
+                    display_name,
+                    gmc_number,
+                    current_trust,
+                    hr_welcome_message_template,
+                    user_id,
+                ),
+            )
+        else:
+            conn.execute(
+                "UPDATE users SET display_name = ?, gmc_number = ?, current_trust = ? WHERE id = ?",
+                (display_name, gmc_number, current_trust, user_id),
+            )
+        conn.commit()
+
+
+def user_set_hr_welcome_template(user_id: int, template: Optional[str]) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_hr_welcome_template_column(conn)
         conn.execute(
-            "UPDATE users SET display_name = ?, gmc_number = ?, current_trust = ? WHERE id = ?",
-            (display_name, gmc_number, current_trust, user_id),
+            "UPDATE users SET hr_welcome_message_template = ? WHERE id = ?",
+            (template, int(user_id)),
         )
         conn.commit()
 
@@ -2281,18 +2360,60 @@ def user_wallet_put(user_id: int, wallet_json: str):
 # ---------- HR cohorts (provision clinicians + group messaging) ----------
 
 
-def cohort_create(hr_trust: str, name: str, created_by_user_id: int) -> int:
+def cohort_create(
+    hr_trust: str,
+    name: str,
+    created_by_user_id: int,
+    welcome_message_template: Optional[str] = None,
+) -> int:
     hr_trust = (hr_trust or "").strip()
     name = (name or "").strip()
+    tmpl = (welcome_message_template or "").strip() or None
     now = datetime.utcnow().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_hr_cohorts_tables(conn)
         cur = conn.execute(
-            "INSERT INTO hr_cohorts (hr_trust, name, created_at, created_by_user_id) VALUES (?, ?, ?, ?)",
-            (hr_trust, name, now, int(created_by_user_id)),
+            """INSERT INTO hr_cohorts
+               (hr_trust, name, created_at, created_by_user_id, welcome_message_template)
+               VALUES (?, ?, ?, ?, ?)""",
+            (hr_trust, name, now, int(created_by_user_id), tmpl),
         )
         conn.commit()
         return int(cur.lastrowid)
+
+
+def _cohort_row_dict(row: sqlite3.Row) -> dict:
+    keys = row.keys()
+    return {
+        "id": int(row["id"]),
+        "hr_trust": row["hr_trust"],
+        "name": row["name"],
+        "created_at": row["created_at"],
+        "created_by_user_id": int(row["created_by_user_id"]),
+        "member_count": int(row["member_count"] or 0)
+        if "member_count" in keys
+        else 0,
+        "welcome_message_template": row["welcome_message_template"]
+        if "welcome_message_template" in keys
+        else None,
+    }
+
+
+def cohort_set_welcome_template(
+    cohort_id: int, hr_trust: str, template: Optional[str]
+) -> Optional[dict]:
+    if not cohort_get(cohort_id, hr_trust):
+        return None
+    tmpl = (template or "").strip() or None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        conn.execute(
+            """UPDATE hr_cohorts SET welcome_message_template = ?
+               WHERE id = ? AND LOWER(TRIM(hr_trust)) = LOWER(TRIM(?))""",
+            (tmpl, int(cohort_id), (hr_trust or "").strip()),
+        )
+        conn.commit()
+    return cohort_get(cohort_id, hr_trust)
 
 
 def cohort_list_for_trust(hr_trust: str) -> list[dict]:
@@ -2303,6 +2424,7 @@ def cohort_list_for_trust(hr_trust: str) -> list[dict]:
         rows = conn.execute(
             """
             SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
+                   c.welcome_message_template,
                    (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
             FROM hr_cohorts c
             WHERE LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
@@ -2310,17 +2432,26 @@ def cohort_list_for_trust(hr_trust: str) -> list[dict]:
             """,
             (hr_trust,),
         ).fetchall()
-    return [
-        {
-            "id": int(r["id"]),
-            "hr_trust": r["hr_trust"],
-            "name": r["name"],
-            "created_at": r["created_at"],
-            "created_by_user_id": int(r["created_by_user_id"]),
-            "member_count": int(r["member_count"] or 0),
-        }
-        for r in rows
-    ]
+    return [_cohort_row_dict(r) for r in rows]
+
+
+def cohort_get_by_id(cohort_id: int) -> Optional[dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
+                   c.welcome_message_template,
+                   (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
+            FROM hr_cohorts c
+            WHERE c.id = ?
+            """,
+            (int(cohort_id),),
+        ).fetchone()
+    if not row:
+        return None
+    return _cohort_row_dict(row)
 
 
 def cohort_get(cohort_id: int, hr_trust: str) -> Optional[dict]:
@@ -2330,6 +2461,7 @@ def cohort_get(cohort_id: int, hr_trust: str) -> Optional[dict]:
         row = conn.execute(
             """
             SELECT c.id, c.hr_trust, c.name, c.created_at, c.created_by_user_id,
+                   c.welcome_message_template,
                    (SELECT COUNT(*) FROM hr_cohort_members m WHERE m.cohort_id = c.id) AS member_count
             FROM hr_cohorts c
             WHERE c.id = ? AND LOWER(TRIM(c.hr_trust)) = LOWER(TRIM(?))
@@ -2338,14 +2470,7 @@ def cohort_get(cohort_id: int, hr_trust: str) -> Optional[dict]:
         ).fetchone()
     if not row:
         return None
-    return {
-        "id": int(row["id"]),
-        "hr_trust": row["hr_trust"],
-        "name": row["name"],
-        "created_at": row["created_at"],
-        "created_by_user_id": int(row["created_by_user_id"]),
-        "member_count": int(row["member_count"] or 0),
-    }
+    return _cohort_row_dict(row)
 
 
 def cohort_delete(cohort_id: int, hr_trust: str) -> bool:

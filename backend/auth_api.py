@@ -73,13 +73,62 @@ def trust_display_name(trust_name: str) -> str:
     return _display(trust_name)
 
 
-def _cohort_welcome_message(doc: dict, hr_trust: str) -> str:
+DEFAULT_COHORT_WELCOME_TEMPLATE = (
+    "Welcome {name} to {trust}. Please reply if you have any queries or concerns."
+)
+
+MAX_WELCOME_TEMPLATE_LEN = 4000
+
+
+def _normalize_welcome_template(raw: Optional[str]) -> Optional[str]:
+    t = (raw or "").strip()
+    if not t:
+        return None
+    if len(t) > MAX_WELCOME_TEMPLATE_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Welcome message must be {MAX_WELCOME_TEMPLATE_LEN} characters or fewer",
+        )
+    return t
+
+
+def _render_welcome_template(template: str, doc: dict, hr_trust: str) -> str:
     name = _cohort_welcome_name(doc)
     trust = trust_display_name(hr_trust) or "your trust"
-    return (
-        f"Welcome {name} to {trust}. "
-        "Please reply if you have any queries or concerns."
-    )
+    text = template.replace("{name}", name).replace("{trust}", trust)
+    return text.strip()
+
+
+def _resolve_welcome_template(cohort_id: int) -> str:
+    """Cohort override, then cohort creator HR default, then system default."""
+    cohort = db.cohort_get_by_id(int(cohort_id))
+    if not cohort:
+        return DEFAULT_COHORT_WELCOME_TEMPLATE
+    cohort_tmpl = (cohort.get("welcome_message_template") or "").strip()
+    if cohort_tmpl:
+        return cohort_tmpl
+    creator = db.user_get_by_id(int(cohort["created_by_user_id"]))
+    if creator:
+        hr_tmpl = (creator.get("hr_welcome_message_template") or "").strip()
+        if hr_tmpl:
+            return hr_tmpl
+    return DEFAULT_COHORT_WELCOME_TEMPLATE
+
+
+def _cohort_welcome_message(doc: dict, hr_trust: str, cohort_id: int) -> str:
+    return _render_welcome_template(_resolve_welcome_template(cohort_id), doc, hr_trust)
+
+
+def _welcome_template_meta(cohort: dict, hr_user: dict) -> dict:
+    cohort_tmpl = (cohort.get("welcome_message_template") or "").strip() or None
+    hr_default = (hr_user.get("hr_welcome_message_template") or "").strip() or None
+    effective = cohort_tmpl or hr_default or DEFAULT_COHORT_WELCOME_TEMPLATE
+    return {
+        "welcome_message_template": cohort_tmpl,
+        "welcome_message_hr_default": hr_default,
+        "welcome_message_system_default": DEFAULT_COHORT_WELCOME_TEMPLATE,
+        "welcome_message_effective": effective,
+    }
 
 
 def _normalize_email(email: str) -> str:
@@ -619,6 +668,10 @@ def auth_me(request: Request):
         "personal_email": u.get("email"),
         "must_change_password": bool(u.get("must_change_password")),
         "onboarding_completed": bool(u.get("onboarding_completed")),
+        "hr_welcome_message_template": (u.get("hr_welcome_message_template") or "").strip()
+        or None
+        if db.user_is_premium(u)
+        else None,
     }
 
 
@@ -682,6 +735,12 @@ async def me_profile_put(request: Request):
     else:
         current_trust = u.get("current_trust")
 
+    hr_welcome_template = u.get("hr_welcome_message_template")
+    if db.user_is_premium(u) and "hr_welcome_message_template" in body:
+        hr_welcome_template = _normalize_welcome_template(
+            body.get("hr_welcome_message_template")
+        )
+
     merged = {
         "display_name": display_name,
         "gmc_number": gmc,
@@ -707,7 +766,17 @@ async def me_profile_put(request: Request):
             "current_trust": u.get("current_trust"),
         }
     )
-    db.user_set_profile(uid, display_name, gmc, current_trust)
+    if db.user_is_premium(u) and "hr_welcome_message_template" in body:
+        db.user_set_profile(
+            uid,
+            display_name,
+            gmc,
+            current_trust,
+            hr_welcome_template,
+            update_hr_welcome_template=True,
+        )
+    else:
+        db.user_set_profile(uid, display_name, gmc, current_trust)
     if not db.user_is_premium(u) and _profile_is_complete(merged):
         db.user_mark_onboarding_complete(uid)
     if not db.user_is_premium(u) and _profile_is_complete(merged) and not was_complete:
@@ -1851,10 +1920,14 @@ async def me_messages_send(request: Request, conv_id: int):
 # HR endpoints
 @router.get("/hr/messages/doctors/search")
 def hr_messages_doctors_search(request: Request, q: str = "", limit: int = 30):
-    """Search any registered clinician account to start a message (no visibility filter)."""
-    require_premium_user(request)
+    """Search clinicians or cohorts by name to start a message."""
+    hr = require_premium_user(request)
     results = db.hr_doctors_search_messaging(q=q, limit=limit)
-    return {"results": results}
+    cohorts: list[dict] = []
+    trust = (hr.get("current_trust") or "").strip()
+    if trust:
+        cohorts = db.hr_cohort_search_by_name(trust, q=q, limit=10)
+    return {"results": results, "cohorts": cohorts}
 
 
 @router.post("/hr/messages/start")
@@ -2071,7 +2144,7 @@ def _hr_process_pending_welcomes(user_id: int) -> int:
     for row in by_trust.values():
         trust = row["hr_trust"]
         try:
-            text = _cohort_welcome_message(doc, trust)
+            text = _cohort_welcome_message(doc, trust, int(row["cohort_id"]))
             conv = db.conversation_get_or_create(int(user_id), trust)
             db.message_send_body(
                 int(conv["id"]), int(row["created_by_user_id"]), text
@@ -2123,7 +2196,12 @@ async def hr_cohorts_create(request: Request):
     members = _parse_cohort_members(body)
     _validate_cohort_members(members)
 
-    cohort_id = db.cohort_create(trust, name, int(hr["id"]))
+    welcome_tmpl = None
+    if "welcome_message_template" in body:
+        welcome_tmpl = _normalize_welcome_template(body.get("welcome_message_template"))
+    cohort_id = db.cohort_create(
+        trust, name, int(hr["id"]), welcome_message_template=welcome_tmpl
+    )
     results = db.cohort_add_members(
         cohort_id,
         trust,
@@ -2139,8 +2217,10 @@ async def hr_cohorts_create(request: Request):
     existing = sum(1 for r in results if r.get("status") == "existing")
     failed = sum(1 for r in results if r.get("status") == "failed")
 
+    cohort = db.cohort_get(cohort_id, trust)
+    meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
     return {
-        "cohort": db.cohort_get(cohort_id, trust),
+        "cohort": {**cohort, **meta} if cohort else None,
         "results": results,
         "summary": {
             "created": created,
@@ -2168,7 +2248,31 @@ def hr_cohorts_detail(request: Request, cohort_id: int):
     if not cohort:
         raise HTTPException(status_code=404, detail="Cohort not found")
     members = db.cohort_members_list(int(cohort_id), trust)
-    return {"cohort": cohort, "members": members}
+    meta = _welcome_template_meta(cohort, hr)
+    return {
+        "cohort": {**cohort, **meta},
+        "members": members,
+    }
+
+
+@router.patch("/hr/cohorts/{cohort_id}")
+async def hr_cohorts_patch(request: Request, cohort_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if "welcome_message_template" not in body:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    tmpl = _normalize_welcome_template(body.get("welcome_message_template"))
+    cohort = db.cohort_set_welcome_template(int(cohort_id), trust, tmpl)
+    if not cohort:
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    meta = _welcome_template_meta(cohort, hr)
+    return {"cohort": {**cohort, **meta}}
 
 
 @router.patch("/hr/cohorts/{cohort_id}/members/{doctor_user_id}")
@@ -2228,6 +2332,10 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
     members = _parse_cohort_members(body)
     _validate_cohort_members(members)
 
+    if "welcome_message_template" in body:
+        tmpl = _normalize_welcome_template(body.get("welcome_message_template"))
+        db.cohort_set_welcome_template(int(cohort_id), trust, tmpl)
+
     results = db.cohort_add_members(
         int(cohort_id),
         trust,
@@ -2239,8 +2347,12 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
     user_ids = [r["user_id"] for r in results if r.get("user_id")]
     welcome_summary = _hr_after_cohort_welcome_queue(user_ids)
 
+    cohort = db.cohort_get(int(cohort_id), trust)
+    meta = _welcome_template_meta(cohort or {}, hr) if cohort else {}
+
     return {
         "results": results,
+        "cohort": {**cohort, **meta} if cohort else None,
         "summary": {
             "created": sum(1 for r in results if r.get("status") == "created"),
             "existing": sum(1 for r in results if r.get("status") == "existing"),
