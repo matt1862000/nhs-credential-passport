@@ -380,12 +380,55 @@
       color: var(--nhsuk-secondary-text);
       font-weight: 400;
     }
+    .cohort-roster-added {
+      margin-top: 1.25rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--nhsuk-border);
+      max-width: 40rem;
+    }
+    .cohort-roster-added__heading {
+      margin: 0 0 0.35rem 0;
+      font-size: 0.9375rem;
+      font-weight: 700;
+      color: var(--nhsuk-text);
+    }
+    .cohort-roster-added .cohort-email-count {
+      display: block;
+      margin: 0 0 0.5rem 0;
+    }
+    .cohort-roster-added .cohort-email-list {
+      margin-top: 0.35rem;
+      margin-bottom: 0;
+    }
     .cohort-email-list {
       display: flex;
       flex-direction: column;
       gap: 0.35rem;
       margin: 0.5rem 0 0.75rem 0;
       max-width: 36rem;
+    }
+    .cohort-roster-submit--empty,
+    .cohort-roster-submit--empty:disabled {
+      background: #d8dde0 !important;
+      border-color: #d8dde0 !important;
+      color: #4c6272 !important;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    .cohort-roster-submit--empty:hover,
+    .cohort-roster-submit--empty:focus,
+    .cohort-roster-submit--empty:active {
+      background: #d8dde0 !important;
+      border-color: #d8dde0 !important;
+      color: #4c6272 !important;
+    }
+    .cohort-roster-submit--ready:not(:disabled) {
+      background: var(--nhsuk-success, #007f3b);
+      border-color: var(--nhsuk-success, #007f3b);
+    }
+    .cohort-roster-submit--ready:not(:disabled):hover {
+      background: #006435;
+      border-color: #006435;
     }
     .cohort-email-row {
       display: flex;
@@ -563,23 +606,6 @@
     .nhsuk-form-group--focused .nhsuk-hint--secondary {
       opacity: 0.85;
     }
-    .hr-cohort-welcome-details { margin: 0 0 1rem 0; }
-    .hr-cohort-welcome-details summary {
-      cursor: pointer;
-      font-size: 0.9375rem;
-      font-weight: 600;
-      color: var(--nhsuk-link);
-      list-style: none;
-      padding: 0.15rem 0;
-    }
-    .hr-cohort-welcome-details summary::-webkit-details-marker { display: none; }
-    .hr-cohort-welcome-details summary::before {
-      content: "▸ ";
-      display: inline-block;
-      transition: transform 0.15s ease;
-    }
-    .hr-cohort-welcome-details[open] summary::before { transform: rotate(90deg); }
-    .hr-cohort-welcome-details .hr-cohort-inset { margin: 0.65rem 0 0 0; }
     .hr-cohort-panel-actions { margin-top: 1.25rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
     .hr-cohort-inset {
       margin: 0 0 1rem 0;

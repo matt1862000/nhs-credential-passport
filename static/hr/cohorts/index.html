@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-6">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-8">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260524-2">
 </head>
 <body>
@@ -103,10 +103,6 @@
               <div id="createStepRoster" class="cohort-wizard-step-panel" hidden>
                 <p class="cohort-wizard-roster-title" id="createRosterTitle">Add clinicians</p>
                 <div class="nhsuk-form-group" id="cohortEmailsGroup">
-                  <div id="cohortEmailsList" class="cohort-email-list" aria-live="polite"></div>
-                  <p class="cohort-list-empty" id="cohortEmailsListEmpty">No clinicians added yet.</p>
-                  <span class="cohort-email-count cohort-email-count--empty" id="cohortEmailsCount" aria-live="polite">0 clinicians</span>
-
                   <div id="createPanelManual" hidden>
                     <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required — this is how they sign in. Name and GMC are optional and pre-fill their profile.</span>
                     <div class="cohort-add-card" id="cohortAddCard" role="group" aria-labelledby="cohortAddCardTitle">
@@ -150,11 +146,18 @@
                     </p>
                     <p class="cohort-email-error" id="cohortUploadError" hidden role="alert"></p>
                   </div>
+
+                  <div class="cohort-roster-added">
+                    <p class="cohort-roster-added__heading">Added clinicians</p>
+                    <span class="cohort-email-count cohort-email-count--empty" id="cohortEmailsCount" aria-live="polite">0 clinicians</span>
+                    <p class="cohort-list-empty" id="cohortEmailsListEmpty">No clinicians added yet — use the form above or upload a file.</p>
+                    <div id="cohortEmailsList" class="cohort-email-list" aria-live="polite"></div>
+                  </div>
                 </div>
                 <p class="hr-cohort-inset" style="margin:1rem 0;" id="welcomePreview"></p>
                 <div class="cohort-wizard-actions cohort-wizard-actions--split">
                   <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCreateBackRoster">Back</button>
-                  <button type="submit" class="nhsuk-button" id="btnCreateSubmit">Create cohort</button>
+                  <button type="submit" class="nhsuk-button cohort-roster-submit cohort-roster-submit--empty" id="btnCreateSubmit" disabled>Create cohort</button>
                 </div>
               </div>
             </form>
@@ -235,10 +238,6 @@
         </div>
 
         <div id="panelCohortAdd" class="hr-bulk-panel hr-cohort-panel" role="tabpanel" aria-labelledby="tabCohortAdd" hidden>
-          <details class="hr-cohort-welcome-details">
-            <summary>About welcome messages</summary>
-            <div class="hr-cohort-inset" id="addWelcomeInset"></div>
-          </details>
           <div class="cohort-wizard-head">
             <h2>Add clinicians</h2>
             <p class="cohort-wizard-step-label" id="addWizardStepLabel" aria-live="polite">Step 1 of 2 — How to add clinicians</p>
@@ -267,10 +266,6 @@
             <div id="addStepRoster" class="cohort-wizard-step-panel" hidden>
               <p class="cohort-wizard-roster-title" id="addRosterTitle">Add clinicians</p>
               <div class="nhsuk-form-group" id="addEmailsGroup">
-                <div id="addEmailsList" class="cohort-email-list" aria-live="polite"></div>
-                <p class="cohort-list-empty" id="addEmailsListEmpty">No clinicians added yet.</p>
-                <span class="cohort-email-count cohort-email-count--empty" id="addEmailsCount" aria-live="polite">0 clinicians</span>
-
                 <div id="addPanelManual" hidden>
                   <span class="nhsuk-hint nhsuk-hint--secondary">Personal email is required — this is how they sign in. Name and GMC are optional and pre-fill their profile.</span>
                   <div class="cohort-add-card" id="addAddCard" role="group" aria-labelledby="addAddCardTitle">
@@ -314,10 +309,17 @@
                   </p>
                   <p class="cohort-email-error" id="addUploadError" hidden role="alert"></p>
                 </div>
+
+                <div class="cohort-roster-added">
+                  <p class="cohort-roster-added__heading">Added clinicians</p>
+                  <span class="cohort-email-count cohort-email-count--empty" id="addEmailsCount" aria-live="polite">0 clinicians</span>
+                  <p class="cohort-list-empty" id="addEmailsListEmpty">No clinicians added yet — use the form above or upload a file.</p>
+                  <div id="addEmailsList" class="cohort-email-list" aria-live="polite"></div>
+                </div>
               </div>
               <div class="cohort-wizard-actions cohort-wizard-actions--split">
                 <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnAddBackMethod">Back</button>
-                <button type="submit" class="nhsuk-button" id="btnAddSubmit">Add to cohort</button>
+                <button type="submit" class="nhsuk-button cohort-roster-submit cohort-roster-submit--empty" id="btnAddSubmit" disabled>Add to cohort</button>
               </div>
             </div>
           </form>
@@ -452,12 +454,23 @@
           if (personalEl) personalEl.closest('.cohort-add-field').classList.toggle('cohort-add-field--error', !!msg);
         }
 
+        function syncSubmitState() {
+          if (!opts.submitBtnId) return;
+          var submitBtn = document.getElementById(opts.submitBtnId);
+          if (!submitBtn) return;
+          var ready = members.length > 0;
+          submitBtn.disabled = !ready;
+          submitBtn.classList.toggle('cohort-roster-submit--ready', ready);
+          submitBtn.classList.toggle('cohort-roster-submit--empty', !ready);
+        }
+
         function updateCount() {
           var n = members.length;
           if (!countEl) return;
           countEl.textContent = n === 1 ? '1 clinician' : n + ' clinicians';
           countEl.classList.toggle('cohort-email-count--empty', n === 0);
           if (listEmptyEl) listEmptyEl.hidden = n > 0;
+          syncSubmitState();
         }
 
         function syncUploadPicker() {
@@ -659,6 +672,7 @@
             syncUploadPicker();
           },
           syncUploadPicker: syncUploadPicker,
+          syncSubmitState: syncSubmitState,
         };
       }
 
@@ -804,12 +818,6 @@
           }
         }
 
-        var trust = (NHSAuth.user && NHSAuth.user.current_trust) || '';
-        var inset = document.getElementById('addWelcomeInset');
-        if (inset) {
-          inset.innerHTML = '<strong>Automatic welcome</strong> — after profile completion, each new member receives: '
-            + esc(welcomeExampleSnippet(trust));
-        }
       }
 
       function confirmCohortSend(count, members) {
@@ -1380,6 +1388,7 @@
           fileVizId: 'cohortEmailsFileViz',
           uploadPickerId: 'cohortUploadPicker',
           uploadDoneId: 'cohortUploadDone',
+          submitBtnId: 'btnCreateSubmit',
         });
         _addEmailRoster = wireEmailRoster({
           listId: 'addEmailsList',
@@ -1398,6 +1407,7 @@
           fileVizId: 'addEmailsFileViz',
           uploadPickerId: 'addUploadPicker',
           uploadDoneId: 'addUploadDone',
+          submitBtnId: 'btnAddSubmit',
         });
         wireComposeFocus('cohortMsgBody', 'cohortMsgGroup');
         if (window.NHSMessages && typeof NHSMessages.bindCompose === 'function') {
