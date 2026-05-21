@@ -619,6 +619,7 @@ def auth_me(request: Request):
         "personal_email": u.get("email"),
         "nhs_work_email": u.get("nhs_work_email"),
         "must_change_password": bool(u.get("must_change_password")),
+        "onboarding_completed": bool(u.get("onboarding_completed")),
     }
 
 
@@ -718,6 +719,8 @@ async def me_profile_put(request: Request):
     db.user_set_profile(uid, display_name, gmc, current_trust)
     if "nhs_work_email" in body:
         db.user_set_nhs_work_email(uid, nhs_work_email)
+    if not db.user_is_premium(u) and _profile_is_complete(merged):
+        db.user_mark_onboarding_complete(uid)
     if not db.user_is_premium(u) and _profile_is_complete(merged) and not was_complete:
         _hr_process_pending_welcomes(uid)
     return {"ok": True}

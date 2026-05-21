@@ -93,6 +93,7 @@ def init_db():
         _ensure_seed_rotherham_user(conn)
         _backfill_sheffield_partnership_trust_labels(conn)
         _migrate_provisioned_personal_email_login(conn)
+        _backfill_onboarding_completed(conn)
         conn.commit()
 
 
@@ -1696,6 +1697,25 @@ def _ensure_users_provision_columns(conn: sqlite3.Connection) -> None:
         )
     if "provisioned_by_hr" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN provisioned_by_hr INTEGER")
+    if "onboarding_completed" not in cols:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN onboarding_completed INTEGER NOT NULL DEFAULT 0"
+        )
+
+
+def _backfill_onboarding_completed(conn: sqlite3.Connection) -> None:
+    """Existing clinicians with a full profile skip the one-time onboarding screen."""
+    _ensure_users_provision_columns(conn)
+    conn.execute(
+        """
+        UPDATE users SET onboarding_completed = 1
+        WHERE COALESCE(premium, 0) = 0
+          AND COALESCE(must_change_password, 0) = 0
+          AND TRIM(COALESCE(display_name, '')) != ''
+          AND TRIM(COALESCE(gmc_number, '')) != ''
+          AND TRIM(COALESCE(current_trust, '')) != ''
+        """
+    )
 
 
 def _ensure_hr_cohorts_tables(conn: sqlite3.Connection) -> None:
@@ -1813,6 +1833,9 @@ def _user_public_dict(row: sqlite3.Row, include_password_hash: bool = False) -> 
         "must_change_password": bool(row["must_change_password"])
         if "must_change_password" in row.keys() and row["must_change_password"] is not None
         else False,
+        "onboarding_completed": bool(row["onboarding_completed"])
+        if "onboarding_completed" in keys and row["onboarding_completed"] is not None
+        else False,
     }
     if include_password_hash:
         out["password_hash"] = row["password_hash"]
@@ -1829,7 +1852,8 @@ def user_get_by_email(email: str):
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """SELECT id, email, password_hash, premium, gmc_number, display_name, current_trust,
-                      personal_email, nhs_work_email, must_change_password FROM users WHERE email = ?""",
+                      personal_email, nhs_work_email, must_change_password, onboarding_completed
+               FROM users WHERE email = ?""",
             (email,),
         ).fetchone()
     if not row:
@@ -1847,7 +1871,7 @@ def user_get_by_nhs_work_email(nhs_work_email: str):
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """SELECT id, email, password_hash, premium, gmc_number, display_name, current_trust,
-                      personal_email, nhs_work_email, must_change_password
+                      personal_email, nhs_work_email, must_change_password, onboarding_completed
                FROM users WHERE LOWER(TRIM(nhs_work_email)) = ?""",
             (nhs,),
         ).fetchone()
@@ -1866,7 +1890,8 @@ def user_get_by_id(user_id: int):
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """SELECT id, email, premium, gmc_number, display_name, current_trust,
-                      personal_email, nhs_work_email, must_change_password FROM users WHERE id = ?""",
+                      personal_email, nhs_work_email, must_change_password, onboarding_completed
+               FROM users WHERE id = ?""",
             (user_id,),
         ).fetchone()
     if not row:
@@ -1970,6 +1995,16 @@ def user_set_personal_email(user_id: int, personal_email: Optional[str]) -> None
         conn.commit()
 
 
+def user_mark_onboarding_complete(user_id: int) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_provision_columns(conn)
+        conn.execute(
+            "UPDATE users SET onboarding_completed = 1 WHERE id = ?",
+            (int(user_id),),
+        )
+        conn.commit()
+
+
 def user_set_nhs_work_email(user_id: int, nhs_work_email: Optional[str]) -> None:
     nhs = (nhs_work_email or "").strip().lower() or None
     with sqlite3.connect(DB_PATH) as conn:
@@ -2005,8 +2040,8 @@ def user_create_provisioned(
         cur = conn.execute(
             """INSERT INTO users (
                    email, password_hash, created_at, premium, gmc_number, display_name, current_trust,
-                   nhs_work_email, must_change_password, provisioned_by_hr
-               ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, 1, ?)""",
+                   nhs_work_email, must_change_password, provisioned_by_hr, onboarding_completed
+               ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, 1, ?, 0)""",
             (
                 personal_email,
                 h,

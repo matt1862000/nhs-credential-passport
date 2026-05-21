@@ -29,10 +29,27 @@
   <header class="nhsuk-header" role="banner">
     <div class="nhsuk-header__container">
       <div class="nhsuk-header__service">
-        <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/" aria-label="DocPass home">
-          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260519-1" alt="DocPass" width="420" height="146">
+        <a class="nhsuk-header__service-logo nhsuk-header__service-logo--docpass" href="/static/dashboard/" aria-label="Dashboard">
+          <img class="docpass-header-logo" src="/static/shared/docpass-logo.png?v=20260519-1" alt="DocPass — professional credential wallet" width="420" height="146">
         </a>
       </div>
+      <nav class="nhsuk-topnav" aria-label="Account">
+        <div class="nhsuk-topnav__account" id="navAccount">
+          <span class="nhsuk-topnav__name" id="navUserName">&nbsp;</span>
+          <a href="/static/messages/" class="nhsuk-topnav__messages" id="navMessagesLink" aria-label="Messages">
+            <svg class="nhsuk-topnav__envelope" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>
+            <span class="nhsuk-topnav__msg-badge" id="navMsgBadge" hidden aria-live="polite"></span>
+          </a>
+        </div>
+        <div class="nhsuk-menu">
+          <button type="button" id="btnMenu" aria-haspopup="true" aria-expanded="false" aria-controls="menuPanel">Menu</button>
+          <div class="nhsuk-menu__panel" id="menuPanel" role="menu" hidden>
+            <a href="/static/dashboard/" role="menuitem">Dashboard</a>
+            <a href="/static/profile/" role="menuitem">Profile</a>
+            <button type="button" id="btnSignOut" role="menuitem">Sign out</button>
+          </div>
+        </div>
+      </nav>
     </div>
   </header>
 
@@ -73,6 +90,8 @@
   <script src="/static/shared/ods-trust-suggest.js"></script>
   <script src="/static/shared/trust-autocomplete.js"></script>
   <script src="/static/shared/auth.js"></script>
+  <script src="/static/shared/nav-account.js?v=20260522-1"></script>
+  <script src="/static/shared/app-menu.js?v=20260522-1"></script>
   <script>
     (function () {
       function showErr(msg) {
@@ -110,14 +129,15 @@
 
       (async function () {
         await NHSAuth.refresh();
+        if (window.NHSNavAccount) void NHSNavAccount.refresh();
         if (!NHSAuth.requireAuth()) return;
         if (NHSAuth.user.premium) {
           window.location.replace('/static/dashboard/');
           return;
         }
         if (!NHSAuth.requirePasswordChanged()) return;
-        if (NHSAuth.isProfileComplete()) {
-          window.location.replace('/static/dashboard/');
+        if (NHSAuth.hasCompletedOnboarding()) {
+          window.location.replace(NHSAuth.postLoginPath('/static/dashboard/'));
           return;
         }
         var u = NHSAuth.user;

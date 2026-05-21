@@ -220,10 +220,19 @@
     /**
      * After sign-in or on protected pages: password change, then profile onboarding.
      */
+    hasCompletedOnboarding() {
+      return !!(this.user && this.user.onboarding_completed);
+    },
+
+    needsOnboarding() {
+      return !!(this.user && !this.user.premium && !this.hasCompletedOnboarding());
+    },
+
     postLoginPath(fallback) {
       if (!this.user) return (fallback || '/static/dashboard/');
       if (this.user.premium) return (fallback || '/static/dashboard/');
       if (this.mustChangePassword()) return '/static/auth/change-password.html';
+      if (this.needsOnboarding()) return '/static/auth/onboarding.html';
       if (!this.isProfileComplete()) return '/static/auth/onboarding.html';
       return (fallback || '/static/dashboard/');
     },
@@ -236,7 +245,7 @@
         next &&
         /^\/(static\/)?[a-zA-Z0-9_\-/?=&%.#]*$/.test(next) &&
         !this.mustChangePassword() &&
-        (this.user.premium || this.isProfileComplete())
+        (this.user.premium || (this.hasCompletedOnboarding() && this.isProfileComplete()))
       ) {
         window.location.replace(next);
         return;
@@ -258,7 +267,7 @@
 
     requireOnboardingComplete(loginUrl) {
       if (!this.requirePasswordChanged(loginUrl)) return false;
-      if (!this.user || this.user.premium || this.isProfileComplete()) return true;
+      if (!this.user || this.user.premium || !this.needsOnboarding()) return true;
       var path = window.location.pathname || '';
       if (
         path.indexOf('/static/auth/onboarding') >= 0 ||
