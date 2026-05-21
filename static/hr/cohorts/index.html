@@ -76,10 +76,10 @@
                 <span class="cohort-email-count cohort-email-count--empty" id="cohortEmailsCount" aria-live="polite">0 addresses</span>
                 <p class="hr-roster-or">Or upload a file</p>
                 <div class="hr-roster-upload">
-                  <label class="nhsuk-label nhsuk-label--s" for="cohortEmailsFile">CSV or plain text</label>
-                  <span class="nhsuk-hint">CSV export from Excel. Columns: <strong>NHS work email</strong> (required), full name, GMC number, personal email — header row recommended. Empty cells are OK.</span>
+                  <label class="nhsuk-label nhsuk-label--s" for="cohortEmailsFile">CSV or Excel</label>
+                  <span class="nhsuk-hint">Upload <strong>.csv</strong> or <strong>.xlsx</strong>. Columns: NHS work email (required), full name, GMC number, personal email — header row recommended. Empty cells are OK.</span>
                   <div class="hr-bulk-file">
-                    <input class="nhsuk-input" type="file" id="cohortEmailsFile" accept=".txt,.csv,text/plain,text/csv" aria-describedby="cohortEmailsFileStatus">
+                    <input class="nhsuk-input" type="file" id="cohortEmailsFile" accept=".txt,.csv,.xlsx,.xls,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" aria-describedby="cohortEmailsFileStatus">
                   </div>
                   <span class="hr-roster-file-name" id="cohortEmailsFileName" aria-live="polite">No file chosen</span>
                   <p class="hr-roster-upload-status" id="cohortEmailsFileStatus" hidden role="status"></p>
@@ -170,10 +170,10 @@
               <span class="cohort-email-count cohort-email-count--empty" id="addEmailsCount" aria-live="polite">0 addresses</span>
               <p class="hr-roster-or">Or upload a file</p>
               <div class="hr-roster-upload">
-                <label class="nhsuk-label nhsuk-label--s" for="addEmailsFile">CSV or plain text</label>
-                <span class="nhsuk-hint">CSV export from Excel. Columns: NHS work email, full name, GMC number, personal email (header row recommended).</span>
+                <label class="nhsuk-label nhsuk-label--s" for="addEmailsFile">CSV or Excel</label>
+                <span class="nhsuk-hint">Upload .csv or .xlsx. Columns: NHS work email, full name, GMC number, personal email (header row recommended).</span>
                 <div class="hr-bulk-file">
-                  <input class="nhsuk-input" type="file" id="addEmailsFile" accept=".txt,.csv,text/plain,text/csv" aria-describedby="addEmailsFileStatus">
+                  <input class="nhsuk-input" type="file" id="addEmailsFile" accept=".txt,.csv,.xlsx,.xls,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" aria-describedby="addEmailsFileStatus">
                 </div>
                 <span class="hr-roster-file-name" id="addEmailsFileName" aria-live="polite">No file chosen</span>
                 <p class="hr-roster-upload-status" id="addEmailsFileStatus" hidden role="status"></p>
@@ -192,7 +192,8 @@
   </main>
 
   <script src="/static/shared/import-result-viz.js?v=20260522-1"></script>
-  <script src="/static/shared/cohort-roster-parse.js?v=20260522-2"></script>
+  <script src="/static/shared/vendor/xlsx.full.min.js?v=20260522-1"></script>
+  <script src="/static/shared/cohort-roster-parse.js?v=20260522-3"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
   <script>
@@ -388,43 +389,42 @@
             var file = fileInp.files && fileInp.files[0];
             if (nameEl) nameEl.textContent = file ? file.name : 'No file chosen';
             if (!file) return;
-            if (!parseApi) {
+            if (!parseApi || typeof parseApi.parseRosterFile !== 'function') {
               setRosterUploadStatus(opts.fileStatusId, 'Import module failed to load.', true);
               return;
             }
-            var reader = new FileReader();
-            reader.onload = function () {
-              var text = String(reader.result || '');
-              var parsed = parseApi.parseRosterText(text);
-              if (!parsed.length) {
-                setRosterUploadStatus(
-                  opts.fileStatusId,
-                  'No NHS work emails found. Include a header row or put the work email in the first column.',
-                  true
-                );
+            setRosterUploadStatus(opts.fileStatusId, 'Reading file…', false);
+            parseApi
+              .parseRosterFile(file)
+              .then(function (parsed) {
+                if (!parsed.length) {
+                  setRosterUploadStatus(
+                    opts.fileStatusId,
+                    'No NHS work emails found. Include a header row or put the work email in the first column.',
+                    true
+                  );
+                  fileInp.value = '';
+                  if (nameEl) nameEl.textContent = 'No file chosen';
+                  return;
+                }
+                var out = mergeFromMembers(parsed);
+                var msg = 'Added ' + out.added + ' clinician' + (out.added === 1 ? '' : 's') + ' from file';
+                if (out.skipped > 0) {
+                  msg += ' (' + out.skipped + ' duplicate' + (out.skipped === 1 ? '' : 's') + ' merged)';
+                }
+                msg += '. ' + out.total + ' total.';
+                setRosterUploadStatus(opts.fileStatusId, msg, false);
+                if (opts.fileVizId && viz()) {
+                  viz().fileMerge(document.getElementById(opts.fileVizId), out.added, out.total);
+                }
                 fileInp.value = '';
                 if (nameEl) nameEl.textContent = 'No file chosen';
-                return;
-              }
-              var out = mergeFromMembers(parsed);
-              var msg = 'Added ' + out.added + ' clinician' + (out.added === 1 ? '' : 's') + ' from file';
-              if (out.skipped > 0) {
-                msg += ' (' + out.skipped + ' duplicate' + (out.skipped === 1 ? '' : 's') + ' merged)';
-              }
-              msg += '. ' + out.total + ' total.';
-              setRosterUploadStatus(opts.fileStatusId, msg, false);
-              if (opts.fileVizId && viz()) {
-                viz().fileMerge(document.getElementById(opts.fileVizId), out.added, out.total);
-              }
-              fileInp.value = '';
-              if (nameEl) nameEl.textContent = 'No file chosen';
-            };
-            reader.onerror = function () {
-              setRosterUploadStatus(opts.fileStatusId, 'Could not read that file.', true);
-              fileInp.value = '';
-              if (nameEl) nameEl.textContent = 'No file chosen';
-            };
-            reader.readAsText(file);
+              })
+              .catch(function (err) {
+                setRosterUploadStatus(opts.fileStatusId, err.message || 'Could not read that file.', true);
+                fileInp.value = '';
+                if (nameEl) nameEl.textContent = 'No file chosen';
+              });
           });
         }
 

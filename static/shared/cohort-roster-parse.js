@@ -1,6 +1,6 @@
 /**
- * Parse HR cohort roster CSV / plain text with optional columns:
- * NHS work email (required), full name, GMC number, personal email.
+ * Parse HR cohort roster from CSV, plain text, or Excel (.xlsx / .xls).
+ * Columns: NHS work email (required), full name, GMC number, personal email.
  * Header row is detected when a column looks like "email" / "nhs email" etc.
  */
 (function (global) {
@@ -152,17 +152,26 @@
     return member;
   }
 
-  function parseRosterText(text) {
-    var lines = String(text || '').split(/\r?\n/);
+  function cellValue(v) {
+    if (v == null) return '';
+    return String(v).trim();
+  }
+
+  function rowHasContent(cols) {
+    return cols.some(function (c) {
+      return !!cellValue(c);
+    });
+  }
+
+  function parseRosterRows(rows) {
     var members = [];
     var headerMap = null;
     var seen = Object.create(null);
 
-    lines.forEach(function (rawLine) {
-      var line = rawLine.trim();
-      if (!line || line.charAt(0) === '#') return;
-      var cols = parseCsvRow(line);
-      if (!cols.length) return;
+    (rows || []).forEach(function (rawRow) {
+      if (!rawRow || !rawRow.length) return;
+      var cols = rawRow.map(cellValue);
+      if (!rowHasContent(cols)) return;
       if (!headerMap && looksLikeHeader(cols)) {
         headerMap = mapHeaders(cols);
         return;
@@ -175,6 +184,81 @@
     return members;
   }
 
+  function parseRosterText(text) {
+    var lines = String(text || '').split(/\r?\n/);
+    var rows = [];
+    lines.forEach(function (rawLine) {
+      var line = rawLine.trim();
+      if (!line || line.charAt(0) === '#') return;
+      rows.push(parseCsvRow(line));
+    });
+    return parseRosterRows(rows);
+  }
+
+  function isExcelFile(file) {
+    if (!file) return false;
+    var name = String(file.name || '').toLowerCase();
+    var type = String(file.type || '').toLowerCase();
+    if (name.endsWith('.xlsx') || name.endsWith('.xlsm') || name.endsWith('.xls')) return true;
+    if (
+      type.indexOf('spreadsheetml') >= 0 ||
+      type === 'application/vnd.ms-excel' ||
+      type === 'application/vnd.ms-excel.sheet.macroenabled.12'
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function parseExcelArrayBuffer(buf) {
+    if (!global.XLSX || typeof global.XLSX.read !== 'function') {
+      throw new Error('Excel support is not available. Save the file as CSV and try again.');
+    }
+    var wb = global.XLSX.read(buf, { type: 'array' });
+    if (!wb.SheetNames || !wb.SheetNames.length) {
+      return [];
+    }
+    var sheet = wb.Sheets[wb.SheetNames[0]];
+    var rows = global.XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      defval: '',
+      raw: false,
+    });
+    return parseRosterRows(rows);
+  }
+
+  function parseRosterFile(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file) {
+        reject(new Error('No file selected'));
+        return;
+      }
+      var reader = new FileReader();
+      reader.onerror = function () {
+        reject(new Error('Could not read that file'));
+      };
+      if (isExcelFile(file)) {
+        reader.onload = function () {
+          try {
+            resolve(parseExcelArrayBuffer(reader.result));
+          } catch (e) {
+            reject(e);
+          }
+        };
+        reader.readAsArrayBuffer(file);
+        return;
+      }
+      reader.onload = function () {
+        try {
+          resolve(parseRosterText(reader.result));
+        } catch (e) {
+          reject(e);
+        }
+      };
+      reader.readAsText(file);
+    });
+  }
+
   function mergeMember(into, from) {
     if (from.display_name && !into.display_name) into.display_name = from.display_name;
     if (from.gmc_number && !into.gmc_number) into.gmc_number = from.gmc_number;
@@ -183,6 +267,9 @@
 
   global.NHSCohortRosterParse = {
     parseRosterText: parseRosterText,
+    parseRosterRows: parseRosterRows,
+    parseRosterFile: parseRosterFile,
+    isExcelFile: isExcelFile,
     isValidEmail: function (s) {
       return EMAIL_RE.test(String(s || '').trim());
     },
