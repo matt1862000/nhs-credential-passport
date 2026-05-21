@@ -66,7 +66,7 @@
               </div>
               <div class="nhsuk-form-group" id="cohortEmailsGroup">
                 <label class="nhsuk-label" for="cohortEmailInput">NHS work emails</label>
-                <span class="nhsuk-hint nhsuk-hint--secondary">Add each clinician&rsquo;s NHS email (e.g. firstname.surname123@nhs.net), or import many at once from a file below.</span>
+                <span class="nhsuk-hint nhsuk-hint--secondary">Add each clinician&rsquo;s NHS work email, or import a spreadsheet below (name, GMC, personal email columns optional — blanks are fine).</span>
                 <div id="cohortEmailsList" class="cohort-email-list" aria-live="polite"></div>
                 <div class="cohort-email-add">
                   <input class="nhsuk-input" type="email" id="cohortEmailInput" placeholder="name.surname@nhs.net" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="email" aria-describedby="cohortEmailError cohortEmailsCount">
@@ -77,7 +77,7 @@
                 <p class="hr-roster-or">Or upload a file</p>
                 <div class="hr-roster-upload">
                   <label class="nhsuk-label nhsuk-label--s" for="cohortEmailsFile">CSV or plain text</label>
-                  <span class="nhsuk-hint">First column of a spreadsheet, or one email per line.</span>
+                  <span class="nhsuk-hint">CSV export from Excel. Columns: <strong>NHS work email</strong> (required), full name, GMC number, personal email — header row recommended. Empty cells are OK.</span>
                   <div class="hr-bulk-file">
                     <input class="nhsuk-input" type="file" id="cohortEmailsFile" accept=".txt,.csv,text/plain,text/csv" aria-describedby="cohortEmailsFileStatus">
                   </div>
@@ -99,7 +99,7 @@
             <h3 style="font-size:1rem;margin:1rem 0 0.5rem;">Results</h3>
             <div class="hr-table-wrap">
               <table class="hr-table" aria-label="Provisioning results">
-                <thead><tr><th>Email</th><th>Status</th><th>Note</th></tr></thead>
+                <thead><tr><th>Email</th><th>Status</th><th>Pre-filled</th><th>Note</th></tr></thead>
                 <tbody id="createResultsTbody"></tbody>
               </table>
             </div>
@@ -122,7 +122,7 @@
         <p class="hr-cohort-legend">Status shows whether they can sign in and whether an automatic welcome will be sent after they complete their profile.</p>
         <div class="hr-table-wrap">
           <table class="hr-table" aria-label="Cohort members">
-            <thead><tr><th>Name</th><th>NHS email</th><th>GMC</th><th>Status</th></tr></thead>
+            <thead><tr><th>Name</th><th>NHS email</th><th>GMC</th><th>Personal email</th><th>Status</th></tr></thead>
             <tbody id="membersTbody"></tbody>
           </table>
         </div>
@@ -160,7 +160,7 @@
           <form id="formAddMembers" class="hr-bulk-form" novalidate>
             <div class="nhsuk-form-group" id="addEmailsGroup">
               <label class="nhsuk-label" for="addEmailInput">NHS work emails</label>
-              <span class="nhsuk-hint nhsuk-hint--secondary">Add each clinician&rsquo;s NHS email, or import from a file below.</span>
+              <span class="nhsuk-hint nhsuk-hint--secondary">Add NHS work emails one by one, or import a spreadsheet (name, GMC, personal email optional).</span>
               <div id="addEmailsList" class="cohort-email-list" aria-live="polite"></div>
               <div class="cohort-email-add">
                 <input class="nhsuk-input" type="email" id="addEmailInput" placeholder="name.surname@nhs.net" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="email" aria-describedby="addEmailError addEmailsCount">
@@ -171,7 +171,7 @@
               <p class="hr-roster-or">Or upload a file</p>
               <div class="hr-roster-upload">
                 <label class="nhsuk-label nhsuk-label--s" for="addEmailsFile">CSV or plain text</label>
-                <span class="nhsuk-hint">First column of a spreadsheet, or one email per line.</span>
+                <span class="nhsuk-hint">CSV export from Excel. Columns: NHS work email, full name, GMC number, personal email (header row recommended).</span>
                 <div class="hr-bulk-file">
                   <input class="nhsuk-input" type="file" id="addEmailsFile" accept=".txt,.csv,text/plain,text/csv" aria-describedby="addEmailsFileStatus">
                 </div>
@@ -192,6 +192,7 @@
   </main>
 
   <script src="/static/shared/import-result-viz.js?v=20260522-1"></script>
+  <script src="/static/shared/cohort-roster-parse.js?v=20260522-2"></script>
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
   <script>
@@ -242,25 +243,16 @@
         if (viz()) viz().clear(el);
       }
 
-      var EMAIL_LINE_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+      var rosterParse = function () {
+        return window.NHSCohortRosterParse || null;
+      };
 
-      function parseRosterLines(text) {
-        var out = [];
-        String(text || '').split(/\r?\n/).forEach(function (rawLine) {
-          var line = rawLine.trim();
-          if (!line || line.charAt(0) === '#') return;
-          if (line.indexOf(',') >= 0) {
-            line = line.split(',')[0].trim().replace(/^["']|["']$/g, '');
-          }
-          if (line) out.push(line);
-        });
-        return out;
-      }
-
-      function rosterEmailsFromText(text) {
-        return parseRosterLines(text).filter(function (line) {
-          return EMAIL_LINE_RE.test(line);
-        });
+      function memberMetaLine(m) {
+        var bits = [];
+        if (m.display_name) bits.push(esc(m.display_name));
+        if (m.gmc_number) bits.push('GMC ' + esc(m.gmc_number));
+        if (m.personal_email) bits.push(esc(m.personal_email));
+        return bits.length ? bits.join(' · ') : '';
       }
 
       function setRosterUploadStatus(statusId, msg, isError) {
@@ -278,13 +270,15 @@
       }
 
       function wireEmailRoster(opts) {
-        var emails = [];
+        var members = [];
+        var byEmail = Object.create(null);
         var listEl = document.getElementById(opts.listId);
         var inputEl = document.getElementById(opts.inputId);
         var addBtn = document.getElementById(opts.addBtnId);
         var countEl = document.getElementById(opts.countId);
         var errEl = opts.errorId ? document.getElementById(opts.errorId) : null;
         var formGroup = inputEl && inputEl.closest('.nhsuk-form-group');
+        var parseApi = rosterParse();
 
         function setError(msg) {
           if (errEl) {
@@ -295,47 +289,55 @@
         }
 
         function updateCount() {
-          var n = emails.length;
+          var n = members.length;
           if (!countEl) return;
-          countEl.textContent = n === 1 ? '1 address' : n + ' addresses';
+          countEl.textContent = n === 1 ? '1 clinician' : n + ' clinicians';
           countEl.classList.toggle('cohort-email-count--empty', n === 0);
         }
 
         function render() {
           if (!listEl) return;
-          if (!emails.length) {
+          if (!members.length) {
             listEl.innerHTML = '';
             updateCount();
             return;
           }
-          listEl.innerHTML = emails.map(function (email, i) {
+          listEl.innerHTML = members.map(function (m, i) {
+            var meta = memberMetaLine(m);
             return '<div class="cohort-email-row">'
-              + '<span class="cohort-email-row__addr">' + esc(email) + '</span>'
-              + '<button type="button" class="cohort-email-row__remove" data-remove="' + i + '" aria-label="Remove ' + esc(email) + '">&times;</button>'
+              + '<div style="flex:1;min-width:0;">'
+              + '<span class="cohort-email-row__addr">' + esc(m.email) + '</span>'
+              + (meta ? '<span class="cohort-email-row__meta">' + meta + '</span>' : '')
+              + '</div>'
+              + '<button type="button" class="cohort-email-row__remove" data-remove="' + i + '" aria-label="Remove ' + esc(m.email) + '">&times;</button>'
               + '</div>';
           }).join('');
           updateCount();
         }
 
-        function tryAddEmail(raw, silent) {
-          var line = String(raw || '').trim();
-          if (!line) return false;
-          if (line.indexOf(',') >= 0) {
-            line = line.split(',')[0].trim().replace(/^["']|["']$/g, '');
-          }
-          var email = line.toLowerCase();
-          if (!EMAIL_LINE_RE.test(email)) {
-            if (!silent) setError('Enter a valid email address (e.g. name.surname@nhs.net).');
+        function upsertMember(m, silent) {
+          if (!m || !m.email) return false;
+          var email = String(m.email).trim().toLowerCase();
+          if (!parseApi || !parseApi.isValidEmail(email)) {
+            if (!silent) setError('Enter a valid NHS work email (e.g. name.surname@nhs.net).');
             return false;
           }
-          if (emails.indexOf(email) >= 0) {
+          m.email = email;
+          if (byEmail[email]) {
+            if (parseApi.mergeMember) parseApi.mergeMember(byEmail[email], m);
             if (!silent) setError('');
+            render();
             return false;
           }
           if (!silent) setError('');
-          emails.push(email);
+          byEmail[email] = m;
+          members.push(m);
           render();
           return true;
+        }
+
+        function tryAddEmail(raw, silent) {
+          return upsertMember({ email: String(raw || '').trim() }, silent);
         }
 
         function addFromInput() {
@@ -345,14 +347,14 @@
           inputEl.focus();
         }
 
-        function mergeFromLines(lines) {
+        function mergeFromMembers(rows) {
           var added = 0;
           var skipped = 0;
-          (lines || []).forEach(function (line) {
-            if (tryAddEmail(line, true)) added += 1;
-            else if (String(line || '').trim()) skipped += 1;
+          (rows || []).forEach(function (m) {
+            if (upsertMember(m, true)) added += 1;
+            else if (m && m.email) skipped += 1;
           });
-          return { added: added, skipped: skipped, total: emails.length };
+          return { added: added, skipped: skipped, total: members.length };
         }
 
         if (addBtn) addBtn.addEventListener('click', addFromInput);
@@ -370,8 +372,9 @@
             var btn = e.target.closest('[data-remove]');
             if (!btn) return;
             var idx = parseInt(btn.getAttribute('data-remove'), 10);
-            if (idx >= 0 && idx < emails.length) {
-              emails.splice(idx, 1);
+            if (idx >= 0 && idx < members.length) {
+              var removed = members.splice(idx, 1)[0];
+              if (removed && removed.email) delete byEmail[removed.email];
               render();
             }
           });
@@ -385,25 +388,28 @@
             var file = fileInp.files && fileInp.files[0];
             if (nameEl) nameEl.textContent = file ? file.name : 'No file chosen';
             if (!file) return;
+            if (!parseApi) {
+              setRosterUploadStatus(opts.fileStatusId, 'Import module failed to load.', true);
+              return;
+            }
             var reader = new FileReader();
             reader.onload = function () {
               var text = String(reader.result || '');
-              var parsed = rosterEmailsFromText(text);
-              var skipped = parseRosterLines(text).length - parsed.length;
+              var parsed = parseApi.parseRosterText(text);
               if (!parsed.length) {
                 setRosterUploadStatus(
                   opts.fileStatusId,
-                  'No email addresses found. Use one per line or in the first CSV column.',
+                  'No NHS work emails found. Include a header row or put the work email in the first column.',
                   true
                 );
                 fileInp.value = '';
                 if (nameEl) nameEl.textContent = 'No file chosen';
                 return;
               }
-              var out = mergeFromLines(parsed);
-              var msg = 'Added ' + out.added + ' address' + (out.added === 1 ? '' : 'es') + ' from file';
-              if (skipped > 0) {
-                msg += ' (' + skipped + ' row' + (skipped === 1 ? '' : 's') + ' skipped)';
+              var out = mergeFromMembers(parsed);
+              var msg = 'Added ' + out.added + ' clinician' + (out.added === 1 ? '' : 's') + ' from file';
+              if (out.skipped > 0) {
+                msg += ' (' + out.skipped + ' duplicate' + (out.skipped === 1 ? '' : 's') + ' merged)';
               }
               msg += '. ' + out.total + ' total.';
               setRosterUploadStatus(opts.fileStatusId, msg, false);
@@ -425,9 +431,22 @@
         render();
 
         return {
-          getEmails: function () { return emails.slice(); },
+          getEmails: function () {
+            return members.map(function (m) { return m.email; });
+          },
+          getMembers: function () {
+            return members.map(function (m) {
+              return {
+                email: m.email,
+                display_name: m.display_name || undefined,
+                gmc_number: m.gmc_number || undefined,
+                personal_email: m.personal_email || undefined,
+              };
+            });
+          },
           clear: function () {
-            emails = [];
+            members = [];
+            byEmail = Object.create(null);
             render();
             setError('');
             if (inputEl) inputEl.value = '';
@@ -599,10 +618,10 @@
         document.getElementById('detailTitle').textContent = c.name;
         var tb = document.getElementById('membersTbody');
         if (!_detailMembers.length) {
-          tb.innerHTML = '<tr><td colspan="4" class="hr-muted">No members yet. Use <strong>Add clinicians</strong> to provision NHS work emails.</td></tr>';
+          tb.innerHTML = '<tr><td colspan="5" class="hr-muted">No members yet. Use <strong>Add clinicians</strong> to provision NHS work emails.</td></tr>';
         } else {
           tb.innerHTML = _detailMembers.map(function (m) {
-            return '<tr><td>' + esc(m.display_name || '—') + '</td><td>' + esc(m.email) + '</td><td>' + esc(m.gmc_number || '—') + '</td><td>' + memberStatusPill(m) + '</td></tr>';
+            return '<tr><td>' + esc(m.display_name || '—') + '</td><td>' + esc(m.email) + '</td><td>' + esc(m.gmc_number || '—') + '</td><td>' + esc(m.personal_email || '—') + '</td><td>' + memberStatusPill(m) + '</td></tr>';
           }).join('');
         }
         updateCohortActionUI();
@@ -652,8 +671,8 @@
         var status = document.getElementById('createStatus');
         var vizEl = document.getElementById('createProvisionResult');
         var submitBtn = e.target.querySelector('button[type="submit"]');
-        var emails = _createEmailRoster ? _createEmailRoster.getEmails() : [];
-        if (!emails.length) {
+        var members = _createEmailRoster ? _createEmailRoster.getMembers() : [];
+        if (!members.length) {
           show(status, true);
           status.textContent = 'Add at least one NHS work email.';
           return;
@@ -668,7 +687,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               name: document.getElementById('cohortName').value.trim(),
-              emails: emails,
+              members: members,
             }),
           });
           var cohortName = (data.cohort && data.cohort.name) || document.getElementById('cohortName').value.trim();
@@ -676,7 +695,8 @@
           var wrap = document.getElementById('createResultsWrap');
           var tb = document.getElementById('createResultsTbody');
           tb.innerHTML = (data.results || []).map(function (r) {
-            return '<tr><td>' + esc(r.email) + '</td><td>' + esc(r.status) + '</td><td>' + esc(r.error || '') + '</td></tr>';
+            var pref = (r.prefilled && r.prefilled.length) ? r.prefilled.join(', ') : '—';
+            return '<tr><td>' + esc(r.email) + '</td><td>' + esc(r.status) + '</td><td>' + esc(pref) + '</td><td>' + esc(r.error || '') + '</td></tr>';
           }).join('');
           show(wrap, true);
           document.getElementById('cohortName').value = '';
@@ -765,8 +785,8 @@
         var st = document.getElementById('addStatus');
         var vizEl = document.getElementById('addProvisionResult');
         var submitBtn = e.target.querySelector('button[type="submit"]');
-        var emails = _addEmailRoster ? _addEmailRoster.getEmails() : [];
-        if (!emails.length) {
+        var members = _addEmailRoster ? _addEmailRoster.getMembers() : [];
+        if (!members.length) {
           show(st, true);
           setStatusEl(st, 'Add at least one NHS work email.', 'error');
           return;
@@ -779,7 +799,7 @@
           var data = await apiJson('/api/hr/cohorts/' + _activeCohortId + '/members', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ emails: emails }),
+            body: JSON.stringify({ members: members }),
           });
           if (viz()) viz().cohortProvision(vizEl, data, {});
           if (_addEmailRoster) _addEmailRoster.clear();

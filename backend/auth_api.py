@@ -614,6 +614,7 @@ def auth_me(request: Request):
         "gmc_number": u.get("gmc_number"),
         "display_name": db.user_effective_display_name(u),
         "current_trust": u.get("current_trust"),
+        "personal_email": u.get("personal_email"),
         "must_change_password": bool(u.get("must_change_password")),
     }
 
@@ -678,6 +679,14 @@ async def me_profile_put(request: Request):
     else:
         current_trust = u.get("current_trust")
 
+    if "personal_email" in body:
+        personal_email = _normalize_email(str(body.get("personal_email") or ""))
+        if personal_email and not EMAIL_RE.match(personal_email):
+            raise HTTPException(status_code=400, detail="Invalid personal email address")
+        personal_email = personal_email or None
+    else:
+        personal_email = u.get("personal_email")
+
     merged = {
         "display_name": display_name,
         "gmc_number": gmc,
@@ -704,6 +713,8 @@ async def me_profile_put(request: Request):
         }
     )
     db.user_set_profile(uid, display_name, gmc, current_trust)
+    if "personal_email" in body:
+        db.user_set_personal_email(uid, personal_email)
     if not db.user_is_premium(u) and _profile_is_complete(merged) and not was_complete:
         _hr_process_pending_welcomes(uid)
     return {"ok": True}
@@ -1877,6 +1888,87 @@ def _parse_cohort_emails(raw_emails) -> list[str]:
     return out
 
 
+def _cohort_member_from_item(item) -> Optional[dict]:
+    """Normalize one roster row from JSON (spreadsheet import or legacy email string)."""
+    if isinstance(item, str):
+        email = _normalize_email(item)
+        return {"email": email} if email else None
+    if not isinstance(item, dict):
+        return None
+    email = _normalize_email(
+        str(
+            item.get("email")
+            or item.get("nhs_email")
+            or item.get("work_email")
+            or item.get("nhs_work_email")
+            or ""
+        )
+    )
+    if not email:
+        return None
+    dn = str(item.get("display_name") or item.get("full_name") or item.get("name") or "").strip()
+    gmc_raw = str(item.get("gmc_number") or item.get("gmc") or "").strip()
+    pe = _normalize_email(str(item.get("personal_email") or item.get("personal") or ""))
+    if pe and not EMAIL_RE.match(pe):
+        pe = ""
+    out: dict = {"email": email}
+    if dn:
+        out["display_name"] = dn
+    if gmc_raw:
+        out["gmc_number"] = gmc_raw
+    if pe:
+        out["personal_email"] = pe
+    return out
+
+
+def _parse_cohort_members(body: dict) -> list[dict]:
+    """
+    Accept members: [{email, display_name?, gmc_number?, personal_email?}, ...]
+    or legacy emails: [string, ...].
+    """
+    raw_members = body.get("members")
+    if raw_members is not None:
+        if not isinstance(raw_members, list):
+            raise HTTPException(status_code=400, detail="members must be a list")
+        seen: set[str] = set()
+        out: list[dict] = []
+        for item in raw_members:
+            row = _cohort_member_from_item(item)
+            if not row or row["email"] in seen:
+                continue
+            seen.add(row["email"])
+            out.append(row)
+        return out
+    emails = _parse_cohort_emails(body.get("emails"))
+    return [{"email": e} for e in emails]
+
+
+def _validate_cohort_members(members: list[dict]) -> None:
+    if not members:
+        raise HTTPException(status_code=400, detail="At least one NHS work email is required")
+    if len(members) > MAX_HR_COHORT_LINES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many rows ({len(members)}). Maximum is {MAX_HR_COHORT_LINES}.",
+        )
+    for row in members:
+        email = row.get("email") or ""
+        if not EMAIL_RE.match(email):
+            raise HTTPException(status_code=400, detail=f"Invalid NHS work email: {email}")
+        pe = row.get("personal_email")
+        if pe and not EMAIL_RE.match(pe):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid personal email for {email}: {pe}",
+            )
+        gmc = _normalize_gmc(str(row.get("gmc_number") or ""))
+        if row.get("gmc_number") and gmc and not GMC_RE.match(gmc):
+            raise HTTPException(
+                status_code=400,
+                detail=f"GMC number for {email} must be exactly 7 digits",
+            )
+
+
 def _hr_broadcast_to_doctors(
     hr_user_id: int,
     hr_trust: str,
@@ -1972,23 +2064,14 @@ async def hr_cohorts_create(request: Request):
     name = str(body.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Cohort name is required")
-    emails = _parse_cohort_emails(body.get("emails"))
-    if not emails:
-        raise HTTPException(status_code=400, detail="At least one NHS email is required")
-    if len(emails) > MAX_HR_COHORT_LINES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Too many emails ({len(emails)}). Maximum is {MAX_HR_COHORT_LINES}.",
-        )
-    for email in emails:
-        if not EMAIL_RE.match(email):
-            raise HTTPException(status_code=400, detail=f"Invalid email: {email}")
+    members = _parse_cohort_members(body)
+    _validate_cohort_members(members)
 
     cohort_id = db.cohort_create(trust, name, int(hr["id"]))
-    results = db.cohort_add_members_from_emails(
+    results = db.cohort_add_members(
         cohort_id,
         trust,
-        emails,
+        members,
         int(hr["id"]),
         _cohort_reserved_emails(),
         queue_welcome=True,
@@ -2033,22 +2116,13 @@ async def hr_cohorts_add_members(request: Request, cohort_id: int):
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
-    emails = _parse_cohort_emails(body.get("emails"))
-    if not emails:
-        raise HTTPException(status_code=400, detail="At least one NHS email is required")
-    if len(emails) > MAX_HR_COHORT_LINES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Too many emails ({len(emails)}). Maximum is {MAX_HR_COHORT_LINES}.",
-        )
-    for email in emails:
-        if not EMAIL_RE.match(email):
-            raise HTTPException(status_code=400, detail=f"Invalid email: {email}")
+    members = _parse_cohort_members(body)
+    _validate_cohort_members(members)
 
-    results = db.cohort_add_members_from_emails(
+    results = db.cohort_add_members(
         int(cohort_id),
         trust,
-        emails,
+        members,
         int(hr["id"]),
         _cohort_reserved_emails(),
         queue_welcome=True,

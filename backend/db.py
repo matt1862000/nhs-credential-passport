@@ -1624,6 +1624,8 @@ def _ensure_users_profile_extra_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN display_name TEXT")
     if "current_trust" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN current_trust TEXT")
+    if "personal_email" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN personal_email TEXT")
 
 
 def _ensure_users_provision_columns(conn: sqlite3.Connection) -> None:
@@ -1738,6 +1740,7 @@ def user_create(email: str, password_hash: str, gmc_number: Optional[str] = None
 
 
 def _user_public_dict(row: sqlite3.Row, include_password_hash: bool = False) -> dict:
+    keys = row.keys()
     out = {
         "id": row["id"],
         "email": row["email"],
@@ -1745,6 +1748,7 @@ def _user_public_dict(row: sqlite3.Row, include_password_hash: bool = False) -> 
         "gmc_number": row["gmc_number"],
         "display_name": row["display_name"],
         "current_trust": row["current_trust"],
+        "personal_email": row["personal_email"] if "personal_email" in keys else None,
         "must_change_password": bool(row["must_change_password"])
         if "must_change_password" in row.keys() and row["must_change_password"] is not None
         else False,
@@ -1763,7 +1767,7 @@ def user_get_by_email(email: str):
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """SELECT id, email, password_hash, premium, gmc_number, display_name, current_trust,
-                      must_change_password FROM users WHERE email = ?""",
+                      personal_email, must_change_password FROM users WHERE email = ?""",
             (email,),
         ).fetchone()
     if not row:
@@ -1780,7 +1784,7 @@ def user_get_by_id(user_id: int):
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """SELECT id, email, premium, gmc_number, display_name, current_trust,
-                      must_change_password FROM users WHERE id = ?""",
+                      personal_email, must_change_password FROM users WHERE id = ?""",
             (user_id,),
         ).fetchone()
     if not row:
@@ -1824,14 +1828,78 @@ def user_set_current_trust_if_empty(user_id: int, trust: str) -> None:
         conn.commit()
 
 
+def _normalize_provision_gmc(raw: Optional[str]) -> Optional[str]:
+    gmc = re.sub(r"\D", "", raw or "")
+    return gmc if len(gmc) == 7 else None
+
+
+def user_apply_provisioned_profile(
+    user_id: int,
+    *,
+    display_name: Optional[str] = None,
+    gmc_number: Optional[str] = None,
+    personal_email: Optional[str] = None,
+    default_trust: Optional[str] = None,
+) -> None:
+    """Fill empty profile fields from HR roster import (never overwrite clinician edits)."""
+    u = user_get_by_id(int(user_id))
+    if not u:
+        return
+    dn = (display_name or "").strip() or None
+    gmc = _normalize_provision_gmc(gmc_number)
+    pe = (personal_email or "").strip().lower() or None
+    trust = (default_trust or "").strip() or None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_gmc_number_column(conn)
+        _ensure_users_profile_extra_columns(conn)
+        if dn and not (u.get("display_name") or "").strip():
+            conn.execute(
+                "UPDATE users SET display_name = ? WHERE id = ?",
+                (dn, int(user_id)),
+            )
+        if gmc and not (u.get("gmc_number") or "").strip():
+            conn.execute(
+                "UPDATE users SET gmc_number = ? WHERE id = ?",
+                (gmc, int(user_id)),
+            )
+        if pe and not (u.get("personal_email") or "").strip():
+            conn.execute(
+                "UPDATE users SET personal_email = ? WHERE id = ?",
+                (pe, int(user_id)),
+            )
+        if trust and not (u.get("current_trust") or "").strip():
+            conn.execute(
+                "UPDATE users SET current_trust = ? WHERE id = ?",
+                (trust, int(user_id)),
+            )
+        conn.commit()
+
+
+def user_set_personal_email(user_id: int, personal_email: Optional[str]) -> None:
+    pe = (personal_email or "").strip().lower() or None
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_users_profile_extra_columns(conn)
+        conn.execute(
+            "UPDATE users SET personal_email = ? WHERE id = ?",
+            (pe, int(user_id)),
+        )
+        conn.commit()
+
+
 def user_create_provisioned(
     email: str,
     provisioned_by_hr_user_id: int,
     default_trust: Optional[str] = None,
+    display_name: Optional[str] = None,
+    gmc_number: Optional[str] = None,
+    personal_email: Optional[str] = None,
 ) -> int:
     """Create non-premium clinician with demo password and must_change_password=1."""
     email = (email or "").strip().lower()
     trust = (default_trust or "").strip() or None
+    dn = (display_name or "").strip() or None
+    gmc = _normalize_provision_gmc(gmc_number)
+    pe = (personal_email or "").strip().lower() or None
     h = _provisioned_password_hash()
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_premium_column(conn)
@@ -1841,9 +1909,18 @@ def user_create_provisioned(
         cur = conn.execute(
             """INSERT INTO users (
                    email, password_hash, created_at, premium, gmc_number, display_name, current_trust,
-                   must_change_password, provisioned_by_hr
-               ) VALUES (?, ?, ?, 0, NULL, NULL, ?, 1, ?)""",
-            (email, h, datetime.utcnow().isoformat(), trust, int(provisioned_by_hr_user_id)),
+                   personal_email, must_change_password, provisioned_by_hr
+               ) VALUES (?, ?, ?, 0, ?, ?, ?, ?, 1, ?)""",
+            (
+                email,
+                h,
+                datetime.utcnow().isoformat(),
+                gmc,
+                dn,
+                trust,
+                pe,
+                int(provisioned_by_hr_user_id),
+            ),
         )
         uid = int(cur.lastrowid)
         conn.execute(
@@ -1993,7 +2070,7 @@ def cohort_members_list(cohort_id: int, hr_trust: str) -> list[dict]:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT u.id, u.email, u.display_name, u.gmc_number, u.current_trust,
+            SELECT u.id, u.email, u.display_name, u.gmc_number, u.personal_email, u.current_trust,
                    u.must_change_password, u.provisioned_by_hr, m.added_at,
                    m.welcome_pending, m.welcome_sent_at
             FROM hr_cohort_members m
@@ -2009,6 +2086,7 @@ def cohort_members_list(cohort_id: int, hr_trust: str) -> list[dict]:
             "email": r["email"],
             "display_name": r["display_name"],
             "gmc_number": r["gmc_number"],
+            "personal_email": r["personal_email"],
             "current_trust": r["current_trust"],
             "must_change_password": bool(r["must_change_password"]),
             "provisioned_by_hr": r["provisioned_by_hr"],
@@ -2133,9 +2211,30 @@ def cohort_add_members_from_emails(
     reserved_emails: set[str],
     queue_welcome: bool = False,
 ) -> list[dict]:
+    """Backward-compatible wrapper: email strings only."""
+    members = [{"email": e} for e in emails]
+    return cohort_add_members(
+        cohort_id,
+        hr_trust,
+        members,
+        hr_user_id,
+        reserved_emails,
+        queue_welcome=queue_welcome,
+    )
+
+
+def cohort_add_members(
+    cohort_id: int,
+    hr_trust: str,
+    members: list[dict],
+    hr_user_id: int,
+    reserved_emails: set[str],
+    queue_welcome: bool = False,
+) -> list[dict]:
     """
-    For each email: create provisioned user or link existing; add to cohort.
-    Returns per-row result dicts (email, status, user_id, error).
+    For each roster row: create provisioned user or link existing; add to cohort.
+    Each member dict may include email (required), display_name, gmc_number, personal_email.
+    Returns per-row result dicts (email, status, user_id, error, prefilled).
     """
     from . import trust_packs
 
@@ -2144,13 +2243,34 @@ def cohort_add_members_from_emails(
         raise ValueError("cohort_not_found")
     default_trust = trust_packs.trust_display_name(hr_trust) or None
     results: list[dict] = []
-    for raw in emails:
-        email = (raw or "").strip().lower()
+    for row in members:
+        if not isinstance(row, dict):
+            continue
+        email = (row.get("email") or "").strip().lower()
         if not email:
             continue
+        dn = (row.get("display_name") or "").strip() or None
+        gmc_raw = row.get("gmc_number")
+        pe = (row.get("personal_email") or "").strip().lower() or None
+        prefilled: list[str] = []
+        if dn:
+            prefilled.append("name")
+        if _normalize_provision_gmc(str(gmc_raw or "")):
+            prefilled.append("GMC")
+        if pe:
+            prefilled.append("personal email")
+        if default_trust:
+            prefilled.append("trust")
+
         if email in reserved_emails:
             results.append(
-                {"email": email, "status": "failed", "user_id": None, "error": "reserved email"}
+                {
+                    "email": email,
+                    "status": "failed",
+                    "user_id": None,
+                    "error": "reserved email",
+                    "prefilled": prefilled,
+                }
             )
             continue
         existing = user_get_by_email(email)
@@ -2162,25 +2282,69 @@ def cohort_add_members_from_emails(
                         "status": "failed",
                         "user_id": None,
                         "error": "premium account",
+                        "prefilled": prefilled,
                     }
                 )
                 continue
             uid = int(existing["id"])
-            user_set_current_trust_if_empty(uid, default_trust or "")
+            user_apply_provisioned_profile(
+                uid,
+                display_name=dn,
+                gmc_number=str(gmc_raw or ""),
+                personal_email=pe,
+                default_trust=default_trust,
+            )
             cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
-            results.append({"email": email, "status": "existing", "user_id": uid, "error": None})
+            results.append(
+                {
+                    "email": email,
+                    "status": "existing",
+                    "user_id": uid,
+                    "error": None,
+                    "prefilled": prefilled,
+                }
+            )
             continue
         try:
-            uid = user_create_provisioned(email, hr_user_id, default_trust=default_trust)
+            uid = user_create_provisioned(
+                email,
+                hr_user_id,
+                default_trust=default_trust,
+                display_name=dn,
+                gmc_number=str(gmc_raw or ""),
+                personal_email=pe,
+            )
             cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
-            results.append({"email": email, "status": "created", "user_id": uid, "error": None})
+            results.append(
+                {
+                    "email": email,
+                    "status": "created",
+                    "user_id": uid,
+                    "error": None,
+                    "prefilled": prefilled,
+                }
+            )
         except sqlite3.IntegrityError:
             existing = user_get_by_email(email)
             if existing and not user_is_premium(existing):
                 uid = int(existing["id"])
-                user_set_current_trust_if_empty(uid, default_trust or "")
+                user_apply_provisioned_profile(
+                    uid,
+                    display_name=dn,
+                    gmc_number=str(gmc_raw or ""),
+                    personal_email=pe,
+                    default_trust=default_trust,
+                )
                 cohort_add_member(cohort_id, uid, welcome_pending=queue_welcome)
-                results.append({"email": email, "status": "existing", "user_id": uid, "error": None})
+                results.append(
+                    {
+                        "email": email,
+                        "status": "existing",
+                        "user_id": uid,
+                        "error": None,
+                        "prefilled": prefilled,
+                    }
+                )
             else:
                 results.append(
                     {
@@ -2188,6 +2352,7 @@ def cohort_add_members_from_emails(
                         "status": "failed",
                         "user_id": None,
                         "error": "could not create account",
+                        "prefilled": prefilled,
                     }
                 )
     return results

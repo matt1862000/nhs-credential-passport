@@ -362,7 +362,7 @@
     }
     .cohort-email-row {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: space-between;
       gap: 0.75rem;
       padding: 0.5rem 0.65rem;
@@ -377,6 +377,14 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .cohort-email-row__meta {
+      display: block;
+      margin-top: 0.2rem;
+      font-size: 0.8125rem;
+      color: var(--nhsuk-secondary-text);
+      line-height: 1.35;
+      white-space: normal;
     }
     .cohort-email-row__remove {
       flex-shrink: 0;
