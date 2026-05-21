@@ -37,8 +37,10 @@
     .msg-compose textarea { width: 100%; box-sizing: border-box; resize: none; border: 2px solid var(--nhsuk-border); border-radius: 4px; padding: 0.5rem 0.65rem; font-size: 0.9375rem; font-family: inherit; min-height: 2.75rem; max-height: 8rem; }
     .msg-compose textarea:focus { outline: 3px solid #ffbf47; border-color: var(--nhsuk-text); }
     .msg-compose-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
-    .msg-attach-btn { background: none; border: none; padding: 0; font-size: 0.875rem; color: #005eb8; text-decoration: underline; cursor: pointer; font-family: inherit; }
-    .msg-attach-btn:hover { color: #003087; }
+    .msg-attach-btn { display: inline-flex; align-items: center; justify-content: center; width: 2.5rem; height: 2.5rem; padding: 0; border: 2px solid var(--nhsuk-border); border-radius: 4px; background: #fff; color: #005eb8; cursor: pointer; flex-shrink: 0; }
+    .msg-attach-btn:hover { background: #e8f0fe; border-color: #005eb8; }
+    .msg-attach-btn:focus { outline: 3px solid #ffbf47; outline-offset: 0; }
+    .msg-attach-icon { display: block; }
     .msg-pending-files { list-style: none; margin: 0; padding: 0; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); }
     .msg-pending-item { display: inline-flex; align-items: center; gap: 0.25rem; margin-right: 0.75rem; margin-bottom: 0.15rem; }
     .msg-pending-remove { background: none; border: none; font-size: 1.1rem; line-height: 1; cursor: pointer; color: var(--nhsuk-error); padding: 0 0.15rem; }
@@ -52,7 +54,7 @@
     .msg-no-conv { padding: 1rem; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); text-align: center; }
     .msg-new-btn { display: block; width: 100%; text-align: left; padding: 0.75rem 1rem; background: #005eb8; color: #fff; border: none; cursor: pointer; font-size: 0.9375rem; font-weight: 600; border-radius: 6px 6px 0 0; touch-action: manipulation; font-family: inherit; }
     .msg-new-btn:hover { background: #003d78; }
-    .msg-search-panel { padding: 0.75rem 1rem 1rem; border-top: 1px solid var(--nhsuk-border); background: #f8fafb; }
+    .msg-search-panel { padding: 0.75rem 1rem 1rem; border-bottom: 1px solid var(--nhsuk-border); background: #f8fafb; }
     .msg-search-panel[hidden] { display: none !important; }
     .msg-search-panel .nhsuk-label { font-size: 0.875rem; margin-bottom: 0.35rem; display: block; }
     .msg-search-panel .nhsuk-input { width: 100%; max-width: none; box-sizing: border-box; font-size: 0.9375rem; }
@@ -105,14 +107,13 @@
       <div class="msg-layout">
         <div class="msg-sidebar">
           <div class="msg-conv-list">
-            <button type="button" class="msg-new-btn" id="btnToggleDoctorSearch" aria-expanded="false" aria-controls="msgDoctorSearchPanel">+ Message a clinician</button>
-            <div class="msg-search-panel" id="msgDoctorSearchPanel" hidden>
-              <label class="nhsuk-label" for="msgDoctorSearchInput">Search by name, email, or GMC number</label>
-              <input type="text" class="nhsuk-input" id="msgDoctorSearchInput" placeholder="e.g. Smith, GMC 1234567" autocomplete="off" aria-autocomplete="list" aria-controls="msgDoctorSearchResults">
-              <p id="msgSearchStatus" class="msg-search-status" role="status" aria-live="polite"></p>
+            <div class="msg-search-panel" id="msgDoctorSearchPanel">
+              <label class="nhsuk-label" for="msgDoctorSearchInput">Search clinicians (name, email, or GMC)</label>
+              <input type="text" class="nhsuk-input" id="msgDoctorSearchInput" placeholder="Find unread or open a past conversation…" autocomplete="off" aria-autocomplete="list" aria-controls="msgDoctorSearchResults">
+              <p id="msgSearchStatus" class="msg-search-status" role="status" aria-live="polite">Search to message a clinician or open read history.</p>
               <ul id="msgDoctorSearchResults" class="msg-doctor-results" role="listbox" hidden aria-label="Matching clinicians"></ul>
             </div>
-            <div class="msg-sidebar-header">Clinician conversations</div>
+            <div class="msg-sidebar-header">Unread messages</div>
             <div id="convItems"><p class="msg-no-conv">No conversations yet.</p></div>
           </div>
         </div>
@@ -129,7 +130,11 @@
                 <div class="msg-compose-toolbar">
                   <input type="file" id="msgFileInput" multiple hidden
                     accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
-                  <button type="button" class="msg-attach-btn" id="btnAttach">Attach file</button>
+                  <button type="button" class="msg-attach-btn" id="btnAttach" aria-label="Attach file" title="Attach file">
+                    <svg class="msg-attach-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <path fill="currentColor" d="M18.5 10.5V18a4.5 4.5 0 0 1-9 0V6a3 3 0 0 1 6 0v10a1.5 1.5 0 0 1-3 0V8h-1.5v8a4.5 4.5 0 1 0 9 0V6h-1.5z"/>
+                    </svg>
+                  </button>
                   <ul class="msg-pending-files" id="msgPendingFiles" hidden aria-label="Files to send"></ul>
                 </div>
               </div>
@@ -180,9 +185,18 @@
       var _myId = null;
       var _activeConvId = null;
       var _activeConv = null;
+      var _allConvs = [];
       var _convs = [];
       var _pollTimer = null;
       var _inboxPollTimer = null;
+
+      function sidebarConversations() {
+        var unread = _allConvs.filter(function (c) { return Number(c.unread_count || 0) > 0; });
+        if (_activeConvId === null) return unread;
+        var active = _allConvs.find(function (c) { return c.id === _activeConvId; });
+        if (!active || unread.some(function (c) { return c.id === active.id; })) return unread;
+        return [active].concat(unread);
+      }
 
       function notifyNavMessages() {
         if (window.NHSNavAccount && typeof NHSNavAccount.notifyMessagesChanged === 'function') {
@@ -203,7 +217,7 @@
 
       async function loadThread(convId) {
         _activeConvId = convId;
-        _activeConv = _convs.find(function (c) { return c.id === convId; }) || null;
+        _activeConv = _allConvs.find(function (c) { return c.id === convId; }) || null;
         var threadName = document.getElementById('threadName');
         var threadMeta = document.getElementById('threadMeta');
         var compose = document.getElementById('composeArea');
@@ -242,8 +256,9 @@
       function renderConvList() {
         var container = document.getElementById('convItems');
         if (!container) return;
+        _convs = sidebarConversations();
         if (!_convs.length) {
-          container.innerHTML = '<p class="msg-no-conv">No conversations yet. Use <strong>Message a clinician</strong> above to start one.</p>';
+          container.innerHTML = '<p class="msg-no-conv">No unread messages. Search above to find a clinician or open a past conversation.</p>';
           return;
         }
         container.innerHTML = _convs.map(function (c) {
@@ -265,7 +280,7 @@
       async function loadConversations(selectFirst) {
         try {
           var data = await apiJson('/api/hr/messages');
-          _convs = data.conversations || [];
+          _allConvs = data.conversations || [];
           renderConvList();
           if (selectFirst && _convs.length && _activeConvId === null) {
             await loadThread(_convs[0].id);
@@ -329,7 +344,6 @@
       });
 
       var _doctorSearchTimer = null;
-      var _doctorSearchOpen = false;
       var _lastDoctorSearch = [];
 
       function setDoctorSearchStatus(msg) {
@@ -343,8 +357,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ doctor_user_id: doctorId }),
         });
-        if (!_convs.find(function (c) { return c.id === conv.id; })) {
-          _convs.unshift(conv);
+        if (!_allConvs.find(function (c) { return c.id === conv.id; })) {
+          _allConvs.unshift(conv);
+        } else {
+          _allConvs = _allConvs.map(function (c) { return c.id === conv.id ? conv : c; });
         }
         renderConvList();
         await loadThread(conv.id);
@@ -359,7 +375,7 @@
           listEl.hidden = true;
           listEl.innerHTML = '';
           _lastDoctorSearch = [];
-          setDoctorSearchStatus('Type a name, email, or GMC number.');
+          setDoctorSearchStatus('Search to message a clinician or open read history.');
           return;
         }
         setDoctorSearchStatus('Searching…');
@@ -394,23 +410,6 @@
         }
       }
 
-      document.getElementById('btnToggleDoctorSearch').addEventListener('click', function () {
-        var panel = document.getElementById('msgDoctorSearchPanel');
-        var btn = this;
-        _doctorSearchOpen = !_doctorSearchOpen;
-        if (panel) panel.hidden = !_doctorSearchOpen;
-        btn.setAttribute('aria-expanded', _doctorSearchOpen ? 'true' : 'false');
-        if (_doctorSearchOpen) {
-          var inp = document.getElementById('msgDoctorSearchInput');
-          if (inp) inp.focus();
-          runDoctorSearch();
-        } else {
-          setDoctorSearchStatus('');
-          var lr = document.getElementById('msgDoctorSearchResults');
-          if (lr) { lr.hidden = true; lr.innerHTML = ''; }
-        }
-      });
-
       document.getElementById('msgDoctorSearchInput').addEventListener('input', function () {
         clearTimeout(_doctorSearchTimer);
         _doctorSearchTimer = setTimeout(runDoctorSearch, 280);
@@ -425,12 +424,9 @@
         try {
           setDoctorSearchStatus('Opening conversation…');
           await openConversationWithDoctor(doc.id);
-          var panel = document.getElementById('msgDoctorSearchPanel');
-          var btn = document.getElementById('btnToggleDoctorSearch');
-          _doctorSearchOpen = false;
-          if (panel) panel.hidden = true;
-          if (btn) btn.setAttribute('aria-expanded', 'false');
-          setDoctorSearchStatus('');
+          var inp = document.getElementById('msgDoctorSearchInput');
+          if (inp) inp.value = '';
+          setDoctorSearchStatus('Search to message a clinician or open read history.');
           var lr = document.getElementById('msgDoctorSearchResults');
           if (lr) { lr.hidden = true; lr.innerHTML = ''; }
         } catch (err) {
@@ -470,7 +466,8 @@
         } else if (_convs.length) {
           await loadThread(_convs[0].id);
         }
-        startInboxPolling();
+        if (_inboxPollTimer) clearInterval(_inboxPollTimer);
+        _inboxPollTimer = setInterval(function () { loadConversations(false); }, 15000);
         notifyNavMessages();
       })();
     })();

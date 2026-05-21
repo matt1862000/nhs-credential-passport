@@ -230,8 +230,16 @@
     if (foot) foot.href = msgPath;
     if (!body) return;
 
+    if (isHr) {
+      conversations = conversations.filter(function (c) {
+        return Number(c.unread_count || 0) > 0;
+      });
+    }
+
     if (!conversations.length) {
-      body.innerHTML = '<p class="nhsuk-topnav__msg-preview-empty">No conversations yet.</p>';
+      body.innerHTML = isHr
+        ? '<p class="nhsuk-topnav__msg-preview-empty">No unread messages. Open Messages to search clinicians.</p>'
+        : '<p class="nhsuk-topnav__msg-preview-empty">No conversations yet.</p>';
       return;
     }
 
