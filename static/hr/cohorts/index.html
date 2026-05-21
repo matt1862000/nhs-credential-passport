@@ -104,7 +104,7 @@
                 <p class="cohort-wizard-roster-title" id="createRosterTitle">Add clinicians</p>
                 <div class="nhsuk-form-group" id="cohortEmailsGroup">
                   <div id="createPanelManual" hidden>
-                    <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required. Add name and GMC below, then click <strong>Add</strong> — or fill every field and submit; we include anything still in the form.</span>
+                    <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required. Fill in the fields, then click <strong>Add</strong>. When you submit the cohort, anything still in the form is included automatically.</span>
                     <div class="cohort-add-card" id="cohortAddCard" role="group" aria-labelledby="cohortAddCardTitle">
                       <p id="cohortAddCardTitle" class="cohort-add-card__title">Add one clinician</p>
                       <div class="cohort-add-card__primary">
@@ -266,7 +266,7 @@
               <p class="cohort-wizard-roster-title" id="addRosterTitle">Add clinicians</p>
               <div class="nhsuk-form-group" id="addEmailsGroup">
                 <div id="addPanelManual" hidden>
-                  <span class="nhsuk-hint nhsuk-hint--secondary">Personal email is required. Add name and GMC below, then click <strong>Add</strong> — or fill every field and submit; we include anything still in the form.</span>
+                  <span class="nhsuk-hint nhsuk-hint--secondary">Personal email is required. Fill in the fields, then click <strong>Add</strong>. When you submit, anything still in the form is included automatically.</span>
                   <div class="cohort-add-card" id="addAddCard" role="group" aria-labelledby="addAddCardTitle">
                     <p id="addAddCardTitle" class="cohort-add-card__title">Add one clinician</p>
                     <div class="cohort-add-card__primary">
@@ -522,9 +522,6 @@
           opts = opts || {};
           var personal = personalEl ? String(personalEl.value || '').trim().toLowerCase() : '';
           var dn = nameEl ? String(nameEl.value || '').trim() : '';
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/ca6415be-e64f-4d5e-a89c-533242c5b73d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'36ab9d'},body:JSON.stringify({sessionId:'36ab9d',hypothesisId:'A',location:'cohorts/index.html:collectMemberFromForm',message:'collect form fields',data:{rosterListId:listEl&&listEl.id,nameElId:nameEl&&nameEl.id,nameElTag:nameEl&&nameEl.tagName,dnLen:dn.length,hasPersonal:!!personal},timestamp:Date.now()})}).catch(function(){});
-          // #endregion
           var gmcRaw = gmcEl ? String(gmcEl.value || '').trim() : '';
           var m = { personal_email: personal };
           if (dn) m.display_name = dn;
@@ -560,9 +557,6 @@
               if ((m.display_name || '').trim()) byPersonal[personal].display_name = m.display_name.trim();
               if (m.gmc_number) byPersonal[personal].gmc_number = m.gmc_number;
             }
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/ca6415be-e64f-4d5e-a89c-533242c5b73d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'36ab9d'},body:JSON.stringify({sessionId:'36ab9d',hypothesisId:'C',location:'cohorts/index.html:upsertMember:merge',message:'merged existing roster row',data:{storedDnLen:(byPersonal[personal].display_name||'').length,incomingDnLen:(m.display_name||'').length,silent:!!silent},timestamp:Date.now()})}).catch(function(){});
-            // #endregion
             if (!silent) setError('Already in the list — details updated if provided.');
             render();
             return false;
@@ -570,9 +564,6 @@
           if (!silent) setError('');
           byPersonal[personal] = m;
           members.push(m);
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/ca6415be-e64f-4d5e-a89c-533242c5b73d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'36ab9d'},body:JSON.stringify({sessionId:'36ab9d',hypothesisId:'C',location:'cohorts/index.html:upsertMember:new',message:'added new roster row',data:{storedDnLen:(m.display_name||'').length,silent:!!silent},timestamp:Date.now()})}).catch(function(){});
-          // #endregion
           render();
           return true;
         }
@@ -620,17 +611,9 @@
             addFromForm();
           });
         }
-        function syncFormToRosterQuiet() {
-          var collected = collectMemberFromForm({ lenientGmc: true });
-          if (collected.member && collected.member.personal_email) {
-            upsertMember(collected.member, true);
-          }
-        }
         fieldEls.forEach(function (el) {
           el.addEventListener('input', function () { setError(''); });
         });
-        if (nameEl) nameEl.addEventListener('blur', syncFormToRosterQuiet);
-        if (gmcEl) gmcEl.addEventListener('blur', syncFormToRosterQuiet);
         if (listEl) {
           listEl.addEventListener('click', function (e) {
             var btn = e.target.closest('[data-remove]');
@@ -646,9 +629,6 @@
 
         var fileInp = opts.fileInputId ? document.getElementById(opts.fileInputId) : null;
         var fileNameEl = opts.fileNameId ? document.getElementById(opts.fileNameId) : null;
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/ca6415be-e64f-4d5e-a89c-533242c5b73d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'36ab9d'},body:JSON.stringify({sessionId:'36ab9d',hypothesisId:'A',location:'cohorts/index.html:wireEmailRoster:init',message:'roster wired',data:{listId:opts.listId,nameInputId:opts.nameInputId,nameElId:nameEl&&nameEl.id,nameElTag:nameEl&&nameEl.tagName,fileNameElId:fileNameEl&&fileNameEl.id},timestamp:Date.now()})}).catch(function(){});
-        // #endregion
         if (fileInp) {
           fileInp.addEventListener('change', function () {
             setRosterUploadStatus(opts.fileStatusId, '', false);
@@ -703,7 +683,7 @@
           },
           getMembers: function () {
             flushPendingForm();
-            var payload = members.map(function (m) {
+            return members.map(function (m) {
               var dn = (m.display_name && String(m.display_name).trim()) || '';
               return {
                 personal_email: m.personal_email,
@@ -711,10 +691,6 @@
                 gmc_number: m.gmc_number || undefined,
               };
             });
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/ca6415be-e64f-4d5e-a89c-533242c5b73d',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'36ab9d'},body:JSON.stringify({sessionId:'36ab9d',hypothesisId:'E',location:'cohorts/index.html:getMembers',message:'payload for API',data:{count:payload.length,withName:payload.filter(function(x){return !!x.display_name;}).length},timestamp:Date.now()})}).catch(function(){});
-            // #endregion
-            return payload;
           },
           clear: function () {
             members = [];
