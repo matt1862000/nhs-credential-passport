@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260522-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260523-1">
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
@@ -65,15 +65,38 @@
                 <input class="nhsuk-input" type="text" id="cohortName" required placeholder="e.g. February 2026" maxlength="120">
               </div>
               <div class="nhsuk-form-group" id="cohortEmailsGroup">
-                <label class="nhsuk-label" for="cohortEmailInput">NHS work emails</label>
-                <span class="nhsuk-hint nhsuk-hint--secondary">Add each clinician&rsquo;s NHS work email, or import a spreadsheet below (name, GMC, personal email columns optional — blanks are fine).</span>
+                <label class="nhsuk-label" id="cohortAddSectionLabel">Add clinicians</label>
+                <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">NHS work email is required. Add people one at a time below, or import a spreadsheet.</span>
                 <div id="cohortEmailsList" class="cohort-email-list" aria-live="polite"></div>
-                <div class="cohort-email-add">
-                  <input class="nhsuk-input" type="email" id="cohortEmailInput" placeholder="name.surname@nhs.net" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="email" aria-describedby="cohortEmailError cohortEmailsCount">
-                  <button type="button" class="nhsuk-button" id="btnCohortEmailAdd">Add</button>
+                <p class="cohort-list-empty" id="cohortEmailsListEmpty">No clinicians added yet.</p>
+                <div class="cohort-add-card" id="cohortAddCard" role="group" aria-labelledby="cohortAddCardTitle">
+                  <p id="cohortAddCardTitle" class="cohort-add-card__title">Add one clinician</p>
+                  <div class="cohort-add-card__primary">
+                    <div class="cohort-add-field cohort-add-field--grow">
+                      <label class="nhsuk-label" for="cohortEmailInput">NHS work email</label>
+                      <input class="nhsuk-input" type="email" id="cohortEmailInput" name="cohort_nhs_email" placeholder="firstname.surname123@nhs.net" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="email" aria-describedby="cohortEmailError cohortEmailsCount cohortAddOptionalHint">
+                    </div>
+                    <button type="button" class="nhsuk-button cohort-add-card__btn" id="btnCohortEmailAdd">Add</button>
+                  </div>
+                  <p class="cohort-add-card__optional-hint" id="cohortAddOptionalHint">Optional — pre-fills their profile when they first sign in</p>
+                  <div class="cohort-add-card__grid">
+                    <div class="cohort-add-field">
+                      <label class="nhsuk-label nhsuk-label--s" for="cohortNameInput">Full name</label>
+                      <input class="nhsuk-input" type="text" id="cohortNameInput" name="cohort_full_name" placeholder="Jane Smith" autocomplete="name" maxlength="200">
+                    </div>
+                    <div class="cohort-add-field">
+                      <label class="nhsuk-label nhsuk-label--s" for="cohortGmcInput">GMC number</label>
+                      <input class="nhsuk-input" type="text" id="cohortGmcInput" name="cohort_gmc" placeholder="1234567" inputmode="numeric" maxlength="11" aria-describedby="cohortGmcHint">
+                      <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortGmcHint">Seven digits</span>
+                    </div>
+                    <div class="cohort-add-field cohort-add-field--wide">
+                      <label class="nhsuk-label nhsuk-label--s" for="cohortPersonalEmailInput">Personal email</label>
+                      <input class="nhsuk-input" type="email" id="cohortPersonalEmailInput" name="cohort_personal_email" placeholder="jane.smith@gmail.com" spellcheck="false" autocapitalize="off" autocomplete="email" maxlength="200">
+                    </div>
+                  </div>
                 </div>
                 <p class="cohort-email-error" id="cohortEmailError" hidden role="alert"></p>
-                <span class="cohort-email-count cohort-email-count--empty" id="cohortEmailsCount" aria-live="polite">0 addresses</span>
+                <span class="cohort-email-count cohort-email-count--empty" id="cohortEmailsCount" aria-live="polite">0 clinicians</span>
                 <p class="hr-roster-or">Or upload a file</p>
                 <div class="hr-roster-upload">
                   <label class="nhsuk-label nhsuk-label--s" for="cohortEmailsFile">CSV or Excel</label>
@@ -159,15 +182,38 @@
           </details>
           <form id="formAddMembers" class="hr-bulk-form" novalidate>
             <div class="nhsuk-form-group" id="addEmailsGroup">
-              <label class="nhsuk-label" for="addEmailInput">NHS work emails</label>
-              <span class="nhsuk-hint nhsuk-hint--secondary">Add NHS work emails one by one, or import a spreadsheet (name, GMC, personal email optional).</span>
+              <label class="nhsuk-label" id="addAddSectionLabel">Add clinicians</label>
+              <span class="nhsuk-hint nhsuk-hint--secondary" id="addAddSectionHint">NHS work email is required. Add people one at a time below, or import a spreadsheet.</span>
               <div id="addEmailsList" class="cohort-email-list" aria-live="polite"></div>
-              <div class="cohort-email-add">
-                <input class="nhsuk-input" type="email" id="addEmailInput" placeholder="name.surname@nhs.net" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="email" aria-describedby="addEmailError addEmailsCount">
-                <button type="button" class="nhsuk-button" id="btnAddEmailAdd">Add</button>
+              <p class="cohort-list-empty" id="addEmailsListEmpty">No clinicians added yet.</p>
+              <div class="cohort-add-card" id="addAddCard" role="group" aria-labelledby="addAddCardTitle">
+                <p id="addAddCardTitle" class="cohort-add-card__title">Add one clinician</p>
+                <div class="cohort-add-card__primary">
+                  <div class="cohort-add-field cohort-add-field--grow">
+                    <label class="nhsuk-label" for="addEmailInput">NHS work email</label>
+                    <input class="nhsuk-input" type="email" id="addEmailInput" name="add_nhs_email" placeholder="firstname.surname123@nhs.net" spellcheck="false" autocapitalize="off" autocomplete="off" inputmode="email" aria-describedby="addEmailError addEmailsCount addAddOptionalHint">
+                  </div>
+                  <button type="button" class="nhsuk-button cohort-add-card__btn" id="btnAddEmailAdd">Add</button>
+                </div>
+                <p class="cohort-add-card__optional-hint" id="addAddOptionalHint">Optional — pre-fills their profile when they first sign in</p>
+                <div class="cohort-add-card__grid">
+                  <div class="cohort-add-field">
+                    <label class="nhsuk-label nhsuk-label--s" for="addNameInput">Full name</label>
+                    <input class="nhsuk-input" type="text" id="addNameInput" name="add_full_name" placeholder="Jane Smith" autocomplete="name" maxlength="200">
+                  </div>
+                  <div class="cohort-add-field">
+                    <label class="nhsuk-label nhsuk-label--s" for="addGmcInput">GMC number</label>
+                    <input class="nhsuk-input" type="text" id="addGmcInput" name="add_gmc" placeholder="1234567" inputmode="numeric" maxlength="11" aria-describedby="addGmcHint">
+                    <span class="nhsuk-hint nhsuk-hint--secondary" id="addGmcHint">Seven digits</span>
+                  </div>
+                  <div class="cohort-add-field cohort-add-field--wide">
+                    <label class="nhsuk-label nhsuk-label--s" for="addPersonalEmailInput">Personal email</label>
+                    <input class="nhsuk-input" type="email" id="addPersonalEmailInput" name="add_personal_email" placeholder="jane.smith@gmail.com" spellcheck="false" autocapitalize="off" autocomplete="email" maxlength="200">
+                  </div>
+                </div>
               </div>
               <p class="cohort-email-error" id="addEmailError" hidden role="alert"></p>
-              <span class="cohort-email-count cohort-email-count--empty" id="addEmailsCount" aria-live="polite">0 addresses</span>
+              <span class="cohort-email-count cohort-email-count--empty" id="addEmailsCount" aria-live="polite">0 clinicians</span>
               <p class="hr-roster-or">Or upload a file</p>
               <div class="hr-roster-upload">
                 <label class="nhsuk-label nhsuk-label--s" for="addEmailsFile">CSV or Excel</label>
@@ -256,6 +302,22 @@
         return bits.length ? bits.join(' · ') : '';
       }
 
+      function memberMetaTags(m) {
+        var tags = [];
+        if (m.display_name) {
+          tags.push('<span class="cohort-email-row__tag">' + esc(m.display_name) + '</span>');
+        }
+        if (m.gmc_number) {
+          tags.push('<span class="cohort-email-row__tag">GMC ' + esc(m.gmc_number) + '</span>');
+        }
+        if (m.personal_email) {
+          tags.push('<span class="cohort-email-row__tag cohort-email-row__tag--muted">' + esc(m.personal_email) + '</span>');
+        }
+        return tags.length ? '<span class="cohort-email-row__tags">' + tags.join('') + '</span>' : '';
+      }
+
+      var EMAIL_LINE_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
       function setRosterUploadStatus(statusId, msg, isError) {
         var el = document.getElementById(statusId);
         if (!el) return;
@@ -274,12 +336,18 @@
         var members = [];
         var byEmail = Object.create(null);
         var listEl = document.getElementById(opts.listId);
-        var inputEl = document.getElementById(opts.inputId);
+        var listEmptyEl = opts.listEmptyId ? document.getElementById(opts.listEmptyId) : null;
+        var emailEl = document.getElementById(opts.emailInputId);
+        var nameEl = opts.nameInputId ? document.getElementById(opts.nameInputId) : null;
+        var gmcEl = opts.gmcInputId ? document.getElementById(opts.gmcInputId) : null;
+        var personalEl = opts.personalInputId ? document.getElementById(opts.personalInputId) : null;
         var addBtn = document.getElementById(opts.addBtnId);
+        var addCard = opts.addCardId ? document.getElementById(opts.addCardId) : null;
         var countEl = document.getElementById(opts.countId);
         var errEl = opts.errorId ? document.getElementById(opts.errorId) : null;
-        var formGroup = inputEl && inputEl.closest('.nhsuk-form-group');
+        var formGroup = opts.formGroupId ? document.getElementById(opts.formGroupId) : null;
         var parseApi = rosterParse();
+        var fieldEls = [emailEl, nameEl, gmcEl, personalEl].filter(Boolean);
 
         function setError(msg) {
           if (errEl) {
@@ -287,6 +355,7 @@
             errEl.hidden = !msg;
           }
           if (formGroup) formGroup.classList.toggle('nhsuk-form-group--error', !!msg);
+          if (emailEl) emailEl.closest('.cohort-add-field').classList.toggle('cohort-add-field--error', !!msg);
         }
 
         function updateCount() {
@@ -294,6 +363,7 @@
           if (!countEl) return;
           countEl.textContent = n === 1 ? '1 clinician' : n + ' clinicians';
           countEl.classList.toggle('cohort-email-count--empty', n === 0);
+          if (listEmptyEl) listEmptyEl.hidden = n > 0;
         }
 
         function render() {
@@ -304,11 +374,11 @@
             return;
           }
           listEl.innerHTML = members.map(function (m, i) {
-            var meta = memberMetaLine(m);
+            var tags = memberMetaTags(m);
             return '<div class="cohort-email-row">'
-              + '<div style="flex:1;min-width:0;">'
+              + '<div class="cohort-email-row__body">'
               + '<span class="cohort-email-row__addr">' + esc(m.email) + '</span>'
-              + (meta ? '<span class="cohort-email-row__meta">' + meta + '</span>' : '')
+              + tags
               + '</div>'
               + '<button type="button" class="cohort-email-row__remove" data-remove="' + i + '" aria-label="Remove ' + esc(m.email) + '">&times;</button>'
               + '</div>';
@@ -316,17 +386,46 @@
           updateCount();
         }
 
+        function normalizeGmc(raw) {
+          var g = String(raw || '').replace(/\D/g, '');
+          return g.length === 7 ? g : '';
+        }
+
+        function collectMemberFromForm() {
+          var email = emailEl ? String(emailEl.value || '').trim().toLowerCase() : '';
+          var dn = nameEl ? String(nameEl.value || '').trim() : '';
+          var gmcRaw = gmcEl ? String(gmcEl.value || '').trim() : '';
+          var pe = personalEl ? String(personalEl.value || '').trim().toLowerCase() : '';
+          var m = { email: email };
+          if (dn) m.display_name = dn;
+          var gmc = normalizeGmc(gmcRaw);
+          if (gmcRaw && !gmc) return { error: 'GMC number must be exactly 7 digits.' };
+          if (gmc) m.gmc_number = gmc;
+          if (pe) {
+            if (!EMAIL_LINE_RE.test(pe)) return { error: 'Enter a valid personal email address.' };
+            m.personal_email = pe;
+          }
+          return { member: m };
+        }
+
+        function clearAddForm() {
+          fieldEls.forEach(function (el) {
+            el.value = '';
+          });
+          if (emailEl) emailEl.focus();
+        }
+
         function upsertMember(m, silent) {
           if (!m || !m.email) return false;
           var email = String(m.email).trim().toLowerCase();
           if (!parseApi || !parseApi.isValidEmail(email)) {
-            if (!silent) setError('Enter a valid NHS work email (e.g. name.surname@nhs.net).');
+            if (!silent) setError('Enter a valid NHS work email (e.g. firstname.surname123@nhs.net).');
             return false;
           }
           m.email = email;
           if (byEmail[email]) {
             if (parseApi.mergeMember) parseApi.mergeMember(byEmail[email], m);
-            if (!silent) setError('');
+            if (!silent) setError('Already in the list — details updated if provided.');
             render();
             return false;
           }
@@ -337,15 +436,20 @@
           return true;
         }
 
-        function tryAddEmail(raw, silent) {
-          return upsertMember({ email: String(raw || '').trim() }, silent);
-        }
-
-        function addFromInput() {
-          if (!inputEl) return;
-          tryAddEmail(inputEl.value, false);
-          inputEl.value = '';
-          inputEl.focus();
+        function addFromForm() {
+          var collected = collectMemberFromForm();
+          if (collected.error) {
+            setError(collected.error);
+            return;
+          }
+          if (!collected.member.email) {
+            setError('NHS work email is required.');
+            if (emailEl) emailEl.focus();
+            return;
+          }
+          if (upsertMember(collected.member, false)) {
+            clearAddForm();
+          }
         }
 
         function mergeFromMembers(rows) {
@@ -358,16 +462,18 @@
           return { added: added, skipped: skipped, total: members.length };
         }
 
-        if (addBtn) addBtn.addEventListener('click', addFromInput);
-        if (inputEl) {
-          inputEl.addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              addFromInput();
-            }
+        if (addBtn) addBtn.addEventListener('click', addFromForm);
+        var keyTarget = addCard || formGroup;
+        if (keyTarget) {
+          keyTarget.addEventListener('keydown', function (e) {
+            if (e.key !== 'Enter' || e.target.tagName === 'TEXTAREA') return;
+            e.preventDefault();
+            addFromForm();
           });
-          inputEl.addEventListener('input', function () { setError(''); });
         }
+        fieldEls.forEach(function (el) {
+          el.addEventListener('input', function () { setError(''); });
+        });
         if (listEl) {
           listEl.addEventListener('click', function (e) {
             var btn = e.target.closest('[data-remove]');
@@ -449,7 +555,7 @@
             byEmail = Object.create(null);
             render();
             setError('');
-            if (inputEl) inputEl.value = '';
+            clearAddForm();
           },
         };
       }
@@ -833,7 +939,13 @@
         updateWelcomePreview();
         _createEmailRoster = wireEmailRoster({
           listId: 'cohortEmailsList',
-          inputId: 'cohortEmailInput',
+          listEmptyId: 'cohortEmailsListEmpty',
+          formGroupId: 'cohortEmailsGroup',
+          addCardId: 'cohortAddCard',
+          emailInputId: 'cohortEmailInput',
+          nameInputId: 'cohortNameInput',
+          gmcInputId: 'cohortGmcInput',
+          personalInputId: 'cohortPersonalEmailInput',
           addBtnId: 'btnCohortEmailAdd',
           countId: 'cohortEmailsCount',
           errorId: 'cohortEmailError',
@@ -844,7 +956,13 @@
         });
         _addEmailRoster = wireEmailRoster({
           listId: 'addEmailsList',
-          inputId: 'addEmailInput',
+          listEmptyId: 'addEmailsListEmpty',
+          formGroupId: 'addEmailsGroup',
+          addCardId: 'addAddCard',
+          emailInputId: 'addEmailInput',
+          nameInputId: 'addNameInput',
+          gmcInputId: 'addGmcInput',
+          personalInputId: 'addPersonalEmailInput',
           addBtnId: 'btnAddEmailAdd',
           countId: 'addEmailsCount',
           errorId: 'addEmailError',

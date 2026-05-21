@@ -397,15 +397,99 @@
       color: var(--nhsuk-secondary-text);
     }
     .cohort-email-row__remove:hover { color: var(--nhsuk-error); }
-    .cohort-email-add {
-      display: flex;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-      align-items: flex-start;
+    .cohort-list-empty {
+      margin: 0 0 0.65rem 0;
+      font-size: 0.875rem;
+      color: var(--nhsuk-secondary-text);
+      font-style: italic;
       max-width: 36rem;
     }
-    .cohort-email-add .nhsuk-input { flex: 1; min-width: 14rem; margin-bottom: 0; }
-    .cohort-email-add .nhsuk-button { margin-bottom: 0; flex-shrink: 0; }
+    .cohort-list-empty[hidden] { display: none !important; }
+    .cohort-add-card {
+      max-width: 40rem;
+      margin: 0.5rem 0 0.75rem 0;
+      padding: 1rem 1.1rem 1.05rem;
+      border: 1px solid rgba(29, 78, 216, 0.22);
+      border-radius: 6px;
+      background: linear-gradient(165deg, #f8fafc 0%, #fff 55%);
+      box-shadow: 0 2px 10px rgba(33, 43, 50, 0.05);
+    }
+    .cohort-add-card__title {
+      margin: 0 0 0.75rem 0;
+      font-size: 0.9375rem;
+      font-weight: 700;
+      color: var(--nhsuk-text);
+    }
+    .cohort-add-card__primary {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      gap: 0.65rem 0.75rem;
+      margin-bottom: 0.65rem;
+    }
+    .cohort-add-card__btn {
+      margin-bottom: 0;
+      flex-shrink: 0;
+      min-height: 2.5rem;
+    }
+    .cohort-add-card__optional-hint {
+      margin: 0 0 0.5rem 0;
+      font-size: 0.8125rem;
+      color: var(--nhsuk-secondary-text);
+      line-height: 1.4;
+    }
+    .cohort-add-card__grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.65rem 0.75rem;
+      padding-top: 0.65rem;
+      border-top: 1px dashed var(--nhsuk-border);
+    }
+    @media (max-width: 520px) {
+      .cohort-add-card__grid { grid-template-columns: 1fr; }
+      .cohort-add-card__primary { flex-direction: column; align-items: stretch; }
+      .cohort-add-card__btn { width: 100%; }
+    }
+    .cohort-add-field { margin-bottom: 0; min-width: 0; }
+    .cohort-add-field--grow { flex: 1; min-width: min(100%, 14rem); }
+    .cohort-add-field--wide { grid-column: 1 / -1; }
+    .cohort-add-field .nhsuk-label { margin-bottom: 0.25rem; }
+    .cohort-add-field .nhsuk-input { margin-bottom: 0; }
+    .cohort-add-field .nhsuk-hint { margin-top: 0.2rem; margin-bottom: 0; }
+    .cohort-add-field--error .nhsuk-input {
+      border-color: var(--nhsuk-error);
+      box-shadow: 0 0 0 2px rgba(218, 41, 28, 0.12);
+    }
+    .cohort-email-row__body {
+      flex: 1;
+      min-width: 0;
+    }
+    .cohort-email-row__tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem 0.4rem;
+      margin-top: 0.35rem;
+    }
+    .cohort-email-row__tag {
+      display: inline-block;
+      padding: 0.1rem 0.45rem;
+      font-size: 0.75rem;
+      line-height: 1.35;
+      font-weight: 600;
+      color: var(--nhsuk-text);
+      background: var(--nhsuk-panel);
+      border: 1px solid var(--nhsuk-border);
+      border-radius: 4px;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cohort-email-row__tag--muted {
+      font-weight: 500;
+      color: var(--nhsuk-secondary-text);
+      background: #fff;
+    }
     .cohort-email-count {
       display: block;
       margin-top: 0.35rem;
