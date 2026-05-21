@@ -57,7 +57,7 @@ def _first_name_from_nhs_email(email: str) -> str:
 
 
 def _cohort_welcome_name(doc: dict) -> str:
-    """Prefer profile display name; fall back to first name from NHS email."""
+    """Prefer profile display name; fall back to first name from email."""
     display = (doc.get("display_name") or "").strip()
     if display:
         return display
@@ -572,8 +572,6 @@ def auth_login(request: Request, body: dict):
     password = body.get("password") or ""
     u = db.user_get_by_email(email)
     if not u:
-        u = db.user_get_by_nhs_work_email(email)
-    if not u:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     try:
         ok = bcrypt.checkpw(
@@ -617,7 +615,6 @@ def auth_me(request: Request):
         "display_name": db.user_effective_display_name(u),
         "current_trust": u.get("current_trust"),
         "personal_email": u.get("email"),
-        "nhs_work_email": u.get("nhs_work_email"),
         "must_change_password": bool(u.get("must_change_password")),
         "onboarding_completed": bool(u.get("onboarding_completed")),
     }
@@ -683,14 +680,6 @@ async def me_profile_put(request: Request):
     else:
         current_trust = u.get("current_trust")
 
-    if "nhs_work_email" in body:
-        nhs_work_email = _normalize_email(str(body.get("nhs_work_email") or ""))
-        if nhs_work_email and not EMAIL_RE.match(nhs_work_email):
-            raise HTTPException(status_code=400, detail="Invalid NHS work email address")
-        nhs_work_email = nhs_work_email or None
-    else:
-        nhs_work_email = u.get("nhs_work_email")
-
     merged = {
         "display_name": display_name,
         "gmc_number": gmc,
@@ -717,8 +706,6 @@ async def me_profile_put(request: Request):
         }
     )
     db.user_set_profile(uid, display_name, gmc, current_trust)
-    if "nhs_work_email" in body:
-        db.user_set_nhs_work_email(uid, nhs_work_email)
     if not db.user_is_premium(u) and _profile_is_complete(merged):
         db.user_mark_onboarding_complete(uid)
     if not db.user_is_premium(u) and _profile_is_complete(merged) and not was_complete:
@@ -874,7 +861,7 @@ async def me_shares_post(request: Request):
 
     created = db.share_session_create(
         doctor_user_id=uid,
-        doctor_email=u.get("nhs_work_email") or u.get("email") or "",
+        doctor_email=u.get("email") or "",
         items=items,
         share_kind="portfolio" if portfolio else "review",
         target_trust=u.get("current_trust") or None,
@@ -1894,13 +1881,8 @@ def _parse_cohort_emails(raw_emails) -> list[str]:
     return out
 
 
-def _looks_nhs_work_email(email: str) -> bool:
-    e = (email or "").strip().lower()
-    return e.endswith("@nhs.net") or e.endswith("@nhs.uk") or e.endswith("@nhs.scot")
-
-
 def _cohort_member_from_item(item) -> Optional[dict]:
-    """Normalize one roster row: personal_email (login) required; nhs_work_email optional."""
+    """Normalize one roster row: personal_email (login) required."""
     if isinstance(item, str):
         personal = _normalize_email(item)
         return {"personal_email": personal} if personal else None
@@ -1911,41 +1893,17 @@ def _cohort_member_from_item(item) -> Optional[dict]:
             item.get("personal_email")
             or item.get("personal")
             or item.get("login_email")
+            or item.get("email")
             or ""
         )
     )
-    nhs = _normalize_email(
-        str(
-            item.get("nhs_work_email")
-            or item.get("nhs_email")
-            or item.get("work_email")
-            or ""
-        )
-    )
-    legacy = _normalize_email(str(item.get("email") or ""))
-    if legacy and not personal and not nhs:
-        if _looks_nhs_work_email(legacy):
-            nhs = legacy
-        else:
-            personal = legacy
-    elif legacy and personal and legacy != personal and not nhs and _looks_nhs_work_email(legacy):
-        nhs = legacy
-    elif legacy and not personal:
-        if _looks_nhs_work_email(legacy):
-            nhs = legacy
-        else:
-            personal = legacy
     if personal and not EMAIL_RE.match(personal):
         personal = ""
-    if nhs and not EMAIL_RE.match(nhs):
-        nhs = ""
     if not personal:
         return None
     dn = str(item.get("display_name") or item.get("full_name") or item.get("name") or "").strip()
     gmc_raw = str(item.get("gmc_number") or item.get("gmc") or "").strip()
     out: dict = {"personal_email": personal}
-    if nhs:
-        out["nhs_work_email"] = nhs
     if dn:
         out["display_name"] = dn
     if gmc_raw:
@@ -1955,7 +1913,7 @@ def _cohort_member_from_item(item) -> Optional[dict]:
 
 def _parse_cohort_members(body: dict) -> list[dict]:
     """
-    Accept members: [{personal_email, nhs_work_email?, display_name?, gmc_number?}, ...]
+    Accept members: [{personal_email, display_name?, gmc_number?}, ...]
     or legacy emails: [string, ...].
     """
     raw_members = body.get("members")
@@ -1988,12 +1946,6 @@ def _validate_cohort_members(members: list[dict]) -> None:
         personal = row.get("personal_email") or ""
         if not EMAIL_RE.match(personal):
             raise HTTPException(status_code=400, detail=f"Invalid personal email: {personal}")
-        nhs = row.get("nhs_work_email")
-        if nhs and not EMAIL_RE.match(nhs):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid NHS work email for {personal}: {nhs}",
-            )
         gmc = _normalize_gmc(str(row.get("gmc_number") or ""))
         if row.get("gmc_number") and gmc and not GMC_RE.match(gmc):
             raise HTTPException(

@@ -1,11 +1,10 @@
 /**
  * Parse HR cohort roster from CSV, plain text, or Excel (.xlsx / .xls).
- * Columns: personal email (required), full name, GMC number, NHS work email.
- * Header row is detected when a column looks like "personal email" / "email" etc.
+ * Expected columns (in order): full name, GMC number, personal email.
+ * Header row is recommended (e.g. Full Name, GMC Number, Personal Email).
  */
 (function (global) {
   var EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-  var NHS_SUFFIX_RE = /@nhs\.(net|uk|scot)$/i;
 
   var FIELD_ALIASES = {
     personal_email: [
@@ -16,14 +15,6 @@
       'home_email',
       'private_email',
       'email_address',
-    ],
-    nhs_work_email: [
-      'nhs_work_email',
-      'nhs_email',
-      'work_email',
-      'workemail',
-      'nhs_email_address',
-      'nhs_work_email_address',
     ],
     display_name: [
       'display_name',
@@ -89,15 +80,11 @@
       if (normHeader.indexOf('personal') >= 0 && normHeader.indexOf('email') >= 0) return true;
       if (normHeader.indexOf('login') >= 0 && normHeader.indexOf('email') >= 0) return true;
     }
-    if (field === 'nhs_work_email') {
-      if (normHeader.indexOf('nhs') >= 0 && normHeader.indexOf('email') >= 0) return true;
-      if (normHeader.indexOf('work') >= 0 && normHeader.indexOf('email') >= 0) return true;
-    }
     return false;
   }
 
   function mapHeaders(cols) {
-    var map = { personal_email: -1, nhs_work_email: -1, display_name: -1, gmc_number: -1 };
+    var map = { personal_email: -1, display_name: -1, gmc_number: -1 };
     cols.forEach(function (cell, idx) {
       var h = normalizeHeader(cell);
       if (!h) return;
@@ -124,43 +111,36 @@
     return g.length === 7 ? g : '';
   }
 
-  function isNhsWorkEmail(addr) {
-    return NHS_SUFFIX_RE.test(String(addr || '').trim().toLowerCase());
-  }
-
   function rowToMember(cols, headerMap) {
     var personal = '';
-    var nhs = '';
     var dn = '';
     var gmc = '';
 
     if (headerMap) {
       personal = cellAt(cols, headerMap.personal_email).toLowerCase();
-      nhs = cellAt(cols, headerMap.nhs_work_email).toLowerCase();
       dn = cellAt(cols, headerMap.display_name);
       gmc = normalizeGmc(cellAt(cols, headerMap.gmc_number));
-    } else if (cols.length >= 1 && EMAIL_RE.test(cellAt(cols, 0))) {
-      personal = cellAt(cols, 0).toLowerCase();
-      dn = cellAt(cols, 1);
-      gmc = normalizeGmc(cellAt(cols, 2));
-      var col3 = cellAt(cols, 3).toLowerCase();
-      if (col3 && EMAIL_RE.test(col3)) {
-        if (isNhsWorkEmail(col3)) nhs = col3;
-        else if (!personal) personal = col3;
+    } else if (cols.length >= 3) {
+      dn = cellAt(cols, 0);
+      gmc = normalizeGmc(cellAt(cols, 1));
+      personal = cellAt(cols, 2).toLowerCase();
+    } else if (cols.length === 2) {
+      if (EMAIL_RE.test(cellAt(cols, 1))) {
+        dn = cellAt(cols, 0);
+        personal = cellAt(cols, 1).toLowerCase();
+      } else if (EMAIL_RE.test(cellAt(cols, 0))) {
+        personal = cellAt(cols, 0).toLowerCase();
+        dn = cellAt(cols, 1);
       }
     } else if (cols.length === 1) {
       var first = cellAt(cols, 0);
-      if (EMAIL_RE.test(first)) {
-        if (isNhsWorkEmail(first)) nhs = first.toLowerCase();
-        else personal = first.toLowerCase();
-      }
+      if (EMAIL_RE.test(first)) personal = first.toLowerCase();
     }
 
     if (!EMAIL_RE.test(personal)) return null;
     var member = { personal_email: personal };
     if (dn) member.display_name = dn;
     if (gmc) member.gmc_number = gmc;
-    if (nhs && EMAIL_RE.test(nhs)) member.nhs_work_email = nhs;
     return member;
   }
 
@@ -274,7 +254,6 @@
   function mergeMember(into, from) {
     if (from.display_name && !into.display_name) into.display_name = from.display_name;
     if (from.gmc_number && !into.gmc_number) into.gmc_number = from.gmc_number;
-    if (from.nhs_work_email && !into.nhs_work_email) into.nhs_work_email = from.nhs_work_email;
   }
 
   global.NHSCohortRosterParse = {

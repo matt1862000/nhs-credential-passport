@@ -69,11 +69,6 @@
           <span class="nhsuk-hint" style="display:block;margin-top:0.35rem;">Seven digits.</span>
         </div>
         <div class="nhsuk-form-group">
-          <label class="nhsuk-label" for="nhsWorkEmail">NHS work email</label>
-          <input class="nhsuk-input" type="email" id="nhsWorkEmail" name="nhs_work_email" autocomplete="off" maxlength="200" placeholder="firstname.surname123@nhs.net">
-          <span class="nhsuk-hint" style="display:block;margin-top:0.35rem;">Optional. Your trust may have added this when your account was created.</span>
-        </div>
-        <div class="nhsuk-form-group">
           <label class="nhsuk-label" for="currentTrust">Current trust</label>
           <div class="profile-ac-wrap" id="trustAcWrap">
             <input class="nhsuk-input" type="text" id="currentTrust" required maxlength="200" autocomplete="off" placeholder="e.g. Sheffield Teaching Hospitals" role="combobox" aria-autocomplete="list" aria-controls="trustSuggestList" aria-expanded="false" spellcheck="false">
@@ -112,12 +107,10 @@
         var btn = this.querySelector('button[type="submit"]');
         btn.disabled = true;
         try {
-          var nhsWork = document.getElementById('nhsWorkEmail').value.trim();
           await NHSAuth.updateProfile({
             display_name: document.getElementById('displayName').value.trim(),
             gmc_number: gmc,
             current_trust: document.getElementById('currentTrust').value.trim(),
-            nhs_work_email: nhsWork,
           });
           await NHSAuth.pullWalletMerge();
           window.location.replace('/static/dashboard/');
@@ -143,7 +136,6 @@
         var u = NHSAuth.user;
         if (u.display_name) document.getElementById('displayName').value = u.display_name;
         if (u.gmc_number) document.getElementById('gmcNumber').value = u.gmc_number;
-        if (u.nhs_work_email) document.getElementById('nhsWorkEmail').value = u.nhs_work_email;
         if (u.current_trust) document.getElementById('currentTrust').value = u.current_trust;
         if (window.NHSTrustAutocomplete) {
           NHSTrustAutocomplete.wire({
