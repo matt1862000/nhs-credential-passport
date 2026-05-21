@@ -518,14 +518,20 @@
           return g.length === 7 ? g : '';
         }
 
-        function collectMemberFromForm() {
+        function collectMemberFromForm(opts) {
+          opts = opts || {};
           var personal = personalEl ? String(personalEl.value || '').trim().toLowerCase() : '';
           var dn = nameEl ? String(nameEl.value || '').trim() : '';
           var gmcRaw = gmcEl ? String(gmcEl.value || '').trim() : '';
           var m = { personal_email: personal };
           if (dn) m.display_name = dn;
           var gmc = normalizeGmc(gmcRaw);
-          if (gmcRaw && !gmc) return { error: 'GMC number must be exactly 7 digits.' };
+          if (gmcRaw && !gmc) {
+            if (opts.lenientGmc) {
+              return { member: m, gmcWarning: 'GMC number must be exactly 7 digits — name and email were still added.' };
+            }
+            return { error: 'GMC number must be exactly 7 digits.' };
+          }
           if (gmc) m.gmc_number = gmc;
           return { member: m };
         }
@@ -563,11 +569,11 @@
         }
 
         function flushPendingForm() {
-          var collected = collectMemberFromForm();
+          var collected = collectMemberFromForm({ lenientGmc: true });
           if (collected.error) return { ok: false, error: collected.error };
-          if (!collected.member.personal_email) return { ok: true };
+          if (!collected.member || !collected.member.personal_email) return { ok: true };
           upsertMember(collected.member, true);
-          return { ok: true };
+          return { ok: true, gmcWarning: collected.gmcWarning || null };
         }
 
         function addFromForm() {
@@ -676,10 +682,12 @@
             return members.map(function (m) { return m.personal_email; });
           },
           getMembers: function () {
+            flushPendingForm();
             return members.map(function (m) {
+              var dn = (m.display_name && String(m.display_name).trim()) || '';
               return {
                 personal_email: m.personal_email,
-                display_name: m.display_name || undefined,
+                display_name: dn || undefined,
                 gmc_number: m.gmc_number || undefined,
               };
             });
@@ -1198,6 +1206,14 @@
         var status = document.getElementById('createStatus');
         var vizEl = document.getElementById('createProvisionResult');
         var submitBtn = e.target.querySelector('button[type="submit"]');
+        var createFlush = _createEmailRoster ? _createEmailRoster.flushPendingForm() : null;
+        if (createFlush && createFlush.gmcWarning) {
+          var gmcWarnCreate = document.getElementById('cohortEmailError');
+          if (gmcWarnCreate) {
+            gmcWarnCreate.textContent = createFlush.gmcWarning;
+            gmcWarnCreate.hidden = false;
+          }
+        }
         var members = _createEmailRoster ? _createEmailRoster.getMembers() : [];
         if (!members.length) {
           var uploadErr = document.getElementById('cohortUploadError');
@@ -1444,6 +1460,13 @@
             }
             setAddWizardStep(2);
             return;
+          }
+          if (flushedAdd && flushedAdd.gmcWarning) {
+            var gmcWarnAdd = document.getElementById('addEmailError');
+            if (gmcWarnAdd) {
+              gmcWarnAdd.textContent = flushedAdd.gmcWarning;
+              gmcWarnAdd.hidden = false;
+            }
           }
         }
         var members = _addEmailRoster ? _addEmailRoster.getMembers() : [];
