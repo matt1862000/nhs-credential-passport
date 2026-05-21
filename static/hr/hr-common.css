@@ -106,35 +106,7 @@
       padding: 1.25rem 1.5rem;
       margin-top: 0.35rem;
     }
-    .hr-bulk-form .nhsuk-form-group { margin-bottom: 1.25rem; }
-    .hr-bulk-form .nhsuk-form-group:last-of-type { margin-bottom: 0; }
-    .hr-bulk-form .nhsuk-hint {
-      display: block;
-      font-size: 0.875rem;
-      color: var(--nhsuk-secondary-text);
-      margin: 0.35rem 0 0.5rem 0;
-      line-height: 1.45;
-      max-width: 36rem;
-    }
-    .hr-bulk-form .nhsuk-input,
-    .hr-bulk-form .nhsuk-select { max-width: 36rem; }
-    .hr-bulk-form .nhsuk-select {
-      display: block;
-      width: 100%;
-      min-height: 3rem;
-      padding: 0.75rem 2.25rem 0.75rem 0.75rem;
-      border: 2px solid var(--nhsuk-border);
-      border-radius: 4px;
-      font-size: 1rem;
-      font-family: inherit;
-      background: #fff;
-      color: var(--nhsuk-text);
-    }
-    .hr-bulk-form .nhsuk-select:focus {
-      outline: 3px solid var(--nhsuk-focus);
-      outline-offset: 0;
-      border-color: var(--nhsuk-text);
-    }
+    /* Input/select sizing: shared/training-add-form.css (load after this file) */
     .hr-bulk-file { max-width: 36rem; }
     .hr-bulk-file input[type="file"] {
       width: 100%;
@@ -182,10 +154,6 @@
     }
     .hr-bulk-fieldset legend.nhsuk-label { padding: 0; }
 
-    /* Training details inside bulk wizard — use shared/training-add-form.css */
-    .hr-bulk-form .training-add-form .nhsuk-form-group:last-of-type {
-      margin-bottom: 0;
-    }
     .hr-bulk-check {
       display: flex;
       align-items: flex-start;

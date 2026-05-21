@@ -1,15 +1,19 @@
-/* Add-training field stack — same layout as clinician “Add training” tab */
-.training-add-form .nhsuk-form-group {
+/* Clinician “Add training” field sizing — HR bulk wizards and add-training modals */
+.training-add-form .nhsuk-form-group,
+.hr-bulk-form .nhsuk-form-group {
   margin-bottom: 1rem;
 }
-.training-add-form .nhsuk-label {
+.training-add-form .nhsuk-label,
+.hr-bulk-form .nhsuk-label {
   display: block;
   font-weight: 600;
   margin-bottom: 0.35rem;
   font-size: 1.125rem;
 }
 .training-add-form .nhsuk-input,
-.training-add-form .nhsuk-select {
+.training-add-form .nhsuk-select,
+.hr-bulk-form .nhsuk-input,
+.hr-bulk-form .nhsuk-select {
   width: 100%;
   max-width: 28rem;
   padding: 0.75rem;
@@ -21,38 +25,53 @@
   color: var(--nhsuk-text);
   box-sizing: border-box;
 }
-.training-add-form .nhsuk-select {
+.training-add-form .nhsuk-select,
+.hr-bulk-form .nhsuk-select {
   display: block;
   min-height: 3.25rem;
   padding: 0.875rem 2.5rem 0.875rem 0.875rem;
   font-size: 1.0625rem;
 }
 .training-add-form .nhsuk-input:focus,
-.training-add-form .nhsuk-select:focus {
+.training-add-form .nhsuk-select:focus,
+.hr-bulk-form .nhsuk-input:focus,
+.hr-bulk-form .nhsuk-select:focus {
   outline: 3px solid var(--nhsuk-focus);
   outline-offset: 0;
   border-color: var(--nhsuk-text);
 }
-.training-add-form .nhsuk-hint {
+.training-add-form .nhsuk-hint,
+.hr-bulk-form .nhsuk-hint {
   display: block;
   font-size: 0.875rem;
   color: var(--nhsuk-secondary-text);
-  margin-top: 0.25rem;
   line-height: 1.45;
   max-width: 28rem;
 }
-.training-add-form .nhs-ac-wrap {
+.training-add-form .nhsuk-hint,
+.hr-bulk-form .nhsuk-form-group > .nhsuk-hint:last-child {
+  margin-top: 0.25rem;
+}
+.hr-bulk-form .nhsuk-form-group > .nhsuk-label + .nhsuk-hint {
+  margin-top: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+.training-add-form .nhs-ac-wrap,
+.hr-bulk-form .nhs-ac-wrap {
   position: relative;
   max-width: 28rem;
 }
-.training-add-form .nhs-ac-wrap .nhsuk-input {
+.training-add-form .nhs-ac-wrap .nhsuk-input,
+.hr-bulk-form .nhs-ac-wrap .nhsuk-input {
   max-width: none;
 }
-.training-add-form .nhsuk-file-upload {
+.training-add-form .nhsuk-file-upload,
+.hr-bulk-form .nhsuk-file-upload {
   display: block;
   max-width: 28rem;
 }
-.training-add-form .nhsuk-file-upload__stack {
+.training-add-form .nhsuk-file-upload__stack,
+.hr-bulk-form .nhsuk-file-upload__stack {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -60,10 +79,12 @@
   width: 100%;
   margin-top: 0.35rem;
 }
-.training-add-form .nhsuk-file-upload__stack .nhsuk-hint {
+.training-add-form .nhsuk-file-upload__stack .nhsuk-hint,
+.hr-bulk-form .nhsuk-file-upload__stack .nhsuk-hint {
   margin: 0;
 }
-.training-add-form .nhsuk-file-upload input[type="file"] {
+.training-add-form .nhsuk-file-upload input[type="file"],
+.hr-bulk-form .nhsuk-file-upload input[type="file"] {
   position: absolute;
   width: 0.1px;
   height: 0.1px;
@@ -71,7 +92,8 @@
   overflow: hidden;
   z-index: -1;
 }
-.training-add-form .nhsuk-file-upload__trigger {
+.training-add-form .nhsuk-file-upload__trigger,
+.hr-bulk-form .nhsuk-file-upload__trigger {
   display: block;
   width: fit-content;
   max-width: 100%;
@@ -87,14 +109,17 @@
   text-align: center;
   box-sizing: border-box;
 }
-.training-add-form .nhsuk-file-upload__trigger:hover {
+.training-add-form .nhsuk-file-upload__trigger:hover,
+.hr-bulk-form .nhsuk-file-upload__trigger:hover {
   background: #004c8f;
 }
-.training-add-form .nhsuk-file-upload__trigger:focus {
+.training-add-form .nhsuk-file-upload__trigger:focus,
+.hr-bulk-form .nhsuk-file-upload__trigger:focus {
   outline: 3px solid var(--nhsuk-focus);
   outline-offset: 2px;
 }
-.training-add-form .nhsuk-file-upload__name {
+.training-add-form .nhsuk-file-upload__name,
+.hr-bulk-form .nhsuk-file-upload__name {
   display: block;
   font-size: 0.9375rem;
   color: var(--nhsuk-secondary-text);

@@ -8,8 +8,8 @@
 
   <title>Bulk add training &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260526-2">
-  <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260526-3">
+  <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-2">
 
 </head>
 <body>
@@ -56,7 +56,7 @@
       <p class="hr-muted" style="margin:0 0 0.75rem 0;">Issue the same module completion to many clinicians using one shared class evidence file. Only people on your roster who have allowed your trust receive a record.</p>
       <div class="hr-bulk-panel">
         <p class="cohort-wizard-step-label" id="bulkWizardStepLabel" aria-live="polite">Step 1 of 4 — Who receives this?</p>
-        <form id="bulkForm" class="hr-bulk-form" novalidate>
+        <form id="bulkForm" class="hr-bulk-form training-add-form" novalidate>
           <div id="bulkStepMethod" class="cohort-wizard-step-panel">
             <p class="cohort-method-intro">Choose how to select clinicians for this bulk upload.</p>
             <div class="cohort-method-grid" role="group" aria-label="Recipient source">
@@ -133,7 +133,6 @@
           <div id="bulkStepDetails" class="cohort-wizard-step-panel" hidden>
             <p class="cohort-wizard-roster-title">Training details</p>
             <p class="nhsuk-hint" id="bulkRecipientsSummary" style="margin-top:0;max-width:none;"></p>
-            <div class="training-add-form">
             <div class="nhsuk-form-group">
               <label class="nhsuk-label" for="bulkModule">Module</label>
               <select class="nhsuk-select" id="bulkModule" name="module_code" required></select>
@@ -158,7 +157,6 @@
               <label class="nhsuk-label" for="bulkOds">Issuing Trust ODS code</label>
               <input class="nhsuk-input" type="text" id="bulkOds" name="issuing_trust_ods_code" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false" aria-describedby="bulkOdsHint">
               <span class="nhsuk-hint" id="bulkOdsHint">Filled automatically from the trust name when possible.</span>
-            </div>
             </div>
             <div class="cohort-wizard-actions cohort-wizard-actions--split">
               <button type="button" class="nhsuk-button nhsuk-button--secondary" id="bulkBackDetails">Back</button>
