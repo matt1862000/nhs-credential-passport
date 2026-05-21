@@ -9,11 +9,11 @@ import base64
 from datetime import datetime, date
 from pathlib import Path
 import sqlite3
-from typing import Optional
+from typing import Iterator, Optional
 
 import bcrypt
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from . import crypto, db, session_auth
 from .credential_service import (
@@ -1227,32 +1227,411 @@ async def hr_doctor_add_training(
     )
 
 
-@router.post("/hr/bulk-training", response_model=HrBulkTrainingResponse)
-async def hr_bulk_training(
+def _bulk_training_progress_line(
+    phase: str, message: str, current: int = 0, total: int = 0
+) -> str:
+    return (
+        json.dumps(
+            {
+                "event": "progress",
+                "phase": phase,
+                "message": message,
+                "current": current,
+                "total": total,
+            }
+        )
+        + "\n"
+    )
+
+
+def _bulk_training_complete_line(resp: HrBulkTrainingResponse) -> str:
+    return json.dumps({"event": "complete", "data": resp.model_dump()}) + "\n"
+
+
+def _hr_bulk_training_run(ctx: dict, *, emit_progress: bool = True) -> Iterator[str]:
+    """
+    Execute bulk training; yields NDJSON progress lines and a final complete line.
+    When emit_progress is False, only the complete line is yielded (for JSON clients).
+    """
+    hr = ctx["hr"]
+    trust = ctx["trust"]
+    lines: list[str] = ctx["lines"]
+    cohort_label: str = ctx.get("cohort_label") or ""
+    mc: str = ctx["mc"]
+    module_name: str = ctx["module_name"]
+    cd: date = ctx["cd"]
+    ed: date = ctx["ed"]
+    ods: str = ctx["ods"]
+    issuing_name: str = ctx["issuing_name"]
+    base: str = ctx["base"]
+    evidence_upload = ctx.get("evidence_upload")
+
+    total = len(lines)
+
+    def progress(phase: str, message: str, current: int = 0, total_n: int = 0) -> None:
+        if emit_progress:
+            yield_lines.append(
+                _bulk_training_progress_line(phase, message, current, total_n or total)
+            )
+
+    yield_lines: list[str] = []
+
+    if cohort_label:
+        progress(
+            "prepare",
+            f'Loaded {total} clinician{"s" if total != 1 else ""} from cohort “{cohort_label}”.',
+            0,
+            total,
+        )
+    else:
+        progress(
+            "prepare",
+            f'Loaded roster ({total} line{"s" if total != 1 else ""}).',
+            0,
+            total,
+        )
+    for line in yield_lines:
+        yield line
+    yield_lines.clear()
+
+    plans: list[dict] = []
+    for idx, line in enumerate(lines):
+        progress("validate", f"Checking clinician {idx + 1} of {total}…", idx + 1, total)
+        for chunk in yield_lines:
+            yield chunk
+        yield_lines.clear()
+
+        doc = db.hr_lookup_doctor_by_roster_line(line)
+        if not doc:
+            plans.append(
+                {
+                    "line": line,
+                    "kind": "missing",
+                    "doc": None,
+                    "err_row": None,
+                    "rec": None,
+                    "wallet_raw": "[]",
+                }
+            )
+            continue
+        kind, err_row, rec, wallet_raw, _keys = _hr_training_line_classify(
+            trust=trust,
+            doc=doc,
+            roster_line=line,
+            mc=mc,
+            module_name=module_name,
+            cd=cd,
+            ed=ed,
+            ods=ods,
+            issuing_name=issuing_name,
+        )
+        plans.append(
+            {
+                "line": line,
+                "kind": kind,
+                "doc": doc,
+                "err_row": err_row,
+                "rec": rec,
+                "wallet_raw": wallet_raw,
+            }
+        )
+
+    def _row_missing(line: str) -> HrBulkTrainingRow:
+        return HrBulkTrainingRow(roster_line=line, status="error", message="No matching clinician account.")
+
+    has_classify_error = any(p["kind"] in ("missing", "error") for p in plans)
+    if has_classify_error:
+        progress("validate", "Roster validation finished — errors found.", total, total)
+        for chunk in yield_lines:
+            yield chunk
+        yield_lines.clear()
+
+        rows_out: list[HrBulkTrainingRow] = []
+        errors = skipped = 0
+        for p in plans:
+            if p["kind"] == "missing":
+                rows_out.append(_row_missing(p["line"]))
+                errors += 1
+            elif p["kind"] == "error":
+                assert p["err_row"] is not None
+                rows_out.append(p["err_row"])
+                errors += 1
+            elif p["kind"] == "skipped":
+                doc_id = int(p["doc"]["id"])
+                rows_out.append(
+                    HrBulkTrainingRow(
+                        roster_line=p["line"],
+                        status="would_skip_duplicate",
+                        message="Clinician already has this completion in their wallet.",
+                        doctor_user_id=doc_id,
+                    )
+                )
+                skipped += 1
+            else:
+                doc_id = int(p["doc"]["id"])
+                rows_out.append(
+                    HrBulkTrainingRow(
+                        roster_line=p["line"],
+                        status="not_committed",
+                        message="Not issued: another line on the roster failed validation. Fix errors and submit again.",
+                        doctor_user_id=doc_id,
+                    )
+                )
+        resp = HrBulkTrainingResponse(
+            dry_run=False,
+            aborted=True,
+            issuing_trust_ods_code=ods,
+            issuing_trust_name=issuing_name,
+            module_code=mc,
+            attempted=len(lines),
+            issued=0,
+            skipped_duplicate=skipped,
+            errors=errors,
+            rows=rows_out,
+        )
+        yield _bulk_training_complete_line(resp)
+        return
+
+    issue_plans = [p for p in plans if p["kind"] == "issue"]
+    if not issue_plans:
+        progress("validate", "Everyone on the roster already has this training.", total, total)
+        for chunk in yield_lines:
+            yield chunk
+        yield_lines.clear()
+
+        rows_out = []
+        skipped = 0
+        for p in plans:
+            assert p["kind"] == "skipped"
+            doc_id = int(p["doc"]["id"])
+            rows_out.append(
+                HrBulkTrainingRow(
+                    roster_line=p["line"],
+                    status="skipped_duplicate",
+                    message="Clinician already has this completion in their wallet.",
+                    doctor_user_id=doc_id,
+                )
+            )
+            skipped += 1
+        resp = HrBulkTrainingResponse(
+            dry_run=False,
+            aborted=False,
+            issuing_trust_ods_code=ods,
+            issuing_trust_name=issuing_name,
+            module_code=mc,
+            attempted=len(lines),
+            issued=0,
+            skipped_duplicate=skipped,
+            errors=0,
+            rows=rows_out,
+        )
+        yield _bulk_training_complete_line(resp)
+        return
+
+    progress("validate", f"Roster OK — issuing to {len(issue_plans)} clinician(s).", total, total)
+    for chunk in yield_lines:
+        yield chunk
+    yield_lines.clear()
+
+    if evidence_upload is None or not (evidence_upload.get("filename") or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Evidence file is required when at least one clinician would receive a new credential.",
+        )
+    progress("evidence", "Reading and validating evidence file…", 0, len(issue_plans))
+    for chunk in yield_lines:
+        yield chunk
+    yield_lines.clear()
+
+    ev_raw = evidence_upload["raw"]
+    if len(ev_raw) > MAX_HR_BULK_EVIDENCE_BYTES:
+        raise HTTPException(status_code=413, detail="Evidence file too large (max 10 MB).")
+    ev_ct = _hr_evidence_content_type(
+        evidence_upload.get("content_type"), evidence_upload.get("filename")
+    )
+    if not ev_ct:
+        raise HTTPException(
+            status_code=400,
+            detail="Evidence must be a PDF or image (JPEG, PNG, or WebP).",
+        )
+    ev_name = (evidence_upload.get("filename") or "evidence").strip()
+    ev_b64 = base64.b64encode(ev_raw).decode("ascii")
+
+    wallet_bad: set[str] = set()
+    wallet_total = len(issue_plans)
+    for widx, p in enumerate(issue_plans):
+        progress(
+            "wallet",
+            f"Checking wallet size {widx + 1} of {wallet_total}…",
+            widx + 1,
+            wallet_total,
+        )
+        for chunk in yield_lines:
+            yield chunk
+        yield_lines.clear()
+
+        if _hr_wallet_size_would_exceed_after_append(
+            p["wallet_raw"],
+            module_name=module_name,
+            expiry_date=ed,
+            base=base,
+            evidence_b64=ev_b64,
+            evidence_filename=ev_name,
+        ):
+            wallet_bad.add(p["line"])
+
+    if wallet_bad:
+        progress("wallet", "Wallet size check failed for at least one clinician.", wallet_total, wallet_total)
+        for chunk in yield_lines:
+            yield chunk
+        yield_lines.clear()
+
+        rows_out = []
+        errors = skipped = 0
+        for p in plans:
+            if p["kind"] == "skipped":
+                doc_id = int(p["doc"]["id"])
+                rows_out.append(
+                    HrBulkTrainingRow(
+                        roster_line=p["line"],
+                        status="would_skip_duplicate",
+                        message="Clinician already has this completion in their wallet.",
+                        doctor_user_id=doc_id,
+                    )
+                )
+                skipped += 1
+            elif p["kind"] == "issue":
+                doc_id = int(p["doc"]["id"])
+                if p["line"] in wallet_bad:
+                    rows_out.append(
+                        HrBulkTrainingRow(
+                            roster_line=p["line"],
+                            status="error",
+                            message="Clinician wallet would exceed server size limit after adding this record.",
+                            doctor_user_id=doc_id,
+                        )
+                    )
+                    errors += 1
+                else:
+                    rows_out.append(
+                        HrBulkTrainingRow(
+                            roster_line=p["line"],
+                            status="not_committed",
+                            message="Not issued: roster failed a wallet size check for at least one other clinician.",
+                            doctor_user_id=doc_id,
+                        )
+                    )
+        resp = HrBulkTrainingResponse(
+            dry_run=False,
+            aborted=True,
+            issuing_trust_ods_code=ods,
+            issuing_trust_name=issuing_name,
+            module_code=mc,
+            attempted=len(lines),
+            issued=0,
+            skipped_duplicate=skipped,
+            errors=errors,
+            rows=rows_out,
+        )
+        yield _bulk_training_complete_line(resp)
+        return
+
+    issue_total = len(issue_plans)
+    rows_out = []
+    issued = skipped = errors = 0
+    issue_idx = 0
+    for p in plans:
+        if p["kind"] == "skipped":
+            doc_id = int(p["doc"]["id"])
+            rows_out.append(
+                HrBulkTrainingRow(
+                    roster_line=p["line"],
+                    status="skipped_duplicate",
+                    message="Clinician already has this completion in their wallet.",
+                    doctor_user_id=doc_id,
+                )
+            )
+            skipped += 1
+            continue
+        if p["kind"] != "issue":
+            continue
+        issue_idx += 1
+        progress(
+            "issue",
+            f"Issuing training record {issue_idx} of {issue_total}…",
+            issue_idx,
+            issue_total,
+        )
+        for chunk in yield_lines:
+            yield chunk
+        yield_lines.clear()
+
+        assert p["rec"] is not None and p["doc"] is not None
+        row, outcome = _hr_commit_training_for_clinician(
+            hr=hr,
+            trust=trust,
+            doc=p["doc"],
+            roster_line=p["line"],
+            rec=p["rec"],
+            module_name=module_name,
+            ed=ed,
+            base=base,
+            ev_b64=ev_b64,
+            ev_name=ev_name,
+        )
+        rows_out.append(row)
+        if outcome == "issued":
+            issued += 1
+        elif outcome == "skipped":
+            skipped += 1
+        elif outcome == "error":
+            errors += 1
+
+    progress("finalize", "Finishing up…", issue_total, issue_total)
+    for chunk in yield_lines:
+        yield chunk
+    yield_lines.clear()
+
+    resp = HrBulkTrainingResponse(
+        dry_run=False,
+        aborted=False,
+        issuing_trust_ods_code=ods,
+        issuing_trust_name=issuing_name,
+        module_code=mc,
+        attempted=len(lines),
+        issued=issued,
+        skipped_duplicate=skipped,
+        errors=errors,
+        rows=rows_out,
+    )
+    yield _bulk_training_complete_line(resp)
+
+
+def _hr_bulk_training_collect(ctx: dict) -> HrBulkTrainingResponse:
+    resp: Optional[HrBulkTrainingResponse] = None
+    for line in _hr_bulk_training_run(ctx, emit_progress=False):
+        payload = json.loads(line)
+        if payload.get("event") == "complete":
+            resp = HrBulkTrainingResponse(**payload["data"])
+    if resp is None:
+        raise HTTPException(status_code=500, detail="Bulk training did not return a result.")
+    return resp
+
+
+async def _hr_bulk_training_build_context(
     request: Request,
-    roster: Optional[UploadFile] = File(None),
-    cohort_id: Optional[str] = Form(None),
-    evidence: Optional[UploadFile] = File(None),
-    module_code: str = Form(...),
-    completion_date: str = Form(...),
-    expiry_date: str = Form(...),
-    issuing_trust_ods_code: Optional[str] = Form(None),
-    issuing_trust_name: Optional[str] = Form(None),
-):
-    """
-    Premium HR: issue one CSTF-style module completion to many clinicians from a roster file
-    or a cohort (one GMC or email per line, or CSV with identifier in the first column) plus shared evidence.
-
-    All-or-nothing on roster validation: every line is checked first; if any line fails
-    (unknown clinician, visibility, premium account, or wallet size guard), nothing is issued.
-    When the roster is clean, lines that would duplicate an existing wallet entry are skipped
-    and all remaining lines are issued in one pass.
-    """
-    hr = require_premium_user(request)
-    trust = (hr.get("current_trust") or "").strip()
-    if not trust:
-        raise HTTPException(status_code=400, detail="Your HR account must have a current trust set.")
-
+    hr: dict,
+    trust: str,
+    *,
+    roster: Optional[UploadFile],
+    cohort_id: Optional[str],
+    evidence: Optional[UploadFile],
+    module_code: str,
+    completion_date: str,
+    expiry_date: str,
+    issuing_trust_ods_code: Optional[str],
+    issuing_trust_name: Optional[str],
+) -> dict:
     lines: list[str] = []
     cohort_label = ""
     raw_cohort = (cohort_id or "").strip()
@@ -1304,248 +1683,92 @@ async def hr_bulk_training(
     ods, issuing_name = _hr_resolve_issuing_trust(hr, issuing_trust_ods_code, issuing_trust_name)
     base = _public_app_base(request)
 
-    plans: list[dict] = []
-    for line in lines:
-        doc = db.hr_lookup_doctor_by_roster_line(line)
-        if not doc:
-            plans.append(
-                {
-                    "line": line,
-                    "kind": "missing",
-                    "doc": None,
-                    "err_row": None,
-                    "rec": None,
-                    "wallet_raw": "[]",
-                }
-            )
-            continue
-        kind, err_row, rec, wallet_raw, _keys = _hr_training_line_classify(
-            trust=trust,
-            doc=doc,
-            roster_line=line,
-            mc=mc,
-            module_name=module_name,
-            cd=cd,
-            ed=ed,
-            ods=ods,
-            issuing_name=issuing_name,
-        )
-        plans.append(
-            {
-                "line": line,
-                "kind": kind,
-                "doc": doc,
-                "err_row": err_row,
-                "rec": rec,
-                "wallet_raw": wallet_raw,
-            }
-        )
+    evidence_upload = None
+    if evidence is not None and (evidence.filename or "").strip():
+        ev_raw = await evidence.read()
+        evidence_upload = {
+            "raw": ev_raw,
+            "filename": (evidence.filename or "evidence").strip(),
+            "content_type": evidence.content_type,
+        }
 
-    def _row_missing(line: str) -> HrBulkTrainingRow:
-        return HrBulkTrainingRow(roster_line=line, status="error", message="No matching clinician account.")
+    return {
+        "hr": hr,
+        "trust": trust,
+        "lines": lines,
+        "cohort_label": cohort_label,
+        "mc": mc,
+        "module_name": module_name,
+        "cd": cd,
+        "ed": ed,
+        "ods": ods,
+        "issuing_name": issuing_name,
+        "base": base,
+        "evidence_upload": evidence_upload,
+    }
 
-    has_classify_error = any(p["kind"] in ("missing", "error") for p in plans)
-    if has_classify_error:
-        rows_out: list[HrBulkTrainingRow] = []
-        errors = skipped = 0
-        for p in plans:
-            if p["kind"] == "missing":
-                rows_out.append(_row_missing(p["line"]))
-                errors += 1
-            elif p["kind"] == "error":
-                assert p["err_row"] is not None
-                rows_out.append(p["err_row"])
-                errors += 1
-            elif p["kind"] == "skipped":
-                doc_id = int(p["doc"]["id"])
-                rows_out.append(
-                    HrBulkTrainingRow(
-                        roster_line=p["line"],
-                        status="would_skip_duplicate",
-                        message="Clinician already has this completion in their wallet.",
-                        doctor_user_id=doc_id,
-                    )
-                )
-                skipped += 1
-            else:
-                doc_id = int(p["doc"]["id"])
-                rows_out.append(
-                    HrBulkTrainingRow(
-                        roster_line=p["line"],
-                        status="not_committed",
-                        message="Not issued: another line on the roster failed validation. Fix errors and submit again.",
-                        doctor_user_id=doc_id,
-                    )
-                )
-        return HrBulkTrainingResponse(
-            dry_run=False,
-            aborted=True,
-            issuing_trust_ods_code=ods,
-            issuing_trust_name=issuing_name,
-            module_code=mc,
-            attempted=len(lines),
-            issued=0,
-            skipped_duplicate=skipped,
-            errors=errors,
-            rows=rows_out,
-        )
 
-    issue_plans = [p for p in plans if p["kind"] == "issue"]
-    if not issue_plans:
-        rows_out = []
-        skipped = 0
-        for p in plans:
-            assert p["kind"] == "skipped"
-            doc_id = int(p["doc"]["id"])
-            rows_out.append(
-                HrBulkTrainingRow(
-                    roster_line=p["line"],
-                    status="skipped_duplicate",
-                    message="Clinician already has this completion in their wallet.",
-                    doctor_user_id=doc_id,
-                )
-            )
-            skipped += 1
-        return HrBulkTrainingResponse(
-            dry_run=False,
-            aborted=False,
-            issuing_trust_ods_code=ods,
-            issuing_trust_name=issuing_name,
-            module_code=mc,
-            attempted=len(lines),
-            issued=0,
-            skipped_duplicate=skipped,
-            errors=0,
-            rows=rows_out,
-        )
+@router.post("/hr/bulk-training")
+async def hr_bulk_training(
+    request: Request,
+    roster: Optional[UploadFile] = File(None),
+    cohort_id: Optional[str] = Form(None),
+    evidence: Optional[UploadFile] = File(None),
+    module_code: str = Form(...),
+    completion_date: str = Form(...),
+    expiry_date: str = Form(...),
+    issuing_trust_ods_code: Optional[str] = Form(None),
+    issuing_trust_name: Optional[str] = Form(None),
+    stream: bool = Form(False),
+):
+    """
+    Premium HR: issue one CSTF-style module completion to many clinicians from a roster file
+    or a cohort (one GMC or email per line, or CSV with identifier in the first column) plus shared evidence.
 
-    if evidence is None or not (evidence.filename or "").strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Evidence file is required when at least one clinician would receive a new credential.",
-        )
-    ev_raw = await evidence.read()
-    if len(ev_raw) > MAX_HR_BULK_EVIDENCE_BYTES:
-        raise HTTPException(status_code=413, detail="Evidence file too large (max 10 MB).")
-    ev_ct = _hr_evidence_content_type(evidence.content_type, evidence.filename)
-    if not ev_ct:
-        raise HTTPException(
-            status_code=400,
-            detail="Evidence must be a PDF or image (JPEG, PNG, or WebP).",
-        )
-    ev_name = (evidence.filename or "evidence").strip()
-    ev_b64 = base64.b64encode(ev_raw).decode("ascii")
+    All-or-nothing on roster validation: every line is checked first; if any line fails
+    (unknown clinician, visibility, premium account, or wallet size guard), nothing is issued.
+    When the roster is clean, lines that would duplicate an existing wallet entry are skipped
+    and all remaining lines are issued in one pass.
 
-    wallet_bad: set[str] = set()
-    for p in issue_plans:
-        if _hr_wallet_size_would_exceed_after_append(
-            p["wallet_raw"],
-            module_name=module_name,
-            expiry_date=ed,
-            base=base,
-            evidence_b64=ev_b64,
-            evidence_filename=ev_name,
-        ):
-            wallet_bad.add(p["line"])
+    Pass stream=true (form field) to receive application/x-ndjson progress events, then a
+    final {"event":"complete","data":...} line.
+    """
+    hr = require_premium_user(request)
+    trust = (hr.get("current_trust") or "").strip()
+    if not trust:
+        raise HTTPException(status_code=400, detail="Your HR account must have a current trust set.")
 
-    if wallet_bad:
-        rows_out = []
-        errors = skipped = 0
-        for p in plans:
-            if p["kind"] == "skipped":
-                doc_id = int(p["doc"]["id"])
-                rows_out.append(
-                    HrBulkTrainingRow(
-                        roster_line=p["line"],
-                        status="would_skip_duplicate",
-                        message="Clinician already has this completion in their wallet.",
-                        doctor_user_id=doc_id,
-                    )
-                )
-                skipped += 1
-            elif p["kind"] == "issue":
-                doc_id = int(p["doc"]["id"])
-                if p["line"] in wallet_bad:
-                    rows_out.append(
-                        HrBulkTrainingRow(
-                            roster_line=p["line"],
-                            status="error",
-                            message="Clinician wallet would exceed server size limit after adding this record.",
-                            doctor_user_id=doc_id,
-                        )
-                    )
-                    errors += 1
-                else:
-                    rows_out.append(
-                        HrBulkTrainingRow(
-                            roster_line=p["line"],
-                            status="not_committed",
-                            message="Not issued: roster failed a wallet size check for at least one other clinician.",
-                            doctor_user_id=doc_id,
-                        )
-                    )
-        return HrBulkTrainingResponse(
-            dry_run=False,
-            aborted=True,
-            issuing_trust_ods_code=ods,
-            issuing_trust_name=issuing_name,
-            module_code=mc,
-            attempted=len(lines),
-            issued=0,
-            skipped_duplicate=skipped,
-            errors=errors,
-            rows=rows_out,
-        )
-
-    rows_out = []
-    issued = skipped = errors = 0
-    for p in plans:
-        if p["kind"] == "skipped":
-            doc_id = int(p["doc"]["id"])
-            rows_out.append(
-                HrBulkTrainingRow(
-                    roster_line=p["line"],
-                    status="skipped_duplicate",
-                    message="Clinician already has this completion in their wallet.",
-                    doctor_user_id=doc_id,
-                )
-            )
-            skipped += 1
-            continue
-        assert p["kind"] == "issue"
-        assert p["rec"] is not None and p["doc"] is not None
-        row, outcome = _hr_commit_training_for_clinician(
-            hr=hr,
-            trust=trust,
-            doc=p["doc"],
-            roster_line=p["line"],
-            rec=p["rec"],
-            module_name=module_name,
-            ed=ed,
-            base=base,
-            ev_b64=ev_b64,
-            ev_name=ev_name,
-        )
-        rows_out.append(row)
-        if outcome == "issued":
-            issued += 1
-        elif outcome == "skipped":
-            skipped += 1
-        elif outcome == "error":
-            errors += 1
-
-    return HrBulkTrainingResponse(
-        dry_run=False,
-        aborted=False,
-        issuing_trust_ods_code=ods,
-        issuing_trust_name=issuing_name,
-        module_code=mc,
-        attempted=len(lines),
-        issued=issued,
-        skipped_duplicate=skipped,
-        errors=errors,
-        rows=rows_out,
+    ctx = await _hr_bulk_training_build_context(
+        request,
+        hr,
+        trust,
+        roster=roster,
+        cohort_id=cohort_id,
+        evidence=evidence,
+        module_code=module_code,
+        completion_date=completion_date,
+        expiry_date=expiry_date,
+        issuing_trust_ods_code=issuing_trust_ods_code,
+        issuing_trust_name=issuing_trust_name,
     )
+
+    if stream:
+
+        def _stream_with_errors() -> Iterator[str]:
+            try:
+                yield from _hr_bulk_training_run(ctx, emit_progress=True)
+            except HTTPException as exc:
+                detail = exc.detail
+                msg = detail if isinstance(detail, str) else str(detail)
+                yield json.dumps({"event": "error", "message": msg}) + "\n"
+
+        return StreamingResponse(
+            _stream_with_errors(),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
+    return _hr_bulk_training_collect(ctx)
 
 
 @router.get("/hr/doctors/{doctor_user_id}/queue")
@@ -1900,6 +2123,7 @@ async def me_messages_start(request: Request):
         trust = (user.get("current_trust") or "").strip()
         if not trust:
             raise HTTPException(status_code=400, detail="Set your current trust in your profile before messaging HR.")
+        trust = db.conversation_trust_canonical(trust)
     conv = db.conversation_get_or_create(uid, trust)
     return conv
 

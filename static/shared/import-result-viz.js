@@ -42,8 +42,115 @@
       '<span class="csv-import-loader__row"></span><span class="csv-import-loader__row"></span>' +
       '<span class="csv-import-loader__row"></span><span class="csv-import-loader__row"></span>' +
       '<span class="csv-import-loader__row"></span></div>' +
-      '<p class="csv-import-loader__text">' + escapeHtml(message || 'Working…') + '</p></div>';
+      '<p class="csv-import-loader__text" data-loader-text>' + escapeHtml(message || 'Working…') + '</p>' +
+      '<div class="csv-import-loader__progress" data-loader-progress hidden>' +
+      '<div class="csv-import-loader__progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">' +
+      '<span class="csv-import-loader__progress-fill" data-loader-progress-fill style="width:0%"></span></div>' +
+      '<p class="csv-import-loader__progress-label" data-loader-progress-label></p></div></div>';
     scrollToFeedback(el);
+  }
+
+  function updateLoadingProgress(el, opts) {
+    if (!el) return;
+    opts = opts || {};
+    var root = el.querySelector('.csv-import-loader');
+    if (!root) {
+      showLoading(el, opts.message || 'Working…');
+      root = el.querySelector('.csv-import-loader');
+    }
+    if (!root) return;
+    var textEl = root.querySelector('[data-loader-text]');
+    if (textEl && opts.message) textEl.textContent = opts.message;
+    var wrap = root.querySelector('[data-loader-progress]');
+    var fill = root.querySelector('[data-loader-progress-fill]');
+    var bar = root.querySelector('.csv-import-loader__progress-bar');
+    var label = root.querySelector('[data-loader-progress-label]');
+    var total = Math.max(0, Number(opts.total || 0));
+    var current = Math.max(0, Number(opts.current || 0));
+    if (wrap && total > 0 && opts.showBar !== false) {
+      wrap.hidden = false;
+      var pct = Math.min(100, Math.round((current / total) * 100));
+      if (fill) fill.style.width = pct + '%';
+      if (bar) {
+        bar.setAttribute('aria-valuenow', String(pct));
+        bar.setAttribute('aria-valuemax', '100');
+      }
+      if (label) {
+        label.textContent = current + ' of ' + total;
+      }
+    } else if (wrap && opts.showBar === false) {
+      wrap.hidden = true;
+    }
+    scrollToFeedback(el);
+  }
+
+  /**
+   * POST multipart form with stream=true; reads application/x-ndjson progress lines.
+   * Returns the final HrBulkTrainingResponse object from the complete event.
+   */
+  async function postBulkTrainingStream(url, formData, el, onProgress) {
+    formData.append('stream', '1');
+    var res = await fetch(url, { method: 'POST', body: formData, credentials: 'include' });
+    var ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!res.ok) {
+      var errText = await res.text();
+      var errData = null;
+      try {
+        errData = errText ? JSON.parse(errText) : null;
+      } catch (e1) {
+        errData = null;
+      }
+      var detail = errData && errData.detail;
+      throw new Error(typeof detail === 'string' ? detail : errText || res.statusText || 'Request failed');
+    }
+    if (ct.indexOf('ndjson') < 0 && ct.indexOf('json') >= 0) {
+      var plain = await res.json();
+      return plain;
+    }
+    if (!res.body || !res.body.getReader) {
+      throw new Error('Progress streaming is not supported in this browser.');
+    }
+    var reader = res.body.getReader();
+    var decoder = new TextDecoder();
+    var buf = '';
+    var result = null;
+    function handleEvent(ev) {
+      if (!ev || !ev.event) return;
+      if (ev.event === 'progress') {
+        if (onProgress) onProgress(ev);
+        if (el) {
+          updateLoadingProgress(el, {
+            message: ev.message,
+            current: ev.current,
+            total: ev.total,
+            showBar: ev.total > 0 && (ev.phase === 'validate' || ev.phase === 'wallet' || ev.phase === 'issue'),
+          });
+        }
+      } else if (ev.event === 'complete') {
+        result = ev.data;
+      } else if (ev.event === 'error') {
+        throw new Error(ev.message || 'Bulk training failed.');
+      }
+    }
+    while (true) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buf += decoder.decode(chunk.value, { stream: true });
+      var parts = buf.split('\n');
+      buf = parts.pop() || '';
+      parts.forEach(function (line) {
+        line = line.trim();
+        if (!line) return;
+        handleEvent(JSON.parse(line));
+      });
+    }
+    if (buf.trim()) {
+      handleEvent(JSON.parse(buf.trim()));
+    }
+    if (!result) {
+      throw new Error('Bulk training finished without a result.');
+    }
+    return result;
   }
 
   function animateStatNumbers(root) {
@@ -457,6 +564,8 @@
     reducedMotion: reducedMotion,
     clear: clear,
     showLoading: showLoading,
+    updateLoadingProgress: updateLoadingProgress,
+    postBulkTrainingStream: postBulkTrainingStream,
     scrollToFeedback: scrollToFeedback,
     render: render,
     animateStatNumbers: animateStatNumbers,

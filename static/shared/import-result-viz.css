@@ -41,6 +41,30 @@
   font-size: 0.9375rem;
   color: var(--nhsuk-secondary-text);
 }
+.csv-import-loader__progress {
+  margin-top: 0.75rem;
+}
+.csv-import-loader__progress[hidden] {
+  display: none !important;
+}
+.csv-import-loader__progress-bar {
+  height: 0.45rem;
+  background: #e8edf0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.csv-import-loader__progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--nhsuk-link, #005eb8);
+  border-radius: 4px;
+  transition: width 0.25s ease;
+}
+.csv-import-loader__progress-label {
+  margin: 0.35rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--nhsuk-secondary-text);
+}
 .csv-import-viz {
   padding: 1.1rem 1.25rem 1rem;
   background: var(--nhsuk-panel, #fff);

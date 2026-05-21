@@ -221,7 +221,9 @@
     if (isHr) {
       return (c.doctor_name && String(c.doctor_name).trim()) || c.doctor_email || 'Clinician';
     }
-    return (c.hr_trust && String(c.hr_trust).trim()) || 'HR';
+    return (c.hr_trust_display && String(c.hr_trust_display).trim())
+      || (c.hr_trust && String(c.hr_trust).trim())
+      || 'HR';
   }
 
   function renderPreviewBody(conversations, isHr, msgPath) {

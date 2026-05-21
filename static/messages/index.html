@@ -229,7 +229,7 @@
         try {
           var data = await apiJson('/api/me/messages/' + encodeURIComponent(String(convId)));
           var conv = (_convs || []).find(function (c) { return c.id === convId; });
-          if (header) header.textContent = conv ? (conv.hr_trust || 'HR') : 'Conversation';
+          if (header) header.textContent = conv ? (conv.hr_trust_display || conv.hr_trust || 'HR') : 'Conversation';
           renderBubbles(data.messages || []);
           show(compose, true);
           // Refresh conv list to clear unread badge
@@ -269,7 +269,7 @@
           var preview = c.last_body ? esc(String(c.last_body).slice(0, 50)) : '<em>No messages yet</em>';
           return (
             '<div class="msg-conv-item' + active + '" data-conv-id="' + c.id + '" tabindex="0" role="button">' +
-              '<div class="msg-conv-trust">' + esc(c.hr_trust || 'HR') + unread + '</div>' +
+              '<div class="msg-conv-trust">' + esc(c.hr_trust_display || c.hr_trust || 'HR') + unread + '</div>' +
               '<div class="msg-conv-preview">' + preview + '</div>' +
             '</div>'
           );

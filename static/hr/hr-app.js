@@ -1328,7 +1328,15 @@
             var bulkSt = document.getElementById('bulkStatus');
             if (bulkSt) bulkSt.hidden = true;
             if (batchViz()) batchViz().clear(bulkVizEl);
-            if (batchViz()) batchViz().showLoading(bulkVizEl, 'Issuing training to roster…');
+            var bulkStartMsg = 'Preparing bulk training issue…';
+            if (cohortId) {
+              var cohortOpt = cohortSel && cohortSel.options[cohortSel.selectedIndex];
+              var cohortLabel = cohortOpt ? String(cohortOpt.textContent || '').trim() : '';
+              if (cohortLabel) bulkStartMsg = 'Loading cohort “' + cohortLabel + '”…';
+            } else if (hasRoster) {
+              bulkStartMsg = 'Uploading roster file…';
+            }
+            if (batchViz()) batchViz().showLoading(bulkVizEl, bulkStartMsg);
             if (wrap) wrap.hidden = true;
             if (tbody) tbody.innerHTML = '';
             try {
@@ -1346,13 +1354,22 @@
               var iname = (document.getElementById('bulkIssuingName') || {}).value;
               if (ods && String(ods).trim()) fd.append('issuing_trust_ods_code', String(ods).trim());
               if (iname && String(iname).trim()) fd.append('issuing_trust_name', String(iname).trim());
-              var res = await fetch('/api/hr/bulk-training', { method: 'POST', body: fd, credentials: 'include' });
-              var text = await res.text();
-              var data = null;
-              try { data = text ? JSON.parse(text) : null; } catch (e2) { data = null; }
-              if (!res.ok) {
-                var d = data && data.detail;
-                throw new Error(typeof d === 'string' ? d : (text || res.statusText));
+              var data;
+              if (batchViz() && batchViz().postBulkTrainingStream) {
+                data = await batchViz().postBulkTrainingStream(
+                  '/api/hr/bulk-training',
+                  fd,
+                  bulkVizEl
+                );
+              } else {
+                var res = await fetch('/api/hr/bulk-training', { method: 'POST', body: fd, credentials: 'include' });
+                var text = await res.text();
+                data = null;
+                try { data = text ? JSON.parse(text) : null; } catch (e2) { data = null; }
+                if (!res.ok) {
+                  var d = data && data.detail;
+                  throw new Error(typeof d === 'string' ? d : (text || res.statusText));
+                }
               }
               if (batchViz()) {
                 batchViz().bulkTraining(bulkVizEl, data);

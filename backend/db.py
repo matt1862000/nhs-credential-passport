@@ -94,6 +94,8 @@ def init_db():
         _ensure_seed_rotherham_user(conn)
         _backfill_sheffield_partnership_trust_labels(conn)
         _migrate_provisioned_personal_email_login(conn)
+        _migrate_merge_duplicate_conversation_trusts(conn)
+        _migrate_normalize_conversation_trust_labels(conn)
         _backfill_onboarding_completed(conn)
         conn.commit()
 
@@ -772,14 +774,42 @@ _CONV_LAST_BODY_SQL = """(
 ) as last_body"""
 
 
+def _hr_trust_display_label(hr_trust: str) -> str:
+    from . import trust_packs
+
+    raw = (hr_trust or "").strip()
+    if not raw:
+        return "HR"
+    return trust_packs.trust_display_name(raw) or raw
+
+
+def conversation_trust_canonical(trust_input: str) -> str:
+    """
+    One stored trust key per HR inbox: prefer the premium HR account's current_trust
+    when the input matches case-insensitively; otherwise a stable display label.
+    """
+    raw = (trust_input or "").strip()
+    if not raw:
+        return raw
+    canonical = hr_messageable_trust_canonical(raw)
+    if canonical:
+        return canonical
+    from . import trust_packs
+
+    displayed = (trust_packs.trust_display_name(raw) or "").strip()
+    return displayed or raw
+
+
 def _conv_row(r) -> dict:
+    hr_trust = r["hr_trust"]
     return {
         "id": int(r["id"]),
         "doctor_user_id": int(r["doctor_user_id"]),
         "doctor_name": r["doctor_name"],
         "doctor_email": r["doctor_email"],
         "doctor_gmc": r["doctor_gmc"],
-        "hr_trust": r["hr_trust"],
+        "hr_trust": hr_trust,
+        "hr_trust_display": _hr_trust_display_label(hr_trust),
         "created_at": r["created_at"],
         "last_message_at": r["last_message_at"],
         "unread_count": int(r["unread_count"] or 0),
@@ -852,8 +882,11 @@ def conversation_assert_participant(
         return False
     if doctor_user_id is not None and int(row["doctor_user_id"]) == int(doctor_user_id):
         return True
-    if hr_trust is not None and (row["hr_trust"] or "").strip() == (hr_trust or "").strip():
-        return True
+    if hr_trust is not None:
+        stored = conversation_trust_canonical((row["hr_trust"] or "").strip())
+        incoming = conversation_trust_canonical((hr_trust or "").strip())
+        if stored and incoming and stored == incoming:
+            return True
     return False
 
 
@@ -981,8 +1014,96 @@ def hr_messageable_trust_canonical(trust_input: str) -> Optional[str]:
     return (row["trust_name"] or "").strip() or None
 
 
+def _migrate_merge_duplicate_conversation_trusts(conn: sqlite3.Connection) -> None:
+    """Merge threads that share the same doctor and trust name differing only by case/spelling."""
+    _ensure_messaging_tables(conn)
+    conn.row_factory = sqlite3.Row
+    groups = conn.execute(
+        """
+        SELECT doctor_user_id, LOWER(TRIM(hr_trust)) AS trust_key
+        FROM conversations
+        GROUP BY doctor_user_id, trust_key
+        HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+    for g in groups:
+        did = int(g["doctor_user_id"])
+        key = g["trust_key"]
+        convs = conn.execute(
+            """
+            SELECT c.id,
+                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count,
+                   c.last_message_at
+            FROM conversations c
+            WHERE c.doctor_user_id = ? AND LOWER(TRIM(c.hr_trust)) = ?
+            ORDER BY msg_count DESC, c.last_message_at DESC, c.id ASC
+            """,
+            (did, key),
+        ).fetchall()
+        if len(convs) < 2:
+            continue
+        keeper_id = int(convs[0]["id"])
+        for c in convs[1:]:
+            dup_id = int(c["id"])
+            conn.execute(
+                "UPDATE messages SET conversation_id = ? WHERE conversation_id = ?",
+                (keeper_id, dup_id),
+            )
+            conn.execute("DELETE FROM conversations WHERE id = ?", (dup_id,))
+        conn.execute(
+            """
+            UPDATE conversations
+            SET last_message_at = COALESCE(
+                (SELECT MAX(sent_at) FROM messages WHERE conversation_id = ?),
+                last_message_at
+            )
+            WHERE id = ?
+            """,
+            (keeper_id, keeper_id),
+        )
+
+
+def _migrate_normalize_conversation_trust_labels(conn: sqlite3.Connection) -> None:
+    """Align stored hr_trust with conversation_trust_canonical; merge on UNIQUE conflicts."""
+    _ensure_messaging_tables(conn)
+    conn.row_factory = sqlite3.Row
+    for _ in range(32):
+        changed = False
+        rows = conn.execute(
+            "SELECT id, doctor_user_id, hr_trust FROM conversations ORDER BY id"
+        ).fetchall()
+        for r in rows:
+            cid = int(r["id"])
+            did = int(r["doctor_user_id"])
+            stored = (r["hr_trust"] or "").strip()
+            canonical = conversation_trust_canonical(stored)
+            if not canonical or canonical == stored:
+                continue
+            other = conn.execute(
+                "SELECT id FROM conversations WHERE doctor_user_id = ? AND hr_trust = ?",
+                (did, canonical),
+            ).fetchone()
+            if other and int(other["id"]) != cid:
+                keeper_id = int(other["id"])
+                conn.execute(
+                    "UPDATE messages SET conversation_id = ? WHERE conversation_id = ?",
+                    (keeper_id, cid),
+                )
+                conn.execute("DELETE FROM conversations WHERE id = ?", (cid,))
+            else:
+                conn.execute(
+                    "UPDATE conversations SET hr_trust = ? WHERE id = ?",
+                    (canonical, cid),
+                )
+            changed = True
+        if not changed:
+            break
+
+
 def conversation_get_or_create(doctor_user_id: int, hr_trust: str) -> dict:
-    hr_trust = (hr_trust or "").strip()
+    hr_trust = conversation_trust_canonical((hr_trust or "").strip())
+    if not hr_trust:
+        raise ValueError("hr_trust is required")
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_messaging_tables(conn)
         conn.row_factory = sqlite3.Row
