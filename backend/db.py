@@ -2,6 +2,7 @@
 Minimal storage: credential_id -> revocation and expiry.
 No full PII stored; JWT holds the claims.
 """
+import json
 import os
 import re
 import sqlite3
@@ -1687,6 +1688,47 @@ def doctor_verified_map(doctor_user_id: int) -> dict:
         prev["pending_target_trust"] = None
         out[cid] = prev
     return out
+
+
+def doctor_getting_started_progress(doctor_user_id: int) -> dict:
+    """
+    Clinician onboarding checklist steps that must be done by the doctor, not HR on their behalf.
+    - doctor_added_training: at least one wallet credential not HR-attested
+    - doctor_shared_with_hr: at least one share session created by the clinician
+    """
+    attested_ids: set[str] = set()
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_attestations_table(conn)
+        _ensure_share_tables(conn)
+        conn.row_factory = sqlite3.Row
+        for row in conn.execute(
+            "SELECT credential_id FROM hr_attested_credentials WHERE doctor_user_id = ?",
+            (int(doctor_user_id),),
+        ).fetchall():
+            attested_ids.add(str(row["credential_id"]))
+        share_row = conn.execute(
+            "SELECT 1 FROM share_sessions WHERE doctor_user_id = ? LIMIT 1",
+            (int(doctor_user_id),),
+        ).fetchone()
+    try:
+        wallet = json.loads(user_wallet_get(int(doctor_user_id)))
+    except Exception:
+        wallet = []
+    if not isinstance(wallet, list):
+        wallet = []
+    doctor_added = False
+    for entry in wallet:
+        if not isinstance(entry, dict):
+            continue
+        cid = (entry.get("credential_id") or "").strip()
+        if cid and cid not in attested_ids:
+            doctor_added = True
+            break
+    return {
+        "doctor_added_training": doctor_added,
+        "doctor_shared_with_hr": share_row is not None,
+    }
+
 
 def _ensure_seed_privileged_user(conn: sqlite3.Connection) -> None:
     """

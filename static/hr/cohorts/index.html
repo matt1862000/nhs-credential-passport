@@ -8,6 +8,7 @@
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
   <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-2">
+  <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260524-2">
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
@@ -205,8 +206,17 @@
           <form id="formCohortMessage" class="hr-bulk-form" novalidate>
             <div class="nhsuk-form-group" id="cohortMsgGroup">
               <label class="nhsuk-label" for="cohortMsgBody">Your message</label>
-              <div class="hr-compose-area">
-                <textarea class="nhsuk-textarea hr-compose-area__input" id="cohortMsgBody" rows="6" required placeholder="Write your message to everyone in this cohort…"></textarea>
+              <span class="nhsuk-hint nhsuk-hint--secondary">Optional text and/or attachments (PDF or images). Each clinician gets their own private thread.</span>
+              <div class="msg-compose msg-compose--cohort">
+                <div class="msg-compose-row">
+                  <input type="file" id="cohortMsgFileInput" multiple hidden
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
+                  <button type="button" class="msg-attach-btn" id="btnCohortAttach" aria-label="Attach file" title="Attach file"></button>
+                  <div class="msg-compose-field">
+                    <textarea class="nhsuk-textarea" id="cohortMsgBody" rows="5" placeholder="Write your message to everyone in this cohort…" aria-label="Message to cohort"></textarea>
+                  </div>
+                </div>
+                <ul class="msg-pending-files" id="cohortMsgPendingFiles" hidden aria-label="Files to send"></ul>
               </div>
             </div>
             <div class="hr-cohort-panel-actions">
@@ -286,6 +296,7 @@
       var _detailMembers = [];
       var _createEmailRoster = null;
       var _addEmailRoster = null;
+      var _cohortMsgCompose = null;
       var _createWizardStep = 1;
       var _createMethod = null;
 
@@ -1024,7 +1035,8 @@
         e.preventDefault();
         if (!_activeCohortId) return;
         var body = document.getElementById('cohortMsgBody').value.trim();
-        if (!body) return;
+        var files = _cohortMsgCompose ? _cohortMsgCompose.getPending() : [];
+        if (!NHSMessages.canSend(body, files)) return;
         if (!_detailMembers.length) {
           setStatusEl(document.getElementById('msgStatus'), 'Add clinicians to this cohort before sending a message.', 'error');
           return;
@@ -1038,13 +1050,14 @@
         if (viz()) viz().showLoading(msgViz, 'Sending message to cohort…');
         if (sendBtn) sendBtn.disabled = true;
         try {
-          var out = await apiJson('/api/hr/cohorts/' + _activeCohortId + '/message', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ body: body }),
-          });
+          var out = await NHSMessages.sendMessage(
+            '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId)) + '/message',
+            body,
+            files
+          );
           if (viz()) viz().cohortMessage(msgViz, out);
           document.getElementById('cohortMsgBody').value = '';
+          if (_cohortMsgCompose) _cohortMsgCompose.clear();
         } catch (err) {
           clearProvisionResult(msgViz);
           show(st, true);
@@ -1141,6 +1154,11 @@
           fileVizId: 'addEmailsFileViz',
         });
         wireComposeFocus('cohortMsgBody', 'cohortMsgGroup');
+        _cohortMsgCompose = NHSMessages.bindCompose(
+          'cohortMsgFileInput',
+          'btnCohortAttach',
+          'cohortMsgPendingFiles'
+        );
         await loadCohorts();
       })();
     })();

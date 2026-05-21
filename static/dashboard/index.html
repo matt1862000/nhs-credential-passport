@@ -416,8 +416,8 @@
         }
       }
 
-      var _gsVerifiedChecked = false;
-      var _gsAnyVerified = false;
+      var _gsDoctorAdded = false;
+      var _gsDoctorShared = false;
 
       var GS_DISMISS_KEY = 'nhs_gs_dismissed'; /* overwritten with user-scoped key after boot */
 
@@ -502,21 +502,15 @@
         document.getElementById('statExpired').textContent = expired;
         document.getElementById('statTotal').textContent = list.length;
 
-        renderGettingStarted(list.length, _gsAnyVerified);
-
-        /* fetch verified-map once we know they have records */
-        if (list.length > 0 && !_gsVerifiedChecked) {
-          _gsVerifiedChecked = true;
-          fetch('/api/me/verified-map', { credentials: 'include' })
-            .then(function (r) { return r.ok ? r.json() : {}; })
-            .then(function (map) {
-              _gsAnyVerified = Object.values(map || {}).some(function (v) {
-                return v && v.shared === true;
-              });
-              renderGettingStarted(list.length, _gsAnyVerified);
-            })
-            .catch(function () {});
-        }
+        renderGettingStarted(_gsDoctorAdded, _gsDoctorShared);
+        fetch('/api/me/getting-started-progress', { credentials: 'include' })
+          .then(function (r) { return r.ok ? r.json() : {}; })
+          .then(function (data) {
+            _gsDoctorAdded = !!data.doctor_added_training;
+            _gsDoctorShared = !!data.doctor_shared_with_hr;
+            renderGettingStarted(_gsDoctorAdded, _gsDoctorShared);
+          })
+          .catch(function () {});
       }
 
       async function fetchServerWallet() {

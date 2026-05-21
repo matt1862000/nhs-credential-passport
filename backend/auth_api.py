@@ -884,6 +884,13 @@ def me_verified_map(request: Request):
     return db.doctor_verified_map(uid)
 
 
+@router.get("/me/getting-started-progress")
+def me_getting_started_progress(request: Request):
+    """Checklist steps 4–5: only count actions the clinician took (not HR bulk issue)."""
+    uid = require_user_id(request)
+    return db.doctor_getting_started_progress(uid)
+
+
 @router.get("/me/visibility")
 def me_visibility_get(request: Request):
     uid = require_user_id(request)
@@ -2021,9 +2028,11 @@ def _hr_broadcast_to_doctors(
     hr_trust: str,
     doctor_ids: list[int],
     body: str,
+    attachments: Optional[list[tuple[str, str, bytes]]] = None,
 ) -> dict:
     sent = 0
     failed: list[dict] = []
+    att = attachments or None
     for did in doctor_ids:
         try:
             doc = db.user_get_by_id(int(did))
@@ -2031,7 +2040,7 @@ def _hr_broadcast_to_doctors(
                 failed.append({"doctor_user_id": did, "error": "clinician not found"})
                 continue
             conv = db.conversation_get_or_create(int(did), hr_trust)
-            db.message_send_body(int(conv["id"]), int(hr_user_id), body)
+            db.message_send_body(int(conv["id"]), int(hr_user_id), body, attachments=att)
             sent += 1
         except Exception as e:
             failed.append({"doctor_user_id": did, "error": str(e)})
@@ -2194,16 +2203,13 @@ async def hr_cohorts_message(request: Request, cohort_id: int):
     trust = _hr_trust_required(hr)
     if not db.cohort_get(int(cohort_id), trust):
         raise HTTPException(status_code=404, detail="Cohort not found")
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    text = str(body.get("body") or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="Message body cannot be empty")
+    text, attachments = await _message_send_payload(request)
+    _require_message_content(text, attachments)
     doctor_ids = db.cohort_member_user_ids(int(cohort_id), trust)
     if not doctor_ids:
         raise HTTPException(status_code=400, detail="Cohort has no members")
     if len(doctor_ids) > MAX_HR_COHORT_LINES:
         raise HTTPException(status_code=400, detail="Cohort is too large to message in one request")
-    return _hr_broadcast_to_doctors(int(hr["id"]), trust, doctor_ids, text)
+    return _hr_broadcast_to_doctors(
+        int(hr["id"]), trust, doctor_ids, text, attachments=attachments or None
+    )

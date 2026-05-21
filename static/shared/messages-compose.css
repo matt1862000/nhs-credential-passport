@@ -134,3 +134,24 @@
   border-radius: 6px;
   display: block;
 }
+/* Cohort broadcast — taller message, attach aligned to top-left of field */
+.msg-compose--cohort {
+  border-top: none;
+  padding: 0;
+}
+.msg-compose--cohort .msg-compose-row {
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+  align-items: start;
+}
+.msg-compose--cohort .msg-attach-btn {
+  margin-top: 0.45rem;
+}
+.msg-compose--cohort .msg-compose-field textarea {
+  height: auto;
+  min-height: 8rem;
+  max-height: 14rem;
+}
+.msg-compose--cohort .msg-pending-files {
+  padding-left: 3.1rem;
+  margin-top: 0.35rem;
+}
