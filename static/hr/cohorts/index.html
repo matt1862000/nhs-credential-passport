@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-2">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-3">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260524-2">
 </head>
 <body>
@@ -54,7 +54,7 @@
             <h2>Your cohorts</h2>
             <button type="button" class="nhsuk-button hr-btn-small" id="btnShowCreate">Create cohort</button>
           </div>
-          <div id="cohortList"><p class="hr-muted">Loading…</p></div>
+          <div id="cohortList" aria-live="polite"></div>
         </div>
 
         <div class="hr-card" id="createCard" hidden>
@@ -175,7 +175,10 @@
 
       <div id="detailView" class="hr-card" hidden>
         <div class="hr-cohort-detail-top">
-          <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">&larr; All cohorts</button>
+          <div class="hr-cohort-detail-nav">
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnBackList">&larr; All cohorts</button>
+            <button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" id="btnDeleteCohort">Delete cohort</button>
+          </div>
           <div class="hr-inbox-head" style="margin-top:0.75rem;">
             <h2 id="detailTitle" style="margin:0;">Cohort</h2>
           </div>
@@ -289,7 +292,7 @@
     </div>
   </main>
 
-  <script src="/static/shared/import-result-viz.js?v=20260522-1"></script>
+  <script src="/static/shared/import-result-viz.js?v=20260524-4"></script>
   <script src="/static/shared/vendor/xlsx.full.min.js?v=20260522-1"></script>
   <script src="/static/shared/cohort-roster-parse.js?v=20260522-3"></script>
   <script src="/static/shared/auth.js"></script>
@@ -302,6 +305,8 @@
       var _createEmailRoster = null;
       var _addEmailRoster = null;
       var _cohortMsgCompose = null;
+      var _cohortsCache = [];
+      var _cohortsLoadSeq = 0;
       var _createWizardStep = 1;
       var _createMethod = null;
 
@@ -744,26 +749,110 @@
         return data;
       }
 
+      function cohortEmptyHtml() {
+        return (
+          '<p class="hr-muted" style="margin:0;">You haven&rsquo;t created a cohort yet. Use <strong>Create cohort</strong> above to add your first one.</p>'
+        );
+      }
+
       function renderCohortList(cohorts) {
         var el = document.getElementById('cohortList');
-        if (!cohorts.length) {
-          el.innerHTML = '<p class="hr-muted">No cohorts yet. Create one to provision clinicians.</p>';
+        if (!el) return;
+        _cohortsCache = cohorts || [];
+        if (!_cohortsCache.length) {
+          el.innerHTML = cohortEmptyHtml();
           return;
         }
-        el.innerHTML = cohorts.map(function (c) {
+        el.innerHTML = _cohortsCache.map(function (c) {
           return (
-            '<div class="hr-search-result-row" style="cursor:pointer;" data-cohort-id="' + c.id + '" tabindex="0" role="button">' +
+            '<div class="hr-search-result-row" data-cohort-id="' + c.id + '">' +
               '<div><div class="hr-search-result-name">' + esc(c.name) + '</div>' +
-              '<div class="hr-search-result-meta">' + esc(String(c.member_count)) + ' member' + (c.member_count === 1 ? '' : 's') + '</div></div>' +
-              '<span class="nhsuk-button nhsuk-button--secondary hr-btn-small">Open</span>' +
+              '<div class="hr-search-result-meta">' + esc(String(c.member_count != null ? c.member_count : 0)) + ' member' + (c.member_count === 1 ? '' : 's') + '</div></div>' +
+              '<div class="hr-search-result-actions">' +
+                '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" data-cohort-open="' + c.id + '">Open</button>' +
+                '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small cohort-delete-btn" data-cohort-delete="' + c.id + '">Delete</button>' +
+              '</div>' +
             '</div>'
           );
         }).join('');
       }
 
-      async function loadCohorts() {
-        var data = await apiJson('/api/hr/cohorts');
-        renderCohortList(data.cohorts || []);
+      function renderCohortListLoading() {
+        var el = document.getElementById('cohortList');
+        if (el) el.innerHTML = '<p class="hr-muted" style="margin:0;">Loading cohorts&hellip;</p>';
+      }
+
+      function renderCohortListError(message) {
+        var el = document.getElementById('cohortList');
+        if (!el) return;
+        el.innerHTML =
+          '<p class="hr-muted" style="margin:0 0 0.5rem 0;">' + esc(message || 'Could not load cohorts') + '</p>' +
+          '<button type="button" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="btnRetryCohorts">Try again</button>';
+        var retry = document.getElementById('btnRetryCohorts');
+        if (retry) retry.addEventListener('click', function () { loadCohorts(); });
+      }
+
+      function upsertCohortInCache(cohort) {
+        if (!cohort || cohort.id == null) return;
+        var id = Number(cohort.id);
+        var idx = _cohortsCache.findIndex(function (c) { return Number(c.id) === id; });
+        if (idx >= 0) _cohortsCache[idx] = cohort;
+        else _cohortsCache.unshift(cohort);
+      }
+
+      function cohortById(id) {
+        var n = Number(id);
+        return _cohortsCache.find(function (c) { return Number(c.id) === n; }) || null;
+      }
+
+      function confirmDeleteCohort(cohort) {
+        var name = (cohort && cohort.name) ? cohort.name : 'this cohort';
+        var n = cohort && cohort.member_count != null ? Number(cohort.member_count) : 0;
+        var memberNote = n > 0
+          ? '\n\n' + n + ' membership' + (n === 1 ? '' : 's') + ' will be removed from this cohort.'
+          : '';
+        return confirm(
+          'Delete “' + name + '”?' + memberNote + '\n\nClinician accounts are not deleted — only this cohort group.'
+        );
+      }
+
+      async function deleteCohort(cohortId) {
+        var cohort = cohortById(cohortId);
+        if (!cohort && _activeCohortId === cohortId) {
+          cohort = { id: cohortId, name: document.getElementById('detailTitle').textContent || 'Cohort', member_count: (_detailMembers || []).length };
+        }
+        if (!confirmDeleteCohort(cohort)) return;
+        try {
+          await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(cohortId)), { method: 'DELETE' });
+          if (_activeCohortId === cohortId) {
+            showList();
+          } else {
+            await loadCohorts();
+          }
+        } catch (err) {
+          alert(err.message || 'Could not delete cohort');
+        }
+      }
+
+      async function loadCohorts(opts) {
+        opts = opts || {};
+        var el = document.getElementById('cohortList');
+        if (!el) return;
+        var seq = ++_cohortsLoadSeq;
+        if (opts.showLoading !== false) renderCohortListLoading();
+        try {
+          var data = await apiJson('/api/hr/cohorts');
+          if (seq !== _cohortsLoadSeq) return;
+          var cohorts = (data && data.cohorts) ? data.cohorts : [];
+          renderCohortList(cohorts);
+        } catch (err) {
+          if (seq !== _cohortsLoadSeq) return;
+          if (_cohortsCache.length) {
+            renderCohortList(_cohortsCache);
+          } else {
+            renderCohortListError(err.message || 'Could not load cohorts');
+          }
+        }
       }
 
       function showList() {
@@ -771,6 +860,7 @@
         show(document.getElementById('listView'), true);
         _activeCohortId = null;
         clearProvisionResult(document.getElementById('addProvisionResult'));
+        if (_cohortsCache.length) renderCohortList(_cohortsCache);
         loadCohorts();
       }
 
@@ -779,6 +869,9 @@
         _activeCohortId = id;
         var data = await apiJson('/api/hr/cohorts/' + encodeURIComponent(String(id)));
         var c = data.cohort;
+        if (c && !_cohortsCache.find(function (x) { return Number(x.id) === Number(c.id); })) {
+          _cohortsCache.push(c);
+        }
         _detailMembers = sortMembers(data.members || []);
         document.getElementById('detailTitle').textContent = c.name;
         var tb = document.getElementById('membersTbody');
@@ -982,7 +1075,16 @@
             }),
           });
           var cohortName = (data.cohort && data.cohort.name) || cohortNameValue();
-          if (viz()) viz().cohortProvision(vizEl, data, { createdCohort: cohortName });
+          if (data.cohort) upsertCohortInCache(data.cohort);
+          resetCreateWizard();
+          show(document.getElementById('createCard'), false);
+          renderCohortList(_cohortsCache);
+          await loadCohorts({ showLoading: false });
+          try {
+            if (viz()) viz().cohortProvision(vizEl, data, { createdCohort: cohortName });
+          } catch (vizErr) {
+            console.warn('cohort result viz', vizErr);
+          }
           var wrap = document.getElementById('createResultsWrap');
           var tb = document.getElementById('createResultsTbody');
           tb.innerHTML = (data.results || []).map(function (r) {
@@ -990,9 +1092,6 @@
             return '<tr><td>' + esc(r.email) + '</td><td>' + esc(r.status) + '</td><td>' + esc(pref) + '</td><td>' + esc(r.error || '') + '</td></tr>';
           }).join('');
           show(wrap, true);
-          resetCreateWizard();
-          show(document.getElementById('createCard'), false);
-          await loadCohorts();
           if (data.cohort && data.cohort.id) {
             setTimeout(function () { openCohort(data.cohort.id); }, 400);
           }
@@ -1005,22 +1104,24 @@
         }
       });
 
-      function openCohortFromRow(row) {
-        if (!row) return;
-        openCohort(parseInt(row.getAttribute('data-cohort-id'), 10));
-      }
       document.getElementById('cohortList').addEventListener('click', function (e) {
-        openCohortFromRow(e.target.closest('[data-cohort-id]'));
-      });
-      document.getElementById('cohortList').addEventListener('keydown', function (e) {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        var row = e.target.closest('[data-cohort-id]');
-        if (!row) return;
-        e.preventDefault();
-        openCohortFromRow(row);
+        var delBtn = e.target.closest('[data-cohort-delete]');
+        if (delBtn) {
+          e.preventDefault();
+          deleteCohort(parseInt(delBtn.getAttribute('data-cohort-delete'), 10));
+          return;
+        }
+        var openBtn = e.target.closest('[data-cohort-open]');
+        if (openBtn) {
+          e.preventDefault();
+          openCohort(parseInt(openBtn.getAttribute('data-cohort-open'), 10));
+        }
       });
 
       document.getElementById('btnBackList').addEventListener('click', showList);
+      document.getElementById('btnDeleteCohort').addEventListener('click', function () {
+        if (_activeCohortId != null) deleteCohort(_activeCohortId);
+      });
 
       document.querySelectorAll('.hr-segment [data-tab]').forEach(function (btn) {
         btn.addEventListener('click', function () { setCohortTab(btn.getAttribute('data-tab')); });
@@ -1136,6 +1237,7 @@
         }
         show(document.getElementById('mainContent'), true);
         updateWelcomePreview();
+        try {
         _createEmailRoster = wireEmailRoster({
           listId: 'cohortEmailsList',
           listEmptyId: 'cohortEmailsListEmpty',
@@ -1177,6 +1279,9 @@
             'btnCohortAttach',
             'cohortMsgPendingFiles'
           );
+        }
+        } catch (bootErr) {
+          console.error('cohorts page init', bootErr);
         }
         await loadCohorts();
       })();

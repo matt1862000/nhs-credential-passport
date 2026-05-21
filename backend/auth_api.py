@@ -2151,6 +2151,15 @@ async def hr_cohorts_create(request: Request):
     }
 
 
+@router.delete("/hr/cohorts/{cohort_id}")
+def hr_cohorts_delete(request: Request, cohort_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    if not db.cohort_delete(int(cohort_id), trust):
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    return {"ok": True, "deleted_cohort_id": int(cohort_id)}
+
+
 @router.get("/hr/cohorts/{cohort_id}")
 def hr_cohorts_detail(request: Request, cohort_id: int):
     hr = require_premium_user(request)

@@ -16,6 +16,24 @@
     if (el) el.innerHTML = '';
   }
 
+  /** Scroll feedback boxes into view after green submit buttons (often below the fold). */
+  function scrollToFeedback(el) {
+    if (!el) return;
+    var target = el.closest('.hr-provision-viz-wrap') || el;
+    requestAnimationFrame(function () {
+      var rect = target.getBoundingClientRect();
+      var margin = 24;
+      var vh = window.innerHeight || document.documentElement.clientHeight;
+      var belowFold = rect.top > vh * 0.45;
+      var clipped = rect.bottom > vh - margin;
+      if (!belowFold && !clipped) return;
+      target.scrollIntoView({
+        behavior: reducedMotion() ? 'auto' : 'smooth',
+        block: 'start',
+      });
+    });
+  }
+
   function showLoading(el, message) {
     if (!el) return;
     el.innerHTML =
@@ -25,6 +43,7 @@
       '<span class="csv-import-loader__row"></span><span class="csv-import-loader__row"></span>' +
       '<span class="csv-import-loader__row"></span></div>' +
       '<p class="csv-import-loader__text">' + escapeHtml(message || 'Working…') + '</p></div>';
+    scrollToFeedback(el);
   }
 
   function animateStatNumbers(root) {
@@ -81,6 +100,7 @@
     if (!el) return;
     if (opts.fatalError) {
       el.innerHTML = '<p class="batch-viz-fatal">' + escapeHtml(opts.fatalError) + '</p>';
+      scrollToFeedback(el);
       return;
     }
     var segments = (opts.segments || []).filter(function (s) { return (s.count || 0) > 0; });
@@ -146,6 +166,7 @@
     }
     parts.push('</div>');
     el.innerHTML = parts.join('');
+    scrollToFeedback(el);
     activateViz(el);
   }
 
@@ -429,6 +450,7 @@
     reducedMotion: reducedMotion,
     clear: clear,
     showLoading: showLoading,
+    scrollToFeedback: scrollToFeedback,
     render: render,
     animateStatNumbers: animateStatNumbers,
     cohortProvision: cohortProvision,

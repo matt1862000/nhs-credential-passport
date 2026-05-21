@@ -250,6 +250,15 @@
     /* Cohort detail — actions panels */
     .hr-cohort-detail-top { margin-bottom: 1.25rem; }
     .hr-cohort-detail-top .hr-inbox-head { margin-bottom: 0; }
+    .hr-cohort-detail-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .cohort-delete-btn { color: var(--nhsuk-error); border-color: var(--nhsuk-error); }
+    .cohort-delete-btn:hover { background: #fef2f2; color: #9b1c1c; }
     .hr-cohort-stats { margin: 0.35rem 0 0 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); line-height: 1.5; }
     .hr-cohort-stats strong { color: var(--nhsuk-text); font-weight: 700; }
     .hr-cohort-members-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.5rem; margin: 1.5rem 0 0.5rem 0; }

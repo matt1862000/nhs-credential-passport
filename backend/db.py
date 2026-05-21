@@ -2313,6 +2313,20 @@ def cohort_get(cohort_id: int, hr_trust: str) -> Optional[dict]:
     }
 
 
+def cohort_delete(cohort_id: int, hr_trust: str) -> bool:
+    """Remove a cohort and its membership rows (clinician accounts are kept)."""
+    if not cohort_get(cohort_id, hr_trust):
+        return False
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        cur = conn.execute(
+            "DELETE FROM hr_cohorts WHERE id = ? AND LOWER(TRIM(hr_trust)) = LOWER(TRIM(?))",
+            (int(cohort_id), (hr_trust or "").strip()),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def cohort_members_list(cohort_id: int, hr_trust: str) -> list[dict]:
     if not cohort_get(cohort_id, hr_trust):
         return []
