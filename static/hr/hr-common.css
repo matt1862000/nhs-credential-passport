@@ -181,6 +181,38 @@
       max-width: 36rem;
     }
     .hr-bulk-fieldset legend.nhsuk-label { padding: 0; }
+
+    /* Stacked training fields — match clinician “Add training” layout */
+    .hr-training-form-stacked .nhsuk-form-group {
+      margin-bottom: 1.25rem;
+    }
+    .hr-training-form-stacked .nhsuk-form-group:last-of-type {
+      margin-bottom: 0;
+    }
+    .hr-bulk-form.hr-training-form-stacked .nhsuk-input,
+    .hr-bulk-form.hr-training-form-stacked .nhsuk-select,
+    .hr-bulk-form .hr-training-form-stacked .nhsuk-input,
+    .hr-bulk-form .hr-training-form-stacked .nhsuk-select {
+      max-width: none;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .hr-bulk-form.hr-training-form-stacked .nhsuk-select,
+    .hr-bulk-form .hr-training-form-stacked .nhsuk-select {
+      min-height: 2.5rem;
+      padding: 0.5rem 2rem 0.5rem 0.75rem;
+      background-color: #fff;
+    }
+    .hr-bulk-form.hr-training-form-stacked .hr-bulk-file,
+    .hr-bulk-form .hr-training-form-stacked .hr-bulk-file {
+      max-width: none;
+    }
+    .hr-bulk-form.hr-training-form-stacked .nhsuk-hint,
+    .hr-bulk-form .hr-training-form-stacked .nhsuk-hint {
+      margin-top: 0.35rem;
+      margin-bottom: 0;
+      max-width: none;
+    }
     .hr-bulk-check {
       display: flex;
       align-items: flex-start;

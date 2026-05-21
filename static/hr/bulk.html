@@ -8,7 +8,7 @@
 
   <title>Bulk add training &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-2">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260526-1">
 
 </head>
 <body>
@@ -132,40 +132,33 @@
           <div id="bulkStepDetails" class="cohort-wizard-step-panel" hidden>
             <p class="cohort-wizard-roster-title">Training details</p>
             <p class="nhsuk-hint" id="bulkRecipientsSummary" style="margin-top:0;max-width:none;"></p>
+            <div class="hr-training-form-stacked">
             <div class="nhsuk-form-group">
               <label class="nhsuk-label" for="bulkModule">Module</label>
-              <span class="nhsuk-hint">The same module and dates are applied to every eligible person.</span>
               <select class="nhsuk-select" id="bulkModule" name="module_code" required></select>
             </div>
             <div class="nhsuk-form-group">
-              <span class="nhsuk-label">Completion and expiry</span>
-              <span class="nhsuk-hint">Use the date picker (stored as YYYY-MM-DD).</span>
-              <div class="hr-bulk-dates">
-                <div>
-                  <label class="nhsuk-label nhsuk-label--s" for="bulkCompletion">Completion date</label>
-                  <input class="nhsuk-input" type="date" id="bulkCompletion" name="completion_date" required>
-                </div>
-                <div>
-                  <label class="nhsuk-label nhsuk-label--s" for="bulkExpiry">Expiry date</label>
-                  <input class="nhsuk-input" type="date" id="bulkExpiry" name="expiry_date" required>
-                </div>
-              </div>
+              <label class="nhsuk-label" for="bulkCompletion">Completion date</label>
+              <input class="nhsuk-input" type="date" id="bulkCompletion" name="completion_date" required>
             </div>
-            <fieldset class="hr-bulk-fieldset">
-              <legend class="nhsuk-label">Issuing trust on the credential</legend>
-              <span class="nhsuk-hint" id="bulkIssuingTrustHint">Search by trust name. Your HR organisation is filled in by default; pick a row to set the ODS code, or type a new name.</span>
-              <div class="nhsuk-form-group" style="margin-bottom:0.75rem;">
-                <label class="nhsuk-label nhsuk-label--s" for="bulkIssuingName">Trust display name</label>
-                <div class="nhs-ac-wrap" id="hrBulkTrustAcWrap">
-                  <input class="nhsuk-input" type="text" id="bulkIssuingName" name="issuing_trust_name" placeholder="e.g. Sheffield Teaching Hospitals" autocomplete="off" spellcheck="false" aria-describedby="bulkIssuingTrustHint" role="combobox" aria-autocomplete="list" aria-controls="hrBulkTrustSuggestList" aria-expanded="false">
-                  <ul id="hrBulkTrustSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching NHS trusts"></ul>
-                </div>
+            <div class="nhsuk-form-group">
+              <label class="nhsuk-label" for="bulkExpiry">Expiry date</label>
+              <input class="nhsuk-input" type="date" id="bulkExpiry" name="expiry_date" required>
+            </div>
+            <div class="nhsuk-form-group">
+              <label class="nhsuk-label" for="bulkIssuingName">Issuing Trust name</label>
+              <div class="nhs-ac-wrap" id="hrBulkTrustAcWrap">
+                <input class="nhsuk-input" type="text" id="bulkIssuingName" name="issuing_trust_name" placeholder="e.g. Sheffield Teaching Hospitals" autocomplete="off" spellcheck="false" aria-describedby="bulkIssuingTrustHint" role="combobox" aria-autocomplete="list" aria-controls="hrBulkTrustSuggestList" aria-expanded="false">
+                <ul id="hrBulkTrustSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching NHS trusts"></ul>
               </div>
-              <div class="nhsuk-form-group" style="margin-bottom:0;">
-                <label class="nhsuk-label nhsuk-label--s" for="bulkOds">ODS code</label>
-                <input class="nhsuk-input" type="text" id="bulkOds" name="issuing_trust_ods_code" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false">
-              </div>
-            </fieldset>
+              <span class="nhsuk-hint" id="bulkIssuingTrustHint">Start typing to see suggestions from the NHS Organisation Directory.</span>
+            </div>
+            <div class="nhsuk-form-group">
+              <label class="nhsuk-label" for="bulkOds">Issuing Trust ODS code</label>
+              <input class="nhsuk-input" type="text" id="bulkOds" name="issuing_trust_ods_code" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false" aria-describedby="bulkOdsHint">
+              <span class="nhsuk-hint" id="bulkOdsHint">Filled automatically from the trust name when possible.</span>
+            </div>
+            </div>
             <div class="cohort-wizard-actions cohort-wizard-actions--split">
               <button type="button" class="nhsuk-button nhsuk-button--secondary" id="bulkBackDetails">Back</button>
               <button type="submit" class="nhsuk-button" id="bulkSubmit">Submit</button>
