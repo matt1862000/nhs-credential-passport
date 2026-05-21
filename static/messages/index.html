@@ -8,6 +8,7 @@
 
   <title>Messages &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
+  <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260524-1">
   <style>
     .msg-wrap { max-width: 52rem; }
     /* Thread layout */
@@ -89,24 +90,6 @@
     .msg-bubble--mine { align-self: flex-end; background: #005eb8; color: #fff; border-bottom-right-radius: 3px; }
     .msg-bubble--theirs { align-self: flex-start; background: #f0f4f5; color: var(--nhsuk-text); border-bottom-left-radius: 3px; }
     .msg-bubble-meta { font-size: 0.75rem; margin-top: 0.2rem; opacity: 0.7; }
-    .msg-compose { display: flex; flex-wrap: wrap; gap: 0.5rem; padding: 0.85rem 1rem; border-top: 1px solid var(--nhsuk-border); align-items: flex-end; }
-    .msg-compose-main { flex: 1 1 12rem; min-width: 0; display: flex; flex-direction: column; gap: 0.35rem; }
-    .msg-compose textarea { width: 100%; box-sizing: border-box; resize: none; border: 2px solid var(--nhsuk-border); border-radius: 4px; padding: 0.5rem 0.65rem; font-size: 0.9375rem; font-family: inherit; min-height: 2.75rem; max-height: 8rem; }
-    .msg-compose textarea:focus { outline: 3px solid #ffbf47; border-color: var(--nhsuk-text); }
-    .msg-compose-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
-    .msg-attach-btn { display: inline-flex; align-items: center; justify-content: center; width: 2.5rem; height: 2.5rem; padding: 0; border: 2px solid var(--nhsuk-border); border-radius: 4px; background: #fff; color: #005eb8; cursor: pointer; flex-shrink: 0; }
-    .msg-attach-btn:hover { background: #e8f0fe; border-color: #005eb8; }
-    .msg-attach-btn:focus { outline: 3px solid #ffbf47; outline-offset: 0; }
-    .msg-attach-icon { display: block; }
-    .msg-pending-files { list-style: none; margin: 0; padding: 0; font-size: 0.8125rem; color: var(--nhsuk-secondary-text); }
-    .msg-pending-item { display: inline-flex; align-items: center; gap: 0.25rem; margin-right: 0.75rem; margin-bottom: 0.15rem; }
-    .msg-pending-remove { background: none; border: none; font-size: 1.1rem; line-height: 1; cursor: pointer; color: var(--nhsuk-error); padding: 0 0.15rem; }
-    .msg-bubble-attachments { margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.35rem; }
-    .msg-bubble--mine .msg-attach-link { color: #fff; }
-    .msg-attach-link { text-decoration: underline; }
-    .msg-attach-size { font-size: 0.8125rem; opacity: 0.85; }
-    .msg-attach-thumb { max-width: 14rem; max-height: 10rem; border-radius: 6px; display: block; }
-    .msg-send-btn { white-space: nowrap; flex-shrink: 0; }
     .msg-empty { color: var(--nhsuk-secondary-text); font-style: italic; font-size: 0.9375rem; text-align: center; padding: 2rem 1rem; }
     .msg-no-conv { padding: 1.25rem; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); text-align: center; }
   </style>
@@ -164,20 +147,16 @@
             <div class="msg-thread-header" id="threadHeader">Select a conversation</div>
             <div class="msg-bubbles" id="bubbles"><p class="msg-empty">Choose a conversation on the left, or start a new one.</p></div>
             <div class="msg-compose" id="composeArea" hidden>
-              <div class="msg-compose-main">
-                <textarea id="msgInput" placeholder="Type a message…" rows="2" aria-label="Message"></textarea>
-                <div class="msg-compose-toolbar">
-                  <input type="file" id="msgFileInput" multiple hidden
-                    accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
-                  <button type="button" class="msg-attach-btn" id="btnAttach" aria-label="Attach file" title="Attach file">
-                    <svg class="msg-attach-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                      <path fill="currentColor" d="M18.5 10.5V18a4.5 4.5 0 0 1-9 0V6a3 3 0 0 1 6 0v10a1.5 1.5 0 0 1-3 0V8h-1.5v8a4.5 4.5 0 1 0 9 0V6h-1.5z"/>
-                    </svg>
-                  </button>
-                  <ul class="msg-pending-files" id="msgPendingFiles" hidden aria-label="Files to send"></ul>
+              <div class="msg-compose-row">
+                <input type="file" id="msgFileInput" multiple hidden
+                  accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp">
+                <button type="button" class="msg-attach-btn" id="btnAttach" aria-label="Attach file" title="Attach file"></button>
+                <div class="msg-compose-field">
+                  <textarea id="msgInput" placeholder="Type a message…" rows="2" aria-label="Message"></textarea>
                 </div>
+                <button type="button" class="nhsuk-button msg-send-btn" id="btnSend">Send</button>
               </div>
-              <button type="button" class="nhsuk-button msg-send-btn" id="btnSend">Send</button>
+              <ul class="msg-pending-files" id="msgPendingFiles" hidden aria-label="Files to send"></ul>
             </div>
           </div>
         </div>
@@ -187,7 +166,7 @@
 
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
-  <script src="/static/shared/messages-common.js?v=20260519-1"></script>
+  <script src="/static/shared/messages-common.js?v=20260524-1"></script>
   <script>
     (function () {
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }

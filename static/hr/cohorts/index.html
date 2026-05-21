@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260523-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-1">
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
@@ -57,58 +57,101 @@
         </div>
 
         <div class="hr-card" id="createCard" hidden>
-          <h2>Create cohort</h2>
+          <div class="cohort-wizard-head">
+            <h2 id="createWizardTitle">Create cohort</h2>
+            <p class="cohort-wizard-step-label" id="createWizardStepLabel" aria-live="polite">Step 1 of 3 — Name your cohort</p>
+          </div>
           <div class="hr-bulk-panel">
             <form id="formCreateCohort" class="hr-bulk-form" novalidate>
-              <div class="nhsuk-form-group">
-                <label class="nhsuk-label" for="cohortName">Cohort name</label>
-                <input class="nhsuk-input" type="text" id="cohortName" required placeholder="e.g. February 2026" maxlength="120">
-              </div>
-              <div class="nhsuk-form-group" id="cohortEmailsGroup">
-                <label class="nhsuk-label" id="cohortAddSectionLabel">Add clinicians</label>
-                <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required (this is how they sign in). Add people one at a time below, or import a spreadsheet.</span>
-                <div id="cohortEmailsList" class="cohort-email-list" aria-live="polite"></div>
-                <p class="cohort-list-empty" id="cohortEmailsListEmpty">No clinicians added yet.</p>
-                <div class="cohort-add-card" id="cohortAddCard" role="group" aria-labelledby="cohortAddCardTitle">
-                  <p id="cohortAddCardTitle" class="cohort-add-card__title">Add one clinician</p>
-                  <div class="cohort-add-card__primary">
-                    <div class="cohort-add-field cohort-add-field--grow">
-                      <label class="nhsuk-label" for="cohortPersonalEmailInput">Personal email</label>
-                      <input class="nhsuk-input" type="email" id="cohortPersonalEmailInput" name="cohort_personal_email" placeholder="jane.smith@gmail.com" spellcheck="false" autocapitalize="off" autocomplete="email" inputmode="email" aria-describedby="cohortEmailError cohortEmailsCount cohortAddOptionalHint" required>
-                    </div>
-                    <button type="button" class="nhsuk-button cohort-add-card__btn" id="btnCohortEmailAdd">Add</button>
-                  </div>
-                  <p class="cohort-add-card__optional-hint" id="cohortAddOptionalHint">Optional — pre-fills their profile when they first sign in</p>
-                  <div class="cohort-add-card__grid">
-                    <div class="cohort-add-field">
-                      <label class="nhsuk-label nhsuk-label--s" for="cohortNameInput">Full name</label>
-                      <input class="nhsuk-input" type="text" id="cohortNameInput" name="cohort_full_name" placeholder="Jane Smith" autocomplete="name" maxlength="200">
-                    </div>
-                    <div class="cohort-add-field">
-                      <label class="nhsuk-label nhsuk-label--s" for="cohortGmcInput">GMC number</label>
-                      <input class="nhsuk-input" type="text" id="cohortGmcInput" name="cohort_gmc" placeholder="1234567" inputmode="numeric" maxlength="11" aria-describedby="cohortGmcHint">
-                      <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortGmcHint">Seven digits</span>
-                    </div>
-                  </div>
+              <div id="createStepName" class="cohort-wizard-step-panel">
+                <div class="nhsuk-form-group" id="cohortNameGroup">
+                  <label class="nhsuk-label" for="cohortName">Cohort name</label>
+                  <span class="nhsuk-hint">Choose a name you will recognise later, for example a rotation or intake month.</span>
+                  <input class="nhsuk-input" type="text" id="cohortName" required placeholder="e.g. February 2026" maxlength="120" autocomplete="off">
+                  <p class="cohort-email-error" id="cohortNameError" hidden role="alert"></p>
                 </div>
-                <p class="cohort-email-error" id="cohortEmailError" hidden role="alert"></p>
-                <span class="cohort-email-count cohort-email-count--empty" id="cohortEmailsCount" aria-live="polite">0 clinicians</span>
-                <p class="hr-roster-or">Or upload a file</p>
-                <div class="hr-roster-upload">
-                  <label class="nhsuk-label nhsuk-label--s" for="cohortEmailsFile">CSV or Excel</label>
-                  <span class="nhsuk-hint">Upload <strong>.csv</strong> or <strong>.xlsx</strong>. Columns in order: <strong>full name</strong>, <strong>GMC number</strong>, <strong>personal email</strong> (header row recommended). Empty cells are OK.</span>
-                  <div class="hr-bulk-file">
-                    <input class="nhsuk-input" type="file" id="cohortEmailsFile" accept=".txt,.csv,.xlsx,.xls,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" aria-describedby="cohortEmailsFileStatus">
-                  </div>
-                  <span class="hr-roster-file-name" id="cohortEmailsFileName" aria-live="polite">No file chosen</span>
-                  <p class="hr-roster-upload-status" id="cohortEmailsFileStatus" hidden role="status"></p>
-                  <div id="cohortEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
+                <div class="cohort-wizard-actions cohort-wizard-actions--split">
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCancelCreate">Cancel</button>
+                  <button type="button" class="nhsuk-button" id="btnCreateNextName">Next</button>
                 </div>
               </div>
-              <p class="hr-cohort-inset" style="margin-bottom:1rem;" id="welcomePreview"></p>
-              <div class="hr-cohort-panel-actions">
-                <button type="submit" class="nhsuk-button">Create cohort</button>
-                <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCancelCreate">Cancel</button>
+
+              <div id="createStepMethod" class="cohort-wizard-step-panel" hidden>
+                <p class="cohort-method-intro">How would you like to add clinicians to <strong id="createCohortNamePreview">this cohort</strong>?</p>
+                <div class="cohort-method-grid" role="group" aria-label="How to add clinicians">
+                  <button type="button" class="cohort-method-card" data-create-method="manual">
+                    <span class="cohort-method-card__icon" aria-hidden="true">
+                      <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                    </span>
+                    <span class="cohort-method-card__title">Add manually</span>
+                    <span class="cohort-method-card__desc">Enter personal email, full name, and GMC number one clinician at a time.</span>
+                  </button>
+                  <button type="button" class="cohort-method-card" data-create-method="upload">
+                    <span class="cohort-method-card__icon" aria-hidden="true">
+                      <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+                    </span>
+                    <span class="cohort-method-card__title">Upload spreadsheet</span>
+                    <span class="cohort-method-card__desc">Import a CSV or Excel file with full name, GMC number, and personal email columns.</span>
+                  </button>
+                </div>
+                <div class="cohort-wizard-actions">
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCreateBackMethod">Back</button>
+                </div>
+              </div>
+
+              <div id="createStepRoster" class="cohort-wizard-step-panel" hidden>
+                <p class="cohort-wizard-roster-title" id="createRosterTitle">Add clinicians</p>
+                <div class="nhsuk-form-group" id="cohortEmailsGroup">
+                  <div id="cohortEmailsList" class="cohort-email-list" aria-live="polite"></div>
+                  <p class="cohort-list-empty" id="cohortEmailsListEmpty">No clinicians added yet.</p>
+                  <span class="cohort-email-count cohort-email-count--empty" id="cohortEmailsCount" aria-live="polite">0 clinicians</span>
+
+                  <div id="createPanelManual" hidden>
+                    <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortAddSectionHint">Personal email is required — this is how they sign in. Name and GMC are optional and pre-fill their profile.</span>
+                    <div class="cohort-add-card" id="cohortAddCard" role="group" aria-labelledby="cohortAddCardTitle">
+                      <p id="cohortAddCardTitle" class="cohort-add-card__title">Add one clinician</p>
+                      <div class="cohort-add-card__primary">
+                        <div class="cohort-add-field cohort-add-field--grow">
+                          <label class="nhsuk-label" for="cohortPersonalEmailInput">Personal email</label>
+                          <input class="nhsuk-input" type="email" id="cohortPersonalEmailInput" name="cohort_personal_email" placeholder="jane.smith@gmail.com" spellcheck="false" autocapitalize="off" autocomplete="email" inputmode="email" aria-describedby="cohortEmailError cohortEmailsCount cohortAddOptionalHint">
+                        </div>
+                        <button type="button" class="nhsuk-button cohort-add-card__btn" id="btnCohortEmailAdd">Add</button>
+                      </div>
+                      <p class="cohort-add-card__optional-hint" id="cohortAddOptionalHint">Optional — pre-fills their profile when they first sign in</p>
+                      <div class="cohort-add-card__grid">
+                        <div class="cohort-add-field">
+                          <label class="nhsuk-label nhsuk-label--s" for="cohortNameInput">Full name</label>
+                          <input class="nhsuk-input" type="text" id="cohortNameInput" name="cohort_full_name" placeholder="Jane Smith" autocomplete="name" maxlength="200">
+                        </div>
+                        <div class="cohort-add-field">
+                          <label class="nhsuk-label nhsuk-label--s" for="cohortGmcInput">GMC number</label>
+                          <input class="nhsuk-input" type="text" id="cohortGmcInput" name="cohort_gmc" placeholder="1234567" inputmode="numeric" maxlength="11" aria-describedby="cohortGmcHint">
+                          <span class="nhsuk-hint nhsuk-hint--secondary" id="cohortGmcHint">Seven digits</span>
+                        </div>
+                      </div>
+                    </div>
+                    <p class="cohort-email-error" id="cohortEmailError" hidden role="alert"></p>
+                  </div>
+
+                  <div id="createPanelUpload" hidden>
+                    <div class="hr-roster-upload">
+                      <label class="nhsuk-label" for="cohortEmailsFile">CSV or Excel file</label>
+                      <span class="nhsuk-hint">Upload <strong>.csv</strong> or <strong>.xlsx</strong>. Columns in order: <strong>full name</strong>, <strong>GMC number</strong>, <strong>personal email</strong> (header row recommended). Empty cells are OK.</span>
+                      <div class="hr-bulk-file">
+                        <input class="nhsuk-input" type="file" id="cohortEmailsFile" accept=".txt,.csv,.xlsx,.xls,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" aria-describedby="cohortEmailsFileStatus">
+                      </div>
+                      <span class="hr-roster-file-name" id="cohortEmailsFileName" aria-live="polite">No file chosen</span>
+                      <p class="hr-roster-upload-status" id="cohortEmailsFileStatus" hidden role="status"></p>
+                      <div id="cohortEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
+                    </div>
+                    <p class="cohort-email-error" id="cohortUploadError" hidden role="alert"></p>
+                  </div>
+                </div>
+                <p class="hr-cohort-inset" style="margin:1rem 0;" id="welcomePreview"></p>
+                <div class="cohort-wizard-actions cohort-wizard-actions--split">
+                  <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCreateBackRoster">Back</button>
+                  <button type="submit" class="nhsuk-button" id="btnCreateSubmit">Create cohort</button>
+                </div>
               </div>
             </form>
           </div>
@@ -240,6 +283,8 @@
       var _detailMembers = [];
       var _createEmailRoster = null;
       var _addEmailRoster = null;
+      var _createWizardStep = 1;
+      var _createMethod = null;
 
       function firstNameFromEmail(email) {
         var local = String(email || '').split('@')[0].toLowerCase();
@@ -740,18 +785,125 @@
         }
       }
 
-      document.getElementById('btnShowCreate').addEventListener('click', function () {
+      function setCohortNameError(msg) {
+        var err = document.getElementById('cohortNameError');
+        var group = document.getElementById('cohortNameGroup');
+        if (err) {
+          err.textContent = msg || '';
+          err.hidden = !msg;
+        }
+        if (group) group.classList.toggle('nhsuk-form-group--error', !!msg);
+      }
+
+      function cohortNameValue() {
+        return String(document.getElementById('cohortName').value || '').trim();
+      }
+
+      function updateCreateCohortNamePreviews() {
+        var name = cohortNameValue() || 'this cohort';
+        var p1 = document.getElementById('createCohortNamePreview');
+        var p2 = document.getElementById('createRosterTitle');
+        if (p1) p1.textContent = name;
+        if (p2) {
+          p2.textContent = _createMethod === 'upload'
+            ? 'Upload roster for “' + name + '”'
+            : 'Add clinicians to “' + name + '”';
+        }
+      }
+
+      function setCreateWizardStep(step) {
+        _createWizardStep = step;
+        show(document.getElementById('createStepName'), step === 1);
+        show(document.getElementById('createStepMethod'), step === 2);
+        show(document.getElementById('createStepRoster'), step === 3);
+        var label = document.getElementById('createWizardStepLabel');
+        if (label) {
+          if (step === 1) label.textContent = 'Step 1 of 3 — Name your cohort';
+          else if (step === 2) label.textContent = 'Step 2 of 3 — How to add clinicians';
+          else {
+            label.textContent = _createMethod === 'upload'
+              ? 'Step 3 of 3 — Upload spreadsheet'
+              : 'Step 3 of 3 — Add clinicians manually';
+          }
+        }
+        show(document.getElementById('createPanelManual'), step === 3 && _createMethod === 'manual');
+        show(document.getElementById('createPanelUpload'), step === 3 && _createMethod === 'upload');
+        if (step === 3) {
+          updateCreateCohortNamePreviews();
+          updateWelcomePreview();
+          var focusId = _createMethod === 'manual' ? 'cohortPersonalEmailInput' : 'cohortEmailsFile';
+          var focusEl = document.getElementById(focusId);
+          if (focusEl) focusEl.focus();
+        }
+        if (step === 1) {
+          var nameInp = document.getElementById('cohortName');
+          if (nameInp) nameInp.focus();
+        }
+      }
+
+      function resetCreateWizard() {
+        _createWizardStep = 1;
+        _createMethod = null;
+        document.getElementById('cohortName').value = '';
+        setCohortNameError('');
+        setCreateWizardStep(1);
+        if (_createEmailRoster) _createEmailRoster.clear();
+        var uploadErr = document.getElementById('cohortUploadError');
+        if (uploadErr) { uploadErr.hidden = true; uploadErr.textContent = ''; }
+      }
+
+      function openCreateWizard() {
         show(document.getElementById('createCard'), true);
         document.getElementById('createStatus').textContent = '';
         show(document.getElementById('createStatus'), false);
         clearProvisionResult(document.getElementById('createProvisionResult'));
         show(document.getElementById('createResultsWrap'), false);
-        if (_createEmailRoster) _createEmailRoster.clear();
-      });
+        resetCreateWizard();
+        document.getElementById('createCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+
+      document.getElementById('btnShowCreate').addEventListener('click', openCreateWizard);
       document.getElementById('btnCancelCreate').addEventListener('click', function () {
         show(document.getElementById('createCard'), false);
-        if (_createEmailRoster) _createEmailRoster.clear();
+        resetCreateWizard();
         clearProvisionResult(document.getElementById('createProvisionResult'));
+      });
+
+      document.getElementById('btnCreateNextName').addEventListener('click', function () {
+        var name = cohortNameValue();
+        if (!name) {
+          setCohortNameError('Enter a cohort name to continue.');
+          document.getElementById('cohortName').focus();
+          return;
+        }
+        setCohortNameError('');
+        updateCreateCohortNamePreviews();
+        setCreateWizardStep(2);
+      });
+
+      document.getElementById('cohortName').addEventListener('input', function () {
+        setCohortNameError('');
+      });
+      document.getElementById('cohortName').addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          document.getElementById('btnCreateNextName').click();
+        }
+      });
+
+      document.getElementById('btnCreateBackMethod').addEventListener('click', function () {
+        setCreateWizardStep(1);
+      });
+
+      document.getElementById('btnCreateBackRoster').addEventListener('click', function () {
+        setCreateWizardStep(2);
+      });
+
+      document.querySelectorAll('[data-create-method]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          _createMethod = btn.getAttribute('data-create-method');
+          setCreateWizardStep(3);
+        });
       });
 
       document.getElementById('formCreateCohort').addEventListener('submit', async function (e) {
@@ -761,10 +913,25 @@
         var submitBtn = e.target.querySelector('button[type="submit"]');
         var members = _createEmailRoster ? _createEmailRoster.getMembers() : [];
         if (!members.length) {
+          var uploadErr = document.getElementById('cohortUploadError');
+          var manualErr = document.getElementById('cohortEmailError');
+          var msg = _createMethod === 'upload'
+            ? 'Upload a spreadsheet with at least one personal email, or go back and choose Add manually.'
+            : 'Add at least one clinician with a personal email.';
+          if (_createMethod === 'upload' && uploadErr) {
+            uploadErr.textContent = msg;
+            uploadErr.hidden = false;
+          } else if (manualErr) {
+            manualErr.textContent = msg;
+            manualErr.hidden = false;
+          }
           show(status, true);
-          status.textContent = 'Add at least one personal email.';
+          status.textContent = msg;
+          setCreateWizardStep(3);
           return;
         }
+        var uploadErrHide = document.getElementById('cohortUploadError');
+        if (uploadErrHide) uploadErrHide.hidden = true;
         show(status, false);
         clearProvisionResult(vizEl);
         if (viz()) viz().showLoading(vizEl, 'Creating cohort and provisioning accounts…');
@@ -774,11 +941,11 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              name: document.getElementById('cohortName').value.trim(),
+              name: cohortNameValue(),
               members: members,
             }),
           });
-          var cohortName = (data.cohort && data.cohort.name) || document.getElementById('cohortName').value.trim();
+          var cohortName = (data.cohort && data.cohort.name) || cohortNameValue();
           if (viz()) viz().cohortProvision(vizEl, data, { createdCohort: cohortName });
           var wrap = document.getElementById('createResultsWrap');
           var tb = document.getElementById('createResultsTbody');
@@ -787,8 +954,8 @@
             return '<tr><td>' + esc(r.email) + '</td><td>' + esc(r.status) + '</td><td>' + esc(pref) + '</td><td>' + esc(r.error || '') + '</td></tr>';
           }).join('');
           show(wrap, true);
-          document.getElementById('cohortName').value = '';
-          if (_createEmailRoster) _createEmailRoster.clear();
+          resetCreateWizard();
+          show(document.getElementById('createCard'), false);
           await loadCohorts();
           if (data.cohort && data.cohort.id) {
             setTimeout(function () { openCohort(data.cohort.id); }, 400);

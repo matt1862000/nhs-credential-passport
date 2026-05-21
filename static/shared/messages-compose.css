@@ -1,0 +1,120 @@
+/* Message compose bar — shared by clinician and HR messaging */
+.msg-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--nhsuk-border);
+}
+.msg-compose-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.35rem;
+  width: 100%;
+}
+.msg-compose-field {
+  flex: 1;
+  min-width: 0;
+}
+.msg-compose-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  border: 2px solid var(--nhsuk-border);
+  border-radius: 6px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.9375rem;
+  font-family: inherit;
+  min-height: 2.75rem;
+  max-height: 8rem;
+  line-height: 1.4;
+}
+.msg-compose-field textarea:focus {
+  outline: 3px solid #ffbf47;
+  border-color: var(--nhsuk-text);
+}
+.msg-attach-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 2.75rem;
+  margin: 0 0 0.05rem 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #4c6272;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.msg-attach-btn:hover {
+  color: #005eb8;
+  background: rgba(0, 94, 184, 0.08);
+}
+.msg-attach-btn:focus {
+  outline: 3px solid #ffbf47;
+  outline-offset: 0;
+}
+.msg-attach-btn:active {
+  background: rgba(0, 94, 184, 0.14);
+}
+.msg-attach-icon {
+  display: block;
+  width: 1.35rem;
+  height: 1.35rem;
+}
+.msg-send-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  margin: 0 0 0.05rem 0;
+}
+.msg-pending-files {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 3.1rem;
+  font-size: 0.8125rem;
+  color: var(--nhsuk-secondary-text);
+}
+.msg-pending-files[hidden] {
+  display: none !important;
+}
+.msg-pending-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: 0.75rem;
+  margin-bottom: 0.15rem;
+}
+.msg-pending-remove {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--nhsuk-error);
+  padding: 0 0.15rem;
+}
+.msg-bubble-attachments {
+  margin-top: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.msg-bubble--mine .msg-attach-link {
+  color: #fff;
+}
+.msg-attach-link {
+  text-decoration: underline;
+}
+.msg-attach-size {
+  font-size: 0.8125rem;
+  opacity: 0.85;
+}
+.msg-attach-thumb {
+  max-width: 14rem;
+  max-height: 10rem;
+  border-radius: 6px;
+  display: block;
+}

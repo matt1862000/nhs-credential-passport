@@ -5,6 +5,13 @@
   var MAX_FILES = 5;
   var pendingFiles = [];
 
+  /** Stroke-style paperclip (Lucide-like), scales via .msg-attach-icon CSS */
+  var ATTACH_ICON_SVG =
+    '<svg class="msg-attach-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+    '<path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" ' +
+    'd="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>' +
+    '</svg>';
+
   function esc(s) {
     var d = document.createElement('div');
     d.textContent = s || '';
@@ -118,8 +125,11 @@
     var fileInput = document.getElementById(fileInputId);
     var attachBtn = document.getElementById(attachBtnId);
     var listEl = document.getElementById(pendingListId);
-    if (attachBtn && fileInput) {
-      attachBtn.addEventListener('click', function () { fileInput.click(); });
+    if (attachBtn) {
+      attachBtn.innerHTML = ATTACH_ICON_SVG;
+      if (fileInput) {
+        attachBtn.addEventListener('click', function () { fileInput.click(); });
+      }
     }
     if (fileInput) {
       fileInput.addEventListener('change', function () {
@@ -183,6 +193,7 @@
     bindCompose: bindCompose,
     sendMessage: sendMessage,
     canSend: canSend,
+    attachIconSvg: ATTACH_ICON_SVG,
     MAX_FILES: MAX_FILES,
   };
 })(typeof window !== 'undefined' ? window : global);
