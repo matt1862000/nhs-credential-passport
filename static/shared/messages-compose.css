@@ -6,28 +6,37 @@
   padding: 0.75rem 1rem;
   border-top: 1px solid var(--nhsuk-border);
 }
+/* Single row: paperclip | message field | Send */
 .msg-compose-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.35rem;
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0, 1fr) auto;
+  grid-template-rows: 1fr;
+  align-items: center;
+  column-gap: 0.5rem;
   width: 100%;
 }
+.msg-compose-row > input[type="file"][hidden] {
+  display: none !important;
+}
 .msg-compose-field {
-  flex: 1;
+  grid-column: 2;
   min-width: 0;
 }
 .msg-compose-field textarea {
+  display: block;
   width: 100%;
   box-sizing: border-box;
   resize: none;
   border: 2px solid var(--nhsuk-border);
   border-radius: 6px;
-  padding: 0.55rem 0.7rem;
+  padding: 0.5rem 0.7rem;
   font-size: 0.9375rem;
   font-family: inherit;
+  height: 2.75rem;
   min-height: 2.75rem;
   max-height: 8rem;
-  line-height: 1.4;
+  line-height: 1.35;
+  margin: 0;
 }
 .msg-compose-field textarea:focus {
   outline: 3px solid #ffbf47;
@@ -37,10 +46,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
   width: 2.75rem;
   height: 2.75rem;
-  margin: 0 0 0.05rem 0;
+  margin: 0;
+  grid-column: 1;
   padding: 0;
   border: none;
   border-radius: 8px;
@@ -65,10 +74,17 @@
   width: 1.35rem;
   height: 1.35rem;
 }
-.msg-send-btn {
-  flex-shrink: 0;
+.msg-compose-row .msg-send-btn.nhsuk-button {
+  grid-column: 3;
+  margin: 0;
+  padding: 0 1.15rem;
+  min-height: 2.75rem;
+  height: 2.75rem;
+  box-sizing: border-box;
+  font-size: 0.9375rem;
+  line-height: 1.25;
   white-space: nowrap;
-  margin: 0 0 0.05rem 0;
+  border-radius: 6px;
 }
 .msg-pending-files {
   list-style: none;

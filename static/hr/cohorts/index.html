@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-2">
 </head>
 <body>
   <header class="nhsuk-header" role="banner">
@@ -134,7 +134,7 @@
                   </div>
 
                   <div id="createPanelUpload" hidden>
-                    <div class="hr-roster-upload">
+                    <div id="cohortUploadPicker" class="hr-roster-upload">
                       <label class="nhsuk-label" for="cohortEmailsFile">CSV or Excel file</label>
                       <span class="nhsuk-hint">Upload <strong>.csv</strong> or <strong>.xlsx</strong>. Columns in order: <strong>full name</strong>, <strong>GMC number</strong>, <strong>personal email</strong> (header row recommended). Empty cells are OK.</span>
                       <div class="hr-bulk-file">
@@ -144,6 +144,9 @@
                       <p class="hr-roster-upload-status" id="cohortEmailsFileStatus" hidden role="status"></p>
                       <div id="cohortEmailsFileViz" class="hr-provision-viz-wrap hr-provision-viz-wrap--compact" aria-live="polite"></div>
                     </div>
+                    <p id="cohortUploadDone" class="cohort-upload-done" hidden role="status">
+                      <strong>Roster imported.</strong> Review the clinicians below, then create the cohort.
+                    </p>
                     <p class="cohort-email-error" id="cohortUploadError" hidden role="alert"></p>
                   </div>
                 </div>
@@ -398,11 +401,21 @@
           if (listEmptyEl) listEmptyEl.hidden = n > 0;
         }
 
+        function syncUploadPicker() {
+          if (!opts.uploadPickerId) return;
+          var picker = document.getElementById(opts.uploadPickerId);
+          var doneEl = opts.uploadDoneId ? document.getElementById(opts.uploadDoneId) : null;
+          var hasRoster = members.length > 0;
+          show(picker, !hasRoster);
+          show(doneEl, hasRoster);
+        }
+
         function render() {
           if (!listEl) return;
           if (!members.length) {
             listEl.innerHTML = '';
             updateCount();
+            syncUploadPicker();
             return;
           }
           listEl.innerHTML = members.map(function (m, i) {
@@ -416,6 +429,7 @@
               + '</div>';
           }).join('');
           updateCount();
+          syncUploadPicker();
         }
 
         function normalizeGmc(raw) {
@@ -552,6 +566,7 @@
                 }
                 fileInp.value = '';
                 if (nameEl) nameEl.textContent = 'No file chosen';
+                if (out.added > 0 || out.total > 0) syncUploadPicker();
               })
               .catch(function (err) {
                 setRosterUploadStatus(opts.fileStatusId, err.message || 'Could not read that file.', true);
@@ -582,7 +597,9 @@
             render();
             setError('');
             clearAddForm();
+            syncUploadPicker();
           },
+          syncUploadPicker: syncUploadPicker,
         };
       }
 
@@ -831,9 +848,12 @@
         if (step === 3) {
           updateCreateCohortNamePreviews();
           updateWelcomePreview();
+          if (_createMethod === 'upload' && _createEmailRoster && _createEmailRoster.syncUploadPicker) {
+            _createEmailRoster.syncUploadPicker();
+          }
           var focusId = _createMethod === 'manual' ? 'cohortPersonalEmailInput' : 'cohortEmailsFile';
           var focusEl = document.getElementById(focusId);
-          if (focusEl) focusEl.focus();
+          if (focusEl && !focusEl.closest('[hidden]')) focusEl.focus();
         }
         if (step === 1) {
           var nameInp = document.getElementById('cohortName');
@@ -1101,6 +1121,8 @@
           fileNameId: 'cohortEmailsFileName',
           fileStatusId: 'cohortEmailsFileStatus',
           fileVizId: 'cohortEmailsFileViz',
+          uploadPickerId: 'cohortUploadPicker',
+          uploadDoneId: 'cohortUploadDone',
         });
         _addEmailRoster = wireEmailRoster({
           listId: 'addEmailsList',

@@ -681,6 +681,20 @@
       font-weight: 700;
       color: var(--nhsuk-text);
     }
+    .cohort-upload-done {
+      margin: 0 0 0.75rem 0;
+      padding: 0.65rem 0.85rem;
+      font-size: 0.9375rem;
+      color: var(--nhsuk-text);
+      background: #e6f4ea;
+      border: 1px solid rgba(0, 112, 60, 0.25);
+      border-radius: 4px;
+      line-height: 1.45;
+    }
+    .cohort-upload-done[hidden] { display: none !important; }
+    #cohortUploadPicker[hidden],
+    #bulkRosterPicker[hidden],
+    #bulkEvidencePicker[hidden] { display: none !important; }
     .hr-table .hr-status-pill { display: inline-block; padding: 0.15rem 0.45rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; white-space: nowrap; }
     .hr-status-pill--pending { background: #fff7e6; color: #8a5b00; }
     .hr-status-pill--queued { background: #e8f4fb; color: #005eb8; }

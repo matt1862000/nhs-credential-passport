@@ -8,7 +8,7 @@
 
   <title>Bulk add training &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260522-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-2">
 
 </head>
 <body>
@@ -54,69 +54,127 @@
       </div>
       <p class="hr-muted" style="margin:0 0 0.75rem 0;">Issue the same module completion to many clinicians using one shared class evidence file. Only people on your roster who have allowed your trust receive a record.</p>
       <div class="hr-bulk-panel">
+        <p class="cohort-wizard-step-label" id="bulkWizardStepLabel" aria-live="polite">Step 1 of 4 — Who receives this?</p>
         <form id="bulkForm" class="hr-bulk-form" novalidate>
-          <div class="nhsuk-form-group">
-            <label class="nhsuk-label" for="bulkCohort">Recipients</label>
-            <span class="nhsuk-hint" id="bulkCohortHint">Select a cohort to use all its members, or leave blank and upload a roster file.</span>
-            <select class="nhsuk-select" id="bulkCohort" name="cohort_id" aria-describedby="bulkCohortHint">
-              <option value="">— Upload a roster file instead —</option>
-            </select>
-          </div>
-          <div class="nhsuk-form-group" id="bulkRosterGroup">
-            <label class="nhsuk-label" for="bulkRoster">Roster file</label>
-            <span class="nhsuk-hint" id="bulkRosterHint">Plain text or CSV — one GMC number or work email per line, or CSV with the identifier in the first column. Maximum 50 people per upload.</span>
-            <div class="hr-bulk-file">
-              <input class="nhsuk-input" type="file" id="bulkRoster" name="roster" accept=".txt,.csv,text/plain,text/csv" aria-describedby="bulkRosterHint">
-            </div>
-            <span class="hr-bulk-file-name" id="bulkRosterName" aria-live="polite">No file chosen</span>
-          </div>
-          <div class="nhsuk-form-group" id="bulkEvidenceGroup">
-            <label class="nhsuk-label" for="bulkEvidence">Class evidence</label>
-            <span class="nhsuk-hint" id="bulkEvidenceHint">Upload a PDF or image (PNG, JPEG, WebP) of the attendance or completion record for the class. Required when at least one person would receive a new credential.</span>
-            <div class="hr-bulk-file">
-              <input class="nhsuk-input" type="file" id="bulkEvidence" name="evidence" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*" aria-describedby="bulkEvidenceHint">
-            </div>
-            <span class="hr-bulk-file-name" id="bulkEvidenceName" aria-live="polite">No file chosen</span>
-          </div>
-          <div class="nhsuk-form-group">
-            <label class="nhsuk-label" for="bulkModule">Module</label>
-            <span class="nhsuk-hint">The same module and dates are applied to every eligible person on the roster.</span>
-            <select class="nhsuk-select" id="bulkModule" name="module_code" required></select>
-          </div>
-          <div class="nhsuk-form-group">
-            <span class="nhsuk-label">Completion and expiry</span>
-            <span class="nhsuk-hint">Use the date picker (stored as YYYY-MM-DD).</span>
-            <div class="hr-bulk-dates">
-              <div>
-                <label class="nhsuk-label nhsuk-label--s" for="bulkCompletion">Completion date</label>
-                <input class="nhsuk-input" type="date" id="bulkCompletion" name="completion_date" required>
-              </div>
-              <div>
-                <label class="nhsuk-label nhsuk-label--s" for="bulkExpiry">Expiry date</label>
-                <input class="nhsuk-input" type="date" id="bulkExpiry" name="expiry_date" required>
-              </div>
+          <div id="bulkStepMethod" class="cohort-wizard-step-panel">
+            <p class="cohort-method-intro">Choose how to select clinicians for this bulk upload.</p>
+            <div class="cohort-method-grid" role="group" aria-label="Recipient source">
+              <button type="button" class="cohort-method-card" data-bulk-method="cohort">
+                <span class="cohort-method-card__icon" aria-hidden="true">
+                  <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+                </span>
+                <span class="cohort-method-card__title">Use a cohort</span>
+                <span class="cohort-method-card__desc">Issue training to everyone in a cohort you have already created.</span>
+              </button>
+              <button type="button" class="cohort-method-card" data-bulk-method="roster">
+                <span class="cohort-method-card__icon" aria-hidden="true">
+                  <svg width="22" height="22" viewBox="0 0 24 24" focusable="false"><path fill="currentColor" d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+                </span>
+                <span class="cohort-method-card__title">Upload roster file</span>
+                <span class="cohort-method-card__desc">Plain text or CSV with GMC numbers or emails (max 50 lines).</span>
+              </button>
             </div>
           </div>
-          <fieldset class="hr-bulk-fieldset">
-            <legend class="nhsuk-label">Issuing trust on the credential</legend>
-            <span class="nhsuk-hint" id="bulkIssuingTrustHint">Search by trust name. Your HR organisation is filled in by default; pick a row to set the ODS code, or type a new name.</span>
-            <div class="nhsuk-form-group" style="margin-bottom:0.75rem;">
-              <label class="nhsuk-label nhsuk-label--s" for="bulkIssuingName">Trust display name</label>
-              <div class="nhs-ac-wrap" id="hrBulkTrustAcWrap">
-                <input class="nhsuk-input" type="text" id="bulkIssuingName" name="issuing_trust_name" placeholder="e.g. Sheffield Teaching Hospitals" autocomplete="off" spellcheck="false" aria-describedby="bulkIssuingTrustHint" role="combobox" aria-autocomplete="list" aria-controls="hrBulkTrustSuggestList" aria-expanded="false">
-                <ul id="hrBulkTrustSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching NHS trusts"></ul>
+
+          <div id="bulkStepCohort" class="cohort-wizard-step-panel" hidden>
+            <div class="nhsuk-form-group">
+              <label class="nhsuk-label" for="bulkCohort">Cohort</label>
+              <span class="nhsuk-hint" id="bulkCohortHint">All eligible members of this cohort will receive the same training record.</span>
+              <select class="nhsuk-select" id="bulkCohort" name="cohort_id" aria-describedby="bulkCohortHint bulkStepCohortError">
+                <option value="">Choose a cohort…</option>
+              </select>
+              <p class="cohort-email-error" id="bulkStepCohortError" hidden role="alert"></p>
+            </div>
+            <div class="cohort-wizard-actions cohort-wizard-actions--split">
+              <button type="button" class="nhsuk-button nhsuk-button--secondary" id="bulkBackCohort">Back</button>
+              <button type="button" class="nhsuk-button" id="bulkNextCohort">Next</button>
+            </div>
+          </div>
+
+          <div id="bulkStepRoster" class="cohort-wizard-step-panel" hidden>
+            <div id="bulkRosterPicker">
+              <div class="nhsuk-form-group" id="bulkRosterGroup">
+                <label class="nhsuk-label" for="bulkRoster">Roster file</label>
+                <span class="nhsuk-hint" id="bulkRosterHint">One GMC number or email per line, or CSV with the identifier in the first column. Maximum 50 people per upload.</span>
+                <div class="hr-bulk-file">
+                  <input class="nhsuk-input" type="file" id="bulkRoster" name="roster" accept=".txt,.csv,text/plain,text/csv" aria-describedby="bulkRosterHint bulkStepRosterError">
+                </div>
+                <span class="hr-bulk-file-name" id="bulkRosterName" aria-live="polite">No file chosen</span>
               </div>
             </div>
-            <div class="nhsuk-form-group" style="margin-bottom:0;">
-              <label class="nhsuk-label nhsuk-label--s" for="bulkOds">ODS code</label>
-              <input class="nhsuk-input" type="text" id="bulkOds" name="issuing_trust_ods_code" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false">
+            <p id="bulkRosterDone" class="cohort-upload-done" hidden role="status"></p>
+            <p class="cohort-email-error" id="bulkStepRosterError" hidden role="alert"></p>
+            <div class="cohort-wizard-actions cohort-wizard-actions--split">
+              <button type="button" class="nhsuk-button nhsuk-button--secondary" id="bulkBackRoster">Back</button>
+              <button type="button" class="nhsuk-button" id="bulkNextRoster">Next</button>
             </div>
-          </fieldset>
-          <div class="hr-bulk-actions">
-            <button type="submit" class="nhsuk-button" id="bulkSubmit">Submit</button>
-            <button type="reset" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="bulkReset" form="bulkForm">Clear form</button>
+          </div>
+
+          <div id="bulkStepEvidence" class="cohort-wizard-step-panel" hidden>
+            <div id="bulkEvidencePicker">
+              <div class="nhsuk-form-group" id="bulkEvidenceGroup">
+                <label class="nhsuk-label" for="bulkEvidence">Class evidence</label>
+                <span class="nhsuk-hint" id="bulkEvidenceHint">PDF or image (PNG, JPEG, WebP) of attendance or completion for the class. Required when issuing new credentials.</span>
+                <div class="hr-bulk-file">
+                  <input class="nhsuk-input" type="file" id="bulkEvidence" name="evidence" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*" aria-describedby="bulkEvidenceHint bulkStepEvidenceError">
+                </div>
+                <span class="hr-bulk-file-name" id="bulkEvidenceName" aria-live="polite">No file chosen</span>
+              </div>
+            </div>
+            <p id="bulkEvidenceDone" class="cohort-upload-done" hidden role="status"></p>
+            <p class="cohort-email-error" id="bulkStepEvidenceError" hidden role="alert"></p>
+            <div class="cohort-wizard-actions cohort-wizard-actions--split">
+              <button type="button" class="nhsuk-button nhsuk-button--secondary" id="bulkBackEvidence">Back</button>
+              <button type="button" class="nhsuk-button" id="bulkNextEvidence">Next</button>
+            </div>
+          </div>
+
+          <div id="bulkStepDetails" class="cohort-wizard-step-panel" hidden>
+            <p class="cohort-wizard-roster-title">Training details</p>
+            <p class="nhsuk-hint" id="bulkRecipientsSummary" style="margin-top:0;max-width:none;"></p>
+            <div class="nhsuk-form-group">
+              <label class="nhsuk-label" for="bulkModule">Module</label>
+              <span class="nhsuk-hint">The same module and dates are applied to every eligible person.</span>
+              <select class="nhsuk-select" id="bulkModule" name="module_code" required></select>
+            </div>
+            <div class="nhsuk-form-group">
+              <span class="nhsuk-label">Completion and expiry</span>
+              <span class="nhsuk-hint">Use the date picker (stored as YYYY-MM-DD).</span>
+              <div class="hr-bulk-dates">
+                <div>
+                  <label class="nhsuk-label nhsuk-label--s" for="bulkCompletion">Completion date</label>
+                  <input class="nhsuk-input" type="date" id="bulkCompletion" name="completion_date" required>
+                </div>
+                <div>
+                  <label class="nhsuk-label nhsuk-label--s" for="bulkExpiry">Expiry date</label>
+                  <input class="nhsuk-input" type="date" id="bulkExpiry" name="expiry_date" required>
+                </div>
+              </div>
+            </div>
+            <fieldset class="hr-bulk-fieldset">
+              <legend class="nhsuk-label">Issuing trust on the credential</legend>
+              <span class="nhsuk-hint" id="bulkIssuingTrustHint">Search by trust name. Your HR organisation is filled in by default; pick a row to set the ODS code, or type a new name.</span>
+              <div class="nhsuk-form-group" style="margin-bottom:0.75rem;">
+                <label class="nhsuk-label nhsuk-label--s" for="bulkIssuingName">Trust display name</label>
+                <div class="nhs-ac-wrap" id="hrBulkTrustAcWrap">
+                  <input class="nhsuk-input" type="text" id="bulkIssuingName" name="issuing_trust_name" placeholder="e.g. Sheffield Teaching Hospitals" autocomplete="off" spellcheck="false" aria-describedby="bulkIssuingTrustHint" role="combobox" aria-autocomplete="list" aria-controls="hrBulkTrustSuggestList" aria-expanded="false">
+                  <ul id="hrBulkTrustSuggestList" class="nhs-suggest-list" role="listbox" hidden aria-label="Matching NHS trusts"></ul>
+                </div>
+              </div>
+              <div class="nhsuk-form-group" style="margin-bottom:0;">
+                <label class="nhsuk-label nhsuk-label--s" for="bulkOds">ODS code</label>
+                <input class="nhsuk-input" type="text" id="bulkOds" name="issuing_trust_ods_code" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false">
+              </div>
+            </fieldset>
+            <div class="cohort-wizard-actions cohort-wizard-actions--split">
+              <button type="button" class="nhsuk-button nhsuk-button--secondary" id="bulkBackDetails">Back</button>
+              <button type="submit" class="nhsuk-button" id="bulkSubmit">Submit</button>
+            </div>
           </div>
         </form>
+        <div class="cohort-wizard-actions" style="margin-top:0.75rem;">
+          <button type="reset" class="nhsuk-button nhsuk-button--secondary hr-btn-small" id="bulkReset" form="bulkForm">Start over</button>
+        </div>
       </div>
       <div class="hr-bulk-status-wrap">
         <div id="bulkProvisionResult" class="hr-provision-viz-wrap" aria-live="polite"></div>
@@ -144,7 +202,7 @@
   <script src="/static/shared/auth.js"></script>
   <script src="/static/shared/nav-account.js?v=20260522-1"></script>
   <script>window.__HR_PAGE__ = 'bulk';</script>
-  <script src="/static/hr/hr-app.js?v=20260522-1"></script>
+  <script src="/static/hr/hr-app.js?v=20260524-1"></script>
 </body>
 </html>
 
