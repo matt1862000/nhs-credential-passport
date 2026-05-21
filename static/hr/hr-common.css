@@ -277,6 +277,23 @@
       outline: 3px solid var(--nhsuk-focus-colour, #ffeb3b);
       outline-offset: 1px;
     }
+    .hr-member-name-btn {
+      padding: 0;
+      border: none;
+      background: none;
+      font: inherit;
+      font-weight: 700;
+      color: var(--nhsuk-link);
+      text-align: left;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .hr-member-name-btn:hover { color: var(--nhsuk-link-hover, #004070); }
+    .hr-member-name-btn:focus-visible {
+      outline: 3px solid var(--nhsuk-focus-colour, #ffeb3b);
+      outline-offset: 1px;
+    }
     .hr-cohort-stats { margin: 0.35rem 0 0 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); line-height: 1.5; }
     .hr-cohort-stats strong { color: var(--nhsuk-text); font-weight: 700; }
     .hr-cohort-members-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.5rem; margin: 1.5rem 0 0.5rem 0; }

@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#005eb8">
   <title>Cohorts &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-8">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260524-9">
   <link rel="stylesheet" href="/static/shared/messages-compose.css?v=20260524-2">
 </head>
 <body>
@@ -154,7 +154,6 @@
                     <div id="cohortEmailsList" class="cohort-email-list" aria-live="polite"></div>
                   </div>
                 </div>
-                <p class="hr-cohort-inset" style="margin:1rem 0;" id="welcomePreview"></p>
                 <div class="cohort-wizard-actions cohort-wizard-actions--split">
                   <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnCreateBackRoster">Back</button>
                   <button type="submit" class="nhsuk-button cohort-roster-submit cohort-roster-submit--empty" id="btnCreateSubmit" disabled>Create cohort</button>
@@ -191,7 +190,7 @@
         <div class="hr-cohort-members-head">
           <h3>Members</h3>
         </div>
-        <p class="hr-cohort-legend">Status shows whether they can sign in and whether an automatic welcome will be sent after they complete their profile.</p>
+        <p class="hr-cohort-legend">Click a name to edit details or remove someone from this cohort. Status shows sign-in and welcome message progress.</p>
         <div class="hr-table-wrap">
           <table class="hr-table" aria-label="Cohort members">
             <thead><tr><th>Name</th><th>Personal email</th><th>GMC</th><th>Status</th></tr></thead>
@@ -330,6 +329,36 @@
     </div>
   </main>
 
+  <div id="memberEditModal" class="hr-modal" hidden role="dialog" aria-modal="true" aria-labelledby="memberEditModalTitle">
+    <div class="hr-modal__panel hr-modal__panel--narrow">
+      <h3 id="memberEditModalTitle" class="hr-modal__title">Edit clinician</h3>
+      <form id="formMemberEdit" class="hr-bulk-form" novalidate>
+        <div class="nhsuk-form-group">
+          <label class="nhsuk-label" for="memberEditEmail">Personal email</label>
+          <input class="nhsuk-input" type="email" id="memberEditEmail" readonly aria-readonly="true">
+          <span class="nhsuk-hint">Login address — cannot be changed here.</span>
+        </div>
+        <div class="nhsuk-form-group" id="memberEditNameGroup">
+          <label class="nhsuk-label" for="memberEditName">Full name</label>
+          <input class="nhsuk-input" type="text" id="memberEditName" maxlength="200" autocomplete="name">
+        </div>
+        <div class="nhsuk-form-group" id="memberEditGmcGroup">
+          <label class="nhsuk-label" for="memberEditGmc">GMC number</label>
+          <input class="nhsuk-input" type="text" id="memberEditGmc" inputmode="numeric" maxlength="11" aria-describedby="memberEditGmcHint">
+          <span class="nhsuk-hint" id="memberEditGmcHint">Seven digits, or leave blank</span>
+          <p class="cohort-email-error" id="memberEditError" hidden role="alert"></p>
+        </div>
+        <div class="cohort-wizard-actions cohort-wizard-actions--split" style="margin-top:1rem;">
+          <button type="button" class="nhsuk-button nhsuk-button--secondary cohort-delete-btn" id="btnMemberRemove">Remove from cohort</button>
+          <div style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+            <button type="button" class="nhsuk-button nhsuk-button--secondary" id="btnMemberCancel">Cancel</button>
+            <button type="submit" class="nhsuk-button">Save</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="/static/shared/import-result-viz.js?v=20260524-4"></script>
   <script src="/static/shared/vendor/xlsx.full.min.js?v=20260522-1"></script>
   <script src="/static/shared/cohort-roster-parse.js?v=20260522-3"></script>
@@ -349,6 +378,7 @@
       var _createMethod = null;
       var _addWizardStep = 1;
       var _addMethod = null;
+      var _editingMemberId = null;
 
       function firstNameFromEmail(email) {
         var local = String(email || '').split('@')[0].toLowerCase();
@@ -356,30 +386,6 @@
         var part = local.split('.')[0].replace(/\d+$/, '');
         if (!part) return 'Colleague';
         return part.charAt(0).toUpperCase() + part.slice(1);
-      }
-
-      function trustDisplayName(trust) {
-        var raw = (trust || '').trim();
-        if (!raw) return 'your trust';
-        if (raw !== raw.toUpperCase() || raw.length <= 3) return raw;
-        var acronyms = { nhs: 1, uk: 1, gp: 1, ods: 1, icu: 1, it: 1 };
-        var small = { and: 1, of: 1, the: 1, for: 1, in: 1, at: 1 };
-        return raw.toLowerCase().split(/\s+/).map(function (w, i) {
-          if (acronyms[w]) return w.toUpperCase();
-          if (small[w] && i > 0) return w;
-          return w.charAt(0).toUpperCase() + w.slice(1);
-        }).join(' ');
-      }
-
-      function welcomePreviewText(trust) {
-        var t = trustDisplayName(trust);
-        return 'Each clinician automatically receives a welcome message when they complete their profile, e.g. “Welcome Bill Smith to '
-          + t + '. Please reply if you have any queries or concerns.”';
-      }
-
-      function welcomeExampleSnippet(trust) {
-        var t = trustDisplayName(trust);
-        return '“Welcome [name] to ' + t + '. Please reply if you have any queries or concerns.”';
       }
 
       function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -696,6 +702,57 @@
         return '<span class="hr-status-pill hr-status-pill--' + meta.key + '">' + esc(meta.label) + '</span>';
       }
 
+      function memberDisplayLabel(m) {
+        return (m.display_name && m.display_name.trim())
+          ? m.display_name.trim()
+          : (m.personal_email || m.email || 'Clinician');
+      }
+
+      function memberById(id) {
+        var n = Number(id);
+        return _detailMembers.find(function (m) { return Number(m.user_id) === n; }) || null;
+      }
+
+      function renderMembersTable() {
+        var tb = document.getElementById('membersTbody');
+        if (!tb) return;
+        if (!_detailMembers.length) {
+          tb.innerHTML = '<tr><td colspan="4" class="hr-muted">No members yet. Use <strong>Add clinicians</strong> to provision personal email accounts.</td></tr>';
+          return;
+        }
+        tb.innerHTML = _detailMembers.map(function (m) {
+          var personal = m.personal_email || m.email || '—';
+          var label = memberDisplayLabel(m);
+          return (
+            '<tr><td><button type="button" class="hr-member-name-btn" data-member-id="' + m.user_id + '">'
+            + esc(label) + '</button></td><td>' + esc(personal) + '</td><td>' + esc(m.gmc_number || '—')
+            + '</td><td>' + memberStatusPill(m) + '</td></tr>'
+          );
+        }).join('');
+      }
+
+      function closeMemberModal() {
+        _editingMemberId = null;
+        var modal = document.getElementById('memberEditModal');
+        if (modal) modal.hidden = true;
+        var err = document.getElementById('memberEditError');
+        if (err) { err.hidden = true; err.textContent = ''; }
+      }
+
+      function openMemberModal(userId) {
+        var m = memberById(userId);
+        if (!m) return;
+        _editingMemberId = Number(m.user_id);
+        document.getElementById('memberEditModalTitle').textContent = 'Edit ' + memberDisplayLabel(m);
+        document.getElementById('memberEditEmail').value = m.personal_email || m.email || '';
+        document.getElementById('memberEditName').value = (m.display_name || '').trim();
+        document.getElementById('memberEditGmc').value = (m.gmc_number || '').trim();
+        var err = document.getElementById('memberEditError');
+        if (err) { err.hidden = true; err.textContent = ''; }
+        document.getElementById('memberEditModal').hidden = false;
+        document.getElementById('memberEditName').focus();
+      }
+
       function sortMembers(members) {
         return members.slice().sort(function (a, b) {
           var sa = memberStatusMeta(a).sort;
@@ -976,15 +1033,7 @@
         }
         _detailMembers = sortMembers(data.members || []);
         document.getElementById('detailTitle').textContent = c.name;
-        var tb = document.getElementById('membersTbody');
-        if (!_detailMembers.length) {
-          tb.innerHTML = '<tr><td colspan="4" class="hr-muted">No members yet. Use <strong>Add clinicians</strong> to provision personal email accounts.</td></tr>';
-        } else {
-          tb.innerHTML = _detailMembers.map(function (m) {
-            var personal = m.personal_email || m.email || '—';
-            return '<tr><td>' + esc(m.display_name || '—') + '</td><td>' + esc(personal) + '</td><td>' + esc(m.gmc_number || '—') + '</td><td>' + memberStatusPill(m) + '</td></tr>';
-          }).join('');
-        }
+        renderMembersTable();
         updateCohortActionUI();
         updateAddCohortNamePreviews();
         setCohortTab('message');
@@ -1002,15 +1051,6 @@
         clearProvisionResult(document.getElementById('msgProvisionResult'));
         if (!opts.preserveAddViz) {
           clearProvisionResult(document.getElementById('addProvisionResult'));
-        }
-      }
-
-      function updateWelcomePreview() {
-        var trust = (NHSAuth.user && NHSAuth.user.current_trust) || '';
-        var el = document.getElementById('welcomePreview');
-        if (el) {
-          el.innerHTML = '<strong>Automatic welcome</strong> — after profile completion, each member receives: '
-            + esc(welcomeExampleSnippet(trust));
         }
       }
 
@@ -1059,7 +1099,6 @@
         show(document.getElementById('createPanelUpload'), step === 3 && _createMethod === 'upload');
         if (step === 3) {
           updateCreateCohortNamePreviews();
-          updateWelcomePreview();
           if (_createMethod === 'upload' && _createEmailRoster && _createEmailRoster.syncUploadPicker) {
             _createEmailRoster.syncUploadPicker();
           }
@@ -1226,6 +1265,76 @@
         if (_activeCohortId != null) deleteCohort(_activeCohortId);
       });
 
+      document.getElementById('membersTbody').addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-member-id]');
+        if (!btn) return;
+        openMemberModal(parseInt(btn.getAttribute('data-member-id'), 10));
+      });
+
+      document.getElementById('btnMemberCancel').addEventListener('click', closeMemberModal);
+      document.getElementById('memberEditModal').addEventListener('click', function (e) {
+        if (e.target === document.getElementById('memberEditModal')) closeMemberModal();
+      });
+
+      document.getElementById('formMemberEdit').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        if (_activeCohortId == null || _editingMemberId == null) return;
+        var errEl = document.getElementById('memberEditError');
+        var gmcRaw = String(document.getElementById('memberEditGmc').value || '').trim();
+        var gmc = gmcRaw.replace(/\D/g, '');
+        if (gmcRaw && gmc.length !== 7) {
+          if (errEl) {
+            errEl.textContent = 'GMC number must be exactly 7 digits.';
+            errEl.hidden = false;
+          }
+          return;
+        }
+        if (errEl) errEl.hidden = true;
+        try {
+          await apiJson(
+            '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId))
+              + '/members/' + encodeURIComponent(String(_editingMemberId)),
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                display_name: String(document.getElementById('memberEditName').value || '').trim(),
+                gmc_number: gmcRaw ? gmc : '',
+              }),
+            }
+          );
+          closeMemberModal();
+          await openCohort(_activeCohortId);
+          await loadCohorts({ showLoading: false });
+        } catch (err) {
+          if (errEl) {
+            errEl.textContent = err.message || 'Could not save';
+            errEl.hidden = false;
+          }
+        }
+      });
+
+      document.getElementById('btnMemberRemove').addEventListener('click', async function () {
+        if (_activeCohortId == null || _editingMemberId == null) return;
+        var m = memberById(_editingMemberId);
+        var label = m ? memberDisplayLabel(m) : 'this clinician';
+        if (!confirm(
+          'Remove ' + label + ' from this cohort?\n\nTheir DocPass account is not deleted — only this cohort membership.'
+        )) return;
+        try {
+          await apiJson(
+            '/api/hr/cohorts/' + encodeURIComponent(String(_activeCohortId))
+              + '/members/' + encodeURIComponent(String(_editingMemberId)),
+            { method: 'DELETE' }
+          );
+          closeMemberModal();
+          await openCohort(_activeCohortId);
+          await loadCohorts({ showLoading: false });
+        } catch (err) {
+          alert(err.message || 'Could not remove from cohort');
+        }
+      });
+
       document.querySelectorAll('.hr-segment [data-tab]').forEach(function (btn) {
         btn.addEventListener('click', function () { setCohortTab(btn.getAttribute('data-tab')); });
       });
@@ -1369,7 +1478,6 @@
           return;
         }
         show(document.getElementById('mainContent'), true);
-        updateWelcomePreview();
         try {
         _createEmailRoster = wireEmailRoster({
           listId: 'cohortEmailsList',

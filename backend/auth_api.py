@@ -2171,6 +2171,50 @@ def hr_cohorts_detail(request: Request, cohort_id: int):
     return {"cohort": cohort, "members": members}
 
 
+@router.patch("/hr/cohorts/{cohort_id}/members/{doctor_user_id}")
+async def hr_cohort_member_update(
+    request: Request, cohort_id: int, doctor_user_id: int
+):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    if not db.cohort_get(int(cohort_id), trust):
+        raise HTTPException(status_code=404, detail="Cohort not found")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    display_name = body.get("display_name") if "display_name" in body else None
+    gmc_raw = body.get("gmc_number") if "gmc_number" in body else None
+    if gmc_raw is not None:
+        gmc = _normalize_gmc(str(gmc_raw or ""))
+        if str(gmc_raw).strip() and gmc and not GMC_RE.match(gmc):
+            raise HTTPException(
+                status_code=400,
+                detail="GMC number must be exactly 7 digits",
+            )
+    member = db.cohort_member_update_profile(
+        int(cohort_id),
+        int(doctor_user_id),
+        trust,
+        display_name=display_name if "display_name" in body else None,
+        gmc_number=gmc_raw if "gmc_number" in body else None,
+    )
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return {"member": member}
+
+
+@router.delete("/hr/cohorts/{cohort_id}/members/{doctor_user_id}")
+def hr_cohort_member_remove(request: Request, cohort_id: int, doctor_user_id: int):
+    hr = require_premium_user(request)
+    trust = _hr_trust_required(hr)
+    if not db.cohort_member_remove(int(cohort_id), int(doctor_user_id), trust):
+        raise HTTPException(status_code=404, detail="Member not found")
+    return {"ok": True, "removed_user_id": int(doctor_user_id)}
+
+
 @router.post("/hr/cohorts/{cohort_id}/members")
 async def hr_cohorts_add_members(request: Request, cohort_id: int):
     hr = require_premium_user(request)

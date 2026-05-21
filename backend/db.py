@@ -2371,6 +2371,47 @@ def cohort_member_user_ids(cohort_id: int, hr_trust: str) -> list[int]:
     return [int(m["user_id"]) for m in members]
 
 
+def cohort_member_remove(cohort_id: int, user_id: int, hr_trust: str) -> bool:
+    """Remove a clinician from a cohort without deleting their account."""
+    if not cohort_get(cohort_id, hr_trust):
+        return False
+    with sqlite3.connect(DB_PATH) as conn:
+        _ensure_hr_cohorts_tables(conn)
+        cur = conn.execute(
+            "DELETE FROM hr_cohort_members WHERE cohort_id = ? AND user_id = ?",
+            (int(cohort_id), int(user_id)),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def cohort_member_update_profile(
+    cohort_id: int,
+    user_id: int,
+    hr_trust: str,
+    *,
+    display_name: Optional[str] = None,
+    gmc_number: Optional[str] = None,
+) -> Optional[dict]:
+    """Update roster name/GMC for a cohort member (login email is unchanged)."""
+    members = cohort_members_list(cohort_id, hr_trust)
+    member = next((m for m in members if int(m["user_id"]) == int(user_id)), None)
+    if not member:
+        return None
+    u = user_get_by_id(int(user_id))
+    if not u or user_is_premium(u):
+        return None
+    dn = u.get("display_name")
+    if display_name is not None:
+        dn = (display_name or "").strip() or None
+    gmc = u.get("gmc_number")
+    if gmc_number is not None:
+        gmc = _normalize_provision_gmc(str(gmc_number or "")) or None
+    user_set_profile(int(user_id), dn, gmc, u.get("current_trust"))
+    members = cohort_members_list(cohort_id, hr_trust)
+    return next((m for m in members if int(m["user_id"]) == int(user_id)), None)
+
+
 def cohort_roster_lines(cohort_id: int, hr_trust: str) -> list[str]:
     """Roster identifiers for bulk training: personal login email, else GMC."""
     lines: list[str] = []
