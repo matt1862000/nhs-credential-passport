@@ -877,7 +877,7 @@
           if (t) t.textContent = 'Add training — ' + (dname || 'Clinician');
           form.reset();
           var nm = document.getElementById('addTrainingEvidenceName');
-          if (nm) nm.textContent = 'No file chosen';
+          if (nm) nm.textContent = '';
           if (batchViz()) batchViz().clear(document.getElementById('addTrainingProvisionResult'));
           var addStEl = document.getElementById('addTrainingStatus');
           if (addStEl) {
@@ -1242,13 +1242,17 @@
           });
         }
 
-        function wireBulkFileName(inputId, nameId, onChange) {
+        function wireBulkFileName(inputId, nameId, onChange, staffStyle) {
           var inp = document.getElementById(inputId);
           var nameEl = document.getElementById(nameId);
           if (!inp || !nameEl) return;
           inp.addEventListener('change', function () {
             var f = inp.files && inp.files[0];
-            nameEl.textContent = f ? f.name : 'No file chosen';
+            if (staffStyle) {
+              nameEl.textContent = f ? ('Chosen: ' + f.name) : '';
+            } else {
+              nameEl.textContent = f ? f.name : 'No file chosen';
+            }
             if (typeof onChange === 'function') onChange();
           });
         }
@@ -1260,7 +1264,7 @@
           syncBulkEvidencePicker();
           setBulkStepError('bulkStepEvidenceError', '');
         });
-        wireBulkFileName('addTrainingEvidence', 'addTrainingEvidenceName');
+        wireBulkFileName('addTrainingEvidence', 'addTrainingEvidenceName', null, true);
 
         var bulkForm = document.getElementById('bulkForm');
         if (bulkForm) {

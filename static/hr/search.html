@@ -8,7 +8,8 @@
 
   <title>Search doctors &mdash; DocPass</title>
   <link rel="stylesheet" href="/static/shared/app.css?v=20260521-2">
-  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260526-1">
+  <link rel="stylesheet" href="/static/hr/hr-common.css?v=20260526-2">
+  <link rel="stylesheet" href="/static/shared/training-add-form.css?v=20260526-1">
 
 </head>
 <body>
@@ -99,7 +100,7 @@
     <div id="hrAddTrainingModal" class="hr-modal" hidden role="dialog" aria-modal="true" aria-labelledby="hrAddTrainingTitle">
       <div class="hr-modal__panel hr-modal__panel--narrow">
         <h3 id="hrAddTrainingTitle" class="hr-modal__title">Add training</h3>
-        <form id="addTrainingForm" class="hr-bulk-form hr-training-form-stacked" novalidate>
+        <form id="addTrainingForm" class="hr-bulk-form training-add-form" novalidate>
           <div class="nhsuk-form-group">
             <label class="nhsuk-label" for="addTrainingModule">Module</label>
             <select class="nhsuk-select" id="addTrainingModule" name="module_code" required></select>
@@ -125,13 +126,14 @@
             <input class="nhsuk-input" type="text" id="addTrainingOds" placeholder="e.g. RHQ" autocomplete="off" maxlength="16" spellcheck="false" aria-describedby="addTrainingOdsHint">
             <span class="nhsuk-hint" id="addTrainingOdsHint">Filled automatically from the trust name when possible.</span>
           </div>
-          <div class="nhsuk-form-group">
+          <div class="nhsuk-form-group nhsuk-file-upload">
             <label class="nhsuk-label" for="addTrainingEvidence">Evidence (class or completion record)</label>
-            <div class="hr-bulk-file">
-              <input class="nhsuk-input" type="file" id="addTrainingEvidence" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*" aria-describedby="addTrainingEvidenceHint">
+            <div class="nhsuk-file-upload__stack">
+              <p class="nhsuk-hint" id="addTrainingEvidenceHint" style="margin:0;">PDF or image (PNG, JPEG, WebP). Required to issue a credential.</p>
+              <label for="addTrainingEvidence" class="nhsuk-file-upload__trigger">Choose file</label>
+              <input type="file" id="addTrainingEvidence" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*" aria-describedby="addTrainingEvidenceHint">
+              <span class="nhsuk-file-upload__name" id="addTrainingEvidenceName" aria-live="polite"></span>
             </div>
-            <span class="nhsuk-hint" id="addTrainingEvidenceHint">PDF or image (PNG, JPEG, WebP). Required to issue a credential.</span>
-            <span class="hr-bulk-file-name" id="addTrainingEvidenceName" aria-live="polite">No file chosen</span>
           </div>
           <div class="hr-bulk-actions">
             <button type="submit" class="nhsuk-button" id="addTrainingSubmit">Submit</button>
