@@ -257,8 +257,26 @@
       align-items: center;
       justify-content: space-between;
     }
-    .cohort-delete-btn { color: var(--nhsuk-error); border-color: var(--nhsuk-error); }
-    .cohort-delete-btn:hover { background: #fef2f2; color: #9b1c1c; }
+    .cohort-delete-btn {
+      background: #fff;
+      color: #9b1c1c;
+      border: 2px solid var(--nhsuk-error);
+      box-shadow: none;
+    }
+    .cohort-delete-btn:hover {
+      background: #fef2f2;
+      color: #7f1616;
+      border-color: #9b1c1c;
+    }
+    .cohort-delete-btn:active:not(:disabled) {
+      background: #fde8e8;
+      color: #7f1616;
+      border-color: #9b1c1c;
+    }
+    .cohort-delete-btn:focus-visible {
+      outline: 3px solid var(--nhsuk-focus-colour, #ffeb3b);
+      outline-offset: 1px;
+    }
     .hr-cohort-stats { margin: 0.35rem 0 0 0; font-size: 0.9375rem; color: var(--nhsuk-secondary-text); line-height: 1.5; }
     .hr-cohort-stats strong { color: var(--nhsuk-text); font-weight: 700; }
     .hr-cohort-members-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.5rem; margin: 1.5rem 0 0.5rem 0; }
