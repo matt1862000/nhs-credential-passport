@@ -448,13 +448,32 @@
         var parseApi = rosterParse();
         var fieldEls = [personalEl, nameEl, gmcEl].filter(Boolean);
 
-        function setError(msg) {
+        function clearFieldErrors() {
+          if (formGroup) formGroup.classList.remove('nhsuk-form-group--error');
+          [personalEl, nameEl, gmcEl].forEach(function (el) {
+            if (!el) return;
+            var wrap = el.closest('.cohort-add-field');
+            if (wrap) wrap.classList.remove('cohort-add-field--error');
+          });
+        }
+
+        function setError(msg, fieldKey) {
+          clearFieldErrors();
           if (errEl) {
             errEl.textContent = msg || '';
             errEl.hidden = !msg;
           }
-          if (formGroup) formGroup.classList.toggle('nhsuk-form-group--error', !!msg);
-          if (personalEl) personalEl.closest('.cohort-add-field').classList.toggle('cohort-add-field--error', !!msg);
+          if (!msg) return;
+          var target = null;
+          if (fieldKey === 'email' && personalEl) target = personalEl;
+          else if (fieldKey === 'name' && nameEl) target = nameEl;
+          else if (fieldKey === 'gmc' && gmcEl) target = gmcEl;
+          if (target) {
+            var wrap = target.closest('.cohort-add-field');
+            if (wrap) wrap.classList.add('cohort-add-field--error');
+          } else if (formGroup) {
+            formGroup.classList.add('nhsuk-form-group--error');
+          }
         }
 
         function syncSubmitState() {
@@ -547,7 +566,7 @@
           if (!m || !m.personal_email) return false;
           var personal = String(m.personal_email).trim().toLowerCase();
           if (!parseApi || !parseApi.isValidEmail(personal)) {
-            if (!silent) setError('Enter a valid personal email address (e.g. jane.smith@gmail.com).');
+            if (!silent) setError('Enter a valid personal email address (e.g. jane.smith@gmail.com).', 'email');
             return false;
           }
           m.personal_email = personal;
@@ -561,7 +580,7 @@
             render();
             return false;
           }
-          if (!silent) setError('');
+          if (!silent) setError('', null);
           byPersonal[personal] = m;
           members.push(m);
           render();
@@ -579,11 +598,13 @@
         function addFromForm() {
           var collected = collectMemberFromForm();
           if (collected.error) {
-            setError(collected.error);
+            var isGmc = collected.error.indexOf('GMC') !== -1;
+            setError(collected.error, isGmc ? 'gmc' : null);
+            if (isGmc && gmcEl) gmcEl.focus();
             return;
           }
           if (!collected.member.personal_email) {
-            setError('Personal email is required.');
+            setError('Personal email is required.', 'email');
             if (personalEl) personalEl.focus();
             return;
           }
@@ -612,7 +633,7 @@
           });
         }
         fieldEls.forEach(function (el) {
-          el.addEventListener('input', function () { setError(''); });
+          el.addEventListener('input', function () { setError('', null); });
         });
         if (listEl) {
           listEl.addEventListener('click', function (e) {
@@ -696,9 +717,12 @@
             members = [];
             byPersonal = Object.create(null);
             render();
-            setError('');
+            setError('', null);
             clearAddForm();
             syncUploadPicker();
+          },
+          setFieldError: function (msg, fieldKey) {
+            setError(msg, fieldKey);
           },
           syncUploadPicker: syncUploadPicker,
           syncSubmitState: syncSubmitState,
@@ -1207,12 +1231,8 @@
         var vizEl = document.getElementById('createProvisionResult');
         var submitBtn = e.target.querySelector('button[type="submit"]');
         var createFlush = _createEmailRoster ? _createEmailRoster.flushPendingForm() : null;
-        if (createFlush && createFlush.gmcWarning) {
-          var gmcWarnCreate = document.getElementById('cohortEmailError');
-          if (gmcWarnCreate) {
-            gmcWarnCreate.textContent = createFlush.gmcWarning;
-            gmcWarnCreate.hidden = false;
-          }
+        if (createFlush && createFlush.gmcWarning && _createEmailRoster) {
+          _createEmailRoster.setFieldError(createFlush.gmcWarning, 'gmc');
         }
         var members = _createEmailRoster ? _createEmailRoster.getMembers() : [];
         if (!members.length) {
