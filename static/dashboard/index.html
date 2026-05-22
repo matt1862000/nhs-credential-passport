@@ -663,6 +663,9 @@
         await NHSAuth.refresh();
         if (!NHSAuth.requireAuth()) return;
         if (!NHSAuth.requireProfileComplete()) return;
+        if (NHSAuth.isProfileComplete() && !NHSAuth.hasCompletedOnboarding()) {
+          void NHSAuth.syncOnboardingIfProfileComplete();
+        }
         /* Scope onboarding keys to this user so other accounts on same browser don't bleed through */
         var _uid = NHSAuth.user.id || NHSAuth.user.email || 'anon';
         GS_DISMISS_KEY = 'nhs_gs_dismissed_' + _uid;

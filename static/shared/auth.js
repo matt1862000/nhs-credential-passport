@@ -245,7 +245,7 @@
         next &&
         /^\/(static\/)?[a-zA-Z0-9_\-/?=&%.#]*$/.test(next) &&
         !this.mustChangePassword() &&
-        (this.user.premium || (this.hasCompletedOnboarding() && this.isProfileComplete()))
+        (this.user.premium || this.isProfileComplete())
       ) {
         window.location.replace(next);
         return;
@@ -268,6 +268,7 @@
     requireOnboardingComplete(loginUrl) {
       if (!this.requirePasswordChanged(loginUrl)) return false;
       if (!this.user || this.user.premium || !this.needsOnboarding()) return true;
+      if (this.isProfileComplete()) return true;
       var path = window.location.pathname || '';
       if (
         path.indexOf('/static/auth/onboarding') >= 0 ||
@@ -293,6 +294,17 @@
         throw new Error(typeof d === 'string' ? d : 'Could not save profile');
       }
       await this.refresh();
+    },
+
+    /** Persist onboarding_completed when HR already pre-filled mandatory profile fields. */
+    async syncOnboardingIfProfileComplete() {
+      if (!this.user || this.user.premium) return;
+      if (!this.isProfileComplete() || this.hasCompletedOnboarding()) return;
+      await this.updateProfile({
+        display_name: String(this.user.display_name || '').trim(),
+        gmc_number: String(this.user.gmc_number || '').trim(),
+        current_trust: String(this.user.current_trust || '').trim(),
+      });
     },
 
     /**
