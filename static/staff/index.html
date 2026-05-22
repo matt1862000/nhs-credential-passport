@@ -631,7 +631,7 @@
     <section id="bulk" role="tabpanel" aria-labelledby="tab-bulk" aria-hidden="true">
       <div class="nhsuk-bulk-export-panel" id="bulkExportPanel">
         <h3 class="nhsuk-bulk-export-panel__title">Download</h3>
-        <p class="nhsuk-bulk-export-panel__desc">Only training marked <strong>VERIFIED</strong> by HR appears here. Tick items below, or use <strong>Select all</strong> then <strong>Download selected PDFs (ZIP)</strong>. <strong>Download all PDFs (ZIP)</strong> selects every verified record below.</p>
+        <p class="nhsuk-bulk-export-panel__desc">HR-verified training only. Tick items below, or use <strong>Select all</strong> then <strong>Download selected PDFs (ZIP)</strong>. <strong>Download all PDFs (ZIP)</strong> selects every verified record below. This is the proof you can share with another trust or employer.</p>
         <div class="nhsuk-bulk-export-panel__actions">
           <span class="nhsuk-bulk-export-panel__count" id="bulkExportCount" aria-live="polite">0 selected</span>
           <div class="nhsuk-bulk-export-panel__buttons">
@@ -1756,10 +1756,10 @@
                 <div class="nhsuk-card__actions">
                   ${renewButtonHtml}
                   ${showVerifyHrButton ? `<button type="button" class="nhsuk-button nhsuk-button--secondary"${verifyBtnAttrs} ${verifyBtnOnclick}>${verifyBtnText}</button>` : ''}
-                  ${!c.import_evidence_batch ? `<button type="button" class="nhsuk-button" onclick="downloadPdf('${c.credential_id}')">Download evidence</button>` : ''}
                   ${credHasEsrEvidence(c) ? `<button type="button" class="nhsuk-button nhsuk-button--secondary" onclick="downloadCertificate('${c.credential_id}')">ESR evidence</button>` : ''}
                   <button type="button" class="nhsuk-button nhsuk-button--secondary nhsuk-button--remove" onclick="removeCred('${c.credential_id}')">Remove</button>
                 </div>
+                ${!alreadyVerified && !c.import_evidence_batch ? '<p class="nhsuk-hint" style="margin:0.5rem 0 0 0;">Downloadable evidence is available after HR verification — use the <strong>Download</strong> tab.</p>' : ''}
                 ${declinedBlock || declinedNote}
               </div>
             </div>
@@ -1879,6 +1879,10 @@
     }
 
     function downloadPdf(credentialId) {
+      if (!isHrVerified(credentialId)) {
+        alert('Downloadable evidence is only available after HR has verified this training. Use Verify with HR first, then the Download tab.');
+        return;
+      }
       const list = getStored();
       const c = list.find(x => x.credential_id === credentialId);
       if (!c || !c.pdf_base64) { alert('PDF not available for this training record'); return; }
