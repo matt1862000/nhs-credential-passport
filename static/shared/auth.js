@@ -323,6 +323,13 @@
       return email;
     },
 
+    /** Human-readable trust name for UI copy (not raw ODS all-caps). */
+    trustDisplayName(user) {
+      var u = user || this.user;
+      if (!u) return '';
+      return String(u.current_trust_display || u.current_trust || '').trim();
+    },
+
     /** Full name, GMC, current trust — required for standard (non-premium) accounts. */
     isProfileComplete() {
       var u = this.user;

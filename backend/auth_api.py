@@ -73,6 +73,26 @@ def trust_display_name(trust_name: str) -> str:
     return _display(trust_name)
 
 
+def _auth_me_payload(u: dict) -> dict:
+    ct = (u.get("current_trust") or "").strip() or None
+    return {
+        "id": u["id"],
+        "email": u["email"],
+        "premium": db.user_is_premium(u),
+        "gmc_number": u.get("gmc_number"),
+        "display_name": db.user_effective_display_name(u),
+        "current_trust": ct,
+        "current_trust_display": trust_display_name(ct) if ct else None,
+        "personal_email": u.get("email"),
+        "must_change_password": bool(u.get("must_change_password")),
+        "onboarding_completed": bool(u.get("onboarding_completed")),
+        "hr_welcome_message_template": (u.get("hr_welcome_message_template") or "").strip()
+        or None
+        if db.user_is_premium(u)
+        else None,
+    }
+
+
 DEFAULT_COHORT_WELCOME_TEMPLATE = (
     "Welcome {name} to {trust}. Please reply if you have any queries or concerns."
 )
@@ -672,21 +692,7 @@ def auth_me(request: Request):
     u = db.user_get_by_id(uid)
     if not u:
         raise HTTPException(status_code=401, detail="Not signed in")
-    return {
-        "id": u["id"],
-        "email": u["email"],
-        "premium": db.user_is_premium(u),
-        "gmc_number": u.get("gmc_number"),
-        "display_name": db.user_effective_display_name(u),
-        "current_trust": u.get("current_trust"),
-        "personal_email": u.get("email"),
-        "must_change_password": bool(u.get("must_change_password")),
-        "onboarding_completed": bool(u.get("onboarding_completed")),
-        "hr_welcome_message_template": (u.get("hr_welcome_message_template") or "").strip()
-        or None
-        if db.user_is_premium(u)
-        else None,
-    }
+    return _auth_me_payload(u)
 
 
 @router.post("/auth/change-password")
@@ -745,7 +751,9 @@ async def me_profile_put(request: Request):
         gmc = u.get("gmc_number")
 
     if "current_trust" in body:
-        current_trust = (body.get("current_trust") or "").strip() or None
+        from .trust_packs import normalize_stored_trust_name
+
+        current_trust = normalize_stored_trust_name((body.get("current_trust") or "").strip())
     else:
         current_trust = u.get("current_trust")
 
@@ -2218,7 +2226,9 @@ async def me_trust_move_complete(request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON")
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Expected JSON object")
-    new_trust = (body.get("new_trust") or "").strip()
+    from .trust_packs import normalize_stored_trust_name
+
+    new_trust = normalize_stored_trust_name((body.get("new_trust") or "").strip())
     if not new_trust:
         raise HTTPException(status_code=400, detail="new_trust is required")
     ids = body.get("portfolio_credential_ids") or []

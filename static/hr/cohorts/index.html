@@ -469,7 +469,7 @@
       }
 
       function trustLabelForWelcome() {
-        return (NHSAuth.user && NHSAuth.user.current_trust) ? NHSAuth.user.current_trust : 'your trust';
+        return (NHSAuth.trustDisplayName && NHSAuth.trustDisplayName()) || ((NHSAuth.user && NHSAuth.user.current_trust) ? NHSAuth.user.current_trust : 'your trust');
       }
 
       function renderWelcomeTemplate(tmpl, name, trust) {

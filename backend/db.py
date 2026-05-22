@@ -22,8 +22,8 @@ DEV_SEED_EMAIL_ROTHERHAM = "rotherhamhr@nhs.net"
 DEV_SEED_PASSWORD = "password"
 # Demo-only: HR-provisioned clinicians start with this password; never returned via API.
 PROVISIONED_DEMO_PASSWORD = "password"
-DEV_SEED_TRUST_SHEFFIELD = "SHEFFIELD HEALTH PARTNERSHIP UNIVERSITY NHS FOUNDATION TRUST"
-DEV_SEED_TRUST_ROTHERHAM = "ROTHERHAM DONCASTER AND SOUTH HUMBER NHS FOUNDATION TRUST"
+DEV_SEED_TRUST_SHEFFIELD = "Sheffield Health Partnership University NHS Foundation Trust"
+DEV_SEED_TRUST_ROTHERHAM = "Rotherham Doncaster and South Humber NHS Foundation Trust"
 DEV_SEED_DISPLAY_SHEFFIELD = "Sheffield HR"
 DEV_SEED_DISPLAY_ROTHERHAM = "Rotherham HR"
 _LEGACY_SHEFFIELD_PARTNERSHIP_TRUST_LABELS = (
@@ -98,6 +98,7 @@ def init_db():
         _ensure_seed_privileged_user(conn)
         _ensure_seed_rotherham_user(conn)
         _backfill_sheffield_partnership_trust_labels(conn)
+        _backfill_uppercase_current_trust(conn)
         _migrate_provisioned_personal_email_login(conn)
         _migrate_merge_duplicate_conversation_trusts(conn)
         _migrate_normalize_conversation_trust_labels(conn)
@@ -109,7 +110,7 @@ def _backfill_sheffield_partnership_trust_labels(conn: sqlite3.Connection) -> No
     """Fix clinicians provisioned with the old wrong SHSC label instead of Sheffield Partnership."""
     from . import trust_packs
 
-    new_label = trust_packs.trust_display_name(DEV_SEED_TRUST_SHEFFIELD)
+    new_label = trust_packs.normalize_stored_trust_name(DEV_SEED_TRUST_SHEFFIELD)
     if not new_label:
         return
     for old in _LEGACY_SHEFFIELD_PARTNERSHIP_TRUST_LABELS:
@@ -117,6 +118,33 @@ def _backfill_sheffield_partnership_trust_labels(conn: sqlite3.Connection) -> No
             "UPDATE users SET current_trust = ? WHERE TRIM(COALESCE(current_trust, '')) = ?",
             (new_label, old),
         )
+    conn.execute(
+        "UPDATE users SET current_trust = ? WHERE TRIM(COALESCE(current_trust, '')) = ?",
+        (
+            new_label,
+            "SHEFFIELD HEALTH PARTNERSHIP UNIVERSITY NHS FOUNDATION TRUST",
+        ),
+    )
+
+
+def _backfill_uppercase_current_trust(conn: sqlite3.Connection) -> None:
+    """Replace ODS-style ALL CAPS current_trust with readable display labels."""
+    from . import trust_packs
+
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, current_trust FROM users WHERE TRIM(COALESCE(current_trust, '')) != ''"
+    ).fetchall()
+    for row in rows:
+        raw = (row["current_trust"] or "").strip()
+        if not raw or raw != raw.upper() or len(raw) <= 3:
+            continue
+        normalized = trust_packs.normalize_stored_trust_name(raw)
+        if normalized and normalized != raw:
+            conn.execute(
+                "UPDATE users SET current_trust = ? WHERE id = ?",
+                (normalized, int(row["id"])),
+            )
 
 
 def _ensure_visibility_tables(conn: sqlite3.Connection) -> None:
@@ -259,6 +287,16 @@ def _doctor_visible_to_trust(doctor_user_id: int, hr_trust: str, conn: sqlite3.C
     return False
 
 
+def _user_trust_fields(current_trust: Optional[str]) -> dict:
+    from . import trust_packs
+
+    ct = (current_trust or "").strip() or None
+    return {
+        "current_trust": ct,
+        "current_trust_display": trust_packs.trust_display_name(ct) if ct else None,
+    }
+
+
 def hr_doctor_search(q: str, hr_trust: str, limit: int = 30) -> list[dict]:
     """
     Search doctors by name / email / GMC.
@@ -295,7 +333,7 @@ def hr_doctor_search(q: str, hr_trust: str, limit: int = 30) -> list[dict]:
                         "email": r["email"],
                         "display_name": r["display_name"],
                         "gmc_number": r["gmc_number"],
-                        "current_trust": r["current_trust"],
+                        **_user_trust_fields(r["current_trust"]),
                     }
                 )
         return out
@@ -365,7 +403,7 @@ def hr_doctors_search_messaging(q: str, limit: int = 30) -> list[dict]:
             "email": r["email"],
             "display_name": r["display_name"],
             "gmc_number": r["gmc_number"],
-            "current_trust": r["current_trust"],
+            **_user_trust_fields(r["current_trust"]),
         }
         for r in rows
     ]
@@ -2671,7 +2709,9 @@ def user_set_password(user_id: int, password_hash: str, clear_must_change: bool 
 
 def user_set_current_trust_if_empty(user_id: int, trust: str) -> None:
     """Set current_trust only when the clinician has not chosen one yet."""
-    trust = (trust or "").strip() or None
+    from . import trust_packs
+
+    trust = trust_packs.normalize_stored_trust_name(trust)
     if not trust:
         return
     with sqlite3.connect(DB_PATH) as conn:
@@ -2703,6 +2743,10 @@ def user_apply_hr_roster_row(
     dn = (display_name or "").strip() or None
     gmc = _normalize_provision_gmc(str(gmc_number or "")) if gmc_number is not None else None
     trust = (default_trust or "").strip() or None
+    if trust:
+        from . import trust_packs
+
+        trust = trust_packs.normalize_stored_trust_name(trust)
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_gmc_number_column(conn)
         _ensure_users_profile_extra_columns(conn)
@@ -2738,6 +2782,10 @@ def user_apply_provisioned_profile(
     dn = (display_name or "").strip() or None
     gmc = _normalize_provision_gmc(gmc_number)
     trust = (default_trust or "").strip() or None
+    if trust:
+        from . import trust_packs
+
+        trust = trust_packs.normalize_stored_trust_name(trust)
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_gmc_number_column(conn)
         _ensure_users_profile_extra_columns(conn)
@@ -2834,6 +2882,10 @@ def user_set_profile(
     update_hr_welcome_template: bool = False,
 ) -> None:
     """Replace optional profile fields (None clears)."""
+    from . import trust_packs
+
+    if current_trust is not None:
+        current_trust = trust_packs.normalize_stored_trust_name(current_trust)
     with sqlite3.connect(DB_PATH) as conn:
         _ensure_users_gmc_number_column(conn)
         _ensure_users_profile_extra_columns(conn)

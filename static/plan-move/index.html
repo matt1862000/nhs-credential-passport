@@ -233,7 +233,7 @@
       if (!NHSAuth.requireProfileComplete()) return;
       if (window.NHSNavAccount) void NHSNavAccount.refresh();
       /* populate leaving trust from profile */
-      var currentTrust = (NHSAuth.user && NHSAuth.user.current_trust) || '';
+      var currentTrust = (NHSAuth.trustDisplayName && NHSAuth.trustDisplayName()) || (NHSAuth.user && NHSAuth.user.current_trust) || '';
       var leaveDisplay = document.getElementById('leaveTrustDisplay');
       if (leaveDisplay) leaveDisplay.textContent = currentTrust || 'Not set — update in profile';
       await NHSAuth.pullWalletMerge();
@@ -283,7 +283,14 @@
         inp.value = it.name;
         odsHid.value = it.ods || '';
         hideList();
-        /* auto-run if ODS code is known */
+        void (async function () {
+          if (window.NHSOdsTrustSuggest && typeof NHSOdsTrustSuggest.resolveDisplayName === 'function') {
+            try {
+              var resolved = await NHSOdsTrustSuggest.resolveDisplayName(it.name);
+              if (resolved) inp.value = resolved;
+            } catch (e) { /* keep ODS name */ }
+          }
+        })();
         if (it.ods) window.dispatchEvent(new CustomEvent('nhs-join-trust-selected'));
       }
       function escapeHtml(s) {

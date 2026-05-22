@@ -167,6 +167,15 @@
       return null;
     },
 
+    /** Readable trust label for profile storage (pack display name or title case). */
+    resolveDisplayName: async function (nameQuery) {
+      var t = (nameQuery || '').trim();
+      if (!t) return '';
+      var resolved = await w.NHSOdsTrustSuggest.resolveFromServer(t);
+      if (resolved && resolved.Name) return String(resolved.Name).trim();
+      return t;
+    },
+
     pickBestOrg: async function (nameQuery, opts) {
       opts = opts || {};
       var minLen = typeof opts.minLength === 'number' ? opts.minLength : 3;

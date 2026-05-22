@@ -138,3 +138,11 @@ def trust_display_name(trust_name: str) -> str:
     if raw == raw.upper() and len(raw) > 3:
         return _title_case_trust_name(raw)
     return raw
+
+
+def normalize_stored_trust_name(trust_name: Optional[str]) -> Optional[str]:
+    """Readable label to store on profiles (matches pack aliases for lookups)."""
+    raw = (trust_name or "").strip()
+    if not raw:
+        return None
+    return trust_display_name(raw) or raw

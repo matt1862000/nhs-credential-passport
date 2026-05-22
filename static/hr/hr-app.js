@@ -1807,7 +1807,7 @@
                 var meta = [];
                 if (doc.gmc_number) meta.push('GMC ' + esc(doc.gmc_number));
                 if (doc.email) meta.push(esc(doc.email));
-                if (doc.current_trust) meta.push(esc(doc.current_trust));
+                if (doc.current_trust) meta.push(esc(doc.current_trust_display || doc.current_trust));
                 return (
                   '<div class="hr-search-result-row">' +
                   '<div><div class="hr-search-result-name">' + name + '</div>' +

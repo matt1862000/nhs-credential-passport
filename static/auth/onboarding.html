@@ -136,7 +136,7 @@
         var u = NHSAuth.user;
         if (u.display_name) document.getElementById('displayName').value = u.display_name;
         if (u.gmc_number) document.getElementById('gmcNumber').value = u.gmc_number;
-        if (u.current_trust) document.getElementById('currentTrust').value = u.current_trust;
+        if (u.current_trust) document.getElementById('currentTrust').value = u.current_trust_display || u.current_trust;
         if (window.NHSTrustAutocomplete) {
           NHSTrustAutocomplete.wire({
             inputId: 'currentTrust',

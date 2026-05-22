@@ -223,8 +223,17 @@
       function applyTrustSuggestIndex(idx) {
         var inp = document.getElementById('currentTrust');
         if (!inp || idx < 0 || idx >= trustSuggestItems.length) return;
-        inp.value = trustSuggestItems[idx].name;
+        var picked = trustSuggestItems[idx].name;
+        inp.value = picked;
         hideTrustSuggest();
+        void (async function () {
+          if (window.NHSOdsTrustSuggest && typeof NHSOdsTrustSuggest.resolveDisplayName === 'function') {
+            try {
+              var resolved = await NHSOdsTrustSuggest.resolveDisplayName(picked);
+              if (resolved) inp.value = resolved;
+            } catch (e) { /* keep picked */ }
+          }
+        })();
       }
 
       function updateTrustSuggestHighlight() {
@@ -308,7 +317,7 @@
         if (!u) return;
         document.getElementById('displayName').value = u.display_name || '';
         document.getElementById('gmcNumber').value = u.gmc_number || '';
-        document.getElementById('currentTrust').value = u.current_trust || '';
+        document.getElementById('currentTrust').value = u.current_trust_display || u.current_trust || '';
         var hrWelcome = document.getElementById('hrWelcomeTemplate');
         if (hrWelcome) {
           hrWelcome.value = u.hr_welcome_message_template || '';
@@ -322,7 +331,9 @@
         var ta = document.getElementById('hrWelcomeTemplate');
         if (!prev || !ta) return;
         var tmpl = String(ta.value || '').trim() || SYSTEM_WELCOME_DEFAULT;
-        var trust = (document.getElementById('currentTrust').value || '').trim() || 'your trust';
+        var trust = (document.getElementById('currentTrust').value || '').trim()
+          || NHSAuth.trustDisplayName()
+          || 'your trust';
         var text = tmpl.replace(/\{name\}/g, 'Jane Smith').replace(/\{trust\}/g, trust);
         prev.textContent = 'Preview: ' + text;
       }

@@ -491,7 +491,7 @@
         }
 
         show(document.getElementById('mainContent'), true);
-        var trust = (NHSAuth.user.current_trust || '').trim();
+        var trust = (NHSAuth.trustDisplayName && NHSAuth.trustDisplayName()) || (NHSAuth.user.current_trust || '').trim();
         var trustLabel = document.getElementById('trustLabel');
         if (trustLabel && trust) trustLabel.textContent = trust;
         var lead = document.getElementById('trustNameLead');

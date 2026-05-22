@@ -597,7 +597,7 @@
           var meta = [];
           if (doc.gmc_number) meta.push('GMC ' + esc(doc.gmc_number));
           if (doc.email) meta.push(esc(doc.email));
-          if (doc.current_trust) meta.push(esc(doc.current_trust));
+          if (doc.current_trust) meta.push(esc(doc.current_trust_display || doc.current_trust));
           html += (
             '<li class="msg-search-person' + (sel ? ' is-selected' : '') + '" data-doctor-idx="' + i + '">' +
               '<input type="checkbox" class="msg-search-person__check" data-doctor-check="' + i + '"' +

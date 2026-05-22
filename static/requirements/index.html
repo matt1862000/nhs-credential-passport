@@ -306,7 +306,7 @@
           window.location.replace('/');
         });
 
-        var trust = (NHSAuth.user.current_trust || '').trim();
+        var trust = (NHSAuth.trustDisplayName && NHSAuth.trustDisplayName()) || (NHSAuth.user.current_trust || '').trim();
         if (!trust) {
           document.getElementById('pageLeadText').textContent = '';
           show(document.getElementById('noTrustMsg'), true);

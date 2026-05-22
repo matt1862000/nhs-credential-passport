@@ -30,8 +30,17 @@
 
     function applyIndex(idx) {
       if (idx < 0 || idx >= items.length) return;
-      inp.value = items[idx].name;
+      var picked = items[idx].name;
       hide();
+      inp.value = picked;
+      void (async function () {
+        if (w.NHSOdsTrustSuggest && typeof NHSOdsTrustSuggest.resolveDisplayName === 'function') {
+          try {
+            var resolved = await NHSOdsTrustSuggest.resolveDisplayName(picked);
+            if (resolved) inp.value = resolved;
+          } catch (e) { /* keep picked */ }
+        }
+      })();
     }
 
     function updateHighlight() {
